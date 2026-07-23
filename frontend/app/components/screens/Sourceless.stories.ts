@@ -1,16 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import Sourceless from './Sourceless.vue'
+import { sampleSourcelessSeries } from '../../fixtures/sourceless'
 
 /**
- * Stories for the library-wide Sourceless screen. Unlike the other library
- * screens (props-down, e.g. `Fractionals`), `Sourceless.vue` is self-contained
- * — it owns `useSourceless()` and the reused `SourcelessCleanupDialog` directly
- * (see its doc comment), so there is no `series`/`pending` arg to drive states
- * from here. The repo has no MSW/mock-server addon for Storybook, so this
- * story renders the real component as-is; in a served preview with no backend
- * behind it, `useSourceless()`'s load fails gracefully into its own error +
- * empty-grid state (the same §16 failure path a real network outage takes),
- * rather than crashing. Flip the theme toolbar to confirm both themes read.
+ * Stories for the library-wide Sourceless screen — the "clean up sourceless
+ * chapters in one place" surface. Each card opens the (page-owned) cleanup
+ * dialog via "Review". There is deliberately NO bulk "clean all". Now
+ * presentation-only (mirrors Fractionals), so every state is driven by props
+ * with no backend involved. Flip the theme toolbar to confirm both themes read.
  */
 const meta = {
   title: 'Screens/Sourceless',
@@ -21,7 +18,24 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-/** The screen as mounted by the page — see the component doc for why there are no args. */
+/** The default list: two series with downloaded sourceless chapters. */
 export const Default: Story = {
-  args: {},
+  args: {
+    series: sampleSourcelessSeries,
+  },
+}
+
+/** Nothing to review — the all-clear empty state. */
+export const Empty: Story = {
+  args: {
+    series: [],
+  },
+}
+
+/** Initial load — skeleton cards. */
+export const Loading: Story = {
+  args: {
+    series: [],
+    loading: true,
+  },
 }

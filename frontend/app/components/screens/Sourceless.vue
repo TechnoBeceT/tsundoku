@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import Skeleton from '../ui/Skeleton.vue'
 import EmptyState from '../ui/EmptyState.vue'
-import ErrorBanner from '../ui/ErrorBanner.vue'
 import ResponsiveGrid from '../ui/ResponsiveGrid.vue'
 import SourcelessSeriesCard from '../sourceless/SourcelessSeriesCard.vue'
-import SourcelessCleanupDialog from '../seriesDetail/SourcelessCleanupDialog.vue'
-import { useSourceless } from '../../composables/useSourceless'
-import type { SourcelessCleanupPreview } from './sourceless.types'
+import type { SeriesSourceless } from './sourceless.types'
 
 /**
  * Sourceless — the library-wide "clean up sourceless chapters in one place"
@@ -17,77 +14,45 @@ import type { SourcelessCleanupPreview } from './sourceless.types'
  * kept on disk (never-auto-delete, Rule 2; GAP-101/QCAT-303) — as a grid of
  * SourcelessSeriesCards, each with one "Review" action.
  *
- * Unlike `Fractionals` (presentation-only, driven by props from its page) this
- * screen owns `useSourceless()` and the reused `SourcelessCleanupDialog`
- * directly: there is no whole-series policy to toggle, so the ONLY page-level
- * concern would be routing, and there isn't any here — reviewing a series opens
- * the dialog on THIS screen, never a per-page state machine. Clicking "Review"
- * fetches that series' removable preview and opens the dialog; a successful
- * removal (§16: failures stay inside the dialog, never silently closed) re-polls
- * the list and closes it.
+ * Presentation only, mirroring Fractionals exactly: every series arrives via
+ * props and all actions are emitted — no fetching, routing, or the reused
+ * cleanup dialog. An empty `series` array is the all-clear EmptyState.
+ * `loading` shows skeletons; `refreshing` puts the rescan button in flight.
+ * Unlike Fractionals there is no whole-series ignore-policy toggle, so there is
+ * no `busyIds` prop either — the parent page owns `useSourceless()` and the
+ * per-series `SourcelessCleanupDialog` directly (§16: it closes the dialog only
+ * on removal success, and shows a failure inside it otherwise). Token-only
+ * colours → both themes render.
  *
  * There is NO bulk "clean all" — same per-series safety posture as Fractionals.
  */
-const {
-  series,
-  pending,
-  refreshing,
-  error,
-  removeBusy,
-  removeError,
-  refresh,
-  fetchPreview,
-  removeSourceless,
-} = useSourceless()
+const props = withDefaults(defineProps<{
+  /** The series with downloaded sourceless chapters; empty → all-clear state. */
+  series: SeriesSourceless[]
+  /** When true, render skeleton cards instead of content. */
+  loading?: boolean
+  /** When true, the rescan action is in flight (spinner + disabled). */
+  refreshing?: boolean
+}>(), {
+  loading: false,
+  refreshing: false,
+})
+
+const emit = defineEmits<{
+  /** A card's "Review" was clicked — the parent fetches that series' removable preview and opens the cleanup dialog. */
+  'review': [seriesId: string]
+  /** Rescan clicked — the parent refetches GET /api/library/sourceless. */
+  'refresh': []
+}>()
 
 // Nothing to review (and not loading) → the all-clear empty state.
-const isEmpty = computed(() => !pending.value && series.value.length === 0)
+const isEmpty = computed(() => !props.loading && props.series.length === 0)
 
 const skeletons = Array.from({ length: 3 }, (_, i) => i)
-
-// ---- Per-series cleanup dialog ----------------------------------------------
-const dialogOpen = ref(false)
-const activeSeriesId = ref<string | null>(null)
-const previewLoading = ref(false)
-const preview = ref<SourcelessCleanupPreview | null>(null)
-
-const activeSeriesTitle = computed(() =>
-  series.value.find((s) => s.seriesId === activeSeriesId.value)?.displayName ?? '',
-)
-
-// The one card whose review/removal flow is in flight (only one dialog open at
-// a time), so only THAT card's button spins.
-const busySeriesId = computed(() => (
-  (previewLoading.value || removeBusy.value) ? activeSeriesId.value : null
-))
-
-async function onReview(seriesId: string): Promise<void> {
-  activeSeriesId.value = seriesId
-  previewLoading.value = true
-  preview.value = await fetchPreview(seriesId)
-  previewLoading.value = false
-  dialogOpen.value = true
-}
-
-async function onConfirm(chapterIds: string[]): Promise<void> {
-  if (!activeSeriesId.value) return
-  const ok = await removeSourceless(activeSeriesId.value, chapterIds)
-  if (ok) {
-    dialogOpen.value = false
-    activeSeriesId.value = null
-    preview.value = null
-  }
-}
-
-function onCloseDialog(): void {
-  dialogOpen.value = false
-}
 </script>
 
 <template>
   <div class="sourceless">
-    <ErrorBanner v-if="error" :message="error" />
-
     <!-- Intro + rescan action -->
     <div class="sourceless__head">
       <div class="sourceless__intro">
@@ -96,7 +61,7 @@ function onCloseDialog(): void {
           Downloaded chapters no source carries — e.g. left behind when a source was removed.
         </p>
       </div>
-      <AppButton variant="mini" :loading="refreshing" @click="refresh">
+      <AppButton variant="mini" :loading="refreshing" @click="emit('refresh')">
         <template #icon>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.6-6.4" />
@@ -109,7 +74,7 @@ function onCloseDialog(): void {
 
     <!-- Loading skeletons -->
     <ResponsiveGrid
-      v-if="pending"
+      v-if="loading"
       class="sourceless__grid"
       min-tile="320px"
       gap="var(--space-base)"
@@ -144,20 +109,10 @@ function onCloseDialog(): void {
         v-for="s in series"
         :key="s.seriesId"
         :row="s"
-        :busy="busySeriesId === s.seriesId"
-        @review="onReview"
+        :busy="false"
+        @review="emit('review', $event)"
       />
     </ResponsiveGrid>
-
-    <SourcelessCleanupDialog
-      :open="dialogOpen"
-      :series-title="activeSeriesTitle"
-      :preview="preview"
-      :busy="removeBusy"
-      :error="removeError"
-      @close="onCloseDialog"
-      @confirm="onConfirm"
-    />
   </div>
 </template>
 
