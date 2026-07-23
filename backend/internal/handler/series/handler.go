@@ -434,12 +434,16 @@ func (h *Handler) SetMetadataSource(c echo.Context) error {
 // middleware as a 500. ErrSeriesNotFound → 404; ErrProviderNotInSeries → 400;
 // ErrNoCover → 404; category.ErrCategoryNotFound → 400 (an unknown categoryId in
 // a recategorize body is a bad request, not a missing resource on this route);
-// ErrChapterNotRemovable → 400 (the fractional-cleanup POST named a chapter that is
-// not in the server-recomputed removable set — a bad selection, not a missing
-// resource; the message names the offending chapter). ErrFractionalCleanupFailed →
-// 500 with an HONEST message: the chapter rows were rolled back, but the CBZs deleted
-// before the failing one are already gone, so the owner is told to re-run the cleanup
-// (it is retry-safe) rather than being handed a bare "internal server error".
+// ErrChapterNotRemovable → 400 (the fractional-cleanup OR the sourceless-cleanup
+// POST named a chapter that is not in that route's server-recomputed removable
+// set — a bad selection, not a missing resource; the message names the offending
+// chapter and is deliberately worded neutrally since the sentinel is shared by
+// both routes). ErrFractionalCleanupFailed → 500 with an HONEST message: the
+// chapter rows were rolled back, but the CBZs deleted before the failing one are
+// already gone, so the owner is told to re-run the cleanup (it is retry-safe)
+// rather than being handed a bare "internal server error". This error is also
+// reachable from the sourceless-cleanup route (it shares the same file-deletion
+// helper), so its message is neutral too.
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, seriessvc.ErrSeriesNotFound):
@@ -450,7 +454,7 @@ func mapServiceError(err error) error {
 		// The rows were rolled back, but the CBZs deleted before the failure are
 		// already gone — say so, and say that a retry finishes the job.
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			"fractional cleanup failed while deleting files: no chapters were removed, but some CBZ files may already be deleted — re-run the cleanup to finish")
+			"cleanup failed while deleting files: no chapters were removed, but some CBZ files may already be deleted — re-run the cleanup to finish")
 	case errors.Is(err, category.ErrCategoryNotFound):
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown category")
 	case errors.Is(err, seriessvc.ErrProviderNotInSeries):

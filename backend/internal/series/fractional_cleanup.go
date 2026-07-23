@@ -18,12 +18,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
 )
 
-// ErrChapterNotRemovable is returned by RemoveFractionalChapters when a requested
-// chapter id is not in the server-recomputed removable set (a whole chapter, a
-// fractional a live source still carries, a chapter of another series, or an
-// unknown id). The HTTP handler maps it to a 400 — the client's list is a
-// SELECTION from the preview, never an authorisation to delete.
-var ErrChapterNotRemovable = errors.New("chapter is not removable by fractional cleanup")
+// ErrChapterNotRemovable is returned by RemoveFractionalChapters (and shared by
+// RemoveSourcelessChapters) when a requested chapter id is not in the
+// server-recomputed removable set (a whole chapter, a fractional a live source
+// still carries, a chapter of another series, or an unknown id). The HTTP
+// handler maps it to a 400 — the client's list is a SELECTION from the preview,
+// never an authorisation to delete. The message is deliberately NEUTRAL (not
+// "fractional") since both cleanup routes surface it verbatim to the owner.
+var ErrChapterNotRemovable = errors.New("chapter is not removable by cleanup")
 
 // ErrFractionalCleanupFailed is returned by RemoveFractionalChapters when a CBZ
 // deletion fails partway. The transaction is rolled back, so NO chapter row is
@@ -31,7 +33,9 @@ var ErrChapterNotRemovable = errors.New("chapter is not removable by fractional 
 // returned count (0) understates that. The call is retry-safe: every selected
 // chapter still qualifies (its row survived), and re-running the cleanup finishes
 // the job — an already-deleted file is a no-op. The handler maps this to a 500
-// whose message says exactly that.
+// whose message says exactly that. The variable name is kept fractional-specific
+// (not renamed) even though removeCleanupFiles — and therefore this error — is
+// also reachable from the sourceless path; see the doc comment there.
 var ErrFractionalCleanupFailed = errors.New("fractional cleanup failed while deleting files")
 
 // FractionalCleanupChapterDTO is one removable chapter in the cleanup preview:
@@ -212,9 +216,10 @@ func (s *Service) deleteRemovableTargets(ctx context.Context, tx *ent.Tx, id uui
 
 	// Belt and braces: the in-tx snapshot makes the decision correct, these predicates
 	// make the DELETE itself un-bypassable — it can only ever touch a downloaded,
-	// filed chapter OF THIS SERIES, whatever the caller sent. This is shared by TWO
-	// callers (RemoveFractionalChapters and RemoveSourcelessChapters) so the guard
-	// only asserts what BOTH rules require. Number-ness is NOT asserted here on
+	// filed chapter OF THIS SERIES, whatever the caller sent. This is shared by THREE
+	// callers (RemoveFractionalChapters, RemoveSourcelessChapters, and DedupeFiles via
+	// executeIgnoredFractionalPlan) so the guard only asserts what ALL THREE rules
+	// require. Number-ness is NOT asserted here on
 	// purpose: for the fractional rule it is a decision-layer guarantee
 	// (isDownloadedFractional requires ch.Number != nil before a chapter ever reaches
 	// this set), so re-asserting it in SQL would be redundant, not protective — but
@@ -268,8 +273,10 @@ func (s *Service) removeCleanupFiles(row *ent.Series, targets []*ent.Chapter) er
 			return fmt.Errorf("%w: series %s chapter %s (%q): %w", ErrFractionalCleanupFailed, row.ID, ch.ID, ch.Filename, err)
 		}
 		if !removed {
-			// ch.Number is dereferenced through FormatChapterNumber (never a raw
-			// pointer in the log line) — every target has a number by the rule.
+			// chapterNumberLabel is nil-safe (renders "?" for a nil ch.Number) rather
+			// than dereferencing directly — the fractional-rule callers always have a
+			// number, but the sourceless caller (RemoveSourcelessChapters) may
+			// legitimately pass a target with no parsed number.
 			slog.Warn("series.RemoveFractionalChapters: no CBZ found for the chapter — nothing deleted on disk (the on-disk title/category may have drifted from the DB, leaving the real file behind for a reconcile to re-import)",
 				"series_id", row.ID, "title", row.Title, "category", categoryName,
 				"chapter_id", ch.ID, "number", chapterNumberLabel(ch), "filename", ch.Filename)
