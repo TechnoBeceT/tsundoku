@@ -36,6 +36,7 @@ export const librarySettings: LibrarySettings = {
   staleGraceDays: 14,
   refreshConcurrency: 4,
   downloadConcurrency: 5,
+  maxConcurrentDownloads: 6,
 }
 
 /** Read-only deploy-time facts for the System card (2a). */

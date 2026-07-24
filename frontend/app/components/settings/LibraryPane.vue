@@ -64,6 +64,7 @@ const cloneLibrary = (l: LibrarySettings): LibrarySettings => ({
   staleGraceDays: l.staleGraceDays,
   refreshConcurrency: l.refreshConcurrency,
   downloadConcurrency: l.downloadConcurrency,
+  maxConcurrentDownloads: l.maxConcurrentDownloads,
 })
 
 const lib = reactive(cloneLibrary(props.library))
@@ -133,6 +134,10 @@ function onSave() {
 
         <SettingRow v-if="advancedOpen" flush name="Download concurrency" hint="Parallel downloads per source — how many of a source's chapters download at once">
           <TextField compact type="number" :model-value="String(lib.downloadConcurrency)" @update:model-value="lib.downloadConcurrency = clampInt($event)" />
+        </SettingRow>
+
+        <SettingRow v-if="advancedOpen" flush name="Max concurrent downloads" hint="GLOBAL cap on total downloads across ALL sources at once (protects the Cloudflare solver). Each source still respects Download concurrency; this caps the total.">
+          <TextField compact type="number" :model-value="String(lib.maxConcurrentDownloads)" @update:model-value="lib.maxConcurrentDownloads = clampInt($event)" />
         </SettingRow>
       </div>
 

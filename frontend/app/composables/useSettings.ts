@@ -22,6 +22,7 @@
  *   health.stale_grace_days       → staleGraceDays   (number)
  *   jobs.refresh_concurrency      → refreshConcurrency (number)
  *   jobs.download_concurrency     → downloadConcurrency (number)
+ *   jobs.max_concurrent_downloads → maxConcurrentDownloads (number)
  *
  * Standalone tunables (not part of LibrarySettings — live in other panes):
  *   jobs.extension_check_interval → extensionCheckInterval (DurationValue)
@@ -140,6 +141,7 @@ const DEFAULTS: LibrarySettings = {
   staleGraceDays: 14,
   refreshConcurrency: 4,
   downloadConcurrency: 5,
+  maxConcurrentDownloads: 6,
 }
 
 // Default for the standalone extension-check-interval tunable (Extensions pane).
@@ -187,6 +189,7 @@ function mapSettings(settings: SettingDTO[]): LibrarySettings {
     staleGraceDays: int('health.stale_grace_days', DEFAULTS.staleGraceDays),
     refreshConcurrency: int('jobs.refresh_concurrency', DEFAULTS.refreshConcurrency),
     downloadConcurrency: int('jobs.download_concurrency', DEFAULTS.downloadConcurrency),
+    maxConcurrentDownloads: int('jobs.max_concurrent_downloads', DEFAULTS.maxConcurrentDownloads),
   }
 }
 
@@ -237,6 +240,7 @@ export function useSettings() {
     staleGraceDays: DEFAULTS.staleGraceDays,
     refreshConcurrency: DEFAULTS.refreshConcurrency,
     downloadConcurrency: DEFAULTS.downloadConcurrency,
+    maxConcurrentDownloads: DEFAULTS.maxConcurrentDownloads,
   })
   const system = ref<SystemInfo>({ storageFolder: '', serverPort: '', database: '' })
   const librarySave = ref<SaveState>({ status: 'idle' })
@@ -326,6 +330,7 @@ export function useSettings() {
             { key: 'health.stale_grace_days', value: String(next.staleGraceDays) },
             { key: 'jobs.refresh_concurrency', value: String(next.refreshConcurrency) },
             { key: 'jobs.download_concurrency', value: String(next.downloadConcurrency) },
+            { key: 'jobs.max_concurrent_downloads', value: String(next.maxConcurrentDownloads) },
           ],
         },
       })

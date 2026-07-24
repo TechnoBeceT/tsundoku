@@ -9,6 +9,10 @@ import type { FractionalCleanupChapter } from '../screens/seriesDetail.types'
  * 223.5 are 132/135-page FULL chapters against a 96p typical. The heuristic
  * pre-ticks the four junk files and leaves the two real chapters unticked +
  * flagged — the owner still decides. Flip the theme toolbar to check both themes.
+ *
+ * The destructive delete has no in-product inverse, so it only ever fires through
+ * the shared destructive `ConfirmModal` (QCAT-222) — click "Remove N files" to see
+ * the gate; nothing is deleted until that modal is itself confirmed.
  */
 const meta = {
   title: 'SeriesDetail/FractionalCleanupDialog',

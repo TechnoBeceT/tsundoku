@@ -4,6 +4,7 @@ import Dialog from '../ui/Dialog.vue'
 import AppButton from '../ui/AppButton.vue'
 import Checkbox from '../ui/Checkbox.vue'
 import ErrorBanner from '../ui/ErrorBanner.vue'
+import ConfirmModal from '../ui/ConfirmModal.vue'
 import type { FractionalCleanupChapter } from '../screens/seriesDetail.types'
 
 /**
@@ -29,10 +30,17 @@ import type { FractionalCleanupChapter } from '../screens/seriesDetail.types'
  *   - `pageCount === null` (never recorded) → same reasoning: not pre-ticked, and
  *     NOT flagged full-size (that would be a claim we cannot support).
  *
- * Presentation-only: the preview arrives via props, the confirm emits the TICKED
- * chapter ids, and the parent runs the POST. §16: `busy` spins the confirm button
- * and blocks dismissal; a FAILED removal keeps the dialog open with the reason
- * shown inside it (the parent closes it only once the removal succeeded).
+ * 🔴 QCAT-222 (owner-ratified, NON-NEGOTIABLE): this delete has NO in-product
+ * inverse — it permanently deletes CBZ files. It MUST NOT fire off the list's
+ * own "Remove N files" button directly: that button only opens the shared,
+ * destructive `ConfirmModal` (mirrors `SourcelessCleanupDialog` /
+ * `RemoveSourceDialog` / `PurgeSourceDialog`'s use of the same atom), which
+ * alone emits `confirm`.
+ *
+ * Presentation-only: the preview arrives via props, `confirm` carries ONLY the
+ * TICKED chapter ids, and the parent runs the POST. §16: `busy` spins the confirm
+ * button and blocks dismissal; a FAILED removal keeps the dialog open with the
+ * reason shown inside it (the parent closes it only once the removal succeeded).
  */
 const props = withDefaults(defineProps<{
   /** Whether the dialog is shown (v-model:open). */
@@ -91,6 +99,14 @@ watch(() => [props.open, props.chapters] as const, ([isOpen]) => {
   if (isOpen) seedSelection()
 }, { immediate: true })
 
+/** Whether the destructive QCAT-222 confirm step is showing. */
+const confirming = ref(false)
+
+// Reset the confirm step on every (re)open — a re-open never resumes mid-confirm.
+watch(() => props.open, (isOpen) => {
+  if (isOpen) confirming.value = false
+})
+
 interface CleanupRow extends FractionalCleanupChapter {
   /** Ticked = this file will be deleted on confirm. */
   checked: boolean
@@ -119,10 +135,18 @@ function setChecked(chapterId: string, checked: boolean): void {
   selected.value = next
 }
 
-function confirm(): void {
+/** Opens the QCAT-222 confirm gate — never deletes anything by itself. */
+function requestConfirm(): void {
   if (selectedCount.value === 0 || props.busy) return
+  confirming.value = true
+}
+
+/** Only reachable from the ConfirmModal's own confirm button. */
+function onConfirmed(): void {
   emit('confirm', [...selectedIds.value])
 }
+
+const confirmTitle = computed(() => `Remove ${selectedCount.value} file${selectedCount.value === 1 ? '' : 's'}?`)
 </script>
 
 <template>
@@ -164,13 +188,26 @@ function confirm(): void {
       </AppButton>
       <AppButton
         variant="danger-ghost"
-        :loading="busy"
-        :disabled="selectedCount === 0"
-        @click="confirm"
+        :disabled="selectedCount === 0 || busy"
+        @click="requestConfirm"
       >
         Remove {{ selectedCount }} file{{ selectedCount === 1 ? '' : 's' }}
       </AppButton>
     </template>
+
+    <!-- QCAT-222: no in-product inverse for this delete, so the actual removal
+         can ONLY be triggered from this shared, destructive confirm gate — never
+         directly from the button above. -->
+    <ConfirmModal
+      :open="confirming"
+      :busy="busy"
+      :title="confirmTitle"
+      message="These CBZ files will be permanently deleted. This can't be undone from the app."
+      confirm-label="Remove files"
+      destructive
+      @update:open="confirming = $event"
+      @confirm="onConfirmed"
+    />
   </Dialog>
 </template>
 

@@ -76,6 +76,8 @@ export interface LibrarySettings {
   refreshConcurrency: number
   /** Parallel downloads per source — how many of a source's chapters download at once. */
   downloadConcurrency: number
+  /** Global cap on total concurrent downloads across ALL sources at once. */
+  maxConcurrentDownloads: number
 }
 
 /** Read-only deploy-time facts shown in the System card (set via env vars). */

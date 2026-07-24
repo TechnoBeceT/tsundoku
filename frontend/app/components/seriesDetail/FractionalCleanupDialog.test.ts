@@ -12,10 +12,19 @@
  *   3. THE ONE THAT MATTERS: confirming emits ONLY the TICKED ids — sending all
  *      of them would delete exactly the chapters the owner deliberately unticked.
  *
+ * QCAT-222 (owner-ratified, NON-NEGOTIABLE): this delete has no in-product
+ * inverse — it permanently deletes CBZ files — so it must fire ONLY through the
+ * shared `ConfirmModal` (destructive). The confirm tests below prove the wiring,
+ * not just the copy: clicking the list's own "Remove N files" trigger must NOT
+ * emit `confirm` by itself; only confirming the nested `ConfirmModal` (its own
+ * "Remove files" button) does.
+ *
  * The real Dialog teleports through reka-ui's portal (which does not render in
  * happy-dom), so it is stubbed to render its title + slots inline — the same
- * approach as RemoveSourceDialog.test.ts. The Checkbox atom is NOT stubbed: its
- * `aria-checked` is what makes the per-row assertions non-vacuous.
+ * approach as RemoveSourceDialog.test.ts. `ConfirmModal` itself is NOT stubbed
+ * (only the `Dialog` it wraps internally is, via the same global stub), so its
+ * real title/message/confirm-label render for real. The Checkbox atom is NOT
+ * stubbed: its `aria-checked` is what makes the per-row assertions non-vacuous.
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -49,8 +58,14 @@ function tickState(wrapper: ReturnType<typeof mountDialog>): boolean[] {
   return wrapper.findAll('[role="checkbox"]').map((box) => box.attributes('aria-checked') === 'true')
 }
 
+/** The list's own trigger — opens the confirm gate, deletes nothing by itself. */
 function confirmButton(wrapper: ReturnType<typeof mountDialog>) {
-  return wrapper.findAll('button').find((b) => b.text().startsWith('Remove '))!
+  return wrapper.findAll('button').find((b) => b.text().startsWith('Remove ') && b.text().includes('file'))!
+}
+
+/** The nested destructive ConfirmModal's own button — the ONLY thing that emits. */
+function confirmModalButton(wrapper: ReturnType<typeof mountDialog>) {
+  return wrapper.findAll('button').find((b) => b.text() === 'Remove files')!
 }
 
 describe('FractionalCleanupDialog — the pre-tick rule (advisory only)', () => {
@@ -139,10 +154,13 @@ describe('FractionalCleanupDialog — the confirm', () => {
     expect(confirmButton(wrapper).attributes('disabled')).toBeDefined()
   })
 
-  it('emits ONLY the TICKED ids — never the whole preview', async () => {
+  it('emits ONLY the TICKED ids — never the whole preview (only after the gate is confirmed)', async () => {
     const wrapper = mountDialog()
 
     await confirmButton(wrapper).trigger('click')
+    // The trigger only OPENS the destructive gate — nothing is deleted yet (QCAT-222).
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+    await confirmModalButton(wrapper).trigger('click')
 
     // The four pre-ticked junk files — NOT the two full-size chapters the owner left unticked.
     expect(wrapper.emitted('confirm')).toHaveLength(1)
@@ -157,16 +175,27 @@ describe('FractionalCleanupDialog — the confirm', () => {
     await wrapper.findAll('[role="checkbox"]')[1]!.trigger('click')
     await wrapper.findAll('[role="checkbox"]')[4]!.trigger('click')
     await confirmButton(wrapper).trigger('click')
+    await confirmModalButton(wrapper).trigger('click')
 
     expect(wrapper.emitted('confirm')![0]).toEqual([['c-31', 'c-2245', 'c-2215']])
   })
 
-  it('never emits when nothing is ticked', async () => {
+  it('never emits when nothing is ticked (the trigger disables at zero)', async () => {
     const wrapper = mountDialog({ typicalPageCount: 0 })
 
     await confirmButton(wrapper).trigger('click')
 
+    expect(confirmButton(wrapper).attributes('disabled')).toBeDefined()
     expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
+  it('the trigger opens the shared destructive ConfirmModal with the mandated permanent-deletion copy', async () => {
+    const wrapper = mountDialog()
+
+    await confirmButton(wrapper).trigger('click')
+
+    expect(wrapper.text()).toContain('These CBZ files will be permanently deleted. This can\'t be undone from the app.')
+    expect(confirmModalButton(wrapper)).toBeDefined()
   })
 
   it('shows a failed removal’s reason inside the dialog (§16 — it stays open)', () => {
