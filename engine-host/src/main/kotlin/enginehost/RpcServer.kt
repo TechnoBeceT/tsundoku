@@ -89,7 +89,7 @@ class RpcServer(
             ex.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
         } catch (e: IllegalArgumentException) {
             ex.respondJson(400, ErrorResponse(e.message ?: "bad request"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.warn(e) { "sources request failed" }
             ex.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
@@ -150,7 +150,7 @@ class RpcServer(
             ex.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: BadRequest) {
             ex.respondJson(400, ErrorResponse(e.message ?: "bad request"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.warn(e) { "extensions request failed" }
             ex.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
@@ -169,7 +169,7 @@ class RpcServer(
             }
         } catch (e: JacksonException) {
             ex.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.warn(e) { "repos request failed" }
             ex.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
@@ -196,7 +196,7 @@ class RpcServer(
             }
         } catch (e: JacksonException) {
             ex.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.warn(e) { "config request failed" }
             ex.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
@@ -216,7 +216,7 @@ class RpcServer(
             ex.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: JacksonException) {
             ex.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             logger.warn(e) { "image request failed" }
             ex.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
@@ -235,7 +235,13 @@ class RpcServer(
             respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
         } catch (e: IllegalArgumentException) {
             respondJson(400, ErrorResponse(e.message ?: "bad request"))
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Throwable, not Exception: a broken/mistranslated extension throws Error subclasses
+            // (VerifyError / LinkageError / NoClassDefFoundError / InstantiationError /
+            // ExceptionInInitializerError), which are NOT Exceptions. Catching only Exception let them
+            // escape the handler, so the exchange never got a response and the request HUNG until the
+            // client timed out (the "can't install / everything hangs" symptom). Contain them as a
+            // clean 502 so one bad source can never stall the engine (GAP-100).
             logger.warn(e) { "request failed" }
             respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
