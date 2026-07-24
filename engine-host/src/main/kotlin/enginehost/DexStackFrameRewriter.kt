@@ -28,16 +28,24 @@ import kotlin.streams.asSequence
 /**
  * Repairs dex2jar mistranslations in every class of a dex2jar-produced extension jar (GAP-100).
  *
- * Three distinct dex2jar bugs are repaired:
+ * Four distinct dex2jar bugs are repaired:
  *  - **(c) object collapse** — `new X` mistranslated to `new java/lang/Object` with X's constructor
  *    dropped; undone by [repairObjectCollapse], a WHOLE-JAR pass that runs FIRST (the dropped constructor
  *    must be synthesized in a class OTHER than the one holding the `new`, so it cannot be done per class);
+ *  - **dropped constructors** — dex2jar drops the `<init>` of R8-optimized lambda singletons, minified enum
+ *    constants and small holder classes, leaving them with methods but no constructor. The vendored dex2jar
+ *    type-fix now makes the translator emit the CORRECT allocation type directly (`new k0; invokespecial
+ *    k0.<init>()V` rather than collapsing to `new java/lang/Object`), so bugs (b)/(c) no longer retarget it
+ *    and therefore never synthesize k0's still-missing ctor — the class fails to link with
+ *    `NoSuchMethodError: k0.<init>()`. [backfillMissingCtors], a WHOLE-JAR pass right after (c), synthesizes a
+ *    forwarding constructor for EVERY dangling in-jar `invokespecial <init>` (the superset of the bug-(b)/(c)
+ *    retarget-only synthesis), guarded so it never relocates the error onto its own super-call;
  *  - **(b) self-instantiation collapse** — a class instantiating itself (R8 lambda singletons, minified
  *    enum constants) mistranslated to `new <superclass>`; undone in [repairSelfInstantiation] before the
  *    frame recompute;
  *  - **(a) missing StackMapTable frames** — recomputed via `COMPUTE_FRAMES` (the original reason this
- *    exists; see below). It runs LAST on purpose: (b) and (c) rewrite instructions, so the frames must be
- *    recomputed from the CORRECTED instruction stream.
+ *    exists; see below). It runs LAST on purpose: (b), (c) and the ctor backfill rewrite/add instructions,
+ *    so the frames must be recomputed from the CORRECTED instruction stream.
  *
  * ## Why this exists (bug (a))
  * Suwayomi's [suwayomi.tachidesk.manga.impl.util.PackageTools.dex2jar] converts an Android APK's
@@ -89,10 +97,10 @@ object DexStackFrameRewriter {
     private const val JAVA_LANG_OBJECT = "java/lang/Object"
 
     /**
-     * Run the whole-jar object-collapse repair (bug (c)) and then recompute the StackMapTable of every
-     * `.class` in [jarFile], resolving referenced types against the jar plus [referenceClassLoader] (the
-     * engine-host runtime classpath). Classes that cannot be recomputed are kept unchanged. Best-effort
-     * per class; a single failure never aborts the jar.
+     * Run the whole-jar object-collapse repair (bug (c)), then the whole-jar constructor backfill, and finally
+     * recompute the StackMapTable of every `.class` in [jarFile], resolving referenced types against the jar
+     * plus [referenceClassLoader] (the engine-host runtime classpath). Classes that cannot be recomputed are
+     * kept unchanged. Best-effort per class; a single failure never aborts the jar.
      *
      * The WHOLE pass is fail-safe too: a jar-level failure (opening/walking/closing the zip filesystem)
      * is logged and swallowed, leaving the jar exactly as dex2jar produced it. This repair can only ever
@@ -107,6 +115,10 @@ object DexStackFrameRewriter {
         // it rewrites instructions, so it must land before the per-class COMPUTE_FRAMES walk recomputes
         // frames from the instruction stream. It guards itself, so it can never abort this pass.
         repairObjectCollapse(jarFile)
+        // Then the universal ctor backfill: whole-jar, right AFTER (c) so it composes with (c)'s retargeted
+        // allocations, and BEFORE the per-class walk so its added constructors get frames recomputed by the
+        // COMPUTE_FRAMES step below. It guards itself, so it can never abort this pass either.
+        backfillMissingCtors(jarFile, referenceClassLoader)
         try {
             val jarUrl = jarFile.toUri().toURL()
             // This resolver is PARENT-FIRST (a plain URLClassLoader), whereas the runtime loads the
@@ -629,6 +641,221 @@ object DexStackFrameRewriter {
         }
         return provenance
     }
+
+    /**
+     * Backfill the constructor dex2jar DROPPED for every R8-optimized class across the WHOLE jar (GAP-100).
+     *
+     * ## The bug
+     * dex2jar drops the `<init>` of R8-optimized classes — Kotlin lambda singletons (`k0`), minified enum
+     * constants, and small holder classes — leaving a class with methods but NO constructor. Separately, the
+     * vendored dex2jar type-fix now makes the translator emit the CORRECT allocation type directly
+     * (`new k0; invokespecial k0.<init>()V`) instead of collapsing it to `new java/lang/Object`. That is a net
+     * improvement, but it also means bugs (b)/(c) — which only synthesize a constructor for allocations THEY
+     * retarget — never touch `k0`: there is no `new <superclass>` to undo and no `new java/lang/Object` to
+     * recover, just a correct `new k0` whose target still declares no `<init>`. The class then fails to link
+     * with `NoSuchMethodError: k0.<init>()`. Proven live on arven/Vortex: 24 dangling `invokespecial <init>`
+     * sites, every one resolved by this backfill.
+     *
+     * ## The repair — a superset of the bug-(b)/(c) synthesis
+     * Synthesize a forwarding constructor for EVERY dangling in-jar `invokespecial <owner>.<init><desc>` — any
+     * call to an `<init>` on a class DEFINED IN THIS JAR that the class does not declare. This is the whole-jar
+     * generalisation of [synthesizeForwardingCtor]'s retarget-only callers: they patch the constructors the
+     * collapse repairs create work for; this patches every constructor dex2jar dropped, whatever produced the
+     * (already-correct) allocation. Calls whose owner is a library/parent type are ignored — those constructors
+     * exist on the classpath.
+     *
+     * ## The safety gate — the super must actually declare the same descriptor
+     * [synthesizeForwardingCtor] emits `INVOKESPECIAL <super>.<init><desc>`, so a forwarding ctor only links if
+     * the super genuinely declares `<init><desc>` (constructors are NOT inherited — the super must declare the
+     * exact descriptor). Synthesizing one whose super lacks it would merely RELOCATE the `NoSuchMethodError`
+     * onto the synthesized ctor's own super-call, so an owner is backfilled only when its super will declare
+     * `<init><desc>` after this pass ([superWillDeclareInit]): an in-jar super that already declares it or is
+     * itself backfilled in this same pass (resolved to a fixpoint so a chain of in-jar supers composes), or an
+     * out-of-jar super that declares it (resolved reflectively via [referenceClassLoader] — `java/lang/Object`
+     * has `()V`, `kotlin/jvm/internal/Lambda` has `(I)V`, `java/lang/Enum` has `(Ljava/lang/String;I)V`, …).
+     * An unresolvable owner is SKIPPED and logged — never a dangling super call. Best-effort like the other
+     * passes: any throwable leaves the jar exactly as dex2jar produced it.
+     *
+     * Classes are read with `SKIP_FRAMES` and written back with RECOMPUTED frames via [FrameComputingClassWriter]
+     * — the SAME writer the per-class [recompute] walk uses — NOT `COMPUTE_MAXS` (which would STRIP the
+     * StackMapTable and lean on that later walk to regenerate it). Computing frames HERE keeps the on-disk bytes
+     * frame-valid, so a backfilled class is never left frameless even in the case the per-class recompute that
+     * runs next WOULD fail for it (a COMPUTE_FRAMES failure on an unresolvable type — a case [repairClass]
+     * explicitly plans for). That restores this file's unconditional "the rewrite can only ever fix a class,
+     * never turn a loadable one into a broken one" invariant for backfill-touched classes (GAP-100). Per-class
+     * fail-safe: if frame computation THROWS for one touched class it is DROPPED from the write set and its
+     * pristine dex2jar bytes are kept untouched (never worse than pre-fix) — the pass does not abort for it, and
+     * the other touched classes still land. Serialize-all-then-write-all ordering is preserved so a single
+     * failure can never half-write the jar.
+     */
+    private fun backfillMissingCtors(
+        jarFile: Path,
+        referenceClassLoader: ClassLoader,
+    ) {
+        try {
+            FileSystems.newFileSystem(jarFile, null as ClassLoader?)?.use { fs ->
+                val classes = LinkedHashMap<Path, ClassNode>()
+                Files
+                    .walk(fs.getPath("/"))
+                    .asSequence()
+                    .filterNot(Files::isDirectory)
+                    .filter { it.toString().endsWith(".class") }
+                    .forEach { path ->
+                        val bytes = Files.readAllBytes(path)
+                        if (!isClassFile(bytes)) return@forEach
+                        val node = ClassNode()
+                        ClassReader(bytes).accept(node, ClassReader.SKIP_FRAMES)
+                        classes[path] = node
+                    }
+
+                val inJar = classes.values.associateBy(ClassNode::name)
+
+                // Every dangling in-jar `invokespecial <init>` whose owner does not already declare that ctor.
+                val candidates = LinkedHashSet<MissingCtor>()
+                for (node in classes.values) {
+                    for (method in node.methods) {
+                        for (insn in method.instructions) {
+                            if (insn !is MethodInsnNode) continue
+                            if (insn.opcode != Opcodes.INVOKESPECIAL || insn.name != "<init>") continue
+                            val owner = inJar[insn.owner] ?: continue // library/parent ctors exist on the classpath
+                            if (owner.methods.any { it.name == "<init>" && it.desc == insn.desc }) continue
+                            candidates += MissingCtor(insn.owner, insn.desc)
+                        }
+                    }
+                }
+
+                // Confirm a candidate only when its super will declare <init><desc> after this pass. Fixpoint,
+                // so a chain of in-jar supers all backfilled here composes (each round can enable the next).
+                val confirmed = LinkedHashSet<MissingCtor>()
+                do {
+                    var added = false
+                    for (candidate in candidates) {
+                        if (candidate in confirmed) continue
+                        if (superWillDeclareInit(candidate, inJar, confirmed, referenceClassLoader)) {
+                            confirmed += candidate
+                            added = true
+                        }
+                    }
+                } while (added)
+
+                for (candidate in candidates) {
+                    if (candidate !in confirmed) {
+                        logger.debug {
+                            "GAP-100 ctor backfill skipped ${candidate.owner}.<init>${candidate.desc}: its super " +
+                                "declares no matching constructor (synthesizing one would relocate the error)"
+                        }
+                    }
+                }
+
+                val changed = mutableSetOf<String>()
+                for (ctor in confirmed) {
+                    val target = inJar[ctor.owner] ?: continue
+                    if (synthesizeForwardingCtor(target, ctor.desc)) changed += target.name
+                }
+                if (changed.isEmpty()) return@use
+
+                // A resolver spanning the jar's OWN classes plus the engine-host classpath — built exactly like
+                // the per-class recompute walk's (see [repairStackFrames]) so FrameComputingClassWriter can resolve
+                // every merge type an extension can reference. Parent-first like the walk's; a plain local loader
+                // is enough (the walk left it un-closed too — the whole pass is guarded and short-lived).
+                val typeResolver = URLClassLoader(arrayOf<URL>(jarFile.toUri().toURL()), referenceClassLoader)
+
+                // Serialize everything BEFORE touching the jar, so a failure on one class cannot leave the jar
+                // half-rewritten. Frames are recomputed HERE (FrameComputingClassWriter, the writer the per-class
+                // recompute uses) instead of stripped with COMPUTE_MAXS, so the on-disk bytes are frame-valid even
+                // if the per-class recompute that runs next would fail for a backfilled class (GAP-100). Per-class
+                // fail-safe: a touched class whose frames cannot be computed is DROPPED from the write set — its
+                // pristine dex2jar bytes are kept (never worse than pre-fix) — rather than aborting the whole pass.
+                val rewritten =
+                    classes
+                        .filterValues { it.name in changed }
+                        .mapNotNull { (path, node) ->
+                            try {
+                                val writer = FrameComputingClassWriter(typeResolver)
+                                node.accept(writer)
+                                path to writer.toByteArray()
+                            } catch (t: Throwable) {
+                                logger.warn(t) {
+                                    "GAP-100 ctor backfill could not recompute frames for ${node.name} in " +
+                                        "${jarFile.fileName}; kept its original dex2jar bytes (backfill skipped for " +
+                                        "this class): ${t.message}"
+                                }
+                                null
+                            }
+                        }
+                for ((path, bytes) in rewritten) {
+                    Files.write(path, bytes, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+                }
+                logger.debug { "Constructor backfill added ${rewritten.size} ctor(s) in ${jarFile.fileName}" }
+            }
+        } catch (t: Throwable) {
+            logger.warn(t) {
+                "Constructor backfill failed for ${jarFile.fileName}; leaving the jar as dex2jar produced it " +
+                    "and continuing to load (repair is best-effort): ${t.message}"
+            }
+        }
+    }
+
+    /**
+     * True when the SUPERCLASS of [ctor]'s owner will declare `<init>` with [ctor]'s descriptor after this pass
+     * — the gate that keeps [backfillMissingCtors] from emitting a forwarding ctor whose own `super(...)` call
+     * would itself be unresolved. Constructors are not inherited, so the super must declare the EXACT
+     * descriptor. An in-jar super qualifies when it already declares it or is itself in [confirmed] (a ctor this
+     * pass will add); an out-of-jar super is checked reflectively via [loader].
+     */
+    private fun superWillDeclareInit(
+        ctor: MissingCtor,
+        inJar: Map<String, ClassNode>,
+        confirmed: Set<MissingCtor>,
+        loader: ClassLoader,
+    ): Boolean {
+        val superName = inJar[ctor.owner]?.superName ?: return false
+        val superNode = inJar[superName]
+        return if (superNode != null) {
+            superNode.methods.any { it.name == "<init>" && it.desc == ctor.desc } ||
+                MissingCtor(superName, ctor.desc) in confirmed
+        } else {
+            superDeclaresCtorReflectively(superName, ctor.desc, loader)
+        }
+    }
+
+    /**
+     * True when the out-of-jar class [internalName] declares a constructor with descriptor [desc], resolved via
+     * [loader] (the extension jar + engine-host runtime classpath). `initialize = false` so the query never
+     * links/verifies the class. Any failure — the class or a parameter type is unresolvable, or no such ctor
+     * exists — is treated as "does not declare it" (unresolvable ⇒ skip, never a dangling super call).
+     */
+    private fun superDeclaresCtorReflectively(
+        internalName: String,
+        desc: String,
+        loader: ClassLoader,
+    ): Boolean =
+        try {
+            val owner = Class.forName(internalName.replace('/', '.'), false, loader)
+            val params = Type.getArgumentTypes(desc).map { typeToClass(it, loader) }.toTypedArray()
+            owner.getDeclaredConstructor(*params)
+            true
+        } catch (_: Throwable) {
+            false
+        }
+
+    /** Resolve an ASM argument [type] to its `Class` (primitives to their `TYPE`, refs/arrays via [loader]). */
+    private fun typeToClass(
+        type: Type,
+        loader: ClassLoader,
+    ): Class<*> =
+        when (type.sort) {
+            Type.BOOLEAN -> Boolean::class.javaPrimitiveType!!
+            Type.CHAR -> Char::class.javaPrimitiveType!!
+            Type.BYTE -> Byte::class.javaPrimitiveType!!
+            Type.SHORT -> Short::class.javaPrimitiveType!!
+            Type.INT -> Int::class.javaPrimitiveType!!
+            Type.FLOAT -> Float::class.javaPrimitiveType!!
+            Type.LONG -> Long::class.javaPrimitiveType!!
+            Type.DOUBLE -> Double::class.javaPrimitiveType!!
+            Type.ARRAY -> Class.forName(type.descriptor.replace('/', '.'), false, loader)
+            else -> Class.forName(type.className, false, loader) // OBJECT
+        }
 
     /** A class file starts with the 0xCAFEBABE magic; anything else in the jar is skipped. */
     private fun isClassFile(bytes: ByteArray): Boolean =

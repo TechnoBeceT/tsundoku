@@ -748,4 +748,215 @@ class DexStackFrameRewriterTest {
             "no constructor may be synthesized for a holder whose allocation was never retargeted",
         )
     }
+
+    // --- GAP-100 universal ctor backfill: dex2jar drops the constructor of R8-optimized lambda/enum/holder
+    //     classes, leaving them with methods but no `<init>`. The vendored dex2jar fix now makes the translator
+    //     emit the CORRECT allocation type directly (`new k0; invokespecial k0.<init>()V`) instead of collapsing
+    //     to `new java/lang/Object`, but k0's own `<init>` is still missing and NOTHING retargets that `new`
+    //     (it is not a self-instantiation and not an Object collapse), so bug (b)/(c) never synthesize it and the
+    //     class fails to link with `NoSuchMethodError: k0.<init>()`. The backfill pass synthesizes a forwarding
+    //     ctor for EVERY dangling in-jar `invokespecial <init>`, guarded on the super actually declaring the same
+    //     descriptor so it can never relocate the error onto its own super-call. The trio below pins that.
+
+    /** A class with a real `<init>(I)V` that chains to `Object` — the in-jar super a descriptor-carrying ctor forwards to. */
+    private fun baseWithIntCtor(internalName: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(I)V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(1, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A class `X extends [superName]` with NO `<init>` at all — exactly what dex2jar leaves for an R8
+     * lambda/enum/holder singleton once the vendored type-fix has restored the correct `new X` allocation but
+     * the constructor is still dropped.
+     */
+    private fun ctorlessClass(
+        internalName: String,
+        superName: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, superName, null)
+        // deliberately NO `<init>` — dex2jar dropped it
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A class whose static `make()` allocates [target] with the CORRECT type and the given ctor [desc] —
+     * `new target; dup; <push args>; invokespecial target.<init>[desc]; …` — modelling the vendored dex2jar
+     * fix's output. [pushArgs] emits the constructor arguments; the result is returned (`areturn`) or, for a
+     * void method (`retDesc == "()V"`), discarded (`pop; return`) so a class we only inspect stays valid.
+     */
+    private fun allocator(
+        self: String,
+        target: String,
+        desc: String,
+        retDesc: String,
+        pushArgs: (MethodVisitor) -> Unit,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, self, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "make", retDesc, null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, target)
+        mv.visitInsn(Opcodes.DUP)
+        pushArgs(mv)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, target, "<init>", desc, false)
+        if (retDesc == "()V") {
+            mv.visitInsn(Opcodes.POP)
+            mv.visitInsn(Opcodes.RETURN)
+        } else {
+            mv.visitInsn(Opcodes.ARETURN)
+        }
+        mv.visitMaxs(4, 0)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A ctorless class (dex2jar dropped its `<init>`) that ALSO carries a branchy method: an `IFNE` to a label
+     * whose target needs a StackMapTable frame, emitted with `ClassWriter(0)` so NO frames are present. It is the
+     * shape that makes the backfill's serialization choice observable — the touched class must be written with
+     * RECOMPUTED frames (not stripped with COMPUTE_MAXS), so it verifies on load rather than relying on a later
+     * pass. Raw (frameless branch at v52) it would fail verification; after the repair its `label(int)` must run.
+     */
+    private fun ctorlessBranchyClass(internalName: String): ByteArray {
+        val cw = ClassWriter(0) // no frames + no ctor — dex2jar's dropped-ctor output with a frameless branch
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "label", "(I)Ljava/lang/String;", null, null)
+        mv.visitCode()
+        val elseLabel = Label()
+        mv.visitVarInsn(Opcodes.ILOAD, 1)
+        mv.visitJumpInsn(Opcodes.IFNE, elseLabel) // branch whose target needs a stackmap frame
+        mv.visitLdcInsn("zero")
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitLabel(elseLabel) // <- strict verifier demands a frame here
+        mv.visitLdcInsn("nonzero")
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(1, 2)
+        mv.visitEnd()
+        // deliberately NO `<init>` — dex2jar dropped it
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    @Test
+    fun `repairStackFrames backfills a dropped no-arg ctor for an in-jar new target`() {
+        // The vendored dex2jar fix emits the correct `new BfB; invokespecial BfB.<init>()V`, but BfB's ctor is
+        // still dropped. Nothing retargets this `new` (BfB is neither its allocator's superclass nor
+        // java/lang/Object), so only the universal backfill can restore BfB.<init>()V; without it BfB fails to
+        // link with NoSuchMethodError.
+        val jar =
+            jarWithClasses(
+                "BfB" to ctorlessClass("BfB", "java/lang/Object"),
+                "BfA" to allocator("BfA", "BfB", "()V", "()Ljava/lang/Object;") {},
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        val loader = BytesLoader()
+        val b = loader.define("BfB", classBytesFromJar(jar, "BfB"))
+        assertTrue(
+            b.declaredConstructors.any { it.parameterCount == 0 },
+            "the backfill must give BfB the no-arg <init>()V dex2jar dropped",
+        )
+        val a = loader.define("BfA", classBytesFromJar(jar, "BfA"))
+        // Links and runs only because BfB.<init>()V now exists.
+        assertEquals(
+            "BfB",
+            a.getDeclaredMethod("make").invoke(null)!!.javaClass.name,
+            "the allocator must construct a real BfB through the backfilled constructor",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames backfills a dropped descriptor ctor forwarding to an in-jar super`() {
+        // BfD extends BfBase, which DOES declare <init>(I)V; BfD's own <init>(I)V was dropped. The backfill must
+        // synthesize BfD.<init>(I)V forwarding the same descriptor to BfBase.
+        val jar =
+            jarWithClasses(
+                "BfBase" to baseWithIntCtor("BfBase"),
+                "BfD" to ctorlessClass("BfD", "BfBase"),
+                "BfC" to allocator("BfC", "BfD", "(I)V", "()Ljava/lang/Object;") { it.visitInsn(Opcodes.ICONST_0) },
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        val loader = BytesLoader()
+        loader.define("BfBase", classBytesFromJar(jar, "BfBase"))
+        val d = loader.define("BfD", classBytesFromJar(jar, "BfD"))
+        assertTrue(
+            d.declaredConstructors.any { it.parameterCount == 1 && it.parameterTypes[0] == Int::class.javaPrimitiveType },
+            "the backfill must give BfD the <init>(I)V it forwards to its base",
+        )
+        val c = loader.define("BfC", classBytesFromJar(jar, "BfC"))
+        assertEquals(
+            "BfD",
+            c.getDeclaredMethod("make").invoke(null)!!.javaClass.name,
+            "the allocator must construct a real BfD through the backfilled (I)V constructor",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames leaves a dangling ctor whose super lacks it un-backfilled`() {
+        // BfF extends java/lang/Object, which declares no <init>(Ljava/lang/String;)V. Synthesizing
+        // BfF.<init>(Ljava/lang/String;)V would merely relocate the NoSuchMethodError to its own super-call, so
+        // the super-resolvability guard MUST skip it and leave BfF byte-for-byte unchanged.
+        val jar =
+            jarWithClasses(
+                "BfF" to ctorlessClass("BfF", "java/lang/Object"),
+                "BfE" to
+                    allocator("BfE", "BfF", "(Ljava/lang/String;)V", "()V") { it.visitInsn(Opcodes.ACONST_NULL) },
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertTrue(
+            BytesLoader().define("BfF", classBytesFromJar(jar, "BfF")).declaredConstructors.isEmpty(),
+            "no ctor may be synthesized when the super declares no matching <init> (would only relocate the error)",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames backfills a ctor for a class whose branchy method needs recomputed frames`() {
+        // The touched class RECEIVES a backfilled <init>()V AND carries a branchy method (IFNE to a label) with
+        // NO StackMapTable — the frames must be recomputed. The backfill now serializes touched classes with
+        // recomputed frames (FrameComputingClassWriter, not COMPUTE_MAXS), so the on-disk bytes are frame-valid
+        // even if a later recompute would fail; the class must VERIFY and run its branch, not just gain the ctor.
+        val jar =
+            jarWithClasses(
+                "BgBranchy" to ctorlessBranchyClass("BgBranchy"),
+                "BgA" to allocator("BgA", "BgBranchy", "()V", "()Ljava/lang/Object;") {},
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        val loader = BytesLoader()
+        val branchy = loader.define("BgBranchy", classBytesFromJar(jar, "BgBranchy"))
+        assertTrue(
+            branchy.declaredConstructors.any { it.parameterCount == 0 },
+            "the backfill must give BgBranchy the no-arg <init>()V dex2jar dropped",
+        )
+        // newInstance() links + verifies the class: the branchy method only passes with valid recomputed frames.
+        val instance = branchy.getDeclaredConstructor().newInstance()
+        val label = branchy.getDeclaredMethod("label", Int::class.javaPrimitiveType)
+        assertEquals("zero", label.invoke(instance, 0), "the branchy method must verify and run its then-branch")
+        assertEquals("nonzero", label.invoke(instance, 7), "the branchy method must verify and run its else-branch")
+        // The allocator links + runs only because BgBranchy.<init>()V now exists.
+        val a = loader.define("BgA", classBytesFromJar(jar, "BgA"))
+        assertEquals(
+            "BgBranchy",
+            a.getDeclaredMethod("make").invoke(null)!!.javaClass.name,
+            "the allocator must construct a real BgBranchy through the backfilled constructor",
+        )
+    }
 }
