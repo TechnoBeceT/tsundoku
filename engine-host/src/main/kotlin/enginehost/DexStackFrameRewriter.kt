@@ -351,7 +351,22 @@ object DexStackFrameRewriter {
      *     allocation is identified through the SAME dataflow (not by textual proximity); if it is missing or
      *     several are found, nothing is rewritten — a `new X` left initialised by `Object.<init>` would be
      *     worse than the original defect.
-     *  6. **Fail-safe, at three levels** — a method whose dataflow cannot be analysed is skipped; classes are
+     *  6. **Exact type only — X must be FINAL** ([isExactType]). This is the core of the shipped-regression
+     *     fix. A receiver-use only proves the value is ASSIGNABLE-TO X (X or any subtype of X), not that it
+     *     IS X. If X is non-final the erased real type may have been a subclass, and a downstream
+     *     `checkcast <subclass>` on the value we retargeted to the supertype throws `ClassCastException` at
+     *     runtime — exactly what MadaraDex/Toonily/Fairy hit in their okhttp interceptors after bug (c)
+     *     first shipped. A FINAL class has no subtypes, so an X-receiver is EXACTLY X and no such checkcast
+     *     can exist. The R8 targets this repair genuinely needs (synthetic lambdas, holder classes such as
+     *     anisa's `public final class b0`) are all final, so the true positives survive; the supertype-
+     *     ambiguous cases are LEFT UNREPAIRED (the extension may then fail to load cleanly — strictly better
+     *     than a runtime ClassCast on a source call).
+     *  7. **Single, unmerged allocation** ([resolveAllocationProvenance]). The receiver value that recovered
+     *     X must resolve to EXACTLY one `new java/lang/Object` and nothing else — no phi/merge of several
+     *     producers. If the value could also have come from another `new`, a method return or a field read
+     *     (a control-flow merge into the same local), we cannot prove THIS allocation always holds the X,
+     *     so the use is discarded as type evidence.
+     *  8. **Fail-safe, at three levels** — a method whose dataflow cannot be analysed is skipped; classes are
      *     only re-serialized AFTER every class has been analysed AND only when this pass actually changed
      *     them (an untouched class keeps its original bytes byte-for-byte); and any throwable at all leaves
      *     the jar exactly as dex2jar produced it and only logs a WARN. Like the frame pass, this repair must
@@ -391,7 +406,7 @@ object DexStackFrameRewriter {
                 if (changed.isEmpty()) return@use
 
                 // Serialize everything BEFORE touching the jar, so an ASM failure on the last class cannot
-                // leave the jar half-rewritten (gate 6).
+                // leave the jar half-rewritten (gate 8).
                 val rewritten =
                     classes
                         .filterValues { it.name in changed }
@@ -433,7 +448,7 @@ object DexStackFrameRewriter {
                 try {
                     collectCollapseCandidates(node.name, method)
                 } catch (t: Throwable) {
-                    // A method dex2jar left un-analysable is skipped, not fatal (gate 6): the rest of the jar
+                    // A method dex2jar left un-analysable is skipped, not fatal (gate 8): the rest of the jar
                     // still gets repaired, and this method is simply left as dex2jar produced it.
                     logger.debug(t) { "Object-collapse analysis skipped ${node.name}.${method.name}: ${t.message}" }
                     continue
@@ -442,6 +457,7 @@ object DexStackFrameRewriter {
                 val owner = owners.singleOrNull() ?: continue // gate 4: ambiguous -> never guess
                 val target = inJar[owner] ?: continue // gate 2: in-jar types only
                 if (!isInstantiable(target)) continue // gate 3
+                if (!isExactType(target)) continue // gate 6: FINAL owners only — see class doc / [isExactType]
                 val init = candidates.initializers[alloc]?.singleOrNull() ?: continue // gate 5
                 alloc.desc = owner
                 init.owner = owner
@@ -455,6 +471,20 @@ object DexStackFrameRewriter {
     /** True when `new X` on [node] is legal at all — i.e. X is neither an interface nor abstract (gate 3). */
     private fun isInstantiable(node: ClassNode): Boolean =
         node.access and (Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT) == 0
+
+    /**
+     * True when X is a FINAL class (gate 6 — the exact-type gate, the core of the GAP-100 bug (c) regression
+     * fix). A final class has NO subtypes, so a value proven to be an X-receiver is EXACTLY X — there can be
+     * no later `checkcast <subtype-of-X>` for the retargeted value to fail. A NON-final owner is only a
+     * SUPERTYPE bound: the receiver-use proves the value is assignable-to X, not that it IS X, so the real
+     * (erased) type may have been a subclass and a downstream `checkcast` to that subclass would throw
+     * `ClassCastException` at runtime after we retargeted to the supertype. That is exactly the shipped
+     * regression (MadaraDex/Toonily/Fairy ClassCast in their okhttp interceptors), so retargeting is
+     * restricted to final owners; the R8 targets this repair actually needs — synthetic lambdas and small
+     * holder classes — are all final (e.g. anisa's `public final class b0`), so the true positives survive.
+     */
+    private fun isExactType(node: ClassNode): Boolean =
+        node.access and Opcodes.ACC_FINAL != 0
 
     /**
      * What the dataflow analysis recovered for ONE method: per collapsed `new java/lang/Object`, the owners
@@ -484,14 +514,20 @@ object DexStackFrameRewriter {
             val frame = frames[i] ?: continue // unreachable (dead) code carries no frame
             val receiverIndex = receiverStackIndex(insn, frame.stackSize) ?: continue
             if (receiverIndex < 0) continue
-            val allocations = resolveObjectAllocations(frame.getStack(receiverIndex), frames, method)
-            if (allocations.isEmpty()) continue
+            val provenance = resolveAllocationProvenance(frame.getStack(receiverIndex), frames, method)
+            if (provenance.allocations.isEmpty()) continue
             if (insn is MethodInsnNode && insn.name == "<init>") {
                 if (insn.owner != JAVA_LANG_OBJECT) continue
-                for (alloc in allocations) found.initializers.getOrPut(alloc) { mutableSetOf() } += insn
+                // The initializer side keeps its existing behaviour (gate 5's "exactly one init" handles
+                // ambiguity there); merged provenance is only disqualifying for TYPE evidence, below.
+                for (alloc in provenance.allocations) found.initializers.getOrPut(alloc) { mutableSetOf() } += insn
             } else {
                 val owner = receiverOwner(insn) ?: continue
-                for (alloc in allocations) found.owners.getOrPut(alloc) { mutableSetOf() } += owner
+                // Gate 7 (no-merge): a receiver-use is admissible TYPE evidence only when its value is
+                // provably EXACTLY one collapsed allocation — not a phi/merge of several producers. A merged
+                // value cannot prove THIS `new` always holds the recovered type, so it contributes nothing.
+                if (provenance.merged || provenance.allocations.size != 1) continue
+                found.owners.getOrPut(provenance.allocations.single()) { mutableSetOf() } += owner
             }
         }
         return found
@@ -534,41 +570,64 @@ object DexStackFrameRewriter {
     }
 
     /**
-     * Walk [value]'s producing instructions back to the `new java/lang/Object` allocations it can hold.
+     * The provenance of a receiver value: which `new java/lang/Object` allocations it can hold, and whether
+     * that provenance is MERGED — i.e. the walk also reached a producer that is neither one of those
+     * allocations nor a pure copy of one (a method return, a field read, a `new` of some OTHER type, or a
+     * stack op we refuse to follow). A merged value cannot be proven to ALWAYS hold one specific allocation,
+     * which is why it is inadmissible as type evidence (gate 7).
+     */
+    private class AllocationProvenance {
+        val allocations = LinkedHashSet<TypeInsnNode>()
+        var merged = false
+    }
+
+    /**
+     * Walk [value]'s producing instructions back to the `new java/lang/Object` allocations it can hold,
+     * flagging [AllocationProvenance.merged] whenever the value could ALSO have come from a producer that is
+     * not one of those allocations (proving it is a phi/merge, not a clean single allocation).
      *
      * A backwards walk is required because `SourceInterpreter` re-bases a value's source on every COPY:
      * after `new Object ; dup ; astore_3 … aload_3`, the receiver's recorded producer is the `aload`, not
      * the `new`. So copy instructions (`aload` / `astore` / `dup` / `checkcast`) are followed to the value
-     * they copied, until an allocation is reached. Any other producer (a method return, a field read, a
-     * merge of an untracked value) ends that branch of the walk: unknown provenance simply yields no
-     * allocation, which means no retarget.
+     * they copied, until an allocation is reached. Any OTHER producer (a method return, a field read, a
+     * `new` of a different type, an unfollowable stack op) yields no allocation AND marks the value merged:
+     * for the type-evidence path (gate 7) that doubt is disqualifying, while the initializer path only reads
+     * [AllocationProvenance.allocations] and so behaves exactly as before.
      */
-    private fun resolveObjectAllocations(
+    private fun resolveAllocationProvenance(
         value: SourceValue,
         frames: Array<Frame<SourceValue>?>,
         method: MethodNode,
-    ): Set<TypeInsnNode> {
-        val allocations = LinkedHashSet<TypeInsnNode>()
+    ): AllocationProvenance {
+        val provenance = AllocationProvenance()
         val visited = mutableSetOf<AbstractInsnNode>()
         val pending = ArrayDeque(value.insns)
         while (pending.isNotEmpty()) {
             val producer = pending.removeFirst()
             if (!visited.add(producer)) continue // a value copied around a loop must not spin forever
             if (producer is TypeInsnNode && producer.opcode == Opcodes.NEW) {
-                if (producer.desc == JAVA_LANG_OBJECT) allocations += producer
+                if (producer.desc == JAVA_LANG_OBJECT) {
+                    provenance.allocations += producer
+                } else {
+                    provenance.merged = true // a `new <other type>` reaching this receiver is foreign provenance
+                }
                 continue
             }
-            val frame = frames.getOrNull(method.instructions.indexOf(producer)) ?: continue
+            val frame = frames.getOrNull(method.instructions.indexOf(producer))
             val copied =
                 when (producer.opcode) {
-                    Opcodes.ALOAD -> frame.getLocal((producer as VarInsnNode).`var`)
+                    Opcodes.ALOAD -> frame?.getLocal((producer as VarInsnNode).`var`)
                     Opcodes.ASTORE, Opcodes.DUP, Opcodes.CHECKCAST ->
-                        if (frame.stackSize > 0) frame.getStack(frame.stackSize - 1) else null
-                    else -> null // deliberately conservative: DUP_X1/SWAP/… end the walk instead of guessing
-                } ?: continue
+                        if (frame != null && frame.stackSize > 0) frame.getStack(frame.stackSize - 1) else null
+                    else -> null // a method return, a field read, DUP_X1/SWAP/… — not a copy we can follow
+                }
+            if (copied == null) {
+                provenance.merged = true // unfollowable producer -> unknown provenance, treat as a merge
+                continue
+            }
             pending += copied.insns
         }
-        return allocations
+        return provenance
     }
 
     /** A class file starts with the 0xCAFEBABE magic; anything else in the jar is skipped. */

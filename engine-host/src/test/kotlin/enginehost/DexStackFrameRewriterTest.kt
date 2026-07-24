@@ -597,4 +597,155 @@ class DexStackFrameRewriterTest {
         assertTrue(method.invoke(null, true) is java.util.ArrayList<*>, "then-branch returns the ArrayList")
         assertTrue(method.invoke(null, false) is java.util.LinkedList<*>, "else-branch returns the LinkedList")
     }
+
+    // --- GAP-100 bug (c) regression guards: the object-collapse retarget must be exact-type (FINAL) only,
+    //     and single-unmerged-allocation only. The shipped repair was UNSOUND for NON-final recovered types
+    //     (MadaraDex/Toonily/Fairy threw ClassCastException in their okhttp interceptors, because the
+    //     receiver-use owner it recovered was a SUPERTYPE of the real erased type). The trio below pins the
+    //     final-only gate (6) and the no-merge gate (7): a FINAL holder is still retargeted (anisa-shaped
+    //     true positive), while a NON-final owner and a merged allocation are both left un-repaired.
+
+    /**
+     * A NON-final holder — same shape as [fieldHolder] but subclassable. A value proven to be its receiver
+     * is only proven ASSIGNABLE-to it, NOT to be EXACTLY it (a subtype could later be `checkcast`), so gate 6
+     * (final-only) must refuse to retarget to it.
+     */
+    private fun openFieldHolder(
+        internalName: String,
+        fieldName: String,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null) // NOT final
+        cw.visitField(Opcodes.ACC_PUBLIC, fieldName, "Z", null, null).visitEnd()
+        // deliberately NO `<init>` — so a synthesized constructor would be observable if it wrongly retargeted
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A collapsed `new java/lang/Object` whose value MERGES with a foreign producer before its receiver-use:
+     * the `then` branch stores the new Object into local 1, the `else` branch stores an `Object`-typed static
+     * field into the SAME local, and only AFTER the join is local 1 used as the receiver of [holder]'s field.
+     * The value at that use is a phi of two producers, so gate 7 (no-merge) must refuse it as type evidence —
+     * we cannot prove THIS allocation always holds a [holder] — and the `new` must stay `java/lang/Object`
+     * even though [holder] is final and in-jar.
+     */
+    private fun mergedAllocationUser(
+        self: String,
+        holder: String,
+        fieldName: String,
+    ): ByteArray {
+        val cw = ClassWriter(0) // no frames — exactly dex2jar's broken output
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, self, null, "java/lang/Object", null)
+        cw.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "other", "Ljava/lang/Object;", null, null).visitEnd()
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "run", "(I)V", null, null)
+        mv.visitCode()
+        val elseLabel = Label()
+        val endLabel = Label()
+        mv.visitVarInsn(Opcodes.ILOAD, 0)
+        mv.visitJumpInsn(Opcodes.IFEQ, elseLabel)
+        // then: local 1 = new Object (the COLLAPSED allocation)
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Object")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitVarInsn(Opcodes.ASTORE, 1)
+        mv.visitJumpInsn(Opcodes.GOTO, endLabel)
+        // else: local 1 = a foreign Object-typed value -> merges with the allocation at the join
+        mv.visitLabel(elseLabel)
+        mv.visitFieldInsn(Opcodes.GETSTATIC, self, "other", "Ljava/lang/Object;")
+        mv.visitVarInsn(Opcodes.ASTORE, 1)
+        // merge: local 1 is (new Object) phi (other) — provenance is merged, so no retarget
+        mv.visitLabel(endLabel)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitInsn(Opcodes.ICONST_1)
+        mv.visitFieldInsn(Opcodes.PUTFIELD, holder, fieldName, "Z") // receiver-use — but the value is merged
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    @Test
+    fun `repairStackFrames retargets an object collapse to a FINAL holder (the anisa-shaped positive)`() {
+        // The R8 target this repair genuinely needs: a FINAL holder with a field, used as the receiver of the
+        // collapsed value. Raw it fails verification; after the repair it retargets, the holder regains the
+        // constructor dex2jar dropped, and it runs. This is the case gate 6 MUST keep working.
+        val loader = BytesLoader()
+        loader.define("FinalHolder", fieldHolder("FinalHolder", "f"))
+        assertFailsWith<VerifyError>("raw collapsed class must fail verification") {
+            loader.define("FinalUser", collapsedHolderUser("FinalUser", "FinalHolder", "f")).getDeclaredMethods()
+        }
+
+        val jar =
+            jarWithClasses(
+                "FinalHolder" to fieldHolder("FinalHolder", "f"),
+                "FinalUser" to collapsedHolderUser("FinalUser", "FinalHolder", "f"),
+            )
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("FinalHolder"),
+            newInstructionTypes(jar, "FinalUser", "run"),
+            "a FINAL recovered type is exact, so the collapsed `new java/lang/Object` must be retargeted",
+        )
+        val fresh = BytesLoader()
+        val holder = fresh.define("FinalHolder", classBytesFromJar(jar, "FinalHolder"))
+        assertTrue(
+            holder.declaredConstructors.any { it.parameterCount == 0 },
+            "FinalHolder must have regained the no-arg <init>()V dex2jar dropped",
+        )
+        val user = fresh.define("FinalUser", classBytesFromJar(jar, "FinalUser"))
+        assertEquals(
+            true,
+            user.getDeclaredMethod("run").invoke(null),
+            "the repaired class must verify, link and round-trip the value through the holder's field",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames leaves an object collapse to a NON-final owner un-repaired`() {
+        // The regression guard: the receiver-use owner is a NON-final class, so it is only a SUPERTYPE bound —
+        // the real erased type could be a subclass and a later checkcast would ClassCast. Gate 6 refuses it.
+        val jar =
+            jarWithClasses(
+                "OpenHolder" to openFieldHolder("OpenHolder", "f"),
+                "OpenUser" to collapsedHolderUser("OpenUser", "OpenHolder", "f"),
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("java/lang/Object"),
+            newInstructionTypes(jar, "OpenUser", "run"),
+            "a non-final recovered type is only a supertype bound, so the `new` must be left as java/lang/Object",
+        )
+        assertTrue(
+            BytesLoader().define("OpenHolder", classBytesFromJar(jar, "OpenHolder")).declaredConstructors.isEmpty(),
+            "no constructor may be synthesized for an owner that was never retargeted",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames leaves a merged object collapse un-repaired`() {
+        // The value at the receiver-use is a phi of the `new Object` and a foreign Object-typed field, so we
+        // cannot prove THIS allocation always holds the (final, in-jar) holder. Gate 7 refuses it.
+        val jar =
+            jarWithClasses(
+                "MergeHolder" to fieldHolder("MergeHolder", "f"),
+                "MergeUser" to mergedAllocationUser("MergeUser", "MergeHolder", "f"),
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("java/lang/Object"),
+            newInstructionTypes(jar, "MergeUser", "run"),
+            "a merged (phi) allocation cannot be proven exact, so the `new` must be left as java/lang/Object",
+        )
+        assertTrue(
+            BytesLoader().define("MergeHolder", classBytesFromJar(jar, "MergeHolder")).declaredConstructors.isEmpty(),
+            "no constructor may be synthesized for a holder whose allocation was never retargeted",
+        )
+    }
 }
