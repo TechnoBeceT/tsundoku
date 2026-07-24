@@ -2,9 +2,16 @@ package enginehost
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import org.objectweb.asm.ClassReader
-import org.objectweb.asm.ClassVisitor
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.Type
+import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.tree.FieldInsnNode
+import org.objectweb.asm.tree.InsnNode
+import org.objectweb.asm.tree.MethodInsnNode
+import org.objectweb.asm.tree.MethodNode
+import org.objectweb.asm.tree.TypeInsnNode
+import org.objectweb.asm.tree.VarInsnNode
 import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.FileSystems
@@ -14,9 +21,16 @@ import java.nio.file.StandardOpenOption
 import kotlin.streams.asSequence
 
 /**
- * Repairs the StackMapTable of every class in a dex2jar-produced extension jar (GAP-100).
+ * Repairs dex2jar mistranslations in every class of a dex2jar-produced extension jar (GAP-100).
  *
- * ## Why this exists
+ * Two distinct dex2jar bugs are repaired in one pass, per class:
+ *  - **(a) missing StackMapTable frames** — recomputed via `COMPUTE_FRAMES` (the original reason this
+ *    exists; see below);
+ *  - **(b) self-instantiation collapse** — a class instantiating itself (R8 lambda singletons, minified
+ *    enum constants) mistranslated to `new <superclass>`; undone in [repairSelfInstantiation] before the
+ *    frame recompute.
+ *
+ * ## Why this exists (bug (a))
  * Suwayomi's [suwayomi.tachidesk.manga.impl.util.PackageTools.dex2jar] converts an Android APK's
  * dex bytecode to a JVM jar via the `de.femtopedia.dex2jar` translator, then runs
  * `BytecodeEditor.fixAndroidClasses`, which rewrites each class with `ClassWriter(classReader, 0)`.
@@ -130,15 +144,128 @@ object DexStackFrameRewriter {
         return true
     }
 
-    /** COMPUTE_FRAMES rewrite. Reader is NOT passed to the writer, so original frames are discarded. */
+    /**
+     * Repair one class: (1) undo dex2jar's self-instantiation collapse (GAP-100 bug (b)), then
+     * (2) recompute the StackMapTable (bug (a)). The class is read into an ASM tree so the instruction
+     * edits and the COMPUTE_FRAMES write happen on one pass; the reader is NOT passed to the writer, so
+     * the original (broken) frames are discarded and recomputed from the — now corrected — instructions.
+     */
     private fun recompute(
         classBytes: ByteArray,
         typeResolver: ClassLoader,
     ): ByteArray {
-        val reader = ClassReader(classBytes)
+        val node = ClassNode()
+        ClassReader(classBytes).accept(node, ClassReader.EXPAND_FRAMES)
+        repairSelfInstantiation(node)
         val writer = FrameComputingClassWriter(typeResolver)
-        reader.accept(object : ClassVisitor(Opcodes.ASM9, writer) {}, ClassReader.EXPAND_FRAMES)
+        node.accept(writer)
         return writer.toByteArray()
+    }
+
+    /**
+     * Undo dex2jar's SELF-INSTANTIATION collapse (GAP-100 bug (b)).
+     *
+     * ## The bug
+     * When a class `X extends S` instantiates ITSELF — the R8 stateless-lambda singleton
+     * (`class q extends kotlin.jvm.internal.Lambda { static final q a; static { a = new q(); } }`) and
+     * every minified `enum` constant are the common cases — dex2jar 2.4.37 emits `new S` (the
+     * SUPERCLASS) instead of `new X`, and drops X's own constructor. The result is bytecode that
+     * `new`s an ABSTRACT base (`kotlin/jvm/internal/Lambda`, `java/lang/Enum`, …): the strict verifier
+     * rejects it with `VerifyError: Bad type on operand stack` (the base is not assignable to the
+     * field it is stored into), and with verification off it fails at runtime with
+     * `InstantiationError`. Confirmed live on fmteam/dragontea (lambda) and anisa/madaradex (lambda +
+     * enum); a version bump does not help (2.4.37 and 2.4.38 are byte-identical here).
+     *
+     * ## The repair — two retargeting gates by superclass
+     * For each `new S` whose matching `invokespecial S.<init>(d)` we decide whether to retarget both to
+     * `X` (and synthesize a forwarding constructor `X.<init>(d) { super(d); }`). Which gate applies is
+     * decided by the superclass `S`:
+     *  - **`S == java/lang/Enum` ⇒ retarget UNCONDITIONALLY.** A class extending abstract `java.lang.Enum`
+     *    is definitionally an `enum`, and an enum only ever instantiates its OWN constants (it can never
+     *    `new` a foreign enum), so EVERY `new java/lang/Enum` inside it is one of this enum's constants and
+     *    is always self. We bypass the self-typed-sink gate here because R8 stores enum constants via a
+     *    LOCAL first (`… ; astore N` … much later `aload N; putstatic`/`$VALUES aastore`), so the
+     *    short-window [flowsIntoSelfTypedSink] scan MISSES them — retargeting only some of an enum's
+     *    constants leaves a mix of `new X` / `new Enum` and re-breaks `<clinit>` with
+     *    `VerifyError: Bad access to protected <init> method` (seen live on anisascans/madaradex).
+     *  - **any other `S` (`kotlin/jvm/internal/Lambda`, …) ⇒ the self-typed-field gate.** Retarget only when
+     *    the initialised object flows into a `put{static,field}` of a field TYPED `LX;` (or an enum
+     *    `$VALUES` `AASTORE`) — see [flowsIntoSelfTypedSink]. This is conservative on purpose: a lambda `X`
+     *    may legitimately create OTHER lambdas (dex2jar collapses those to `new S` too); those go into no
+     *    `LX;` field and so are correctly SKIPPED. Only enums get the unconditional treatment because only
+     *    enums extend `Enum` and an enum can never construct a foreign enum.
+     * Purely local; frame correctness is restored by the subsequent COMPUTE_FRAMES pass. `S == null` (only
+     * `java.lang.Object` has no super) short-circuits.
+     */
+    private fun repairSelfInstantiation(node: ClassNode) {
+        val self = node.name
+        val sup = node.superName ?: return
+        val superIsEnum = sup == "java/lang/Enum"
+        val synthesized = mutableSetOf<String>()
+
+        for (method in node.methods) {
+            val insns = method.instructions.toArray()
+            for (i in insns.indices) {
+                val alloc = insns[i]
+                if (alloc !is TypeInsnNode || alloc.opcode != Opcodes.NEW || alloc.desc != sup) continue
+                // Find the INDEX of the matching `invokespecial S.<init>` that initialises this allocation.
+                val initIdx =
+                    (i + 1 until insns.size)
+                        .firstOrNull {
+                            val n = insns[it]
+                            n is MethodInsnNode && n.opcode == Opcodes.INVOKESPECIAL && n.owner == sup && n.name == "<init>"
+                        } ?: continue
+                val init = insns[initIdx] as MethodInsnNode
+                // Enum: every `new Enum` here is one of this enum's own constants -> retarget unconditionally
+                // (R8 stores constants via a local, so the window gate would miss them). Otherwise gate on the
+                // self-typed sink so a lambda creating OTHER lambdas is never retargeted.
+                if (!superIsEnum && !flowsIntoSelfTypedSink(insns, initIdx, self)) continue
+                alloc.desc = self
+                init.owner = self
+                synthesized.add(init.desc)
+            }
+        }
+
+        for (desc in synthesized) {
+            if (node.methods.any { it.name == "<init>" && it.desc == desc }) continue
+            val ctor = MethodNode(Opcodes.ACC_PUBLIC, "<init>", desc, null, null)
+            ctor.instructions.add(VarInsnNode(Opcodes.ALOAD, 0))
+            var slot = 1
+            for (arg in Type.getArgumentTypes(desc)) {
+                ctor.instructions.add(VarInsnNode(arg.getOpcode(Opcodes.ILOAD), slot))
+                slot += arg.size
+            }
+            ctor.instructions.add(MethodInsnNode(Opcodes.INVOKESPECIAL, sup, "<init>", desc, false))
+            ctor.instructions.add(InsnNode(Opcodes.RETURN))
+            node.methods.add(ctor)
+        }
+    }
+
+    /**
+     * True when the object initialised at [initIdx] (an `invokespecial <init>`) is stored into a field
+     * TYPED `L[self];` (a static or instance field of the class itself — the singleton/enum-constant
+     * field) or an enum `$VALUES` array (`AASTORE`) within a few instructions. That destination proves
+     * the allocated object was meant to be [self], not its superclass — the gate that keeps the repair
+     * from ever touching a legitimate `new Superclass`.
+     */
+    private fun flowsIntoSelfTypedSink(
+        insns: Array<org.objectweb.asm.tree.AbstractInsnNode>,
+        initIdx: Int,
+        self: String,
+    ): Boolean {
+        val window = (initIdx + 1 until minOf(insns.size, initIdx + 6))
+        for (k in window) {
+            val n = insns[k]
+            if (n is FieldInsnNode &&
+                (n.opcode == Opcodes.PUTSTATIC || n.opcode == Opcodes.PUTFIELD) &&
+                n.owner == self &&
+                n.desc == "L$self;"
+            ) {
+                return true
+            }
+            if (n is InsnNode && n.opcode == Opcodes.AASTORE) return true
+        }
+        return false
     }
 
     /** A class file starts with the 0xCAFEBABE magic; anything else in the jar is skipped. */

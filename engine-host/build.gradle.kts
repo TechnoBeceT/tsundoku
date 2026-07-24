@@ -35,6 +35,10 @@ dependencies {
     // org.objectweb.asm.*), so this only makes the classes visible to the compiler — it adds no new
     // runtime artifact. Version pinned to Suwayomi's libs.versions.toml (`asm = org.ow2.asm:asm`).
     compileOnly("org.ow2.asm:asm:9.9.1")
+    // asm-tree: the DexStackFrameRewriter self-instantiation repair (GAP-100 bug (b)) edits
+    // instructions and synthesizes a constructor via the ASM tree API. Also compileOnly — asm-tree
+    // rides Suwayomi server's runtime classpath transitively via dex2jar (dex-translator depends on it).
+    compileOnly("org.ow2.asm:asm-tree:9.9.1")
     // BouncyCastleProvider (Main.kt bootstrap, B22 in the P2 bootstrap-hardening audit): the JCE
     // provider at least one real Mihon extension (zh.copymanga) needs for image-URL decryption.
     // compileOnly, same reasoning as the JCEF dep above: bcprov-jdk18on already rides Suwayomi

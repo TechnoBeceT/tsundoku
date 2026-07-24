@@ -184,6 +184,174 @@ class DexStackFrameRewriterTest {
         assertEquals("nonzero", method.invoke(null, 1))
     }
 
+    /** An abstract superclass with a no-arg constructor — models `kotlin.jvm.internal.Lambda` / `java.lang.Enum`. */
+    private fun abstractBase(internalName: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, internalName, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PROTECTED, "<init>", "()V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(1, 1)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A class version 52 singleton `X extends [base]` whose `<clinit>` was mistranslated exactly as
+     * dex2jar mis-emits the R8 stateless-lambda / enum-constant self-instantiation: it does `new [base]`
+     * (the ABSTRACT superclass) instead of `new X`, stores it into the X-typed field `a`, and X has NO
+     * constructor of its own. Raw, this fails verification ("Bad type on operand stack": base is not
+     * assignable to the `LX;` field); after the rewriter's self-instantiation repair it must load and
+     * `X.a` must hold a real X.
+     */
+    private fun collapsedSingleton(
+        self: String,
+        base: String,
+    ): ByteArray {
+        val cw = ClassWriter(0) // no frames, no synthesized ctor — exactly dex2jar's broken output
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, self, null, base, null)
+        cw.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL, "a", "L$self;", null, null).visitEnd()
+        val mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, base) // BUG: dex2jar emits the superclass instead of `self`
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, base, "<init>", "()V", false) // BUG: base ctor
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, self, "a", "L$self;") // destination proves it should be `self`
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 0)
+        mv.visitEnd()
+        // deliberately NO `<init>` — dex2jar dropped it
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A class version 52 `enum X extends java/lang/Enum` whose `<clinit>` was mistranslated exactly as
+     * dex2jar mis-emits R8's enum-constant self-instantiation, in the shape that DEFEATS the short-window
+     * self-typed-sink scan: it creates BOTH constants first (`new java/lang/Enum … astore`), storing each
+     * into a LOCAL, and only THEN writes them out (`aload; putstatic X.A:LX;`). So the `putstatic` that
+     * proves constant `A` is self sits ~8 instructions after A's `invokespecial`, outside the window — a
+     * window gate would retarget only `B` (whose store is near its init) and leave `A` as `new Enum`,
+     * re-breaking `<clinit>`. Raw, it fails verification (`Bad access to protected <init> method`: a bare
+     * `java.lang.Enum` cannot invoke its protected constructor from `X`); after the rewriter's
+     * enum-unconditional repair BOTH constants must become real `X` instances.
+     */
+    private fun collapsedEnumViaLocals(self: String): ByteArray {
+        val cw = ClassWriter(0) // no frames, no synthesized ctor — exactly dex2jar's broken output
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or Opcodes.ACC_ENUM, self, null, "java/lang/Enum", null)
+        val fieldFlags = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_ENUM
+        cw.visitField(fieldFlags, "A", "L$self;", null, null).visitEnd()
+        cw.visitField(fieldFlags, "B", "L$self;", null, null).visitEnd()
+        val mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null)
+        mv.visitCode()
+        // Constant A: new Enum(name="A", ordinal=0) -> local 0 (BUG: dex2jar `new`s the Enum superclass)
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Enum")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitLdcInsn("A")
+        mv.visitInsn(Opcodes.ICONST_0)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
+        mv.visitVarInsn(Opcodes.ASTORE, 0)
+        // Constant B: new Enum(name="B", ordinal=1) -> local 1
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Enum")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitLdcInsn("B")
+        mv.visitInsn(Opcodes.ICONST_1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Enum", "<init>", "(Ljava/lang/String;I)V", false)
+        mv.visitVarInsn(Opcodes.ASTORE, 1)
+        // Only NOW write them out — A's putstatic is far past A's `invokespecial`, so the window gate misses it.
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, self, "A", "L$self;")
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, self, "B", "L$self;")
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(4, 2)
+        mv.visitEnd()
+        // deliberately NO `<init>` — dex2jar dropped it
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** Writes several classes into one jar under [tmp]. */
+    private fun jarWithClasses(vararg classes: Pair<String, ByteArray>): Path {
+        val jar = tmp.resolve("multi-${classes.first().first.substringAfterLast('/')}.jar")
+        JarOutputStream(Files.newOutputStream(jar)).use { out ->
+            for ((name, bytes) in classes) {
+                out.putNextEntry(JarEntry("$name.class"))
+                out.write(bytes)
+                out.closeEntry()
+            }
+        }
+        return jar
+    }
+
+    @Test
+    fun `raw dex2jar self-instantiation collapse fails JVM verification`() {
+        val loader = BytesLoader()
+        loader.define("SelfBase", abstractBase("SelfBase"))
+        // Linking the singleton verifies its <clinit>, which stores a `new SelfBase` into an LSelf; field.
+        assertFailsWith<VerifyError> {
+            loader.define("SelfSingle", collapsedSingleton("SelfSingle", "SelfBase")).getDeclaredFields()
+        }
+    }
+
+    @Test
+    fun `repairStackFrames undoes the self-instantiation collapse and the singleton initialises`() {
+        val jar =
+            jarWithClasses(
+                "FixBase" to abstractBase("FixBase"),
+                "FixSingle" to collapsedSingleton("FixSingle", "FixBase"),
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        val loader = BytesLoader()
+        loader.define("FixBase", classBytesFromJar(jar, "FixBase"))
+        val single = loader.define("FixSingle", classBytesFromJar(jar, "FixSingle"))
+        // Class.forName(initialize = true) runs the repaired <clinit>; the singleton field must hold a
+        // real FixSingle (not the abstract base, and not a verification failure).
+        val initialised = Class.forName("FixSingle", true, loader)
+        val instance = initialised.getField("a").get(null)
+        assertTrue(instance != null, "the singleton field must be initialised after the repair")
+        assertEquals("FixSingle", instance.javaClass.name, "the singleton must be an instance of the class itself, not its abstract superclass")
+        assertTrue(single.superclass.name == "FixBase", "sanity: the repaired class still extends its real superclass")
+    }
+
+    @Test
+    fun `raw dex2jar enum-via-local self-instantiation collapse fails JVM verification`() {
+        // Linking the enum verifies its <clinit>, which `new`s the abstract java.lang.Enum and invokes its
+        // protected constructor from a foreign type -> "Bad access to protected <init> method".
+        assertFailsWith<VerifyError> {
+            BytesLoader().define("RawEnum", collapsedEnumViaLocals("RawEnum")).getDeclaredFields()
+        }
+    }
+
+    @Test
+    fun `repairStackFrames retargets EVERY enum constant even when the window gate would miss it`() {
+        // The window gate catches B (its putstatic is near its init) but MISSES A (created into a local,
+        // stored much later). The old behaviour would retarget only B and leave `new Enum` for A, so the
+        // repaired <clinit> would still fail verification. The enum-unconditional gate retargets both.
+        val jar = jarWith("FixEnum", collapsedEnumViaLocals("FixEnum"))
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        val loader = BytesLoader()
+        loader.define("FixEnum", classBytesFromJar(jar, "FixEnum"))
+        // Class.forName(initialize = true) runs the repaired <clinit>; both constants must be real FixEnums.
+        val initialised = Class.forName("FixEnum", true, loader)
+        for (name in listOf("A", "B")) {
+            val constant = initialised.getField(name).get(null)
+            assertTrue(constant != null, "enum constant $name must be initialised after the repair")
+            assertEquals(
+                "FixEnum",
+                constant.javaClass.name,
+                "enum constant $name must be an instance of the enum itself, not its abstract java.lang.Enum superclass",
+            )
+        }
+    }
+
     @Test
     fun `repairStackFrames computes a real supertype merge against the reference classpath`() {
         // Forces getCommonSuperClass(ArrayList, LinkedList) -> AbstractList: the type-resolution half of
