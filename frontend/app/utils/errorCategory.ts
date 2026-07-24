@@ -21,6 +21,7 @@ export type ErrorCategoryKey =
   | 'timeout'
   | 'parse'
   | 'no_pages'
+  | 'broken_image'
   | 'unknown'
 
 /**
@@ -48,6 +49,7 @@ export const ERROR_CATEGORIES: Record<ErrorCategoryKey, CategoryMeta> = {
   timeout: { label: 'Timeout', tone: 'warn' },
   parse: { label: 'Parse error', tone: 'danger' },
   no_pages: { label: 'No pages', tone: 'neutral' },
+  broken_image: { label: 'Incomplete image', tone: 'warn' },
   unknown: { label: 'Unknown', tone: 'neutral' },
 }
 

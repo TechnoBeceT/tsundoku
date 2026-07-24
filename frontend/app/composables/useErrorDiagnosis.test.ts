@@ -25,6 +25,7 @@ describe('useErrorDiagnosis', () => {
       timeout: 'Request timed out',
       parse: 'Response could not be read',
       no_pages: 'No readable pages',
+      broken_image: 'Incomplete or unreadable image',
     }
     for (const [category, title] of Object.entries(cases)) {
       const d = diagnose(category, 'some raw message')

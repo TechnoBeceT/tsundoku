@@ -29,6 +29,9 @@ func TestClassifyMessage_EachCategory(t *testing.T) {
 		{"network refused", "dial tcp 1.2.3.4:443: connection refused", errorclass.CategoryNetwork},
 		{"parse", "invalid character 'x' looking for beginning of value", errorclass.CategoryParse},
 		{"no pages", "chapter resolved to 0 pages", errorclass.CategoryNoPages},
+		{"broken image incomplete", "sourceengine: page failed image validation: incomplete image — the download was truncated before the full image arrived (will retry)", errorclass.CategoryBrokenImage},
+		{"broken image empty", "sourceengine: page failed image validation: empty response — the source returned no image data (transient; will retry)", errorclass.CategoryBrokenImage},
+		{"broken image unrecognized", "sourceengine: page failed image validation: unrecognized image data — not a supported image format", errorclass.CategoryBrokenImage},
 		{"unknown", "something entirely unclassifiable happened", errorclass.CategoryUnknown},
 		{"empty", "", errorclass.CategoryUnknown},
 	}
@@ -57,6 +60,11 @@ func TestClassifyMessage_OrderingFirstMatchWins(t *testing.T) {
 		{"rate limit beats server error", "429 too many requests, internal server error", errorclass.CategoryRateLimit},
 		// timeout outranks network (a timed-out dial reads as both).
 		{"timeout beats network", "dial tcp: i/o timeout: connection reset", errorclass.CategoryTimeout},
+		// The anti-bot/HTML challenge validation message carries "challenge", so it
+		// must classify as captcha, NOT broken_image — captcha is placed first, and
+		// this pins that the broken_image rule (appended after it) never steals a
+		// challenge page.
+		{"challenge validation beats broken_image", "sourceengine: page failed image validation: not an image — the source returned an anti-bot/HTML challenge page instead of the image (will retry)", errorclass.CategoryCaptcha},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

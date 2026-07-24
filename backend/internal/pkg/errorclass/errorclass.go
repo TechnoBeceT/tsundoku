@@ -46,6 +46,13 @@ const (
 	// to zero pages) — distinct from not_found (the chapter exists, it just has no
 	// readable images).
 	CategoryNoPages = "no_pages"
+	// CategoryBrokenImage is a page image that arrived incomplete, empty, or
+	// otherwise unreadable — a transient DELIVERY failure (a truncated download, an
+	// empty body, or unrecognized bytes), not a format bug on the source. The
+	// download path rejects the body (never saving a broken panel) and retries
+	// automatically. A challenge/anti-bot page is deliberately NOT here — it is a
+	// captcha (see the ordered rule list below).
+	CategoryBrokenImage = "broken_image"
 	// CategoryUnknown is the fall-through: an error that matched no rule above.
 	CategoryUnknown = "unknown"
 )
@@ -69,6 +76,11 @@ type rule struct {
 //   - no_pages / parse last among the specific rules (they are the least ambiguous
 //     substrings, so ordering them earlier would never change an outcome — kept
 //     late for readability).
+//   - broken_image LAST among the specific rules, and crucially AFTER captcha: a
+//     transient page-image delivery failure (incomplete/empty/unrecognized) whose
+//     message carries none of the earlier rules' substrings. It sits after captcha
+//     on purpose so the anti-bot/HTML challenge validation message — which contains
+//     "challenge" — classifies as captcha (the actionable cause), never broken_image.
 var categories = []rule{
 	{CategoryCaptcha, []string{"captcha", "cloudflare", "challenge", "attention required", "cf-", "just a moment", "access denied", "forbidden", "403"}},
 	{CategoryRateLimit, []string{"rate limit", "rate-limit", "ratelimit", "too many requests", "429"}},
@@ -78,6 +90,7 @@ var categories = []rule{
 	{CategoryNetwork, []string{"connection refused", "connection reset", "no route to host", "network is unreachable", "broken pipe", "eof", "no such host", "dial tcp", "dns", "i/o timeout"}},
 	{CategoryParse, []string{"parse", "unmarshal", "invalid character", "decode", "malformed", "unexpected end of json", "invalid json"}},
 	{CategoryNoPages, []string{"no pages", "empty chapter", "zero pages", "0 pages"}},
+	{CategoryBrokenImage, []string{"incomplete image", "empty response", "unrecognized image data", "truncated"}},
 }
 
 // Classify returns the category of err. A nil error is CategoryUnknown (callers

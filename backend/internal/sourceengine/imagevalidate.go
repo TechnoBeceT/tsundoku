@@ -85,6 +85,20 @@ var ErrBrokenPage = errors.New("sourceengine: page failed image validation")
 //     rejected — a cut tail has no trailing EOI, and ordinary corruption surfaces as
 //     a jpeg.FormatError rather than jpeg.UnsupportedError.
 //
+// The DECISION is unchanged from before this file's reword: every body that was
+// rejected is still rejected, every accepted body still accepted. What changed is
+// the reject WORDING — a raw decode error like "webp: invalid format" LOOKS like a
+// format bug, when the cause is almost always a transient DELIVERY failure (a
+// truncated download, an empty body, or a Cloudflare/anti-bot HTML page returned in
+// place of the image, under load). classifyBrokenPage (below) names the actual
+// sub-cause so the Source Health Console can classify and diagnose it correctly:
+//   - empty response  — the source returned no bytes (transient);
+//   - anti-bot/HTML challenge page — errorclass reads its "challenge" wording as
+//     captcha, the actionable cause;
+//   - incomplete image — a known image signature whose pixel stream was truncated
+//     (errorclass → broken_image);
+//   - unrecognized image data — no known signature and not a challenge.
+//
 // KNOWN, ACCEPTED false-rejects (do NOT add carve-outs): animated WebP (x/image/webp
 // cannot decode it) and JPEG XL (no Go decoder, and no magic carve-out here) fail as
 // broken. Both are ~nonexistent as manga pages, and a false-reject only fails a
@@ -92,7 +106,7 @@ var ErrBrokenPage = errors.New("sourceengine: page failed image validation")
 // broken one — the correct side of the trade.
 func validateImagePage(data []byte) error {
 	if len(data) == 0 {
-		return fmt.Errorf("%w: empty body", ErrBrokenPage)
+		return fmt.Errorf("%w: empty response — the source returned no image data (transient; will retry)", ErrBrokenPage)
 	}
 
 	// Header-only dimension pre-check: cheap and bomb-proof. A format we cannot even
@@ -108,10 +122,90 @@ func validateImagePage(data []byte) error {
 	if _, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		return nil
 	} else if !isAcceptedUndecodable(data, err) {
-		return fmt.Errorf("%w: %v", ErrBrokenPage, err)
+		return classifyBrokenPage(data)
 	}
 
 	return nil
+}
+
+// classifyBrokenPage names the sub-cause of a body that failed image.Decode and is
+// NOT an accepted-undecodable real panel. It exists so the reject message describes
+// the actual (almost always transient, delivery-side) cause instead of leaking a raw
+// decoder error that reads like a format bug. It changes only the wording — the
+// caller has already made the reject DECISION; every message wraps ErrBrokenPage.
+// Order matters: a challenge page can carry image-looking bytes, so it is checked
+// first; then a known image signature (truncation); else unrecognized.
+func classifyBrokenPage(data []byte) error {
+	switch {
+	case looksLikeChallenge(data):
+		return fmt.Errorf("%w: not an image — the source returned an anti-bot/HTML challenge page instead of the image (will retry)", ErrBrokenPage)
+	case hasImageSignature(data):
+		return fmt.Errorf("%w: incomplete image — the download was truncated before the full image arrived (will retry)", ErrBrokenPage)
+	default:
+		return fmt.Errorf("%w: unrecognized image data — not a supported image format", ErrBrokenPage)
+	}
+}
+
+// looksLikeChallenge reports whether data is an anti-bot / HTML interstitial served
+// in place of the image (Cloudflare "just a moment", an "attention required" wall, a
+// CAPTCHA page) rather than a real image. It is a heuristic on the leading bytes: an
+// HTML/markup body starts with '<' once leading whitespace is trimmed, and the common
+// challenge phrases appear near the top of the body. The word "challenge" in the
+// resulting message is load-bearing — errorclass reads it as captcha (the actionable
+// cause), not broken_image. Only the first ~2KB is scanned; a challenge page always
+// declares itself in its head.
+func looksLikeChallenge(data []byte) bool {
+	trimmed := bytes.TrimLeft(data, " \t\r\n")
+	if len(trimmed) > 0 && trimmed[0] == '<' {
+		return true
+	}
+
+	head := data
+	if len(head) > 2048 {
+		head = head[:2048]
+	}
+	lower := bytes.ToLower(head)
+	for _, marker := range challengeMarkers {
+		if bytes.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// challengeMarkers are the lowercased phrases an anti-bot/HTML challenge page carries
+// near the top of its body. Kept beside looksLikeChallenge as the single list.
+var challengeMarkers = [][]byte{
+	[]byte("<!doctype"),
+	[]byte("<html"),
+	[]byte("just a moment"),
+	[]byte("cloudflare"),
+	[]byte("attention required"),
+	[]byte("access denied"),
+	[]byte("captcha"),
+}
+
+// hasImageSignature reports whether data begins with a known raster-image magic
+// number (JPEG, PNG, GIF, RIFF/WEBP, or BMP). A body with a valid signature that
+// still fails image.Decode is a TRUNCATED image — the header arrived but the pixel
+// stream was cut — which is the "incomplete image" delivery failure, distinct from a
+// body that is not an image at all.
+func hasImageSignature(data []byte) bool {
+	switch {
+	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
+		return true // JPEG (SOI + marker)
+	case len(data) >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47:
+		return true // PNG
+	case len(data) >= 3 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46:
+		return true // GIF ("GIF")
+	case len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50:
+		return true // RIFF container carrying WEBP ("RIFF"..."WEBP")
+	case len(data) >= 2 && data[0] == 0x42 && data[1] == 0x4D:
+		return true // BMP ("BM")
+	default:
+		return false
+	}
 }
 
 // isAcceptedUndecodable reports whether data is a real panel Go's registered decoders

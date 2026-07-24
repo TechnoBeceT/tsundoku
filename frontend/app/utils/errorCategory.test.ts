@@ -17,6 +17,7 @@ describe('categoryMeta', () => {
     expect(categoryMeta('parse').tone).toBe('danger')
     expect(categoryMeta('not_found').tone).toBe('neutral')
     expect(categoryMeta('no_pages').tone).toBe('neutral')
+    expect(categoryMeta('broken_image')).toEqual({ label: 'Incomplete image', tone: 'warn' })
   })
 
   it('falls back to the neutral Unknown treatment for null/unmapped', () => {

@@ -10,6 +10,7 @@ package sourceengine_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -80,6 +81,45 @@ func TestValidateImagePage_RejectsBrokenContent(t *testing.T) {
 		if !errors.Is(err, sourceengine.ErrBrokenPage) {
 			t.Errorf("%s: err %v does not wrap ErrBrokenPage", name, err)
 		}
+	}
+}
+
+// TestValidateImagePage_ClassifiesRejectReason verifies the reject MESSAGE names the
+// actual sub-cause (not a raw decoder error that reads like a format bug). Each case
+// still wraps ErrBrokenPage — the DECISION is unchanged; only the wording is. The
+// exact phrases are load-bearing: errorclass keys off them ("challenge" → captcha;
+// "incomplete image"/"empty response"/"unrecognized image data" → broken_image).
+func TestValidateImagePage_ClassifiesRejectReason(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		data   []byte
+		phrase string
+	}{
+		// A valid JPEG signature (FF D8 FF) with the pixel stream cut → truncation.
+		{"truncated jpeg", truncatedJPEG(t), "incomplete image"},
+		// An HTML challenge/interstitial served as 200 → an anti-bot page.
+		{"html challenge", htmlPage(), "challenge"},
+		// A 0-byte body → the source returned nothing.
+		{"empty body", []byte{}, "empty response"},
+		// Bytes with no known image signature and not markup → unrecognized.
+		{"random non-image", []byte{0xAA, 0xBB, 0xCC, 0xDD}, "unrecognized image data"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := sourceengine.ValidateImagePage(tc.data)
+			if err == nil {
+				t.Fatalf("%s: accepted, want rejection", tc.name)
+			}
+			if !errors.Is(err, sourceengine.ErrBrokenPage) {
+				t.Errorf("%s: err %v does not wrap ErrBrokenPage", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), tc.phrase) {
+				t.Errorf("%s: err %q does not contain %q", tc.name, err.Error(), tc.phrase)
+			}
+		})
 	}
 }
 

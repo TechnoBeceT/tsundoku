@@ -114,6 +114,16 @@ const DIAGNOSES: Record<ErrorCategoryKey, DiagnosisText> = {
       'Rank another provider higher if this one is unreliable',
     ],
   },
+  broken_image: {
+    title: 'Incomplete or unreadable image',
+    explanation:
+      'The source returned an image that arrived incomplete, empty, or as an anti-bot/blocking page — so it was not saved (a partial panel would corrupt the chapter). The real image is fine; the delivery failed, usually because the source’s image CDN is overloaded or Cloudflare-gated.',
+    suggestions: [
+      'Usually transient — the retry cycle refetches it automatically',
+      'If it persists, lower Download concurrency / Max concurrent downloads so the source’s CDN returns complete images',
+      'A source whose image CDN sits behind Cloudflare may need a working FlareSolverr',
+    ],
+  },
   unknown: {
     title: 'Unclassified error',
     explanation:
