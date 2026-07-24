@@ -82,3 +82,40 @@ func TestValidateImagePage_RejectsBrokenContent(t *testing.T) {
 		}
 	}
 }
+
+// TestValidateImagePage_AcceptsUnsupportedSubsamplingJPEG verifies a complete JPEG
+// with a chroma-subsampling ratio Go's image/jpeg cannot decode (3x1 / H3V1,
+// golang/go#62421) is ACCEPTED. It is a real, complete panel every browser renders;
+// false-rejecting it fails an otherwise-downloadable chapter — the same accept-a-
+// real-panel-Go-can't-decode case as AVIF.
+func TestValidateImagePage_AcceptsUnsupportedSubsamplingJPEG(t *testing.T) {
+	t.Parallel()
+
+	if err := sourceengine.ValidateImagePage(subsampled3x1JPEG(t)); err != nil {
+		t.Errorf("complete 3x1-subsampled JPEG rejected: %v", err)
+	}
+}
+
+// TestValidateImagePage_RejectsIncompleteUnsupportedJPEG verifies the accept-path's
+// truncation guard: an unusual-subsampling JPEG whose trailing EOI has been cut is
+// REJECTED, even though it raises the SAME jpeg.UnsupportedError as the complete one.
+// The structural SOI...EOI completeness check — not the error class — is what draws
+// the line, so a truncated (missing-panel) body can never ride the carve-out in.
+func TestValidateImagePage_RejectsIncompleteUnsupportedJPEG(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string][]byte{
+		"truncated 3x1 jpeg (no EOI)": truncatedSubsampled3x1JPEG(t),
+		"soi-prefixed garbage":        soiPrefixedGarbage(),
+	}
+	for name, data := range cases {
+		err := sourceengine.ValidateImagePage(data)
+		if err == nil {
+			t.Errorf("%s: incomplete content accepted, want rejection", name)
+			continue
+		}
+		if !errors.Is(err, sourceengine.ErrBrokenPage) {
+			t.Errorf("%s: err %v does not wrap ErrBrokenPage", name, err)
+		}
+	}
+}

@@ -23,11 +23,16 @@ import (
 	"fmt"
 	"image"
 
-	// Register the standard-library image decoders for their side effect: a blank
-	// import wires each format into image.Decode's format registry. These cover
-	// the overwhelming majority of manga pages.
+	// image/jpeg is imported by NAME (not blank) so we can reference
+	// jpeg.UnsupportedError in the decode-failure carve-out below. A named import
+	// still runs the package init() that registers the JPEG decoder into
+	// image.Decode's format registry, so JPEG decoding is unaffected.
+	"image/jpeg"
+
+	// Register the remaining standard-library image decoders for their side effect:
+	// a blank import wires each format into image.Decode's format registry. These
+	// cover the overwhelming majority of manga pages.
 	_ "image/gif"
-	_ "image/jpeg"
 	_ "image/png"
 
 	// WebP is heavily used by manga sources; x/image/webp registers a decoder for
@@ -69,11 +74,16 @@ var ErrBrokenPage = errors.New("sourceengine: page failed image validation")
 //     stream, so a truncated body (valid magic, short data) and an HTML page served
 //     as 200 both fail here. DecodeConfig alone is NOT enough: a truncated body has
 //     a valid header but short pixel data, which is exactly the missing-panel case.
-//   - A format Go cannot decode in-process (currently AVIF) must NOT be false-
-//     rejected — a valid AVIF page is a real panel. It is accepted on a strict
-//     container-magic check instead (see isAcceptedUndecodable). This is the
-//     deliberate trade-off: for formats we can decode we prove every pixel; for the
-//     one we can't we prove the container, never dropping a real page.
+//   - A real panel Go cannot decode in-process must NOT be false-rejected. Two
+//     shapes qualify (see isAcceptedUndecodable): a valid AVIF container (Go has no
+//     AVIF decoder), accepted on a strict container-magic check; and a structurally
+//     complete JPEG whose chroma-subsampling ratio Go's image/jpeg does not
+//     implement (e.g. 3x1 / H3V1 — golang/go#62421), accepted on a
+//     jpeg.UnsupportedError plus a complete SOI...EOI frame. This is the deliberate
+//     trade-off: for what we can decode we prove every pixel; for what we can't we
+//     prove structural completeness, never dropping a real page. Truncation is still
+//     rejected — a cut tail has no trailing EOI, and ordinary corruption surfaces as
+//     a jpeg.FormatError rather than jpeg.UnsupportedError.
 //
 // KNOWN, ACCEPTED false-rejects (do NOT add carve-outs): animated WebP (x/image/webp
 // cannot decode it) and JPEG XL (no Go decoder, and no magic carve-out here) fail as
@@ -97,18 +107,61 @@ func validateImagePage(data []byte) error {
 
 	if _, _, err := image.Decode(bytes.NewReader(data)); err == nil {
 		return nil
-	} else if !isAcceptedUndecodable(data) {
+	} else if !isAcceptedUndecodable(data, err) {
 		return fmt.Errorf("%w: %v", ErrBrokenPage, err)
 	}
 
 	return nil
 }
 
-// isAcceptedUndecodable reports whether data is a valid image container in a format
-// Go's registered decoders cannot read in-process, which we accept on a strict
-// magic-byte check rather than drop a real panel. Currently that is AVIF only.
-func isAcceptedUndecodable(data []byte) bool {
-	return isAVIF(data)
+// isAcceptedUndecodable reports whether data is a real panel Go's registered decoders
+// cannot read in-process, which we accept rather than drop. Two shapes qualify: a
+// valid AVIF container (strict magic-byte check — Go has no AVIF decoder), and a
+// structurally complete JPEG that failed decode only on an unsupported subsampling
+// ratio (isCompleteButUnsupportedJPEG). The AVIF check ignores decodeErr; the JPEG
+// check needs it to tell a valid-but-unsupported JPEG apart from a corrupt one.
+func isAcceptedUndecodable(data []byte, decodeErr error) bool {
+	return isAVIF(data) || isCompleteButUnsupportedJPEG(data, decodeErr)
+}
+
+// isCompleteButUnsupportedJPEG reports whether data is a structurally complete JPEG
+// that image.Decode rejected only because Go's image/jpeg does not implement its
+// chroma-subsampling ratio (e.g. 3x1 / H3V1) — a KNOWN stdlib limitation
+// (golang/go#62421), NOT corruption. Such a page is a real, complete panel every
+// browser renders, so false-rejecting it fails an otherwise-downloadable chapter:
+// the same "accept a real panel Go can't decode in-process" case as AVIF.
+//
+// BOTH conditions are required, and together they preserve the never-save-a-broken-
+// panel invariant:
+//   - the decode error is a jpeg.UnsupportedError — proving "valid JPEG, unsupported
+//     FEATURE", distinct from truncation/corruption (which surface as a
+//     jpeg.FormatError or io.ErrUnexpectedEOF), AND
+//   - the body is a complete JPEG frame (SOI...EOI, see isCompleteJPEG) — proving it
+//     is not truncated. A truncated unusual-subsampling JPEG throws the SAME
+//     UnsupportedError at SOF-parse time, before the missing tail matters, so the
+//     error check ALONE would let a truncated body through; the trailing-EOI check
+//     is what rejects it.
+//
+// Trade-off (identical in spirit to the AVIF container-accept): a complete-framed but
+// internally-corrupt such-JPEG could pass. That is vanishingly rare and, like AVIF,
+// the accepted cost of never dropping a real page.
+func isCompleteButUnsupportedJPEG(data []byte, decodeErr error) bool {
+	var unsupported jpeg.UnsupportedError
+	return errors.As(decodeErr, &unsupported) && isCompleteJPEG(data)
+}
+
+// isCompleteJPEG reports whether data is a structurally complete JPEG: the start-of-
+// image marker 0xFF 0xD8 at the very start AND the end-of-image marker 0xFF 0xD9 as
+// the final two bytes. The trailing-EOI check is the truncation guard — a JPEG whose
+// tail was cut mid-stream cannot end in 0xFF 0xD9, so a truncated body fails here
+// even when its header still parses.
+func isCompleteJPEG(data []byte) bool {
+	if len(data) < 2 {
+		return false
+	}
+	soi := data[0] == 0xFF && data[1] == 0xD8
+	eoi := data[len(data)-2] == 0xFF && data[len(data)-1] == 0xD9
+	return soi && eoi
 }
 
 // isAVIF reports whether data is an AVIF image by its ISO-BMFF container magic: a

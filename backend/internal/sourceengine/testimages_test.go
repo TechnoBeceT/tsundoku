@@ -125,6 +125,46 @@ func truncatedJPEG(t *testing.T) []byte {
 	return full[:16]
 }
 
+// subsampled3x1JPEGBase64 is a REAL, complete JPEG with 3x1 (H3V1) chroma
+// subsampling — a valid ratio Go's image/jpeg refuses to decode
+// (jpeg.UnsupportedError, golang/go#62421), though every browser renders it. Go's
+// encoder cannot produce this ratio, so the fixture is embedded rather than encoded
+// in-process. Observed live on a QiScans chapter (GAP for the JPEG false-reject).
+const subsampled3x1JPEGBase64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBD/wAARCABgAGADATEAAhEBAxEB/8QAFgABAQEAAAAAAAAAAAAAAAAAAAQI/8QAFxABAQEBAAAAAAAAAAAAAAAAABNhAf/EABcBAQEBAQAAAAAAAAAAAAAAAAAGBwn/xAAWEQEBAQAAAAAAAAAAAAAAAAAAFGH/2gAMAwEAAhEDEQA/AM4UKFGOyOotRQoUJCooUKEhUUKFCQqS0KFFNJieqKFChJhUUKFCTCooUKEmFSShQoppU9UUKFCUqKFChKVFChQlKklChRTyJ6ooUKEhUUKFCQqKFChIVJaFCimkxO1FChQkwqKFChJhUUKFCTCpJQoUU8qeqKFChKVFChQlKihQoSlSShQoppMT1RQoUJMKihQoSYVFChQkwqS0KFFNInqihQoSFRQoUJCooUKEhUkoUKKaNO1FChQjKihQoRlRQoUIypLTSmlNU0mJ6oppTSmkmFRTSmlNJMKimlNKaSYVJacKcKcU0qeq0pwpwpwlKtKcKcKcJSrSnCnCnCUq1JTSmlNU8qdqKaU0ppKVFNKaU0lKimlNKaSlT//Z"
+
+// subsampled3x1JPEG returns the real 3x1-subsampled JPEG bytes, asserting the fixture
+// itself is structurally intact (SOI at the start, EOI at the end) so a corrupt
+// literal can never silently weaken the accept-path test.
+func subsampled3x1JPEG(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(subsampled3x1JPEGBase64)
+	if err != nil {
+		t.Fatalf("decode embedded 3x1 JPEG base64: %v", err)
+	}
+	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 ||
+		data[len(data)-2] != 0xFF || data[len(data)-1] != 0xD9 {
+		t.Fatalf("embedded 3x1 JPEG fixture is not a complete SOI...EOI JPEG frame")
+	}
+	return data
+}
+
+// truncatedSubsampled3x1JPEG returns the 3x1-subsampled JPEG with its last 40 bytes
+// dropped, cutting the trailing EOI marker. Go still raises the SAME
+// jpeg.UnsupportedError at SOF-parse time, so this proves the trailing-EOI truncation
+// guard — not the error class — is what rejects a truncated unusual-subsampling body.
+func truncatedSubsampled3x1JPEG(t *testing.T) []byte {
+	t.Helper()
+	full := subsampled3x1JPEG(t)
+	return full[:len(full)-40]
+}
+
+// soiPrefixedGarbage returns a JPEG start-of-image marker followed by non-image bytes
+// with no trailing EOI — structurally incomplete content that must never be accepted
+// as a panel.
+func soiPrefixedGarbage() []byte {
+	return []byte{0xFF, 0xD8, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55}
+}
+
 // htmlPage returns the bytes of an HTML challenge/error page served with HTTP 200 —
 // non-image content that must never be written as a panel.
 func htmlPage() []byte {
