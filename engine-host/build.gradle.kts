@@ -1,3 +1,6 @@
+import org.gradle.kotlin.dsl.support.serviceOf
+import org.gradle.process.ExecOperations
+
 plugins {
     kotlin("jvm") version "2.4.0"
     application
@@ -92,4 +95,62 @@ tasks.withType<JavaExec> {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+// GAP-100 (d): vendor a one-method fix to the dex2jar fork (de.femtopedia.dex2jar:dex-ir:2.4.37)
+// until upstream carries it. NewTransformer merges `a = NEW Abc; a.<init>()` into `a = new Abc()`,
+// but took the instantiated type from InvokeExpr.getOwner(). When R8/keiyoushi extensions collapse
+// an allocation the <init> resolves to java/lang/Object.<init>, so getOwner() erases the concrete
+// class to Object — producing a `new Object` that fails a later checkcast (ClassCastException to
+// okhttp3.Interceptor; Toonily / Vortex Scans fail to load). vendor/dex2jar/NewTransformer.java reads
+// NewExpr.type instead, correct in both the normal and collapsed cases. We recompile ONLY that one
+// class against the resolved fork jar and overlay it into the copy installDist ships in lib/, so no
+// binary jar is checked into git. Same economy as the compileOnly ASM deps above — no new artifact,
+// just a corrected class. See vendor/dex2jar/README.md.
+
+// The resolved fork jar on the runtime classpath: both the compile classpath for the vendored source
+// and the archive we overlay the recompiled class into. Resolved lazily (at execution time).
+val dex2jarForkJar = configurations.named("runtimeClasspath").map { rc ->
+    rc.files.first { it.name == "dex-ir-2.4.37.jar" }
+}
+
+// Recompile ONLY NewTransformer against the fork jar (--release 21, via the java{} toolchain).
+val compilePatchedDex2jar by tasks.registering(JavaCompile::class) {
+    source(layout.projectDirectory.file("vendor/dex2jar/NewTransformer.java"))
+    classpath = files(dex2jarForkJar)
+    destinationDirectory.set(layout.buildDirectory.dir("dex2jar-patch/classes"))
+    options.release.set(21)
+}
+
+// Overlay the recompiled com/googlecode/dex2jar/ir/ts/NewTransformer*.class into the fork jar that
+// installDist copies into lib/, so the shipped engine carries the fix. `jar uf` replaces the entries
+// unconditionally; upToDateWhen(false) forces the overlay to re-run every install, because installDist
+// lays down a PRISTINE copy of the fork jar each time — skipping the overlay would ship it unpatched.
+val patchInstalledDex2jar by tasks.registering {
+    dependsOn(compilePatchedDex2jar)
+    val classesDir = compilePatchedDex2jar.flatMap { it.destinationDirectory }
+    val installedJar = layout.buildDirectory.file("install/${project.name}/lib/dex-ir-2.4.37.jar")
+    // The JDK `jar` tool from the pinned Java-21 toolchain (sits next to javac in the JDK bin).
+    val jarTool = javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }.map { it.metadata.installationPath.file("bin/jar").asFile.absolutePath }
+    // ExecOperations is the Gradle-9 replacement for the removed Project.exec.
+    val execOps = serviceOf<ExecOperations>()
+    inputs.dir(classesDir)
+    outputs.upToDateWhen { false }
+    doLast {
+        execOps.exec {
+            executable = jarTool.get()
+            args(
+                "uf", installedJar.get().asFile.absolutePath,
+                "-C", classesDir.get().asFile.absolutePath,
+                "com/googlecode/dex2jar/ir/ts",
+            )
+        }
+    }
+}
+
+// installDist must finish with the fork jar patched in place.
+tasks.named("installDist") {
+    finalizedBy(patchInstalledDex2jar)
 }
