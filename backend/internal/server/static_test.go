@@ -51,7 +51,7 @@ func (nullEngineClient) MangaDetails(_ context.Context, _ int64, _ string) (sour
 func (nullEngineClient) Chapters(_ context.Context, _ int64, _ string, _ string) ([]sourceengine.Chapter, error) {
 	panic("nullEngineClient.Chapters called in test")
 }
-func (nullEngineClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
+func (nullEngineClient) Pages(_ context.Context, _ int64, _, _ string) ([]sourceengine.Page, error) {
 	panic("nullEngineClient.Pages called in test")
 }
 func (nullEngineClient) Image(_ context.Context, _ int64, _, _ string) ([]byte, string, error) {

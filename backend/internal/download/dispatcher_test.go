@@ -631,8 +631,12 @@ drain:
 // the per-chapter Suwayomi ID to the fetcher so it can call ChapterPages with
 // the correct chapter identifier.
 //
+// It also verifies FetchRef.MangaURL is populated from SeriesProvider.url — the
+// series-scoped URL the engine needs to repopulate per-chapter memo (GAP-109).
+//
 // The test uses a ref-capturing fetcher that records the FetchRef it receives,
-// then asserts FetchRef.SuwayomiID == ProviderChapter.suwayomi_chapter_id.
+// then asserts FetchRef.SuwayomiID == ProviderChapter.suwayomi_chapter_id and
+// FetchRef.MangaURL == SeriesProvider.url.
 func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -640,8 +644,9 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	hub := sse.NewHub()
 
 	const (
-		seriesMangaID   = 77  // SeriesProvider.suwayomi_id (manga-level)
-		chapterSuwayomi = 999 // ProviderChapter.suwayomi_chapter_id (chapter-level)
+		seriesMangaID   = 77                              // SeriesProvider.suwayomi_id (manga-level)
+		chapterSuwayomi = 999                             // ProviderChapter.suwayomi_chapter_id (chapter-level)
+		seriesURL       = "https://suwayomi.test/manga/1" // SeriesProvider.url (series-scoped)
 	)
 
 	s := client.Series.Create().SetTitle("FetchRef Series").SetSlug("fetchref-series").SaveX(ctx)
@@ -649,6 +654,7 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 		SetSeries(s).
 		SetProvider("suwayomi").
 		SetImportance(10).
+		SetURL(seriesURL).            // series-scoped URL — must appear in FetchRef.MangaURL
 		SetSuwayomiID(seriesMangaID). // manga-level ID — must NOT appear in FetchRef
 		SaveX(ctx)
 	client.ProviderChapter.Create().
@@ -672,12 +678,17 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 
 	cf.mu.Lock()
 	gotSuwayomiID := cf.ref.SuwayomiID
+	gotMangaURL := cf.ref.MangaURL
 	cf.mu.Unlock()
 
 	if gotSuwayomiID != chapterSuwayomi {
 		t.Errorf("FetchRef.SuwayomiID: got %d, want %d (chapter-level ID); "+
 			"got the manga-level ID %d instead — buildFetchRef is using the wrong source",
 			gotSuwayomiID, chapterSuwayomi, seriesMangaID)
+	}
+	if gotMangaURL != seriesURL {
+		t.Errorf("FetchRef.MangaURL: got %q, want %q (SeriesProvider.url) — "+
+			"buildFetchRef is not threading the series URL for GAP-109", gotMangaURL, seriesURL)
 	}
 }
 

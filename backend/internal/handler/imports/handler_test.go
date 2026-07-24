@@ -141,7 +141,7 @@ func (f *fakeEngineClient) Chapters(_ context.Context, _ int64, url string, _ st
 	return nil, nil
 }
 
-func (f *fakeEngineClient) Pages(context.Context, int64, string) ([]sourceengine.Page, error) {
+func (f *fakeEngineClient) Pages(context.Context, int64, string, string) ([]sourceengine.Page, error) {
 	return nil, nil
 }
 

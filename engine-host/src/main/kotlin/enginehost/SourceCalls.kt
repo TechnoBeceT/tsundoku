@@ -146,18 +146,55 @@ object SourceCalls {
      * OWN address PAIR ([Page.url], [Page.imageUrl]) verbatim — NO image-URL resolution happens here.
      * Resolution (calling getImageUrl when imageUrl is null) is deferred to [image], which
      * reconstructs the exact Page and fetches the bytes, so the page list stays a cheap metadata call.
+     *
+     * [mangaUrl] (optional; "" when unknown) is the source-relative SERIES url. When supplied, the
+     * page fetch runs a series-scoped chapter fetch FIRST and hands [getPageList] the REAL SChapter
+     * from that list — the one whose [SChapter.url] equals [chapterUrl] — instead of a bare seed
+     * reconstructed from the url alone. This is required by the keiyoushi API-extension family
+     * (AsuraScans / HiveScans / VortexScans — all extend `KeiSource`): their `getPageList` calls
+     * `getChapterUrl`, which reads a per-chapter `memo["mangaSlug"]` the source stamps onto each
+     * SChapter DURING the series-scoped fetch (`fetchMangaUpdate` derives it from the series page and
+     * maps every chapter through `toSChapter(randomMangaSlug)`). A bare `SChapter.create()` seed has
+     * an empty `memo`, so `getChapterUrl` throws `Exception("Refresh Chapter List")` and the download
+     * fails (GAP-109). Because the series fetch reuses the same `getMangaUpdate` path `/chapters`
+     * already runs, the matched chapter's url is byte-identical to the [chapterUrl] Tsundoku stored.
+     *
+     * Backward-compatible: a blank [mangaUrl], OR a non-blank one that yields no url match, falls
+     * back to the original bare-seed behavior — the correct path for the many sources whose
+     * `getPageList` needs nothing but the chapter url.
      */
     fun pages(
         source: Source,
         chapterUrl: String,
+        mangaUrl: String = "",
     ): PagesResponse =
         runBlocking {
-            val seed = SChapter.create().apply { this.url = chapterUrl }
-            val pageList = source.getPageList(seed)
+            val chapter = memoChapterOrSeed(source, chapterUrl, mangaUrl)
+            val pageList = source.getPageList(chapter)
             PagesResponse(
                 pageList.map { page -> PageDto(index = page.index, url = page.url, imageUrl = page.imageUrl) },
             )
         }
+
+    /**
+     * Resolve the [SChapter] to hand [Source.getPageList]. When [mangaUrl] is non-blank, runs the
+     * source's series-scoped chapter fetch (the same `fetchChapters=true` [Source.getMangaUpdate]
+     * call [chapters] uses, so any per-chapter `memo` the extension stamps is present) and returns
+     * the chapter whose url matches [chapterUrl]. Falls back to a bare url-only seed when [mangaUrl]
+     * is blank or no chapter in the series list matches — preserving the memo-less sources' path.
+     */
+    private suspend fun memoChapterOrSeed(
+        source: Source,
+        chapterUrl: String,
+        mangaUrl: String,
+    ): SChapter {
+        if (mangaUrl.isNotBlank()) {
+            val mangaSeed = SManga.create().apply { this.url = mangaUrl }
+            val update = source.getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
+            update.chapters.firstOrNull { it.url == chapterUrl }?.let { return it }
+        }
+        return SChapter.create().apply { this.url = chapterUrl }
+    }
 
     /**
      * Fetch the raw image bytes + content type for a page or a cover, distinguished by [pageUrl]:

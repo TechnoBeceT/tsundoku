@@ -136,7 +136,7 @@ func (f *fakeClient) Chapters(_ context.Context, _ int64, url string, _ string) 
 }
 
 // Remaining Client methods are unused by Service; return nil, nil.
-func (f *fakeClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
+func (f *fakeClient) Pages(_ context.Context, _ int64, _, _ string) ([]sourceengine.Page, error) {
 	return nil, nil
 }
 func (f *fakeClient) Image(_ context.Context, _ int64, _, _ string) ([]byte, string, error) {

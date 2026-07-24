@@ -99,7 +99,7 @@ func (f *fakeAddProviderClient) Chapters(ctx context.Context, sourceID int64, ur
 		{URL: "/ch/2", Name: "Chapter 2", Number: 2},
 	}, nil
 }
-func (f *fakeAddProviderClient) Pages(ctx context.Context, sourceID int64, chapterURL string) ([]sourceengine.Page, error) {
+func (f *fakeAddProviderClient) Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]sourceengine.Page, error) {
 	return nil, nil
 }
 func (f *fakeAddProviderClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {

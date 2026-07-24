@@ -247,8 +247,9 @@ func (c *Client) Chapters(_ context.Context, sourceID int64, url string, _ strin
 }
 
 // Pages returns the WithPages-configured page list for (sourceID,
-// chapterURL).
-func (c *Client) Pages(_ context.Context, sourceID int64, chapterURL string) ([]sourceengine.Page, error) {
+// chapterURL). mangaURL is accepted to satisfy the Client port (the engine uses
+// it for series-scoped memo repopulation, GAP-109) and ignored by the fake.
+func (c *Client) Pages(_ context.Context, sourceID int64, chapterURL, _ string) ([]sourceengine.Page, error) {
 	c.record("Pages")
 	if err := c.errFor("Pages"); err != nil {
 		return nil, err

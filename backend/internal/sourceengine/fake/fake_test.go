@@ -74,7 +74,7 @@ func TestWithMangaDetailsChaptersPages(t *testing.T) {
 	if err != nil || len(gotChapters) != 1 || gotChapters[0] != chapters[0] {
 		t.Errorf("Chapters = %+v, %v, want %+v", gotChapters, err, chapters)
 	}
-	gotPages, err := c.Pages(context.Background(), 7, "/m/1/ch/1")
+	gotPages, err := c.Pages(context.Background(), 7, "/m/1/ch/1", "")
 	if err != nil || len(gotPages) != 1 || gotPages[0] != pages[0] {
 		t.Errorf("Pages = %+v, %v, want %+v", gotPages, err, pages)
 	}
@@ -348,7 +348,7 @@ func TestWithError_CoversEveryMethod(t *testing.T) {
 		"Latest":             func(c *fake.Client) error { _, err := c.Latest(ctx, 1, 1); return err },
 		"MangaDetails":       func(c *fake.Client) error { _, err := c.MangaDetails(ctx, 1, "/m"); return err },
 		"Chapters":           func(c *fake.Client) error { _, err := c.Chapters(ctx, 1, "/m", ""); return err },
-		"Pages":              func(c *fake.Client) error { _, err := c.Pages(ctx, 1, "/m/ch/1"); return err },
+		"Pages":              func(c *fake.Client) error { _, err := c.Pages(ctx, 1, "/m/ch/1", ""); return err },
 		"Image":              func(c *fake.Client) error { _, _, err := c.Image(ctx, 1, "/p", ""); return err },
 		"Sources":            func(c *fake.Client) error { _, err := c.Sources(ctx); return err },
 		"Preferences":        func(c *fake.Client) error { _, err := c.Preferences(ctx, 1); return err },

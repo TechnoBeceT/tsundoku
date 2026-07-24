@@ -152,7 +152,7 @@ func (f *Fetcher) resolveLinks(ctx context.Context, sourceID int64, ref fetcher.
 	if len(ref.PageLinks) > 0 {
 		return ref.PageLinks, nil
 	}
-	pages, err := f.client.Pages(ctx, sourceID, ref.URL)
+	pages, err := f.client.Pages(ctx, sourceID, ref.URL, ref.MangaURL)
 	if err != nil {
 		return nil, fmt.Errorf("sourceengine fetcher: pages: %w", err)
 	}

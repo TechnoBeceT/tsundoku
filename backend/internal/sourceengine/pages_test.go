@@ -10,8 +10,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
-// TestPages_Success proves POST /pages sends {sourceId,chapterUrl} and the
-// wrapped {pages:[...]} response is unwrapped to []Page.
+// TestPages_Success proves POST /pages sends {sourceId,chapterUrl,mangaUrl} and
+// the wrapped {pages:[...]} response is unwrapped to []Page.
 func TestPages_Success(t *testing.T) {
 	var captured map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +28,7 @@ func TestPages_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := newTestClient(t, srv).Pages(context.Background(), 7, "/manga/1/ch/1")
+	got, err := newTestClient(t, srv).Pages(context.Background(), 7, "/manga/1/ch/1", "/manga/1")
 	if err != nil {
 		t.Fatalf("Pages: %v", err)
 	}
@@ -42,6 +42,11 @@ func TestPages_Success(t *testing.T) {
 	if captured["chapterUrl"] != "/manga/1/ch/1" {
 		t.Errorf("request body chapterUrl = %v, want /manga/1/ch/1", captured["chapterUrl"])
 	}
+	// The series URL must ride the wire so the engine can run its series-scoped
+	// memo repopulation (GAP-109) — a dropped mangaUrl silently reverts the fix.
+	if captured["mangaUrl"] != "/manga/1" {
+		t.Errorf("request body mangaUrl = %v, want /manga/1", captured["mangaUrl"])
+	}
 }
 
 // TestPages_BadRequest proves a 400 from /pages maps to *BadRequestError.
@@ -51,7 +56,7 @@ func TestPages_BadRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(t, srv).Pages(context.Background(), 1, "/manga/1/ch/1")
+	_, err := newTestClient(t, srv).Pages(context.Background(), 1, "/manga/1/ch/1", "")
 	assertBadRequestError(t, err)
 }
 
@@ -62,6 +67,6 @@ func TestPages_UpstreamFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := newTestClient(t, srv).Pages(context.Background(), 1, "/manga/1/ch/1")
+	_, err := newTestClient(t, srv).Pages(context.Background(), 1, "/manga/1/ch/1", "")
 	assertUpstreamError(t, err, http.StatusBadGateway)
 }

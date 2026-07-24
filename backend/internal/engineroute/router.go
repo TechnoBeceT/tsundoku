@@ -107,8 +107,8 @@ func (r *Router) Chapters(ctx context.Context, sourceID int64, url, mangaTitle s
 }
 
 // Pages routes to sourceID's instance.
-func (r *Router) Pages(ctx context.Context, sourceID int64, chapterURL string) ([]sourceengine.Page, error) {
-	return r.clientFor(sourceID).Pages(ctx, sourceID, chapterURL)
+func (r *Router) Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]sourceengine.Page, error) {
+	return r.clientFor(sourceID).Pages(ctx, sourceID, chapterURL, mangaURL)
 }
 
 // Image routes to sourceID's instance — the load-bearing egress: a bound

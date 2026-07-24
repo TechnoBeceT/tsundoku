@@ -45,7 +45,7 @@ type brokenPageClient struct {
 	pageData map[string][]byte
 }
 
-func (b *brokenPageClient) Pages(_ context.Context, _ int64, _ string) ([]sourceengine.Page, error) {
+func (b *brokenPageClient) Pages(_ context.Context, _ int64, _, _ string) ([]sourceengine.Page, error) {
 	return b.pages, nil
 }
 

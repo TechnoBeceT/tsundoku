@@ -100,7 +100,15 @@ data class MangaRequest(val sourceId: Long, val url: String)
  */
 data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "")
 
-data class PagesRequest(val sourceId: Long, val chapterUrl: String)
+/**
+ * [mangaUrl] is the OPTIONAL source-relative SERIES url the chapter belongs to. Supplying it lets
+ * [SourceCalls.pages] run a series-scoped chapter fetch and hand the real memo-bearing SChapter to
+ * `getPageList` — required by the keiyoushi `KeiSource` family (AsuraScans / HiveScans / VortexScans),
+ * whose `getChapterUrl` reads a per-chapter `memo["mangaSlug"]` a bare url-only seed lacks (GAP-109).
+ * Defaulted to "" for backward compatibility: a blank value keeps the original bare-seed page fetch,
+ * which is correct for every source whose `getPageList` needs only the chapter url.
+ */
+data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "")
 
 /** [pageUrl] = the page's [PageDto.url]; [imageUrl] = the page's [PageDto.imageUrl] (may be null). */
 data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: String? = null)

@@ -1302,6 +1302,7 @@ func buildFetchRef(pc *ent.ProviderChapter, sp *ent.SeriesProvider) fetcher.Fetc
 		Scanlator:         sp.Scanlator,
 		Language:          sp.Language,
 		URL:               pc.URL,
+		MangaURL:          sp.URL,
 		SuwayomiID:        pc.SuwayomiChapterID,
 		SeriesProviderID:  sp.ID,
 		ProviderChapterID: pc.ID,

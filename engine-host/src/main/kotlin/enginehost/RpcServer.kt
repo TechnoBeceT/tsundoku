@@ -51,7 +51,7 @@ class RpcServer(
         server.createContext("/latest") { ex -> ex.handle { req: BrowseRequest -> SourceCalls.latest(req.source(), req.page) } }
         server.createContext("/manga") { ex -> ex.handle { req: MangaRequest -> SourceCalls.mangaDetails(req.source(), req.url) } }
         server.createContext("/chapters") { ex -> ex.handle { req: ChaptersRequest -> SourceCalls.chapters(req.source(), req.url, req.mangaTitle) } }
-        server.createContext("/pages") { ex -> ex.handle { req: PagesRequest -> SourceCalls.pages(req.source(), req.chapterUrl) } }
+        server.createContext("/pages") { ex -> ex.handle { req: PagesRequest -> SourceCalls.pages(req.source(), req.chapterUrl, req.mangaUrl) } }
         server.createContext("/image", ::handleImage)
 
         // ---- registry + per-source preferences (prefix context; path-routed) ----

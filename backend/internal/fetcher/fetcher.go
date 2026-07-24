@@ -46,6 +46,11 @@ type FetchRef struct {
 	// URL is the provider-supplied canonical URL for this chapter.
 	URL string
 
+	// MangaURL is the series' provider-side URL (SeriesProvider.url). The engine
+	// needs it to run a series-scoped fetch that repopulates per-chapter state
+	// (memo) some extensions require in getPageList (GAP-109); empty when unknown.
+	MangaURL string
+
 	// SuwayomiID is the Suwayomi-internal numeric identifier for this chapter.
 	// It is used by the M2 Suwayomi fetcher implementation and is left zero in
 	// contexts where Suwayomi has not been consulted.
