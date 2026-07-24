@@ -39,6 +39,11 @@ dependencies {
     // instructions and synthesizes a constructor via the ASM tree API. Also compileOnly — asm-tree
     // rides Suwayomi server's runtime classpath transitively via dex2jar (dex-translator depends on it).
     compileOnly("org.ow2.asm:asm-tree:9.9.1")
+    // asm-analysis: the DexStackFrameRewriter object-collapse repair (GAP-100 bug (c)) recovers the type
+    // dex2jar erased by asking Analyzer/SourceInterpreter which instruction produced a receiver. Also
+    // compileOnly — asm-analysis rides Suwayomi server's runtime classpath transitively alongside asm-tree
+    // (confirmed present in the built distribution's lib/).
+    compileOnly("org.ow2.asm:asm-analysis:9.9.1")
     // BouncyCastleProvider (Main.kt bootstrap, B22 in the P2 bootstrap-hardening audit): the JCE
     // provider at least one real Mihon extension (zh.copymanga) needs for image-URL decryption.
     // compileOnly, same reasoning as the JCEF dep above: bcprov-jdk18on already rides Suwayomi
@@ -59,6 +64,9 @@ dependencies {
     // DexStackFrameRewriterTest builds a synthetic broken class with ASM to pin the VerifyError; asm
     // is compileOnly in main (rides Suwayomi's runtime), so the test source needs its own compile dep.
     testImplementation("org.ow2.asm:asm:9.9.1")
+    // asm-tree: the object-collapse tests (GAP-100 bug (c)) read the repaired classes back and assert on the
+    // `new` instructions themselves — the only way to prove a genuine `new Object` was NOT retargeted.
+    testImplementation("org.ow2.asm:asm-tree:9.9.1")
 }
 
 application {

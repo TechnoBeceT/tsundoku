@@ -14,12 +14,22 @@ package enginehost
  *  1) the raw class fails verification with the exact production error, and
  *  2) after DexStackFrameRewriter recomputes its frames it loads AND runs correctly, while a class
  *     that was already valid is left working (no regression on older, well-formed extensions).
+ *
+ * The same synthetic-class approach pins the two TYPE-collapse defects the rewriter also repairs: the
+ * self-instantiation collapse (`new <superclass>`, bug (b)) and the object collapse (`new
+ * java/lang/Object` with the real type's constructor dropped, bug (c)). For bug (c) the proof runs both
+ * ways — the collapsed allocation IS retargeted from its usage, and a genuine `new Object()` (a lock)
+ * plus an allocation whose intended type is ambiguous are BOTH left untouched, because a wrong retarget
+ * would corrupt an extension that works today.
  */
 
+import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
 import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
+import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.tree.TypeInsnNode
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.jar.JarEntry
@@ -350,6 +360,225 @@ class DexStackFrameRewriterTest {
                 "enum constant $name must be an instance of the enum itself, not its abstract java.lang.Enum superclass",
             )
         }
+    }
+
+    /**
+     * A holder exactly like the live anisa/fmteam `b0`: `public final class X { public boolean f; }` with NO
+     * constructor at all, because dex2jar dropped it along with the `new X` that created it.
+     */
+    private fun fieldHolder(
+        internalName: String,
+        fieldName: String,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, internalName, null, "java/lang/Object", null)
+        cw.visitField(Opcodes.ACC_PUBLIC, fieldName, "Z", null, null).visitEnd()
+        // deliberately NO `<init>` — dex2jar dropped it
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A class version 52 user of [holder] mistranslated exactly as dex2jar mis-emits the OBJECT collapse: it
+     * allocates a bare `new java/lang/Object`, parks it in a local, and then uses that local as the RECEIVER
+     * of `putfield`/`getfield` on [holder] — so the value it created can only ever have been a [holder].
+     * Raw, the strict verifier rejects it ("Type 'java/lang/Object' is not assignable to '[holder]'"); after
+     * the repair `run()` must return the boolean it round-trips through the holder's field.
+     */
+    private fun collapsedHolderUser(
+        self: String,
+        holder: String,
+        fieldName: String,
+    ): ByteArray {
+        val cw = ClassWriter(0) // no frames — exactly dex2jar's broken output
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, self, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "run", "()Z", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Object") // BUG: dex2jar collapsed `new [holder]`
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false) // BUG: Object ctor
+        mv.visitVarInsn(Opcodes.ASTORE, 0) // parked in a local — the receiver is several insns away
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.ICONST_1)
+        mv.visitFieldInsn(Opcodes.PUTFIELD, holder, fieldName, "Z") // receiver proves the type: it IS a holder
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitFieldInsn(Opcodes.GETFIELD, holder, fieldName, "Z")
+        mv.visitInsn(Opcodes.IRETURN)
+        mv.visitMaxs(2, 1)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A GENUINE `new Object()` — a lock: it is monitor-entered, has `Object`'s own `hashCode()` called on it,
+     * is stored into an `Object`-typed static and returned as an `Object`. Nothing here pins it to a class of
+     * the jar, so the repair must leave it exactly as-is. (Retargeting this would corrupt a working
+     * extension: the whole reason the repair is usage-driven and in-jar-gated.)
+     */
+    private fun genuineObjectUser(self: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, self, null, "java/lang/Object", null)
+        cw.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "lock", "Ljava/lang/Object;", null, null).visitEnd()
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "make", "()Ljava/lang/Object;", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Object")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitVarInsn(Opcodes.ASTORE, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.MONITORENTER) // used as a lock
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Object", "hashCode", "()I", false) // owner = Object
+        mv.visitInsn(Opcodes.POP)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.MONITOREXIT)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitFieldInsn(Opcodes.PUTSTATIC, self, "lock", "Ljava/lang/Object;") // an Object-typed sink
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(2, 1)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * A collapsed allocation used as the receiver of fields on TWO different holders — impossible in real
+     * code, but it is exactly the shape where a usage-driven recovery could guess wrong. The repair must
+     * skip it rather than pick one.
+     */
+    private fun ambiguousUser(
+        self: String,
+        firstHolder: String,
+        secondHolder: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, self, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "run", "()V", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Object")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitVarInsn(Opcodes.ASTORE, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.ICONST_1)
+        mv.visitFieldInsn(Opcodes.PUTFIELD, firstHolder, "f", "Z")
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitInsn(Opcodes.ICONST_1)
+        mv.visitFieldInsn(Opcodes.PUTFIELD, secondHolder, "g", "Z")
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 1)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** The `desc`s of every `new` in [methodName] of [internalName], read back out of the repaired jar. */
+    private fun newInstructionTypes(
+        jar: Path,
+        internalName: String,
+        methodName: String,
+    ): List<String> {
+        val node = ClassNode()
+        ClassReader(classBytesFromJar(jar, internalName)).accept(node, 0)
+        return node.methods
+            .single { it.name == methodName }
+            .instructions
+            .toArray()
+            .filterIsInstance<TypeInsnNode>()
+            .filter { it.opcode == Opcodes.NEW }
+            .map { it.desc }
+    }
+
+    @Test
+    fun `raw dex2jar object collapse fails JVM verification with a bad receiver type`() {
+        val loader = BytesLoader()
+        loader.define("RawHolder", fieldHolder("RawHolder", "f"))
+        // Linking verifies `run()`, whose putfield receiver is a bare java.lang.Object.
+        val error =
+            assertFailsWith<VerifyError> {
+                loader.define("RawUser", collapsedHolderUser("RawUser", "RawHolder", "f")).getDeclaredMethods()
+            }
+        assertTrue(
+            error.message!!.contains("java/lang/Object") && error.message!!.contains("RawHolder"),
+            "expected the production 'Type java/lang/Object is not assignable to RawHolder' VerifyError, got: ${error.message}",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames undoes the object collapse and synthesizes the dropped constructor`() {
+        val jar =
+            jarWithClasses(
+                "FixHolder" to fieldHolder("FixHolder", "f"),
+                "FixUser" to collapsedHolderUser("FixUser", "FixHolder", "f"),
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("FixHolder"),
+            newInstructionTypes(jar, "FixUser", "run"),
+            "the collapsed `new java/lang/Object` must be retargeted to the type its receiver-use implies",
+        )
+        val loader = BytesLoader()
+        val holder = loader.define("FixHolder", classBytesFromJar(jar, "FixHolder"))
+        // The retargeted `invokespecial FixHolder.<init>()V` only links if the dropped ctor was synthesized.
+        assertTrue(
+            holder.declaredConstructors.any { it.parameterCount == 0 },
+            "the holder must have regained the no-arg constructor dex2jar dropped",
+        )
+        val user = loader.define("FixUser", classBytesFromJar(jar, "FixUser"))
+        assertEquals(
+            true,
+            user.getDeclaredMethod("run").invoke(null),
+            "the repaired class must verify, link and round-trip the value through the holder's field",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames leaves a genuine new Object untouched`() {
+        // A lock/monitor Object has no concrete-class receiver-use, so nothing may retarget it — the gate
+        // that keeps this repair from corrupting a WORKING extension.
+        val jar = jarWithClasses("Keeper" to genuineObjectUser("Keeper"))
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("java/lang/Object"),
+            newInstructionTypes(jar, "Keeper", "make"),
+            "a genuine `new Object()` must survive the repair unchanged",
+        )
+        val keeper = BytesLoader().define("Keeper", classBytesFromJar(jar, "Keeper"))
+        val made = keeper.getDeclaredMethod("make").invoke(null)
+        assertEquals(
+            "java.lang.Object",
+            made!!.javaClass.name,
+            "the genuine lock object must still be a plain java.lang.Object at runtime",
+        )
+    }
+
+    @Test
+    fun `repairStackFrames skips a collapsed allocation whose intended type is ambiguous`() {
+        // Two different receiver owners for one allocation: unrecoverable, so the repair must not guess.
+        val jar =
+            jarWithClasses(
+                "AmbHolderA" to fieldHolder("AmbHolderA", "f"),
+                "AmbHolderB" to fieldHolder("AmbHolderB", "g"),
+                "AmbUser" to ambiguousUser("AmbUser", "AmbHolderA", "AmbHolderB"),
+            )
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf("java/lang/Object"),
+            newInstructionTypes(jar, "AmbUser", "run"),
+            "an ambiguous allocation must be left alone rather than retargeted to an arbitrary candidate",
+        )
+        assertTrue(
+            BytesLoader().define("AmbHolderA", classBytesFromJar(jar, "AmbHolderA")).declaredConstructors.isEmpty(),
+            "no constructor may be synthesized for a candidate that was never retargeted",
+        )
     }
 
     @Test
