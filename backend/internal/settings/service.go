@@ -39,6 +39,13 @@ func (s *Service) DownloadConcurrency(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyDownloadConcurrency)
 }
 
+// MaxConcurrentDownloads is the GLOBAL download concurrency cap — the ceiling on
+// total concurrent fetches across ALL sources (DB override else default). The
+// dispatcher reads it once per cycle, so a change hot-reloads on the next cycle.
+func (s *Service) MaxConcurrentDownloads(ctx context.Context) int {
+	return s.resolveInt(ctx, KeyMaxConcurrentDownloads)
+}
+
 // RefreshInterval is the discovery-sweep ticker period (DB override else default).
 func (s *Service) RefreshInterval(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyRefreshInterval)

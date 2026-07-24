@@ -492,6 +492,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 	return settings.Defaults{
 		DownloadInterval:        cfg.Jobs.DownloadInterval,
 		DownloadConcurrency:     cfg.Jobs.DownloadConcurrency,
+		MaxConcurrentDownloads:  cfg.Jobs.MaxConcurrentDownloads,
 		RefreshInterval:         cfg.Jobs.RefreshInterval,
 		RefreshConcurrency:      cfg.Jobs.RefreshConcurrency,
 		MaxRetries:              cfg.Jobs.MaxRetries,

@@ -121,6 +121,21 @@ type JobsConfig struct {
 	// value below 1. Set via TSUNDOKU_JOBS_DOWNLOADCONCURRENCY.
 	DownloadConcurrency int
 
+	// MaxConcurrentDownloads is the GLOBAL cap on total concurrent chapter
+	// downloads across ALL sources at once — distinct from the PER-SOURCE
+	// DownloadConcurrency above. With N active sources the dispatcher would
+	// otherwise run DownloadConcurrency×N fetches in parallel (each source's own
+	// pool runs independently), overwhelming a shared solver (FlareSolverr /
+	// Cloudflare) even though no single source exceeds its per-source cap. This is
+	// the one ceiling on the aggregate. Default 6 — deliberately >= the per-source
+	// default (5) so a single active source still reaches its own cap and the
+	// global limit only bites once multiple sources compete. Like the two caps
+	// above it is the env-sourced DEFAULT the runtime settings overlay
+	// (jobs.max_concurrent_downloads) overrides without a restart; the dispatcher
+	// reads the tunable once per cycle. validate() rejects a value below 1. Set via
+	// TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS.
+	MaxConcurrentDownloads int
+
 	// RefreshInterval is the tick period for the M5 discovery poll, which
 	// re-fetches every monitored series' chapter list to find new releases.
 	// Default 2h (Kaizoku.GO's proven per-title cadence). Set via
@@ -463,6 +478,7 @@ func defaults() map[string]any {
 		// Jobs — background-job scheduler.
 		"jobs.downloadinterval":       "15m",
 		"jobs.downloadconcurrency":    5,
+		"jobs.maxconcurrentdownloads": 6,
 		"jobs.refreshinterval":        "2h",
 		"jobs.refreshconcurrency":     4,
 		"jobs.maxretries":             5,
@@ -568,6 +584,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_AUTH_COOKIESECURE              → auth.cookiesecure
 //	TSUNDOKU_JOBS_DOWNLOADINTERVAL          → jobs.downloadinterval
 //	TSUNDOKU_JOBS_DOWNLOADCONCURRENCY       → jobs.downloadconcurrency
+//	TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS    → jobs.maxconcurrentdownloads
 //	TSUNDOKU_JOBS_REFRESHINTERVAL           → jobs.refreshinterval
 //	TSUNDOKU_JOBS_REFRESHCONCURRENCY        → jobs.refreshconcurrency
 //	TSUNDOKU_JOBS_MAXRETRIES                → jobs.maxretries
@@ -634,6 +651,8 @@ const minAuthSecretLen = 16
 //     either never bound the interactive search fan-out or reject it outright.
 //   - Jobs.DownloadConcurrency must be at least 1 — a non-positive per-provider
 //     concurrency would stall the dispatcher entirely.
+//   - Jobs.MaxConcurrentDownloads must be at least 1 — a non-positive global cap
+//     would block every download slot and stall the whole cycle.
 //   - Jobs.WarmupSlowThresholdMs must be at least 1 — a non-positive slow
 //     threshold would flag every source slow on every warm pass.
 //   - Sources.FailureThreshold must be at least 1 — a source must always get
@@ -677,6 +696,12 @@ func (c *Config) validate() error {
 	if c.Jobs.DownloadConcurrency < 1 {
 		errs = append(errs, fmt.Sprintf(
 			"TSUNDOKU_JOBS_DOWNLOADCONCURRENCY must be at least 1 (got %d)", c.Jobs.DownloadConcurrency,
+		))
+	}
+
+	if c.Jobs.MaxConcurrentDownloads < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS must be at least 1 (got %d)", c.Jobs.MaxConcurrentDownloads,
 		))
 	}
 

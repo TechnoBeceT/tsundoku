@@ -9,6 +9,7 @@ import (
 
 	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
@@ -78,7 +79,14 @@ const unresolvedTargetKey = ""
 // cooled down without spending retry budget) and does NOT abort the pass. Only a
 // hard infrastructure error propagates — it cancels the pass (no further upgrade is
 // STARTED) and is returned along with the count of upgrades that did complete.
-func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[string]int) (int, error) {
+//
+// globalSem is the cycle-shared GLOBAL concurrency cap (nil ⇒ per-source only). The
+// download drain already drew from this SAME semaphore earlier in the cycle, so
+// upgrades and downloads share ONE aggregate all-sources fetch budget: total
+// concurrent upgrade fetches here, plus any still in flight, never exceed the cap.
+// This is an additional bound ON TOP OF the per-source concurrency and the source
+// gate — it never makes any single source more aggressive.
+func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[string]int, globalSem *semaphore.Weighted) (int, error) {
 	chapters, err := d.client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
 		// Stable order (chapter number ascending, nulls last, id tiebreak — the same
@@ -115,7 +123,7 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 		}
 		upgraded.Add(1)
 		return nil
-	})
+	}, globalSem)
 	return int(upgraded.Load()), err
 }
 

@@ -13,15 +13,18 @@ import (
 type Static struct {
 	Download     time.Duration
 	DownloadConc int
-	Refresh      time.Duration
-	Concurrency  int
-	Retries      int
-	Backoff      time.Duration
-	StaleGrace   int
-	StalledDays  int
-	ExtCheck     time.Duration
-	WarmupIv     time.Duration
-	WarmupSlow   int
+	// MaxConcurrentDl backs the MaxConcurrentDownloads accessor — the global
+	// (all-sources) concurrent-download cap.
+	MaxConcurrentDl int
+	Refresh         time.Duration
+	Concurrency     int
+	Retries         int
+	Backoff         time.Duration
+	StaleGrace      int
+	StalledDays     int
+	ExtCheck        time.Duration
+	WarmupIv        time.Duration
+	WarmupSlow      int
 	// SearchCacheIv / ChapterCacheIv back the interactive cache TTL accessors;
 	// 0 disables the corresponding cache.
 	SearchCacheIv  time.Duration
@@ -65,6 +68,9 @@ func (s Static) DownloadInterval(context.Context) time.Duration { return s.Downl
 
 // DownloadConcurrency returns the fixed per-source download concurrency cap.
 func (s Static) DownloadConcurrency(context.Context) int { return s.DownloadConc }
+
+// MaxConcurrentDownloads returns the fixed global (all-sources) concurrent-download cap.
+func (s Static) MaxConcurrentDownloads(context.Context) int { return s.MaxConcurrentDl }
 
 // RefreshInterval returns the fixed discovery-sweep period.
 func (s Static) RefreshInterval(context.Context) time.Duration { return s.Refresh }

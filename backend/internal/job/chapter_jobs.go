@@ -29,6 +29,8 @@ import (
 	"log/slog"
 	"time"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -176,12 +178,22 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 
 	slog.InfoContext(ctx, "job.Runner: download cycle started")
 
+	// Size the ONE global concurrency semaphore for this cycle from the runtime
+	// tunable (read once, clamped to >= 1 by the dispatcher accessor). It bounds the
+	// TOTAL number of concurrent chapter fetches across ALL sources — the aggregate
+	// ceiling the per-source cap cannot express (with N active sources the per-source
+	// caps alone permit download_concurrency×N fetches, which overwhelms a shared
+	// solver). The SAME semaphore is threaded into every download drain pass AND the
+	// upgrade pass below, so downloads and upgrades draw from one aggregate budget
+	// this cycle.
+	globalSem := semaphore.NewWeighted(int64(r.dispatcher.MaxConcurrentDownloads(ctx)))
+
 	// Step 1: drain all actionable chapters via bounded passes. It returns the
 	// per-source dispatch tally for the cycle (canonicalSourceKey → chapters
 	// fetched), which the upgrade pass consumes so downloads + upgrades share ONE
 	// per-source per-cycle fetch budget (an upgrade fetch hits the same protected
 	// endpoint as a download fetch).
-	consumed, err := r.drainDownloads(ctx)
+	consumed, err := r.drainDownloads(ctx, globalSem)
 	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
@@ -206,7 +218,7 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 	// zero new chapters (flagged==0) yet still has stranded rows to re-drive.
 	// UpgradeAll early-returns after one indexed query (zero source calls) when
 	// nothing is upgrade_available, so the unconditional call is a cheap no-op.
-	upgraded, err := r.upgradeAll(ctx, consumed)
+	upgraded, err := r.upgradeAll(ctx, consumed, globalSem)
 	if err != nil {
 		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
@@ -266,11 +278,15 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 // cap is per source, other sources are unaffected and the drain still terminates:
 // a pass dispatches 0 exactly when every source is at its budget or has no live
 // candidate.
-func (r *Runner) drainDownloads(ctx context.Context) (map[string]int, error) {
+//
+// globalSem is the cycle's single all-sources concurrency semaphore, forwarded
+// unchanged to every RunOnceAt pass so the aggregate fetch cap spans the whole
+// drain (and, reused by the upgrade pass, the whole cycle).
+func (r *Runner) drainDownloads(ctx context.Context, globalSem *semaphore.Weighted) (map[string]int, error) {
 	now := time.Now()
 	consumed := make(map[string]int)
 	for {
-		dispatched, err := r.dispatcher.RunOnceAt(ctx, now, consumed)
+		dispatched, err := r.dispatcher.RunOnceAt(ctx, now, consumed, globalSem)
 		if err != nil {
 			return consumed, err
 		}
@@ -299,9 +315,11 @@ func (r *Runner) drainDownloads(ctx context.Context) (map[string]int, error) {
 //
 // downloadsConsumed is the drain pass's per-source dispatch tally, forwarded so the
 // upgrade pass caps each target source to the remainder of its shared per-cycle
-// fetch budget (see download.Dispatcher.UpgradeAll).
-func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]int) (int, error) {
-	return r.dispatcher.UpgradeAll(ctx, downloadsConsumed)
+// fetch budget (see download.Dispatcher.UpgradeAll). globalSem is the same
+// all-sources concurrency semaphore the drain used, so upgrade fetches count against
+// the one aggregate budget for the cycle.
+func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]int, globalSem *semaphore.Weighted) (int, error) {
+	return r.dispatcher.UpgradeAll(ctx, downloadsConsumed, globalSem)
 }
 
 // Start launches a background goroutine that calls RunDownloadCycle on a dynamic

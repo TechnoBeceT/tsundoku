@@ -227,7 +227,7 @@ func TestValidateAcceptsValidAuthSecret(t *testing.T) {
 		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:     validEngineConfig(),
 		Extensions: validExtensionsConfig(),
-		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:       validJobsConfig(),
 		Sources:    validSourcesConfig(),
 	}
 	if err := config.ExportValidateForTest(cfg); err != nil {
@@ -255,6 +255,16 @@ func validEngineConfig() config.EngineConfig {
 // retained-versions bound doesn't need to touch unrelated fixtures.
 func validExtensionsConfig() config.ExtensionsConfig {
 	return config.ExtensionsConfig{RetainedVersions: 3}
+}
+
+// validJobsConfig returns a JobsConfig that passes validate() — the fixture
+// every "happy path" validate() test that doesn't itself exercise a Jobs rule
+// threads through (mirrors validSourcesConfig), so adding a new Jobs bound (e.g.
+// MaxConcurrentDownloads) doesn't need to touch every unrelated fixture. Tests
+// that exercise a specific Jobs rule keep an inline literal with the offending
+// value.
+func validJobsConfig() config.JobsConfig {
+	return config.JobsConfig{DownloadConcurrency: 4, MaxConcurrentDownloads: 6, WarmupSlowThresholdMs: 5000}
 }
 
 // TestLoadAuthSecretFromEnv confirms that TSUNDOKU_AUTH_SECRET is loaded and
@@ -427,7 +437,7 @@ func TestValidateRejectsNonPositiveHTTPTimeout(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   config.EngineConfig{HTTPTimeout: 0, SearchTimeout: 3 * time.Minute}, // invalid
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:     validJobsConfig(),
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -477,7 +487,7 @@ func TestValidateRejectsNonPositiveSearchTimeout(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   config.EngineConfig{HTTPTimeout: time.Minute, SearchTimeout: 0}, // invalid
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:     validJobsConfig(),
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -624,7 +634,7 @@ func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 0}, // invalid
+		Jobs:     config.JobsConfig{DownloadConcurrency: 0, MaxConcurrentDownloads: 6}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -632,6 +642,56 @@ func TestValidateRejectsDownloadConcurrencyBelowOne(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "TSUNDOKU_JOBS_DOWNLOADCONCURRENCY") {
 		t.Errorf("error should name TSUNDOKU_JOBS_DOWNLOADCONCURRENCY, got: %v", err)
+	}
+}
+
+// TestJobsMaxConcurrentDownloadsDefault confirms the GLOBAL concurrent-download
+// cap defaults to 6 (>= the per-source default of 5 so a single source still
+// reaches its own cap).
+func TestJobsMaxConcurrentDownloadsDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.MaxConcurrentDownloads != 6 {
+		t.Errorf("Jobs.MaxConcurrentDownloads default = %d, want 6", cfg.Jobs.MaxConcurrentDownloads)
+	}
+}
+
+// TestJobsMaxConcurrentDownloadsEnvOverride confirms
+// TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS overrides the default.
+func TestJobsMaxConcurrentDownloadsEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS", "12")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.MaxConcurrentDownloads != 12 {
+		t.Errorf("Jobs.MaxConcurrentDownloads = %d, want 12", cfg.Jobs.MaxConcurrentDownloads)
+	}
+}
+
+// TestValidateRejectsMaxConcurrentDownloadsBelowOne confirms validate() fails
+// closed when the global download cap is below 1, naming the env var.
+func TestValidateRejectsMaxConcurrentDownloadsBelowOne(t *testing.T) {
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{Password: "somepassword"},
+		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
+		Engine:   validEngineConfig(),
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, MaxConcurrentDownloads: 0}, // invalid
+	}
+	err := config.ExportValidateForTest(cfg)
+	if err == nil {
+		t.Fatal("expected validate error for MaxConcurrentDownloads < 1, got nil")
+	}
+	if !strings.Contains(err.Error(), "TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS") {
+		t.Errorf("error should name TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS, got: %v", err)
 	}
 }
 
@@ -747,7 +807,7 @@ func TestValidateRejectsWarmupThresholdBelowOne(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 0}, // invalid
+		Jobs:     config.JobsConfig{DownloadConcurrency: 4, MaxConcurrentDownloads: 6, WarmupSlowThresholdMs: 0}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
 	if err == nil {
@@ -811,7 +871,7 @@ func TestValidateRejectsSourcesFailureThresholdBelowOne(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:     validJobsConfig(),
 		Sources:  config.SourcesConfig{FailureThreshold: 0, Cooldown: 30 * time.Minute}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -830,7 +890,7 @@ func TestValidateRejectsSourcesCooldownBelowOneMinute(t *testing.T) {
 		Database: config.DatabaseConfig{Password: "somepassword"},
 		Auth:     config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:   validEngineConfig(),
-		Jobs:     config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:     validJobsConfig(),
 		Sources:  config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Second}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -851,7 +911,7 @@ func TestValidateRejectsSourcesMinRequestDelayNegative(t *testing.T) {
 		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:     validEngineConfig(),
 		Extensions: validExtensionsConfig(),
-		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:       validJobsConfig(),
 		Sources:    config.SourcesConfig{FailureThreshold: 5, Cooldown: 30 * time.Minute, MinRequestDelay: -time.Second}, // invalid
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -1064,7 +1124,7 @@ func TestValidateRejectsRetainedVersionsOutOfBounds(t *testing.T) {
 		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
 		Engine:     validEngineConfig(),
 		Extensions: config.ExtensionsConfig{RetainedVersions: 21}, // invalid
-		Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+		Jobs:       validJobsConfig(),
 		Sources:    validSourcesConfig(),
 	}
 	err := config.ExportValidateForTest(cfg)
@@ -1115,7 +1175,7 @@ func TestValidateAcceptsEngineURL(t *testing.T) {
 		cfg := &config.Config{
 			Database:   config.DatabaseConfig{Password: "somepassword"},
 			Auth:       config.AuthConfig{Secret: "exactly16charssss"},
-			Jobs:       config.JobsConfig{DownloadConcurrency: 4, WarmupSlowThresholdMs: 5000},
+			Jobs:       validJobsConfig(),
 			Sources:    validSourcesConfig(),
 			Extensions: validExtensionsConfig(),
 			Engine:     config.EngineConfig{URL: raw, HTTPTimeout: 3 * time.Minute, SearchTimeout: 3 * time.Minute},

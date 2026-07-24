@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/chapter"
@@ -80,6 +81,13 @@ type RetrySettings interface {
 	// many of that source's queued chapters may be in the downloading state at
 	// once). Read once per cycle for the scheduler + fetch limiter; clamped to >= 1.
 	DownloadConcurrency(ctx context.Context) int
+	// MaxConcurrentDownloads is the GLOBAL download concurrency cap: the ceiling on
+	// TOTAL concurrent fetches across ALL sources at once, distinct from the
+	// per-source DownloadConcurrency. The download cycle reads it ONCE and sizes one
+	// shared semaphore that both the download drain and the convergence-upgrade pass
+	// acquire a slot from, so a many-source library cannot run download_concurrency×N
+	// fetches in parallel and overwhelm a shared solver. Clamped to >= 1.
+	MaxConcurrentDownloads(ctx context.Context) int
 	// SuppressSplitParts reports whether fractional-part suppression is enabled
 	// (DetectSupersededParts, superseded.go). Read at use-time so a settings change
 	// takes effect on the next sweep.
@@ -389,6 +397,28 @@ func (d *Dispatcher) DownloadConcurrency(ctx context.Context) int {
 	return d.downloadConcurrency(ctx)
 }
 
+// maxConcurrentDownloads reads the current GLOBAL download concurrency cap from
+// the runtime settings, clamped to at least 1. A cap of 0 (e.g. an unset
+// settings.Static field) would make semaphore.Acquire block forever, so the
+// clamp is a correctness guard, not a nicety.
+func (d *Dispatcher) maxConcurrentDownloads(ctx context.Context) int {
+	n := d.retry.MaxConcurrentDownloads(ctx)
+	if n < 1 {
+		n = 1
+	}
+	return n
+}
+
+// MaxConcurrentDownloads returns the current GLOBAL download concurrency cap
+// (clamped to at least 1), read at call time. The job runner reads it once per
+// download cycle to size the single shared semaphore threaded through both the
+// download drain and the convergence-upgrade pass (see
+// job.Runner.RunDownloadCycle), so downloads + upgrades share one aggregate
+// fetch budget across all sources.
+func (d *Dispatcher) MaxConcurrentDownloads(ctx context.Context) int {
+	return d.maxConcurrentDownloads(ctx)
+}
+
 // wantedScanLimit bounds how many wanted/failed chapters RunOnce loads per pass.
 // One pass never exceeds this many chapters resolved+grouped, keeping the
 // per-pass query cheap regardless of library size; the drain loop
@@ -458,8 +488,13 @@ func batchPerSource(concurrency int) int {
 // chapters in this one pass (the standalone entry point used by tests and the
 // Process path). The cross-pass per-CYCLE cap is applied by the drain loop, which
 // calls RunOnceAt with a shared budget map — see RunOnceAt.
+//
+// It passes a nil global semaphore: the standalone entry point applies only the
+// per-source cap (its historical behaviour). The GLOBAL all-sources cap is owned
+// by the job runner's cycle, which threads a real semaphore into RunOnceAt (see
+// job.Runner.RunDownloadCycle).
 func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
-	return d.RunOnceAt(ctx, time.Now(), make(map[string]int))
+	return d.RunOnceAt(ctx, time.Now(), make(map[string]int), nil)
 }
 
 // RunOnceAt runs one bounded dispatch pass anchored to the given now, honouring
@@ -483,7 +518,13 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
 // collapse its retry spacing — a slow-timeout source gets one attempt per
 // cycle, not one per pass. All candidacy + backoff decisions in this pass use the
 // now passed here.
-func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[string]int) (dispatched int, err error) {
+//
+// globalSem is the cycle-shared GLOBAL concurrency semaphore (nil ⇒ no global
+// cap, per-source only). When non-nil it is threaded into the scheduler so total
+// concurrent fetches across ALL sources this pass never exceed the cap — the SAME
+// semaphore is reused across every pass of a cycle and by the upgrade pass, so the
+// aggregate budget spans the whole cycle (see job.Runner.RunDownloadCycle).
+func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[string]int, globalSem *semaphore.Weighted) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
 	concurrency := d.downloadConcurrency(ctx)
 
@@ -535,7 +576,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// increments it on a claim), so it must be atomic; read once with .Load() after
 	// all goroutines have joined.
 	var progressed atomic.Int64
-	d.runDownloadQueues(ctx, batched, concurrency, maxRetries, now, limiter, &progressed)
+	d.runDownloadQueues(ctx, batched, concurrency, maxRetries, now, limiter, &progressed, globalSem)
 	d.flushEventSink(ctx, sink)
 	return int(progressed.Load()), nil
 }

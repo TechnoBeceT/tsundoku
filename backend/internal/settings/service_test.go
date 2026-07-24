@@ -18,6 +18,7 @@ func testDefaults() settings.Defaults {
 	return settings.Defaults{
 		DownloadInterval:        15 * time.Minute,
 		DownloadConcurrency:     5,
+		MaxConcurrentDownloads:  6,
 		RefreshInterval:         2 * time.Hour,
 		RefreshConcurrency:      4,
 		MaxRetries:              3,
@@ -296,8 +297,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 33 {
-		t.Fatalf("List len = %d, want 33", len(list))
+	if len(list) != 34 {
+		t.Fatalf("List len = %d, want 34", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -556,6 +557,32 @@ func TestDownloadConcurrency(t *testing.T) {
 	}
 	if got := svc.DownloadConcurrency(ctx); got != 8 {
 		t.Errorf("DownloadConcurrency after Set = %d, want 8", got)
+	}
+}
+
+// TestMaxConcurrentDownloads proves the GLOBAL download-concurrency accessor
+// returns the default (6) when unset, rejects out-of-bounds values (below 1 /
+// above 64), and reflects a valid override (the hot-reload contract the download
+// cycle relies on to size its shared semaphore).
+func TestMaxConcurrentDownloads(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.MaxConcurrentDownloads(ctx); got != 6 {
+		t.Errorf("MaxConcurrentDownloads default = %d, want 6", got)
+	}
+	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "65"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 65 (above 64): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "10"); err != nil {
+		t.Fatalf("Set 10: %v", err)
+	}
+	if got := svc.MaxConcurrentDownloads(ctx); got != 10 {
+		t.Errorf("MaxConcurrentDownloads after Set = %d, want 10", got)
 	}
 }
 

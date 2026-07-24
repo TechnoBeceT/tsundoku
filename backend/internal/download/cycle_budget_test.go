@@ -84,7 +84,7 @@ func TestUpgradeAll_PerSourceVolumeCap_LeavesRemainderFlagged(t *testing.T) {
 
 	// nil consumed: no downloads ran this cycle, so the whole per-cycle budget is
 	// available to upgrades.
-	upgraded, err := d.UpgradeAll(ctx, nil)
+	upgraded, err := d.UpgradeAll(ctx, nil, nil)
 	if err != nil {
 		t.Fatalf("UpgradeAll: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestUpgradeAll_SharesBudgetWithDownloads(t *testing.T) {
 
 	// The download drain of this cycle already spent 4 of "Asura"'s budget.
 	consumed := map[string]int{"Asura": downloadsThisCycle}
-	upgraded, err := d.UpgradeAll(ctx, consumed)
+	upgraded, err := d.UpgradeAll(ctx, consumed, nil)
 	if err != nil {
 		t.Fatalf("UpgradeAll: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRunOnceAt_CapsSourceAtBudgetAcrossPasses(t *testing.T) {
 	consumed := make(map[string]int)
 	total := 0
 	for pass := 0; pass < 20; pass++ {
-		dispatched, err := d.RunOnceAt(ctx, now, consumed)
+		dispatched, err := d.RunOnceAt(ctx, now, consumed, nil)
 		if err != nil {
 			t.Fatalf("pass %d RunOnceAt: %v", pass, err)
 		}
@@ -213,7 +213,7 @@ func TestUpgradeAll_ConvergesByBudgetPerCycle(t *testing.T) {
 	prevRemaining := n
 	converged := false
 	for cycle := 1; cycle <= 10; cycle++ {
-		upgraded, err := d.UpgradeAll(ctx, nil)
+		upgraded, err := d.UpgradeAll(ctx, nil, nil)
 		if err != nil {
 			t.Fatalf("cycle %d UpgradeAll: %v", cycle, err)
 		}
@@ -254,7 +254,7 @@ func TestUpgradeAll_CrossSourceFairness_EachSourceGetsBudget(t *testing.T) {
 	d := download.New(client, fake.New(), sse.NewHub(), download.Config{Storage: mustTempDir(t)},
 		settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: concurrency}, nil)
 
-	upgraded, err := d.UpgradeAll(ctx, nil)
+	upgraded, err := d.UpgradeAll(ctx, nil, nil)
 	if err != nil {
 		t.Fatalf("UpgradeAll: %v", err)
 	}

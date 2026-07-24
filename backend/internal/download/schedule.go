@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -147,7 +148,23 @@ func roundRobinBySeries(items []resolvedChapter) []resolvedChapter {
 // queued just before the cancel would otherwise still run. A skipped item returns
 // nil, so a cancellation never masquerades as a work error; the first real error is
 // returned by Wait.
-func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error) error {
+//
+// globalSem, when non-nil, is a GLOBAL concurrency semaphore shared across EVERY
+// source's goroutine: an item acquires one slot immediately before run and releases
+// it immediately after, so the TOTAL number of concurrent run executions across all
+// sources never exceeds the semaphore's weight — the aggregate cap the per-source
+// SetLimit cannot express (with N sources the per-source caps alone permit
+// concurrency×N in flight). A nil semaphore means "no global cap": behaviour is
+// exactly the historical per-source-only scheduling (the standalone RunOnce path).
+//
+// Deadlock safety: a global slot is acquired ONLY around run and holds no per-source
+// resource that another item needs in order to reach its own Release. Every item that
+// acquires a global slot therefore runs to completion and releases it, so slots are
+// always freed and forward progress is guaranteed — there is no circular wait between
+// the global semaphore and the per-source SetLimit. Acquire is ctx-aware, so a
+// cancelled context returns promptly (treated as a skip → nil) instead of parking on
+// a slot that a cancelled sibling will never grant.
+func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error, globalSem *semaphore.Weighted) error {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -169,6 +186,14 @@ func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concu
 					if qctx.Err() != nil {
 						return nil
 					}
+					// Global cap: hold one all-sources slot for the WHOLE run. Acquire is
+					// ctx-aware, so a cancellation returns nil (a skip) rather than blocking.
+					if globalSem != nil {
+						if err := globalSem.Acquire(qctx, 1); err != nil {
+							return nil
+						}
+						defer globalSem.Release(1)
+					}
 					return run(qctx, it)
 				})
 			}
@@ -188,14 +213,18 @@ func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concu
 // DB and swallowed by downloadResolved), so the scheduler's first-error
 // cancellation is inert on this path: only a cancelled parent context stops it —
 // hence the discarded error.
-func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64) {
+//
+// globalSem is the cycle-shared GLOBAL cap (nil ⇒ per-source only), forwarded to the
+// scheduler so this pass's fetches count against the same all-sources budget as every
+// other pass and the upgrade pass.
+func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem *semaphore.Weighted) {
 	_ = runPerSourceQueues(ctx, groups, concurrency,
 		func(ctx context.Context, it resolvedChapter) error {
 			if d.downloadResolved(ctx, it, maxRetries, now, limiter) {
 				progressed.Add(1)
 			}
 			return nil
-		})
+		}, globalSem)
 }
 
 // downloadResolved loads the full chapter (with its series + category edges for

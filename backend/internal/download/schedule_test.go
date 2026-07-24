@@ -50,6 +50,14 @@ func (m *mutableSettings) DownloadConcurrency(context.Context) int {
 	return m.conc
 }
 
+// MaxConcurrentDownloads exists only to satisfy download.RetrySettings. These
+// tests drive the standalone RunOnce path, which passes a nil global semaphore, so
+// this value is never consulted; the global cap has its own dedicated coverage in
+// schedule_globalsem_test.go.
+func (m *mutableSettings) MaxConcurrentDownloads(context.Context) int {
+	return 1000
+}
+
 func (m *mutableSettings) SuppressSplitParts(context.Context) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

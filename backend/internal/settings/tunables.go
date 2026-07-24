@@ -58,6 +58,18 @@ const (
 	// once. Default 5 (Kaizoku parity). Read at use-time so a change applies on the
 	// next download cycle without a restart.
 	KeyDownloadConcurrency = "jobs.download_concurrency"
+	// KeyMaxConcurrentDownloads is the GLOBAL download concurrency cap (int, 1..64):
+	// the ceiling on TOTAL concurrent chapter fetches across ALL sources at once,
+	// distinct from the PER-SOURCE jobs.download_concurrency. With N active sources
+	// the dispatcher would otherwise run download_concurrency×N fetches in parallel
+	// (each source's pool is independent), overwhelming a shared solver even though
+	// no single source exceeds its own cap; this bounds the aggregate. Downloads AND
+	// convergence upgrades draw from this ONE budget per cycle. Default 6 —
+	// deliberately >= the per-source default (5) so a single active source still
+	// reaches its per-source cap and the global limit only bites once multiple
+	// sources compete. Read once per download cycle so a change applies on the next
+	// cycle without a restart.
+	KeyMaxConcurrentDownloads = "jobs.max_concurrent_downloads"
 	// KeyRefreshInterval is the discovery-sweep ticker period (duration, >= 10m).
 	KeyRefreshInterval = "jobs.refresh_interval"
 	// KeyRefreshConcurrency bounds parallel provider re-fetches (int, 1..32).
@@ -257,6 +269,7 @@ var engineSocksVersions = []int{4, 5}
 type Defaults struct {
 	DownloadInterval        time.Duration
 	DownloadConcurrency     int
+	MaxConcurrentDownloads  int
 	RefreshInterval         time.Duration
 	RefreshConcurrency      int
 	MaxRetries              int
@@ -330,6 +343,7 @@ type tunable struct {
 var tunableOrder = []string{
 	KeyDownloadInterval,
 	KeyDownloadConcurrency,
+	KeyMaxConcurrentDownloads,
 	KeyRefreshInterval,
 	KeyRefreshConcurrency,
 	KeyMaxRetries,
@@ -373,6 +387,10 @@ var tunables = map[string]tunable{
 	KeyDownloadConcurrency: intTunable(
 		KeyDownloadConcurrency, "count", 1, 32,
 		func(d Defaults) int { return d.DownloadConcurrency },
+	),
+	KeyMaxConcurrentDownloads: intTunable(
+		KeyMaxConcurrentDownloads, "count", 1, 64,
+		func(d Defaults) int { return d.MaxConcurrentDownloads },
 	),
 	KeyRefreshInterval: durationTunable(
 		KeyRefreshInterval, "duration", 10*time.Minute,
