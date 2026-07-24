@@ -22,6 +22,9 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.runBlocking
+import okhttp3.ConnectionPool
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 /**
  * Reads a possibly-uninitialized `lateinit` [SManga] String field, yielding [fallback] instead of
@@ -209,14 +212,27 @@ object SourceCalls {
      * Fetch the raw image bytes + content type for a page or a cover, distinguished by [pageUrl]:
      * blank = COVER, non-blank = reader PAGE.
      *
-     * Reader pages reconstruct the source's exact Page(url, imageUrl) and go through
-     * [HttpSource.getImage], resolving imageUrl first via getImageUrl (Suwayomi's getTrueImageUrl
-     * pattern) when absent — this covers sources whose page.url is an intermediate HTML page.
+     * Reader pages reconstruct the source's exact Page(url, imageUrl) and resolve imageUrl first via
+     * getImageUrl (Suwayomi's getTrueImageUrl pattern) when absent — this covers sources whose
+     * page.url is an intermediate HTML page — then fetch via [HttpSource.imageRequest], the same
+     * request [HttpSource.getImage] itself builds.
      *
-     * Covers are fetched with a PLAIN GET of [imageUrl] via the source's own client + headers
-     * (so the CloudflareInterceptor still supplies cf_clearance), deliberately bypassing
+     * Covers are fetched with a PLAIN GET of [imageUrl] via the source's own headers (so the
+     * CloudflareInterceptor still supplies cf_clearance), deliberately bypassing
      * [HttpSource.imageRequest] — some extensions override imageRequest to validate a reader-page
      * URL shape (e.g. "The Blank"), and a cover URL never matches that shape.
+     *
+     * GAP-110 — FRESH CONNECTION PER IMAGE. Some source image CDNs behind Cloudflare (confirmed:
+     * Hive Scans' storage.hivetoon.com) flag a REUSED keep-alive HTTP/2 connection after ~a dozen
+     * requests and start returning 403, while serving every request that arrives on a FRESH
+     * connection with 200. okhttp pools and reuses one connection across a chapter's sequential
+     * page-image fetches, so it gets flagged mid-chapter → the CloudflareInterceptor then hangs ~64s
+     * on FlareSolverr (which structurally cannot fetch a raw image) → the chapter stalls forever and
+     * the hangs exhaust the engine. Deriving a client with connection pooling DISABLED
+     * (maxIdleConnections=0) makes every image request open — and close — its own connection, exactly
+     * as curl/a browser do, sidestepping the flag. Cheap: one image is one request, and the pooling
+     * win never applied to a per-image path anyway. Applied to BOTH branches — a cover on the same
+     * CDN can flag too.
      */
     fun image(
         source: Source,
@@ -226,22 +242,47 @@ object SourceCalls {
         runBlocking {
             val http = source as? HttpSource
                 ?: error("Source ${source.name} is not an HttpSource; cannot fetch image bytes")
+            // A fresh-connection client: no idle connection is ever kept alive for reuse, so each call
+            // opens a new connection and closes it (see the GAP-110 note above). Everything else —
+            // interceptors, headers, timeouts — is inherited from the source's own client.
+            val freshClient = http.client.newBuilder()
+                .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
+                .build()
             val response =
                 if (pageUrl.isBlank()) {
                     val coverUrl = imageUrl ?: error("cover fetch: imageUrl is required when pageUrl is blank")
                     val request = GET(coverUrl, http.headers)
-                    http.client
+                    freshClient
                         .newCachelessCallWithProgress(request, Page(index = 0, url = "", imageUrl = coverUrl))
                         .awaitSuccess()
                 } else {
                     val page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
                     if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
-                    http.getImage(page)
+                    freshClient
+                        .newCachelessCallWithProgress(imageRequestFor(http, page), page)
+                        .awaitSuccess()
                 }
             val contentType = response.header("Content-Type") ?: "application/octet-stream"
             val bytes = response.body.bytes()
             bytes to contentType
         }
+
+    /**
+     * The source's own image [Request] for [page] — the exact request [HttpSource.getImage] builds,
+     * so a per-source `imageRequest` override (a custom Referer, a POST, an alternate url) is honored
+     * verbatim. That method is `protected` on [HttpSource], so it is reached reflectively; virtual
+     * dispatch still routes to the concrete extension's override. Needed so [image] can run the
+     * request on a fresh-connection client (GAP-110) while otherwise staying byte-identical to what
+     * getImage would have sent.
+     */
+    private fun imageRequestFor(
+        http: HttpSource,
+        page: Page,
+    ): Request =
+        HttpSource::class.java
+            .getDeclaredMethod("imageRequest", Page::class.java)
+            .apply { isAccessible = true }
+            .invoke(http, page) as Request
 
     /**
      * Resolves the fully-qualified, browser-clickable url for [manga] via
