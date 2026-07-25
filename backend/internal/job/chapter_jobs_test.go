@@ -107,10 +107,14 @@ func collectCycleEvents(events <-chan sse.Event, timeout time.Duration) (sawStar
 	}
 }
 
-// TestRunner_DownloadCycle_UpgradePass verifies that RunDownloadCycle runs
-// DetectUpgrades + Upgrade for newly-flagged chapters: after the initial
-// download and adding a higher-importance provider, a second cycle should
-// detect the upgrade_available and upgrade the chapter.
+// TestRunner_DownloadCycle_UpgradePass verifies the detect→upgrade convergence:
+// after the initial download and adding a higher-importance provider, an upgrade
+// detection pass flags the chapter and the next download cycle upgrades it.
+//
+// Detection was decoupled from the download cycle (GAP-112) — it now runs in the
+// refresh job path, not inside RunDownloadCycle — so this test drives the
+// detection explicitly (as runRefreshSweep does) before the draining cycle,
+// exactly like the sibling upgrade-scheduling tests already do.
 func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -150,7 +154,12 @@ func TestRunner_DownloadCycle_UpgradePass(t *testing.T) {
 		SetProviderIndex(0).
 		SaveX(ctx)
 
-	// Second cycle: should detect the upgrade and apply it.
+	// Detection (post-refresh pass) flags the chapter upgrade_available.
+	if _, err := d.DetectUpgrades(ctx, d.MaxRetries(ctx)); err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+
+	// Next cycle: UpgradeAll converges the flagged chapter to the higher source.
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		t.Fatalf("second RunDownloadCycle: %v", err)
 	}
@@ -209,15 +218,22 @@ func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
 	initialImportance := requireAllDownloaded(t, ctx, client, seeded)
 
 	// Add a strictly higher-importance provider carrying the SAME chapter key
-	// to every seeded series, flagging all N chapters upgrade_available on the
-	// next DetectUpgrades pass.
+	// to every seeded series, then run the detection pass (post-refresh path,
+	// GAP-112) — it must flag all N chapters upgrade_available.
 	addHigherImportanceProviders(ctx, client, seeded)
+	flagged, err := d.DetectUpgrades(ctx, d.MaxRetries(ctx))
+	if err != nil {
+		t.Fatalf("DetectUpgrades: %v", err)
+	}
+	if flagged != n {
+		t.Fatalf("DetectUpgrades flagged %d, want %d (all N downloaded chapters have a strictly higher source)", flagged, n)
+	}
 
 	events, unsub := hub.Subscribe()
 	defer unsub()
 
-	// Second cycle: DetectUpgrades should flag all N, and the parallel
-	// upgradeAll pool (bounded to `concurrency` < n) must upgrade every one.
+	// Cycle: the parallel upgradeAll pool (bounded to `concurrency` < n) must
+	// upgrade every flagged chapter.
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		t.Fatalf("second RunDownloadCycle: %v", err)
 	}
@@ -227,9 +243,6 @@ func TestRunner_DownloadCycle_UpgradeAll_Parallel(t *testing.T) {
 	evt := waitCycleDoneEvent(events, 2*time.Second)
 	if evt == nil {
 		t.Fatal("expected a cycle.done SSE event, got none")
-	}
-	if evt.Flagged != n {
-		t.Errorf("cycle.done Flagged: want %d, got %d", n, evt.Flagged)
 	}
 	if evt.Upgraded != n {
 		t.Errorf("cycle.done Upgraded: want %d (all N upgraded, none dropped or double-processed), got %d", n, evt.Upgraded)

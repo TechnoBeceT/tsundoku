@@ -45,8 +45,10 @@ import (
 // "last synced" indicator.
 type CycleEvent struct {
 	// Flagged is the number of downloaded chapters detected as having a
-	// strictly better source available (upgrade_available). Set on cycle.done;
-	// zero on cycle.start.
+	// strictly better source available (upgrade_available). It is NO LONGER set by
+	// the download cycle — upgrade detection moved to the post-refresh pass
+	// (runUpgradeDetection) — so cycle.done always omits it. The field is retained
+	// for SSE wire compatibility.
 	Flagged int `json:"flagged,omitempty"`
 
 	// Upgraded is the number of upgrade operations actually performed in this
@@ -142,32 +144,33 @@ func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub
 	}
 }
 
-// RunDownloadCycle executes one full download + upgrade pass:
+// RunDownloadCycle executes one full download + upgrade DRAIN pass:
 //  1. Broadcasts cycle.start.
 //  2. Drains the dispatcher in BOUNDED PASSES (drainDownloads) — each call to
 //     dispatcher.RunOnce dispatches only a bounded batch per source, so the
 //     drain loop re-scans the actionable-chapter set between passes and picks
 //     up chapters that became wanted mid-cycle (e.g. a fresh adopt) instead of
 //     waiting out one giant unbounded drain.
-//  3. Calls download.DetectUpgrades — flags any downloaded chapters that now
-//     have a strictly better source.
-//  4. Calls dispatcher.UpgradeAll UNCONDITIONALLY — it processes every chapter
-//     already in upgrade_available, which is a DISJOINT set from the downloaded
-//     chapters DetectUpgrades scans. Gating this on "DetectUpgrades flagged
-//     something this cycle" would strand a chapter whose upgrade target was down
-//     when it was first flagged: once the library converges, DetectUpgrades flags
-//     zero new chapters every cycle, so a conditional call would never re-drive
-//     the already-flagged rows even after the target recovers. UpgradeAll is a
-//     cheap no-op (one indexed query, zero source calls) when nothing is
-//     upgrade_available, so running it every cycle is free.
-//  5. Calls dispatcher.DetectSupersededParts — fractional-part suppression:
+//  3. Calls dispatcher.UpgradeAll UNCONDITIONALLY — it processes every chapter
+//     already in upgrade_available. Detection (which flags downloaded chapters
+//     into upgrade_available) is DELIBERATELY NOT run here: it is a library-wide
+//     read-only scan whose cost scales with library size, so running it every
+//     download cycle blocked the actual downloads (GAP-112). Detection now runs
+//     once after each discovery sweep instead (see runRefreshSweep) — refresh is
+//     what surfaces the new provider chapters that create upgrade candidates.
+//     UpgradeAll still runs every cycle so a chapter flagged by an earlier
+//     detection whose target source was then down converges once it recovers; it
+//     early-returns after one indexed query (zero source calls) when nothing is
+//     upgrade_available, so the unconditional call is a cheap no-op.
+//  4. Calls dispatcher.DetectSupersededParts — fractional-part suppression:
 //     supersedes split parts of a downloaded whole (and reverts when the whole
 //     is gone or the setting is off).
-//  6. Broadcasts cycle.done (with error info if any prior step failed).
+//  5. Broadcasts cycle.done (with error info if any prior step failed).
 //
 // cycle.start/cycle.done fire exactly ONCE per RunDownloadCycle call — NOT once
 // per bounded pass — so the SSE cadence is unchanged even though downloading now
-// happens in several internal passes.
+// happens in several internal passes. CycleEvent.Flagged is no longer set by this
+// cycle (detection moved out); it stays zero (omitted) here.
 //
 // Per-chapter errors are handled inside the dispatcher and upgrade engine
 // (they record last_error and transition state machine appropriately).
@@ -199,39 +202,25 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
 	}
 
-	// Step 2: detect upgrade candidates among downloaded chapters. Exhausted
-	// sources are excluded using the SAME per-source retry budget the dispatcher
-	// applies, so an upgrade never targets a source that has failed out; the
-	// GATED method form additionally excludes a source whose politeness
-	// circuit-breaker is tripped, so a blocked higher source is never flagged.
-	flagged, err := r.dispatcher.DetectUpgrades(ctx, r.dispatcher.MaxRetries(ctx))
-	if err != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
-		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectUpgrades: %w", err)
-	}
-
-	// Step 3: upgrade every chapter currently in upgrade_available. Called
-	// UNCONDITIONALLY (NOT gated on flagged>0): DetectUpgrades scans downloaded
-	// chapters and UpgradeAll scans upgrade_available ones — disjoint sets. A
-	// chapter flagged on an earlier cycle whose target source was then down would
-	// otherwise sit in upgrade_available forever, because a converged library flags
-	// zero new chapters (flagged==0) yet still has stranded rows to re-drive.
-	// UpgradeAll early-returns after one indexed query (zero source calls) when
-	// nothing is upgrade_available, so the unconditional call is a cheap no-op.
+	// Step 2: upgrade every chapter currently in upgrade_available. Called
+	// UNCONDITIONALLY: the set is flagged by the post-refresh detection pass, and a
+	// chapter flagged on an earlier pass whose target source was then down must
+	// still be re-driven here once it recovers. UpgradeAll early-returns after one
+	// indexed query (zero source calls) when nothing is upgrade_available.
 	upgraded, err := r.upgradeAll(ctx, consumed, globalSem)
 	if err != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Error: err.Error()})
+		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
 	}
 
-	// Step 4: fractional-part suppression — supersede split parts of downloaded
+	// Step 3: fractional-part suppression — supersede split parts of downloaded
 	// wholes (and revert when the whole is gone or the setting is off).
 	if _, _, serr := r.dispatcher.DetectSupersededParts(ctx); serr != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded, Error: serr.Error()})
+		r.broadcastCycle("cycle.done", CycleEvent{Upgraded: upgraded, Error: serr.Error()})
 		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectSupersededParts: %w", serr)
 	}
 
-	// Step 5: best-effort new-readable-chapter notification. It keys on
+	// Step 4: best-effort new-readable-chapter notification. It keys on
 	// first_downloaded_at (upgrade-safe) and never affects the cycle result — a
 	// notify failure is logged inside the pass and swallowed here.
 	if r.notifier != nil {
@@ -240,9 +229,8 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 		}
 	}
 
-	r.broadcastCycle("cycle.done", CycleEvent{Flagged: flagged, Upgraded: upgraded})
+	r.broadcastCycle("cycle.done", CycleEvent{Upgraded: upgraded})
 	slog.InfoContext(ctx, "job.Runner: download cycle finished",
-		"flagged_upgrades", flagged,
 		"upgraded", upgraded,
 	)
 	return nil
@@ -416,6 +404,13 @@ func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, heal
 		"new_chapters", res.NewChapters,
 		"errors", res.Errors,
 	)
+	// A discovery sweep is what surfaces the new provider chapters that create
+	// upgrade candidates, so upgrade detection runs here — ONCE per sweep, at the
+	// refresh cadence — instead of on every download cycle (GAP-112: the library-
+	// wide scan blocked downloads when run every cycle). Detect BEFORE the Trigger
+	// below so the download cycle it kicks off drains the freshly-flagged chapters
+	// via UpgradeAll in the same beat.
+	r.runUpgradeDetection(ctx)
 	r.Trigger()
 	if n, err := healthCount(ctx); err != nil {
 		slog.ErrorContext(ctx, "refresh: health summary count failed", "err", err)
@@ -427,6 +422,24 @@ func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, heal
 	// erroring/coolingDown counts each sweep so a badge that missed a dropped SSE
 	// event self-heals. No-op when no breaker snapshotter is wired.
 	r.broadcastSourcesSummary(ctx)
+}
+
+// runUpgradeDetection runs one convergence-upgrade DETECTION pass: it flags every
+// downloaded chapter that now has a strictly better source into upgrade_available
+// (the actual re-fetch is done by UpgradeAll on the next download cycle). It is
+// pure-DB and makes ZERO source calls. The batched detectUpgrades is no-N+1
+// (GAP-112), so this is cheap even on a large library. Errors are logged and
+// swallowed so a transient detection failure never kills the refresh loop — the
+// next sweep re-detects.
+func (r *Runner) runUpgradeDetection(ctx context.Context) {
+	flagged, err := r.dispatcher.DetectUpgrades(ctx, r.dispatcher.MaxRetries(ctx))
+	if err != nil {
+		slog.ErrorContext(ctx, "job.Runner: upgrade detection error", "err", err)
+		return
+	}
+	if flagged > 0 {
+		slog.InfoContext(ctx, "job.Runner: upgrade detection flagged chapters", "flagged", flagged)
+	}
 }
 
 // broadcastHealthSummary emits a health.summary SSE event with the count of

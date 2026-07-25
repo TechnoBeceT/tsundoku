@@ -89,6 +89,16 @@ func (d *Dispatcher) DetectUpgrades(ctx context.Context, maxRetries int) (int, e
 
 // detectUpgrades is the shared implementation behind both DetectUpgrades forms.
 // gate may be nil (gate-free): every gated-candidate exclusion is a no-op then.
+//
+// It is NO-N+1 by construction (GAP-112): the whole downloaded set's live upgrade
+// candidates are computed by ONE batched bulk load (chapter.RankedLiveCandidatesForMany
+// — was a per-chapter chapter.RankedLiveCandidates = a ~30k-query N+1 on a large
+// library, blocking every download cycle), and the source circuit-breaker is read
+// ONCE for the whole scan (gate.Snapshot — was a per-candidate IsAvailable query).
+// The only per-chapter DB touches left are the RARE stale-watermark heal-write and
+// the SetState of a chapter that actually flags — both writes, both proportional to
+// real work, not reads proportional to library size. The decision per chapter is
+// byte-identical to the old per-chapter path.
 func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int) (int, error) {
 	now := time.Now()
 	chapters, err := client.Chapter.Query().
@@ -105,15 +115,49 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 		return 0, fmt.Errorf("download.DetectUpgrades: query downloaded chapters: %w", err)
 	}
 
+	// Batch-compute every downloaded chapter's ranked live candidates in a bounded
+	// number of queries — identical per-chapter result to RankedLiveCandidates.
+	candsByChapter, err := chapter.RankedLiveCandidatesForMany(ctx, client, chapters, maxRetries, now)
+	if err != nil {
+		return 0, fmt.Errorf("download.DetectUpgrades: batch rank candidates: %w", err)
+	}
+
+	// Read the circuit-breaker snapshot ONCE for the whole scan; a per-candidate
+	// gate query would reintroduce an N+1. A nil gate yields a nil snapshot ⇒ no
+	// exclusion, exactly like the per-candidate nil-gate path.
+	snap := loadBreakerSnapshot(ctx, gate)
+
 	flagged := 0
 	for _, ch := range chapters {
-		n, err := detectUpgradeForChapter(ctx, client, gate, ch, maxRetries, now)
+		n, err := detectUpgradeForChapter(ctx, client, ch, candsByChapter[ch.ID], snap, now)
 		if err != nil {
 			return flagged, err
 		}
 		flagged += n
 	}
 	return flagged, nil
+}
+
+// loadBreakerSnapshot reads every source's circuit-breaker state in ONE query for
+// the whole upgrade scan (the batched twin of the per-candidate gate.IsAvailable
+// used by the download path). A nil gate returns a nil map (no exclusion). A read
+// error is LOGGED AND SWALLOWED, returning a nil map so detection proceeds WITHOUT
+// gate exclusion — the same fail-OPEN direction as the per-candidate
+// gate.IsAvailable (which returns "available" on a read error), and safe because
+// the upgrade FETCH path (fetchAndRender.filterGated) re-checks the gate per source
+// and cleanly resolves any stale upgrade_available flag it produced.
+func loadBreakerSnapshot(ctx context.Context, gate *sourcegate.Service) map[string]sourcegate.BreakerState {
+	if gate == nil {
+		return nil
+	}
+	snap, err := gate.Snapshot(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "download.DetectUpgrades: breaker snapshot read failed — proceeding without gate exclusion (the upgrade fetch re-checks the gate per source)",
+			"err", err,
+		)
+		return nil
+	}
+	return snap
 }
 
 // effectiveSatisfiedImportance resolves the importance an upgrade candidate must
@@ -178,7 +222,12 @@ func effectiveSatisfiedImportance(ctx context.Context, client *ent.Client, ch *e
 // upgrade_available when a strictly higher-importance provider exists.
 // Returns 1 if flagged, 0 if skipped or unchanged, and a non-nil error only
 // for hard failures (state transition errors) that should abort the scan.
-func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (int, error) {
+//
+// cands is ch's ranked live candidates, precomputed by the batched
+// chapter.RankedLiveCandidatesForMany (byte-identical to RankedLiveCandidates);
+// snap is the source circuit-breaker snapshot, read once for the whole scan (nil ⇒
+// no gate exclusion). Neither costs a per-chapter query — that is the N+1 fix.
+func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Chapter, cands []chapter.Candidate, snap map[string]sourcegate.BreakerState, now time.Time) (int, error) {
 	// Defensive path: satisfied_importance should always be set for a downloaded
 	// chapter (a successful download always writes it). Skip to avoid a nil-deref.
 	if ch.SatisfiedImportance == nil {
@@ -194,15 +243,7 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 	// removed or is PARKED at 0 by a library merge.
 	effective := effectiveSatisfiedImportance(ctx, client, ch)
 
-	best, err := bestUpgradeCandidate(ctx, client, gate, ch, maxRetries, now)
-	if err != nil {
-		// Log and continue — one chapter failing to scan should not abort all others.
-		slog.WarnContext(ctx, "download.DetectUpgrades: failed to rank candidates for chapter — skipping",
-			"chapter_id", ch.ID,
-			"err", err,
-		)
-		return 0, nil
-	}
+	best := bestGatedCandidate(snap, cands, now)
 	// No live, non-gated source offers this chapter right now — nothing to upgrade to.
 	if best == nil {
 		return 0, nil
@@ -236,6 +277,11 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, gate *sour
 // importance-ranked" rule is defined once and is identical to the download path
 // (§2 DRY), then applies the shared gate filter so a breaker-tripped higher
 // source is never chosen as an upgrade target (nil gate never filters).
+//
+// This is the SINGLE-CHAPTER form, used by the upgrade SCHEDULING pass
+// (groupByUpgradeTarget) over the already-flagged upgrade_available set — a small,
+// per-cycle-capped set, so its per-chapter query is not a scaling concern. The
+// library-wide DETECTION scan uses the batched detectUpgrades path instead.
 func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (*chapter.Candidate, error) {
 	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
 	if err != nil {
@@ -247,6 +293,41 @@ func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourceg
 	}
 	// RankedLiveCandidates is importance-DESC, so the first is the highest.
 	return &cands[0], nil
+}
+
+// bestGatedCandidate is the snapshot-driven twin of bestUpgradeCandidate's tail:
+// it applies the batched breaker-snapshot exclusion to an ALREADY-ranked candidate
+// slice and returns the highest-importance survivor (cands is importance-DESC), or
+// nil when none survive. Used by the batched detection scan so the gate is read
+// once for the whole library rather than once per candidate.
+func bestGatedCandidate(snap map[string]sourcegate.BreakerState, cands []chapter.Candidate, now time.Time) *chapter.Candidate {
+	cands = gateFilterCandidatesSnapshot(snap, cands, now)
+	if len(cands) == 0 {
+		return nil
+	}
+	return &cands[0]
+}
+
+// gateFilterCandidatesSnapshot is the batched twin of gateFilterCandidates: it
+// drops candidates whose physical source's circuit-breaker is COOLING DOWN, using
+// a PRE-LOADED breaker snapshot (gate.Snapshot) instead of a per-source
+// gate.IsAvailable query — so a library-wide scan reads the gate once, not once per
+// candidate. It is byte-equivalent to gateFilterCandidates for the same DB state:
+// gate.IsAvailable(key) is true unless a breaker row for key has a future cooldown,
+// which is exactly BreakerState.IsCoolingDown; a source with no snapshot entry is
+// available. A nil/empty snapshot filters nothing (identical to a nil gate).
+func gateFilterCandidatesSnapshot(snap map[string]sourcegate.BreakerState, cands []chapter.Candidate, now time.Time) []chapter.Candidate {
+	if len(snap) == 0 {
+		return cands
+	}
+	out := make([]chapter.Candidate, 0, len(cands))
+	for _, c := range cands {
+		if st, ok := snap[canonicalSourceKey(c.SeriesProvider)]; ok && st.IsCoolingDown(now) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // Upgrade executes a non-destructive atomic upgrade for the given chapter.

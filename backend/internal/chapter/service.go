@@ -237,6 +237,20 @@ func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uui
 		return nil, err
 	}
 
+	return liveCandidatesSorted(pcs, maxRetries, now), nil
+}
+
+// liveCandidatesSorted is the shared ranking core behind RankedLiveCandidates
+// (one chapter) and RankedLiveCandidatesForMany (a batched library scan): it
+// keeps only the LIVE candidates (attempts < maxRetries AND past cooldown) and
+// sorts them importance DESC, ProviderChapter-id ASC as the stable tiebreak — so
+// the single-chapter and bulk paths can never rank the same feed differently
+// (§2 DRY). pcs must ALREADY have the ignore-fractional drop applied (both
+// callers apply dropIgnoredFractionalSources before calling in). The comparator
+// is a TOTAL order (importance, then a unique id), so the result is independent
+// of the input row order — the two paths agree byte-for-byte regardless of how
+// Postgres returned the rows.
+func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.Time) []Candidate {
 	var out []Candidate
 	for _, pc := range pcs {
 		sp := pc.Edges.SeriesProvider
@@ -256,7 +270,84 @@ func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uui
 		}
 		return out[i].ProviderChapter.ID.String() < out[j].ProviderChapter.ID.String()
 	})
-	return out, nil
+	return out
+}
+
+// RankedLiveCandidatesForMany is the BATCHED, no-N+1 twin of RankedLiveCandidates:
+// it computes every chapter's ranked live candidates for a WHOLE set of chapters
+// (a library-wide upgrade scan) in a bounded number of queries instead of one
+// query per chapter. The result for each chapter is BYTE-IDENTICAL to calling
+// RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now) — same feed set, same
+// ignore-fractional drop, same live filter, same order — because it reuses the
+// exact same helpers (providerChapter matching, dropIgnoredFractionalSources,
+// liveCandidatesSorted).
+//
+// It issues a constant number of queries regardless of len(chapters): ONE query
+// (plus its WithSeriesProvider eager-load) loads every ProviderChapter feed for
+// the DISTINCT series the chapters belong to, which is then bucketed in memory by
+// (series_id, chapter_key) — the exact key providerChaptersForKey matches on. Each
+// chapter reads only its own bucket, so a same-string chapter_key in a DIFFERENT
+// series never leaks in (bucketing on the pair, not the key alone). Chapters not
+// present in the result map (none are, given a non-empty input) would carry no
+// candidates.
+//
+// The returned map is keyed by Chapter.ID. Chapter.ID is unique and the
+// UNIQUE(series_id, chapter_key) constraint means each (series, key) pair maps to
+// at most one chapter, so buckets never collide across chapters in the input.
+func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapters []*ent.Chapter, maxRetries int, now time.Time) (map[uuid.UUID][]Candidate, error) {
+	result := make(map[uuid.UUID][]Candidate, len(chapters))
+	if len(chapters) == 0 {
+		return result, nil
+	}
+
+	// Distinct series ids across the input — the batch load is scoped to exactly
+	// the series that have a chapter in the scan.
+	seriesSet := make(map[uuid.UUID]struct{}, len(chapters))
+	for _, ch := range chapters {
+		seriesSet[ch.SeriesID] = struct{}{}
+	}
+	seriesIDs := make([]uuid.UUID, 0, len(seriesSet))
+	for id := range seriesSet {
+		seriesIDs = append(seriesIDs, id)
+	}
+
+	pcs, err := client.ProviderChapter.Query().
+		Where(entproviderchapter.HasSeriesProviderWith(
+			entseriesprovider.SeriesIDIn(seriesIDs...),
+		)).
+		WithSeriesProvider().
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("chapter.RankedLiveCandidatesForMany: batch load provider chapters: %w", err)
+	}
+
+	// Bucket by (series_id, chapter_key) — the same pair rawProviderChaptersForKey
+	// matches per chapter. series_id is read off the eager-loaded SeriesProvider edge.
+	type feedKey struct {
+		series uuid.UUID
+		key    string
+	}
+	byKey := make(map[feedKey][]*ent.ProviderChapter, len(pcs))
+	for _, pc := range pcs {
+		sp := pc.Edges.SeriesProvider
+		if sp == nil {
+			// Defensive path: a broken FK — WithSeriesProvider loads the edge for a
+			// valid FK. Skipping mirrors the single-chapter path's nil-edge guard.
+			continue
+		}
+		fk := feedKey{series: sp.SeriesID, key: pc.ChapterKey}
+		byKey[fk] = append(byKey[fk], pc)
+	}
+
+	for _, ch := range chapters {
+		bucket := byKey[feedKey{series: ch.SeriesID, key: ch.ChapterKey}]
+		// dropIgnoredFractionalSources is per-chapter (it depends on whether ch is a
+		// fractional number) and purely in-memory over the loaded edge — exactly what
+		// providerChaptersForKey applies in the single-chapter path.
+		dropped := dropIgnoredFractionalSources(bucket, ch)
+		result[ch.ID] = liveCandidatesSorted(dropped, maxRetries, now)
+	}
+	return result, nil
 }
 
 // HasAnyProviderChapter reports whether at least one source offers chapterID's
