@@ -58,6 +58,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/refresh"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -414,7 +415,15 @@ func main() {
 	// mutation so an owner's routing edit takes effect promptly.
 	onNetworkChange := func() { go netReconcile(ctx) }
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, apkStore, onNetworkChange)
+	// Per-series INSTANT convergence layer (GAP-113): the mutations that create
+	// download/upgrade candidates (adopt, provider add/change/remove, source re-rank)
+	// fire this to refresh+detect that ONE series right away, instead of waiting for
+	// the 2h whole-library sweep. It composes the SCOPED primitives on the refresh
+	// service + dispatcher already built above and nudges runner.Trigger; every run is
+	// async + single-flight per series. It does NOT alter the whole-library cadence.
+	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
+
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, seriesSync, apkStore, onNetworkChange)
 
 	addr := ":" + cfg.Server.Port
 

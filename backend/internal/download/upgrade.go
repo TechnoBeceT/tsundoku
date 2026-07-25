@@ -76,6 +76,25 @@ func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (in
 	return detectUpgrades(ctx, client, nil, maxRetries)
 }
 
+// DetectUpgradesForSeries is the SERIES-SCOPED twin of DetectUpgrades (GAP-113):
+// it evaluates only the downloaded chapters of ONE series, so a mutation that
+// changes that series' candidate set (an adopt, a provider add/remove, a source
+// re-rank) flags its freshly-upgradable chapters IMMEDIATELY instead of waiting for
+// the next whole-library detection at the refresh cadence.
+//
+// It shares the exact batched, no-N+1 implementation as the whole-library scan
+// (detectUpgradesScoped with a series filter) — same chapters.WithSatisfiedBy
+// eager-load, the same chapter.RankedLiveCandidatesForMany batched candidate build
+// (which, for a single-series input, loads only that series' feeds), the same
+// once-per-scan breaker snapshot, and the byte-identical per-chapter decision
+// (watermark heal, park-0/frozen carve-outs, self-churn guard, strict-higher, gate
+// exclusion). So the set it flags for a series is identical to what the
+// whole-library scan would flag for that same series. A nil gate makes it identical
+// to the gate-free form.
+func (d *Dispatcher) DetectUpgradesForSeries(ctx context.Context, seriesID uuid.UUID, maxRetries int) (int, error) {
+	return detectUpgradesScoped(ctx, d.client, d.gate, maxRetries, &seriesID)
+}
+
 // DetectUpgrades is the GATED form used in production. It excludes a source
 // whose source-politeness circuit-breaker is tripped (cooled down) from being
 // chosen as an upgrade target, so a Cloudflare-blocked higher-importance source
@@ -100,9 +119,26 @@ func (d *Dispatcher) DetectUpgrades(ctx context.Context, maxRetries int) (int, e
 // real work, not reads proportional to library size. The decision per chapter is
 // byte-identical to the old per-chapter path.
 func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int) (int, error) {
+	return detectUpgradesScoped(ctx, client, gate, maxRetries, nil)
+}
+
+// detectUpgradesScoped is the shared implementation behind the whole-library
+// (seriesID nil) and per-series (seriesID set) detection. The only difference is a
+// single added WHERE on series_id when scoped — everything downstream (the batched
+// candidate build, the once-per-scan breaker snapshot, the per-chapter decision) is
+// identical, so a scoped scan flags exactly the chapters of that series the
+// whole-library scan would. See detectUpgrades for the no-N+1 rationale.
+func detectUpgradesScoped(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int, seriesID *uuid.UUID) (int, error) {
 	now := time.Now()
-	chapters, err := client.Chapter.Query().
-		Where(entchapter.StateEQ(entchapter.StateDownloaded)).
+	query := client.Chapter.Query().
+		Where(entchapter.StateEQ(entchapter.StateDownloaded))
+	if seriesID != nil {
+		// Scoped: restrict the scan to one series' downloaded chapters. The batched
+		// candidate load then loads only this series' feeds (RankedLiveCandidatesForMany
+		// scopes to the distinct series of its input), so there is no N+1.
+		query = query.Where(entchapter.SeriesID(*seriesID))
+	}
+	chapters, err := query.
 		// Eager-load the satisfying source for the WHOLE scan in one batched query
 		// (Ent resolves the satisfied_by edge with a single IN over the scanned
 		// chapters' satisfied_by_provider_id). effectiveSatisfiedImportance then reads

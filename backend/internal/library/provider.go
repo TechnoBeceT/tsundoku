@@ -121,9 +121,11 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 		return series.SeriesDetailDTO{}, err
 	}
 
-	if s.trigger != nil {
-		s.trigger()
-	}
+	// Immediate whole-library download trigger PLUS the per-series instant
+	// refresh+detect layer (GAP-113): the newly attached, possibly higher-importance
+	// source should download its backlog and supersede existing downloads now, not at
+	// the 2h sweep. Both are nil-guarded no-ops when unwired.
+	s.fireSeriesConvergence(ctx, seriesID)
 
 	return s.series.GetSeries(ctx, seriesID)
 }

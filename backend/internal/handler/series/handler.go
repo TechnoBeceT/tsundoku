@@ -20,6 +20,7 @@ type Handler struct {
 	coverCache      *sourcecover.Cache
 	viewSyncer      ViewSyncer
 	trackerProgress TrackerProgressSetter
+	seriesSync      SeriesSyncer
 }
 
 // NewHandler constructs a Handler bound to a series.Service, an auto-converge
@@ -228,14 +229,24 @@ func (h *Handler) ReorderProviders(c echo.Context) error {
 	// Auto-converge: re-rank may make a downloaded chapter's new top source a
 	// strictly-better version — trigger a cycle so DetectUpgrades runs now (M5).
 	h.trigger()
+	// Instant per-series detection (GAP-113): the feeds are already synced — only the
+	// winning source changed — so re-detect THIS series' upgrades right away (no feed
+	// re-fetch) instead of waiting for the 2h sweep. Async + single-flight; nil when
+	// not wired.
+	if h.seriesSync != nil {
+		h.seriesSync.DetectSeries(ctx, id)
+	}
 	return c.JSON(http.StatusOK, updated)
 }
 
 // RemoveProvider handles DELETE /api/series/:id/providers/:providerId. It
 // removes one source from the series (deleting the provider row + its
 // availability feed + sync state, clearing satisfied_by on affected chapters),
-// keeping every downloaded CBZ, and returns the updated series detail. It does
-// NOT trigger an auto-converge cycle — removal creates no wanted chapters (M6).
+// keeping every downloaded CBZ, and returns the updated series detail. It does not
+// fire the whole-library download trigger (removal creates no wanted chapters — M6),
+// but it DOES fire the per-series instant refresh+detect layer (GAP-113) so a
+// chapter whose satisfying source was just removed re-converges to a remaining
+// source right away instead of at the 2h sweep.
 func (h *Handler) RemoveProvider(c echo.Context) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
@@ -257,6 +268,14 @@ func (h *Handler) RemoveProvider(c echo.Context) error {
 	updated, err := h.svc.GetSeries(ctx, id)
 	if err != nil {
 		return mapServiceError(err)
+	}
+	// Instant per-series convergence (GAP-113): removing a source changes the feed
+	// set, so re-sync the remaining feeds and re-detect this series' upgrades right
+	// away (a downloaded chapter whose satisfier was just removed may now converge to
+	// a different remaining source) instead of waiting for the 2h sweep. Async +
+	// single-flight; nil when not wired.
+	if h.seriesSync != nil {
+		h.seriesSync.SyncSeries(ctx, id)
 	}
 	return c.JSON(http.StatusOK, updated)
 }

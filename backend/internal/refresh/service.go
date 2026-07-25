@@ -111,15 +111,57 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 	if err != nil {
 		return RefreshResult{}, fmt.Errorf("refresh.RefreshAll: query monitored series: %w", err)
 	}
+	return s.sweep(ctx, seriesList), nil
+}
 
+// RefreshSeries is the per-series scoped twin of RefreshAll (GAP-113): it
+// re-fetches only ONE series' provider feeds so a mutation that creates upgrade
+// candidates (an adopt, a provider add/change/remove) discovers new chapters for
+// THAT series immediately instead of waiting for the next whole-library sweep. It
+// reuses the exact same sweep body — group by (physical source, manga), fetch each
+// once under bounded concurrency, ingest every scanlator-provider from the shared
+// raw list — so it is UPSERT-ONLY (never deletes a ProviderChapter row or a CBZ,
+// Rule 2) and stamps last_synced_at/last_error per provider identically.
+//
+// It honors the SAME monitored/completed gate as RefreshAll: a non-monitored or
+// completed series is excluded from the whole-library sweep, so the scoped path
+// skips it too (a no-op zero result, no upstream fetch). A series that was deleted
+// concurrently (not found) is likewise a no-op. Emits refresh.start/refresh.done
+// around the fetch, reusing the whole-library event shape (the FE already handles
+// these names).
+func (s *Service) RefreshSeries(ctx context.Context, seriesID uuid.UUID) (RefreshResult, error) {
+	sr, err := s.client.Series.Query().
+		Where(entseries.IDEQ(seriesID)).
+		WithProviders().
+		Only(ctx)
+	if ent.IsNotFound(err) {
+		// Deleted between the mutation and this scoped refresh — nothing to do.
+		return RefreshResult{}, nil
+	}
+	if err != nil {
+		return RefreshResult{}, fmt.Errorf("refresh.RefreshSeries: query series %s: %w", seriesID, err)
+	}
+	// Same gate RefreshAll applies via its query filter: a completed or unmonitored
+	// series is never swept, so the scoped path is a no-op for it too.
+	if !sr.Monitored || sr.Completed {
+		return RefreshResult{}, nil
+	}
+	return s.sweep(ctx, []*ent.Series{sr}), nil
+}
+
+// sweep is the shared body of RefreshAll (whole library) and RefreshSeries (one
+// series): it groups every provider in seriesList by its (physical source, manga)
+// so each source-manga's chapter list is fetched ONCE and every scanlator-provider
+// that shares it is ingested from that single result (de-amplification — a series
+// followed under three scanlators of the same source triggers one FetchChapters,
+// not three). Fetches run under the runtime-tunable concurrency bound, per-provider
+// failures are logged and skipped (partial success), and refresh.start/refresh.done
+// bracket the sweep. It is UPSERT-ONLY, so a chapter that vanished from a source
+// listing keeps its row and CBZ (Rule 2).
+func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshResult {
 	s.broadcast("refresh.start", RefreshEvent{Monitored: len(seriesList)})
 
 	now := time.Now()
-	// Group every provider by its (physical source, manga) so the sweep fetches
-	// each source-manga's chapter list ONCE and ingests every scanlator-provider
-	// that shares it from that single result (Task A — de-amplification). A series
-	// followed under three scanlators of the same source used to trigger three
-	// identical FetchChapters; now it triggers one.
 	groups := s.buildRefreshGroups(ctx, seriesList, now)
 
 	var mu sync.Mutex
@@ -151,7 +193,7 @@ func (s *Service) RefreshAll(ctx context.Context) (RefreshResult, error) {
 		NewChapters:        result.NewChapters,
 		Errors:             result.Errors,
 	})
-	return result, nil
+	return result
 }
 
 // refreshLimit resolves the runtime-tunable parallel-refetch bound at use-time,

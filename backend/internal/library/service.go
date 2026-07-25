@@ -118,6 +118,42 @@ type Service struct {
 	// it (a true membership check). Nil ⇒ the check is skipped (see SourceLister)
 	// — attach it with WithSourceLister; production always wires it.
 	sources SourceLister
+
+	// seriesSync fires the per-series instant refresh+detect layer (GAP-113) after a
+	// successful AddProvider, so a newly attached source's chapters download / upgrade
+	// immediately instead of at the next whole-library sweep. Nil ⇒ the scoped layer
+	// is skipped (existing NewService call sites unaffected) — attach it with
+	// WithSeriesSync.
+	seriesSync SeriesSyncer
+}
+
+// SeriesSyncer runs the per-series instant refresh+detect convergence for one
+// series. *seriessync.Orchestrator satisfies it. A local interface so library never
+// imports seriessync, and nil is valid (the scoped layer is skipped).
+type SeriesSyncer interface {
+	SyncSeries(ctx context.Context, seriesID uuid.UUID)
+}
+
+// WithSeriesSync attaches the per-series instant convergence orchestrator (GAP-113),
+// fired after a successful AddProvider. Returns the receiver for chaining off
+// NewService. A nil syncer leaves the base behaviour unchanged.
+func (s *Service) WithSeriesSync(sync SeriesSyncer) *Service {
+	s.seriesSync = sync
+	return s
+}
+
+// fireSeriesConvergence kicks the post-mutation convergence for seriesID: the
+// immediate whole-library download trigger AND the per-series instant refresh+detect
+// layer (GAP-113). Both are nil-guarded no-ops when their dependency is unwired.
+// Extracted so a caller's own control flow (e.g. AddProvider) stays within the
+// cyclomatic-complexity budget.
+func (s *Service) fireSeriesConvergence(ctx context.Context, seriesID uuid.UUID) {
+	if s.trigger != nil {
+		s.trigger()
+	}
+	if s.seriesSync != nil {
+		s.seriesSync.SyncSeries(ctx, seriesID)
+	}
 }
 
 // WithSourceLister attaches the engine-host source lister used by AddProvider /

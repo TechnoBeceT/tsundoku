@@ -1,10 +1,12 @@
 package imports
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
@@ -15,6 +17,14 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcecover"
 )
 
+// SeriesSyncer runs the per-series instant refresh+detect layer (GAP-113) for a
+// newly adopted series. *seriessync.Orchestrator satisfies it. Kept as a local
+// interface so this handler never imports seriessync, and nil is a valid value (the
+// scoped layer is simply skipped — the whole-library sweep still covers the series).
+type SeriesSyncer interface {
+	SyncSeries(ctx context.Context, seriesID uuid.UUID)
+}
+
 // Handler holds the dependencies for the imports HTTP handlers.
 // All business logic lives in imports.Service and series.Service; this handler
 // is thin — it binds, validates, calls the service, and renders the DTO.
@@ -23,6 +33,7 @@ type Handler struct {
 	series     *seriessvc.Service
 	trigger    func()
 	coverCache *sourcecover.Cache
+	seriesSync SeriesSyncer
 }
 
 // NewHandler constructs a Handler bound to an imports.Service, a series.Service
@@ -33,6 +44,16 @@ type Handler struct {
 // role as series.Handler's `coverCache`, see ProviderCover and GAP-085).
 func NewHandler(svc *imports.Service, series *seriessvc.Service, trigger func(), coverCache *sourcecover.Cache) *Handler {
 	return &Handler{svc: svc, series: series, trigger: trigger, coverCache: coverCache}
+}
+
+// WithSeriesSync attaches the per-series instant refresh+detect orchestrator
+// (GAP-113), fired after a successful Adopt so the new series' feeds are re-synced
+// and its upgradable chapters flagged immediately. Returns the receiver for
+// chaining off NewHandler. A nil syncer (the base constructor) skips the scoped
+// layer — existing behaviour is unchanged.
+func (h *Handler) WithSeriesSync(s SeriesSyncer) *Handler {
+	h.seriesSync = s
+	return h
 }
 
 // Sources handles GET /api/sources.
@@ -275,5 +296,11 @@ func (h *Handler) Adopt(c echo.Context) error {
 	// Auto-converge: kick an immediate download/upgrade cycle so the adopted
 	// series' backlog downloads now instead of at the next tick (M5).
 	h.trigger()
+	// Instant per-series convergence (GAP-113): re-fetch this new series' feeds and
+	// flag its upgradable chapters right away rather than waiting for the 2h sweep.
+	// Async + single-flight; nil when not wired (scoped layer skipped).
+	if h.seriesSync != nil {
+		h.seriesSync.SyncSeries(ctx, id)
+	}
 	return c.JSON(http.StatusCreated, detail)
 }

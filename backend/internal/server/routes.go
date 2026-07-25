@@ -44,6 +44,7 @@ import (
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/reporting"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -194,6 +195,7 @@ func registerRoutes(
 	pushSubsSvc *pushsvc.Service,
 	vapidPublicKey string,
 	trigger func(),
+	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
 	onNetworkChange func(),
 ) {
@@ -263,7 +265,8 @@ func registerRoutes(
 	// same trackerSyncSvc instance also satisfies.
 	seriesH := seriesh.NewHandler(seriesSvc, trigger, coverCache).
 		WithViewSyncer(trackerSyncSvc).
-		WithTrackerProgressSetter(trackerSyncSvc)
+		WithTrackerProgressSetter(trackerSyncSvc).
+		WithSeriesSync(seriesSync) // GAP-113: re-rank → scoped detect, remove-provider → scoped refresh+detect
 
 	// Source/extension PURGE cascade (GAP-101). purgeSvc composes the sanctioned
 	// series.RemoveProvider per-provider primitive with the metric-row + breaker-row
@@ -508,7 +511,8 @@ func registerRoutes(
 		WithDisabledSources(disabledSrcSvc). // hides owner-disabled sources from the Discover/Search/Browse pickers
 		WithSourceBreakers(gate).            // flags a cooling-down source as degraded in the picker (shared anti-ban breaker snapshot)
 		WithEventRecorder(eventsSvc)         // logs a `search` audit event per source per fan-out (Source Health Console)
-	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache)
+	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache).
+		WithSeriesSync(seriesSync) // GAP-113: adopt → scoped refresh+detect for the new series
 	authed.GET("/sources", importsH.Sources)
 	authed.GET("/search", importsH.Search)
 	authed.GET("/sources/:sourceId/browse", importsH.Browse)
@@ -523,8 +527,9 @@ func registerRoutes(
 	// construction — plus the shared trigger, storage root, and SSE hub (the
 	// async scan streams scan.start/scan.progress/scan.done over it).
 	librarySvc := library.NewService(client, ingestSvc, importsSvc, seriesSvc, trigger, cfg.Storage.Folder, hub).
-		WithAutoIdentifier(metaSvc).   // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
-		WithSourceLister(engineClient) // membership check for AddProvider/MatchDiskProvider — true 404 only on a real miss (not a cooled-down source)
+		WithAutoIdentifier(metaSvc).    // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
+		WithSourceLister(engineClient). // membership check for AddProvider/MatchDiskProvider — true 404 only on a real miss (not a cooled-down source)
+		WithSeriesSync(seriesSync)      // GAP-113: add-provider → scoped refresh+detect for that series
 	// Wire the Slice-B ignore-scanlator on-enable migration into the extensions
 	// handler now that the library service exists (it owns the provider-merge +
 	// CBZ-relabel machinery). extensionsH was constructed earlier; its route
