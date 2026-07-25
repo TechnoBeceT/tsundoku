@@ -3,6 +3,7 @@ package job_test
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -301,5 +302,59 @@ func TestPeriodLoop_PublishesScheduleState(t *testing.T) {
 	}
 	if gap := got[1].next.Sub(got[0].next); gap < period-time.Millisecond {
 		t.Errorf("next-run advanced by %v across a cycle, want ~the %v period", gap, period)
+	}
+}
+
+// shutdownDuringCycleTrial runs one loop from start to shutdown and reports how
+// many cycles it ran. The trial reproduces the production shutdown shape exactly:
+// the context is cancelled from INSIDE the first cycle (a SIGTERM landing
+// mid-cycle), and that cycle then sleeps well past its 1ms period so the next
+// deadline is guaranteed to be in the PAST when it returns. That is the zero-wait
+// state in which timer.C and ctx.Done() are both ready — so a loop that does not
+// order them starts a second cycle on a dead context. Exactly one cycle may run.
+func shutdownDuringCycleTrial(t *testing.T) int {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var cycles atomic.Int32
+	marks := &markRecorder{}
+	run := func(context.Context, bool) {
+		if cycles.Add(1) == 1 {
+			cancel()
+			// Overrun the period so the next deadline is already due. Without
+			// this the next wait stays positive and ctx.Done() wins unaided,
+			// which would leave the defect unexercised.
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	job.StartPeriodLoopForTest(ctx, fixedInterval(time.Millisecond), nil, run, marks.record)
+	// The unscheduled publication is the loop's last act before its goroutine
+	// returns, so no further cycle can start once it lands.
+	marks.waitForUnscheduled(t, 2*time.Second)
+
+	return int(cycles.Load())
+}
+
+// TestPeriodLoop_CancellationBeatsADueCycle pins the shutdown half of the timing
+// contract: once the context is cancelled, no further cycle may START, even when
+// the previous cycle overran its period and the next one is already due.
+//
+// The trial count is the point of this test. The defect it guards against is a
+// COIN FLIP — Go selects at random between the ready timer.C and the ready
+// ctx.Done() — so a single trial would clear a broken loop about half the time.
+// Trials are independent, so 40 of them leave a broken loop a ~1-in-10^12 chance
+// of passing. A correct loop is not statistical at all: the cancellation checks
+// make a second cycle impossible, so it returns exactly 1 every time and this
+// test cannot flake. Each trial costs the ~5ms overrun, so the whole test is well
+// under a second.
+func TestPeriodLoop_CancellationBeatsADueCycle(t *testing.T) {
+	const trials = 40
+	for i := 0; i < trials; i++ {
+		if got := shutdownDuringCycleTrial(t); got != 1 {
+			t.Fatalf("trial %d ran %d cycles, want exactly 1 — a cycle started after the context was cancelled", i, got)
+		}
 	}
 }

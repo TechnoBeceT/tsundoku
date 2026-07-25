@@ -35,6 +35,18 @@ import (
 //
 // The interval is re-read at the top of every iteration, so an owner's settings
 // change takes effect on the next wait without a restart (hot reload).
+//
+// # Cancellation outranks a due cycle
+//
+// A cycle never STARTS on an already-cancelled context. That guarantee needs
+// explicit checks rather than falling out of the select, and the reason is the
+// zero wait: once a cycle has overrun its period the next deadline is already in
+// the past, so timer.C is ready at the very same instant as ctx.Done() — and Go
+// chooses among ready select cases at RANDOM. Without the checks roughly half of
+// all shutdowns that land mid-cycle would start one more doomed cycle (at
+// SIGTERM: a spurious cycle.start/cycle.done pair plus a database pass on a dead
+// context). The checks only order two simultaneously-ready cases; while ctx is
+// live they do nothing, so BACK-TO-BACK WHEN OUTPACED is untouched (GAP-115).
 type periodLoop struct {
 	// name labels the loop in its stop log line ("download", "refresh").
 	name string
@@ -67,6 +79,14 @@ func (l periodLoop) start(ctx context.Context) {
 func (l periodLoop) loop(ctx context.Context) {
 	lastStart := time.Now()
 	for {
+		// Don't even set an iteration up on a dead context: a cycle that overran
+		// its period returns here with the next deadline already past, which is
+		// exactly the zero-wait case the select cannot resolve on its own.
+		if ctx.Err() != nil {
+			l.stop(ctx)
+			return
+		}
+
 		interval := l.interval(ctx)
 		next := lastStart.Add(interval)
 		l.mark(false, next)
@@ -75,16 +95,32 @@ func (l periodLoop) loop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			l.mark(false, time.Time{})
-			slog.InfoContext(ctx, "job.Runner: "+l.name+" loop stopped (context cancelled)")
+			l.stop(ctx)
 			return
 		case <-timer.C:
+			// The check above cannot be the last word: reading the interval is a
+			// live settings read, so cancellation can still arrive between it and
+			// this select — and if the wait was zero, both cases are then ready
+			// and the choice is random. This is where the ordering is actually
+			// enforced, immediately before the only place a timed cycle starts.
+			if ctx.Err() != nil {
+				l.stop(ctx)
+				return
+			}
 			lastStart = l.runCycle(ctx, interval, false)
 		case <-l.trigger:
 			timer.Stop()
 			lastStart = l.runCycle(ctx, interval, true)
 		}
 	}
+}
+
+// stop publishes the loop's terminal schedule state (unscheduled) and logs the
+// exit. Every return from loop goes through it, so a shutdown looks identical
+// whichever of the three cancellation checks observed it first.
+func (l periodLoop) stop(ctx context.Context) {
+	l.mark(false, time.Time{})
+	slog.InfoContext(ctx, "job.Runner: "+l.name+" loop stopped (context cancelled)")
 }
 
 // runCycle marks the loop running, executes one cycle, and returns the instant the
