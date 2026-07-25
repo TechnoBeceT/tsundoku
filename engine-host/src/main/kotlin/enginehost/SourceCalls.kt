@@ -44,11 +44,21 @@ private val jsonMediaType = "application/json".toMediaType()
 private val impersonateMapper = jacksonObjectMapper()
 
 /**
- * Hop-by-hop / content-encoding headers stripped before an upstream request is forwarded to the
- * impersonate gateway (GAP-111). curl_cffi's Chrome impersonation manages the transport and
- * content-encoding itself, so a source that explicitly set any of these could get mis-decoded or
- * misrouted bytes. Lowercased for case-insensitive matching; every OTHER header
- * (Referer/User-Agent/Cookie/custom source headers) is forwarded verbatim.
+ * Headers stripped before an upstream request is forwarded to the impersonate gateway (GAP-111).
+ * Two reasons a header is on this list:
+ *  1. Hop-by-hop / content-encoding (accept-encoding, host, connection, ...): curl_cffi's Chrome
+ *     impersonation manages the transport and content-encoding itself, so a source that explicitly
+ *     set one of these could get mis-decoded or misrouted bytes.
+ *  2. Request-side caching headers (cache-control, pragma): a real browser never sends these on an
+ *     image GET, so forwarding a source's okhttp-set "Cache-Control: max-age=..." is a bot signal
+ *     that DEFEATS the Chrome impersonation — a fingerprint-gating CDN (confirmed: Hive Scans) 403s
+ *     the otherwise-perfect fingerprint purely because of them. Stripped here too (defense-in-depth)
+ *     so the engine never forwards them even though the gateway also strips them.
+ * The strip is deliberately MINIMAL — ONLY transport/encoding + caching headers. Every semantic
+ * header (Referer, User-Agent, Accept, Origin, Cookie, sec-*, custom source headers) is forwarded
+ * verbatim, because over-stripping starves other sources of headers they genuinely need (confirmed:
+ * dropping the UA/Accept set makes Thunder Scans serve an HTML anti-bot page instead of the image).
+ * Lowercased for case-insensitive matching.
  */
 private val strippedGatewayHeaders = setOf(
     "accept-encoding",
@@ -60,6 +70,8 @@ private val strippedGatewayHeaders = setOf(
     "te",
     "upgrade",
     "keep-alive",
+    "cache-control",
+    "pragma",
 )
 
 /**

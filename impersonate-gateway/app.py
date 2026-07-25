@@ -54,10 +54,21 @@ PORT = int(os.environ.get("PORT", "8788"))
 # single request; a slow CDN behind a proxy still resolves well within this.
 DEFAULT_TIMEOUT = 60
 
-# Hop-by-hop / content-encoding headers dropped before the curl_cffi call (GAP-111,
-# defense-in-depth — the engine strips these too). curl_cffi's Chrome impersonation
-# manages the transport and content-encoding itself, so replaying a caller-set
-# Accept-Encoding/Host/Connection/... could mis-decode or misroute the bytes.
+# Headers dropped before the curl_cffi call (GAP-111, defense-in-depth — the engine
+# strips these too). Two reasons a header is on this list:
+#   1. Hop-by-hop / content-encoding (accept-encoding, host, connection, ...):
+#      curl_cffi's Chrome impersonation manages the transport and content-encoding
+#      itself, so replaying a caller-set one could mis-decode or misroute the bytes.
+#   2. Request-side caching headers (cache-control, pragma): a real browser never
+#      sends these on an image GET, so forwarding a source's okhttp-set
+#      "Cache-Control: max-age=..." is a bot signal that DEFEATS the Chrome
+#      impersonation — a fingerprint-gating CDN (confirmed: Hive Scans) 403s the
+#      otherwise-perfect fingerprint purely because of them.
+# The strip is deliberately MINIMAL — ONLY transport/encoding + caching headers.
+# Every semantic header (User-Agent, Accept, Accept-Language, Origin, Referer,
+# Cookie, sec-*, custom source headers) is forwarded verbatim, because over-stripping
+# starves other sources of headers they genuinely need (confirmed: dropping the UA/
+# Accept set makes Thunder Scans serve an HTML anti-bot page instead of the image).
 # Lowercased for case-insensitive matching; all other headers forward verbatim.
 STRIPPED_HEADERS = frozenset({
     "accept-encoding",
@@ -69,6 +80,8 @@ STRIPPED_HEADERS = frozenset({
     "te",
     "upgrade",
     "keep-alive",
+    "cache-control",
+    "pragma",
 })
 
 

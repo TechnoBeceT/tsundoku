@@ -74,6 +74,11 @@ class ImpersonateGatewayTest {
             .get()
             .header("Referer", "https://reader.example/")
             .header("User-Agent", "Mozilla/5.0")
+            // Request-side caching headers a source's okhttp client may set — the gateway strips them
+            // (they are a bot signal a real browser never sends on an image GET). See the stripped-
+            // header assertions in `the forwarded request carries ...`.
+            .header("Cache-Control", "max-age=600")
+            .header("Pragma", "no-cache")
             .build()
 
     /** (a) Gateway 200 + upstream 200 → bytes returned; okhttp is never reached (non-null result). */
@@ -94,7 +99,12 @@ class ImpersonateGatewayTest {
         assertEquals("image/jpeg", result.second)
     }
 
-    /** The forwarded request carries url/method/headers verbatim and the SOCKS egress. */
+    /**
+     * The forwarded request carries url/method/headers verbatim and the SOCKS egress, EXCEPT the
+     * request-side caching headers (Cache-Control/Pragma), which are stripped (GAP-111) — they are a
+     * bot signal that defeats the impersonation on a fingerprint-gating CDN. A semantic header
+     * (Referer/User-Agent) still forwards, proving the strip is minimal and not over-broad.
+     */
     @Test
     fun `the forwarded request carries url, method, headers and socks`() {
         val url = startGateway(
@@ -114,8 +124,13 @@ class ImpersonateGatewayTest {
         assertEquals("socks5://10.0.0.1:1080", body["socks"])
         @Suppress("UNCHECKED_CAST")
         val headers = body["headers"] as Map<String, String>
+        // Semantic headers forward verbatim — the strip is minimal, not over-broad.
         assertEquals("https://reader.example/", headers["Referer"])
         assertEquals("Mozilla/5.0", headers["User-Agent"])
+        // Request-side caching headers are stripped (GAP-111): a bot signal a real browser never
+        // sends on an image GET, which 403s the impersonation on a fingerprint-gating CDN.
+        assertNull(headers["Cache-Control"], "Cache-Control must be stripped, not forwarded")
+        assertNull(headers["Pragma"], "Pragma must be stripped, not forwarded")
         // A GET has no body — body_b64 is null (not an empty string).
         assertNull(body["body_b64"])
     }
