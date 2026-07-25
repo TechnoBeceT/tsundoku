@@ -21,7 +21,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SuwayomiPane from './SuwayomiPane.vue'
-import type { FlareSolverrConfig } from '../screens/settings.types'
+import type { FlareSolverrConfig, ImpersonateConfig } from '../screens/settings.types'
 
 const baseFlareSolverr: FlareSolverrConfig = {
   enabled: false,
@@ -32,18 +32,25 @@ const baseFlareSolverr: FlareSolverrConfig = {
   fallback: false,
 }
 
-function saveButton(wrapper: ReturnType<typeof mount>) {
-  return wrapper.find('button[type="submit"]')
+const baseImpersonate: ImpersonateConfig = {
+  enabled: false,
+  url: '',
+}
+
+function mountPane(overrides: Partial<{ flareSolverr: FlareSolverrConfig, impersonate: ImpersonateConfig }> = {}) {
+  return mount(SuwayomiPane, {
+    props: { flareSolverr: baseFlareSolverr, impersonate: baseImpersonate, ...overrides },
+  })
 }
 
 describe('SuwayomiPane', () => {
   it('enabling FlareSolverr + entering a URL flips the Save button and emits the merged config', async () => {
-    const wrapper = mount(SuwayomiPane, {
-      props: { flareSolverr: baseFlareSolverr },
-    })
+    const wrapper = mountPane()
 
-    // Starts clean: nothing edited yet, Save disabled.
-    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+    // The FlareSolverr card is the first stacked card; its Save button is the
+    // first submit button. Starts clean: nothing edited yet, Save disabled.
+    const flareSaveBtn = () => wrapper.findAll('button[type="submit"]')[0]!
+    expect(flareSaveBtn().attributes('disabled')).toBeDefined()
 
     // Flip the FlareSolverr toggle on — a whole-object v-model update.
     const flareToggle = wrapper.find('[aria-label="Enable FlareSolverr"]')
@@ -56,9 +63,9 @@ describe('SuwayomiPane', () => {
     expect(urlField.exists()).toBe(true)
     await urlField.setValue('http://flaresolverr:8191')
 
-    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
+    expect(flareSaveBtn().attributes('disabled')).toBeUndefined()
 
-    await saveButton(wrapper).trigger('click')
+    await flareSaveBtn().trigger('click')
 
     // §16: the emitted payload carries the full merged FlareSolverr config.
     const emitted = wrapper.emitted('save-flaresolverr')
@@ -66,5 +73,33 @@ describe('SuwayomiPane', () => {
     const saved = emitted![0]![0] as FlareSolverrConfig
     expect(saved.enabled).toBe(true)
     expect(saved.url).toBe('http://flaresolverr:8191')
+  })
+
+  it('enabling the impersonate gateway + entering a URL flips its Save button and emits the merged config', async () => {
+    const wrapper = mountPane()
+
+    // The impersonate card is the second stacked card; its Save button is the
+    // second submit button.
+    const impSaveBtn = () => wrapper.findAll('button[type="submit"]')[1]!
+    expect(impSaveBtn().attributes('disabled')).toBeDefined()
+
+    // Flip the impersonate toggle on — a whole-object v-model update (the same
+    // const-reactive regression guard as the FlareSolverr card above).
+    await wrapper.find('[aria-label="Enable impersonate gateway"]').trigger('click')
+
+    const urlField = wrapper.find('.imp-body .field__input')
+    expect(urlField.exists()).toBe(true)
+    await urlField.setValue('http://impersonate-gateway:8788')
+
+    expect(impSaveBtn().attributes('disabled')).toBeUndefined()
+
+    await impSaveBtn().trigger('click')
+
+    // §16: the emitted payload carries the full merged impersonate config.
+    const emitted = wrapper.emitted('save-impersonate')
+    expect(emitted).toBeTruthy()
+    const saved = emitted![0]![0] as ImpersonateConfig
+    expect(saved.enabled).toBe(true)
+    expect(saved.url).toBe('http://impersonate-gateway:8788')
   })
 })

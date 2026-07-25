@@ -228,6 +228,21 @@ const (
 	// Read at USE-TIME (harvest/update write-through), so a change hot-reloads on
 	// the next prune without a restart.
 	KeyRetainedVersions = "extensions.retained_versions"
+	// KeyImpersonateEnabled toggles routing engine image fetches through the
+	// Chrome-fingerprint impersonate gateway (bool, default false). Like the
+	// flaresolverr.* group (GAP-111) this whole impersonate.* group is
+	// TSUNDOKU-OWNED runtime config — it is NOT an env var and NOT read from the
+	// engine. The engine host reads the pushed value LIVE per image fetch: with
+	// it on AND KeyImpersonateURL set, a page/cover fetch tries the gateway first
+	// and transparently falls back to the default (okhttp) client on any gateway
+	// failure. The safe default is off (straight to okhttp), so a source's image
+	// fetches are unchanged until an owner opts in.
+	KeyImpersonateEnabled = "impersonate.enabled"
+	// KeyImpersonateURL is the impersonate-gateway endpoint (e.g.
+	// http://impersonate-gateway:8788). Blank (default) disables it regardless of
+	// KeyImpersonateEnabled — the engine host goes straight to okhttp when the URL
+	// is empty, exactly like the FlareSolverr URL gates the Kitsu transport.
+	KeyImpersonateURL = "impersonate.url"
 )
 
 // retainedVersionsMin/Max bound the extensions.retained_versions tunable.
@@ -322,6 +337,12 @@ type Defaults struct {
 	// ReportingRetentionDays backs the reporting.retention_days tunable — how many
 	// days of source-operation audit-log rows the daily purge keeps.
 	ReportingRetentionDays int
+	// ImpersonateEnabled / ImpersonateURL back the impersonate.* tunables (the
+	// Chrome-fingerprint image-fetch gateway, GAP-111). Like the FlareSolverr
+	// group these have no env var — main injects fixed factory defaults
+	// (off / blank) an owner overrides via the Settings UI.
+	ImpersonateEnabled bool
+	ImpersonateURL     string
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -375,6 +396,8 @@ var tunableOrder = []string{
 	KeyEngineSocksVersion,
 	KeyReportingRetentionDays,
 	KeyRetainedVersions,
+	KeyImpersonateEnabled,
+	KeyImpersonateURL,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -528,6 +551,18 @@ var tunables = map[string]tunable{
 	KeyRetainedVersions: intTunable(
 		KeyRetainedVersions, "count", retainedVersionsMin, retainedVersionsMax,
 		func(d Defaults) int { return d.RetainedVersions },
+	),
+	// The impersonate group (GAP-111, Tsundoku-owned Chrome-fingerprint image
+	// gateway — see the KeyImpersonate* doc comments above). enabled is a plain
+	// bool; url reuses the same blank-or-absolute-http(s) validation as the
+	// FlareSolverr URL (§2 DRY — one urlx kernel for every URL tunable).
+	KeyImpersonateEnabled: boolTunable(
+		KeyImpersonateEnabled,
+		func(d Defaults) bool { return d.ImpersonateEnabled },
+	),
+	KeyImpersonateURL: urlOrBlankTunable(
+		KeyImpersonateURL, "url",
+		func(d Defaults) string { return d.ImpersonateURL },
 	),
 }
 

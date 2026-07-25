@@ -9,6 +9,8 @@ package enginehost
  * blocking HttpServer threads.
  */
 
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import enginehost.vendor.ChapterRecognition
 import enginehost.vendor.ChapterSanitizer.sanitize
 import eu.kanade.tachiyomi.network.GET
@@ -21,10 +23,58 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
 import okhttp3.ConnectionPool
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okio.Buffer
+import suwayomi.tachidesk.server.serverConfig
+import java.util.Base64
 import java.util.concurrent.TimeUnit
+
+private val logger = KotlinLogging.logger {}
+
+/** application/json media type for the impersonate-gateway POST body. */
+private val jsonMediaType = "application/json".toMediaType()
+
+/** JSON mapper for the impersonate-gateway request body (its own, so it never shares config). */
+private val impersonateMapper = jacksonObjectMapper()
+
+/**
+ * Hop-by-hop / content-encoding headers stripped before an upstream request is forwarded to the
+ * impersonate gateway (GAP-111). curl_cffi's Chrome impersonation manages the transport and
+ * content-encoding itself, so a source that explicitly set any of these could get mis-decoded or
+ * misrouted bytes. Lowercased for case-insensitive matching; every OTHER header
+ * (Referer/User-Agent/Cookie/custom source headers) is forwarded verbatim.
+ */
+private val strippedGatewayHeaders = setOf(
+    "accept-encoding",
+    "host",
+    "content-length",
+    "connection",
+    "proxy-connection",
+    "transfer-encoding",
+    "te",
+    "upgrade",
+    "keep-alive",
+)
+
+/**
+ * The wire body of a `POST /fetch` to the impersonate gateway (GAP-111). Field names match the
+ * gateway's Python contract EXACTLY — note [bodyB64] serialises as `body_b64`. [impersonate] is the
+ * curl_cffi impersonation target ("chrome").
+ */
+private data class GatewayFetchRequest(
+    val url: String,
+    val method: String,
+    val headers: Map<String, String>,
+    @JsonProperty("body_b64") val bodyB64: String?,
+    val socks: String?,
+    val impersonate: String = "chrome",
+)
 
 /**
  * Reads a possibly-uninitialized `lateinit` [SManga] String field, yielding [fallback] instead of
@@ -233,6 +283,17 @@ object SourceCalls {
      * as curl/a browser do, sidestepping the flag. Cheap: one image is one request, and the pooling
      * win never applied to a per-image path anyway. Applied to BOTH branches — a cover on the same
      * CDN can flag too.
+     *
+     * GAP-111 — IMPERSONATE GATEWAY FIRST (default off, fallback-safe). A few CDNs (Hive's
+     * storage.hivetoon.com is the confirmed one) block a request on its TLS/JA3 fingerprint alone:
+     * okhttp is 403'd/stalled while a browser-fingerprinted client (curl_cffi's Chrome impersonation)
+     * gets 200. When the pushed [ImpersonateConfig] is enabled AND has a url, the SAME okhttp request
+     * built below (verbatim headers: Referer/User-Agent/cookies) is forwarded to the gateway's
+     * `/fetch`, carrying this instance's SOCKS egress so a routed source keeps its VPN. A gateway
+     * success (gateway 200 with an upstream 2xx) returns those bytes; ANY other outcome (gateway
+     * failure, an upstream non-2xx, a transport error, an exception) logs a concise reason and falls
+     * through to the okhttp path below — so the default (disabled/blank) behaviour is exactly the
+     * pre-GAP-111 okhttp fetch.
      */
     fun image(
         source: Source,
@@ -242,30 +303,153 @@ object SourceCalls {
         runBlocking {
             val http = source as? HttpSource
                 ?: error("Source ${source.name} is not an HttpSource; cannot fetch image bytes")
-            // A fresh-connection client: no idle connection is ever kept alive for reuse, so each call
-            // opens a new connection and closes it (see the GAP-110 note above). Everything else —
-            // interceptors, headers, timeouts — is inherited from the source's own client.
+
+            // Build the SAME okhttp request the fallback path runs (a cover GET, or the source's own
+            // imageRequest for a page — resolving a null page.imageUrl via getImageUrl first). Both
+            // the gateway attempt and the okhttp fallback below use this one request + page.
+            val page: Page
+            val request: Request
+            if (pageUrl.isBlank()) {
+                val coverUrl = imageUrl ?: error("cover fetch: imageUrl is required when pageUrl is blank")
+                page = Page(index = 0, url = "", imageUrl = coverUrl)
+                request = GET(coverUrl, http.headers)
+            } else {
+                page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
+                if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
+                request = imageRequestFor(http, page)
+            }
+
+            // GAP-111: try the Chrome-fingerprint gateway first. A non-null result is the SUCCESS path
+            // (okhttp is never touched); null means fall through — the default disabled/blank no-op,
+            // or ANY throw on the enabled path (config read, SOCKS build, or the fetch itself).
+            tryImpersonateGateway(request)?.let { return@runBlocking it }
+
+            // Fallback / default: the GAP-110 fresh-connection okhttp path. A fresh-connection client
+            // keeps no idle connection for reuse (see the GAP-110 note above); interceptors, headers,
+            // and timeouts are inherited from the source's own client.
             val freshClient = http.client.newBuilder()
                 .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
                 .build()
-            val response =
-                if (pageUrl.isBlank()) {
-                    val coverUrl = imageUrl ?: error("cover fetch: imageUrl is required when pageUrl is blank")
-                    val request = GET(coverUrl, http.headers)
-                    freshClient
-                        .newCachelessCallWithProgress(request, Page(index = 0, url = "", imageUrl = coverUrl))
-                        .awaitSuccess()
-                } else {
-                    val page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
-                    if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
-                    freshClient
-                        .newCachelessCallWithProgress(imageRequestFor(http, page), page)
-                        .awaitSuccess()
-                }
+            val response = freshClient
+                .newCachelessCallWithProgress(request, page)
+                .awaitSuccess()
             val contentType = response.header("Content-Type") ?: "application/octet-stream"
             val bytes = response.body.bytes()
             bytes to contentType
         }
+
+    /**
+     * The lazily-built OkHttpClient used ONLY to talk to the local impersonate gateway (GAP-111) —
+     * separate from any source client so it carries none of the source's interceptors (the gateway is
+     * plain local HTTP). A generous call timeout covers a slow CDN behind a proxy; one image is one
+     * request.
+     */
+    private val impersonateGatewayClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .callTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /**
+     * Attempts one image fetch through the impersonate gateway, returning the bytes+content-type on
+     * success or null on ANY failure (so [image] falls back to okhttp). It never throws: the config
+     * snapshot read, the SOCKS-string build AND the gateway fetch all sit INSIDE the `runCatching`, so
+     * a throwing config/proxy read falls back to okhttp exactly like a transport error would.
+     *
+     * The default-off no-op is byte-identical to the pre-GAP-111 okhttp path: when the pushed
+     * [ImpersonateConfig] is disabled or has a blank url the gateway is skipped entirely (no client
+     * built, no request sent, nothing logged) and null is returned so [image] runs okhttp.
+     *
+     * Marked `internal` so the routing tests can drive it (config set via [ConfigPush.applyImpersonate])
+     * against a stub / closed-port gateway, proving the catch actually fires.
+     */
+    internal fun tryImpersonateGateway(upstream: Request): Pair<ByteArray, String>? =
+        runCatching {
+            val snap = ImpersonateConfig.snapshot()
+            if (!snap.enabled || snap.url.isBlank()) return@runCatching null
+            fetchViaGateway(impersonateGatewayClient, snap.url, socksProxyString(), upstream)
+        }.getOrElse { e ->
+            logger.warn { "impersonate gateway fetch failed (${e.javaClass.simpleName}: ${e.message}), falling back to okhttp" }
+            null
+        }
+
+    /**
+     * Extracts {url, method, headers, body} from [upstream] and POSTs them to `<gatewayUrl>/fetch`
+     * (with the optional [socks] egress), then interprets the gateway response:
+     *   - gateway 200 AND `X-Upstream-Status` in 200..299 → the raw bytes + `Content-Type` (SUCCESS).
+     *   - anything else (gateway 502 / `X-Gateway-Error`, a non-2xx upstream status, a missing header)
+     *     → null, so the caller falls back to okhttp.
+     * Marked `internal` so the routing tests can drive it against a stub HTTP server (no real source).
+     */
+    internal fun fetchViaGateway(
+        client: OkHttpClient,
+        gatewayUrl: String,
+        socks: String?,
+        upstream: Request,
+    ): Pair<ByteArray, String>? {
+        val bodyBytes: ByteArray? = upstream.body?.let { body ->
+            val buffer = Buffer()
+            body.writeTo(buffer)
+            buffer.readByteArray()
+        }
+        // Strip hop-by-hop / content-encoding headers: curl_cffi's impersonation owns transport +
+        // content-encoding, so forwarding a source-set Accept-Encoding/Host/Connection/... verbatim
+        // could mis-decode or misroute the returned bytes. All other headers pass through unchanged.
+        val forwardedHeaders = upstream.headers.toMap()
+            .filterKeys { it.lowercase() !in strippedGatewayHeaders }
+        val payload = GatewayFetchRequest(
+            url = upstream.url.toString(),
+            method = upstream.method,
+            headers = forwardedHeaders,
+            bodyB64 = bodyBytes?.let { Base64.getEncoder().encodeToString(it) },
+            socks = socks,
+        )
+        val req = Request.Builder()
+            .url(gatewayUrl.trimEnd('/') + "/fetch")
+            .post(impersonateMapper.writeValueAsBytes(payload).toRequestBody(jsonMediaType))
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (resp.code != 200) return null
+            val upstreamStatus = resp.header("X-Upstream-Status")?.toIntOrNull() ?: return null
+            if (upstreamStatus !in 200..299) return null
+            val contentType = resp.header("Content-Type") ?: "application/octet-stream"
+            return resp.body.bytes() to contentType
+        }
+    }
+
+    /**
+     * The SOCKS proxy string for THIS engine-host instance's `serverConfig.socksProxy*` — the egress
+     * passed through to the impersonate gateway so a per-source-VPN-bound instance keeps its egress
+     * (per-source SOCKS is per-instance, so reading this process's config is correct). Returns null
+     * when SOCKS is disabled or has no host (the gateway then goes direct).
+     */
+    private fun socksProxyString(): String? =
+        buildSocksString(
+            enabled = serverConfig.socksProxyEnabled.value,
+            version = serverConfig.socksProxyVersion.value,
+            host = serverConfig.socksProxyHost.value,
+            port = serverConfig.socksProxyPort.value,
+            username = serverConfig.socksProxyUsername.value,
+            password = serverConfig.socksProxyPassword.value,
+        )
+
+    /**
+     * Builds a `socks<version>://[user:pass@]host:port` string, or null when [enabled] is false or
+     * [host] is blank. Credentials are included only when [username] is non-blank. Marked `internal`
+     * so it can be unit-tested without touching `serverConfig`.
+     */
+    internal fun buildSocksString(
+        enabled: Boolean,
+        version: Int,
+        host: String,
+        port: String,
+        username: String,
+        password: String,
+    ): String? {
+        if (!enabled || host.isBlank()) return null
+        val auth = if (username.isNotBlank()) "$username:$password@" else ""
+        return "socks$version://$auth$host:$port"
+    }
 
     /**
      * The source's own image [Request] for [page] — the exact request [HttpSource.getImage] builds,

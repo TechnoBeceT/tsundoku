@@ -47,8 +47,9 @@ type HTTPDoer interface {
 //     source's configurable preferences.
 //   - Extensions/InstallExtension/RefreshExtensions/UpdateExtension/
 //     UninstallExtension/Repos/SetRepos: extension package management.
-//   - SetFlareSolverr/SetSocks: the FlareSolverr + SOCKS-proxy config
-//     passthrough (replaces the retired Suwayomi settings-proxy).
+//   - SetFlareSolverr/SetSocks/SetImpersonate: the FlareSolverr + SOCKS-proxy +
+//     impersonate-gateway config passthrough (replaces the retired Suwayomi
+//     settings-proxy).
 //
 // FOOTGUN — adding a method here is never a local change. Every implementor
 // across the tree must gain it, and only two of them are production code that
@@ -157,6 +158,11 @@ type Client interface {
 	// patch's non-nil fields are sent — and returns the config read back
 	// (the password is never echoed back by the host).
 	SetSocks(ctx context.Context, patch SocksPatch) (SocksConfig, error)
+
+	// SetImpersonate applies a PARTIAL update of the impersonate-gateway config
+	// (the Chrome-fingerprint image-fetch gateway, GAP-111) — only patch's
+	// non-nil fields are sent — and returns the config read back.
+	SetImpersonate(ctx context.Context, patch ImpersonatePatch) (ImpersonateConfig, error)
 }
 
 // New constructs a Client that talks to the engine host at baseURL (e.g.

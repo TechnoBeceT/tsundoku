@@ -539,6 +539,11 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		// audit-log retention window is 30 days by default, owner-tunable via the
 		// Settings UI.
 		ReportingRetentionDays: 30,
+		// ImpersonateEnabled/ImpersonateURL mirror the FlareSolverr group (GAP-111):
+		// fixed factory defaults (off / blank), no env var — the owner opts into the
+		// Chrome-fingerprint image gateway via the Settings UI.
+		ImpersonateEnabled: false,
+		ImpersonateURL:     "",
 	}
 }
 

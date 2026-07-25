@@ -145,6 +145,8 @@ type fakeConfig struct {
 	socksHost     string
 	socksPort     int
 	socksVersion  int
+	impEnabled    bool
+	impURL        string
 }
 
 func (c fakeConfig) FlareSolverrEnabled(context.Context) bool          { return c.fsEnabled }
@@ -157,6 +159,8 @@ func (c fakeConfig) EngineSocksEnabled(context.Context) bool           { return 
 func (c fakeConfig) EngineSocksHost(context.Context) string            { return c.socksHost }
 func (c fakeConfig) EngineSocksPort(context.Context) int               { return c.socksPort }
 func (c fakeConfig) EngineSocksVersion(context.Context) int            { return c.socksVersion }
+func (c fakeConfig) ImpersonateEnabled(context.Context) bool           { return c.impEnabled }
+func (c fakeConfig) ImpersonateURL(context.Context) string             { return c.impURL }
 
 // baseConfig is a fixed FlareSolverr+SOCKS ConfigProvider fixture shared by
 // every test below (the specific values are arbitrary — reconcileConfig no
@@ -173,6 +177,8 @@ func baseConfig() fakeConfig {
 		socksHost:     "127.0.0.1",
 		socksPort:     1080,
 		socksVersion:  5,
+		impEnabled:    true,
+		impURL:        "http://impersonate.test:8788",
 	}
 }
 

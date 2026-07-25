@@ -15,6 +15,7 @@ import type {
   Extension,
   FlareMode,
   FlareSolverrConfig,
+  ImpersonateConfig,
   LibrarySettings,
   NetworkEndpoint,
   NetworkEndpointInput,
@@ -92,6 +93,10 @@ withDefaults(defineProps<{
   flareSolverr: FlareSolverrConfig
   /** §16 state of the FlareSolverr Save button. */
   flareSolverrSave?: SaveState
+  /** The Tsundoku-owned impersonate-gateway config (GAP-111, 2d). */
+  impersonate: ImpersonateConfig
+  /** §16 state of the impersonate Save button. */
+  impersonateSave?: SaveState
   /** Installed extensions (2e). */
   extensions: Extension[]
   /** Available (installable) extensions (2e). */
@@ -173,6 +178,7 @@ withDefaults(defineProps<{
   upgradeSteps: () => [],
   upgrading: false,
   flareSolverrSave: () => ({ status: 'idle' }),
+  impersonateSave: () => ({ status: 'idle' }),
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
@@ -213,6 +219,8 @@ const emit = defineEmits<{
   'save-library': [settings: LibrarySettings]
   /** Persist the edited Tsundoku-owned FlareSolverr config. */
   'save-flaresolverr': [config: FlareSolverrConfig]
+  /** Persist the edited Tsundoku-owned impersonate-gateway config. */
+  'save-impersonate': [config: ImpersonateConfig]
   /** Add a new category by name. */
   'add-category': [name: string]
   /** Rename a category. */
@@ -323,7 +331,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           v-else-if="activePane === 'serverConfig'"
           :flare-solverr="flareSolverr"
           :flare-solverr-save="flareSolverrSave"
+          :impersonate="impersonate"
+          :impersonate-save="impersonateSave"
           @save-flaresolverr="emit('save-flaresolverr', $event)"
+          @save-impersonate="emit('save-impersonate', $event)"
         />
 
         <ExtensionsPane

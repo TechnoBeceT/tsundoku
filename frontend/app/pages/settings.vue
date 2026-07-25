@@ -14,9 +14,12 @@
  *                           circuit-breaker knobs, source-politeness spec)
  *   useCategories()       → settingsCategories + categoryAction + CRUD methods
  *   useFlareSolverrSettings() → config + flareSolverrSave + save (Tsundoku-owned,
- *                           QCAT-238 — the only card left in SuwayomiPane; the
- *                           proxied SOCKS card/composable was RETIRED with the
- *                           P2 Suwayomi-removal backend cutover)
+ *                           QCAT-238 — a card in SuwayomiPane; the proxied SOCKS
+ *                           card/composable was RETIRED with the P2 Suwayomi-removal
+ *                           backend cutover)
+ *   useImpersonateSettings() → config + impersonateSave + save (Tsundoku-owned,
+ *                           GAP-111 — the Chrome-fingerprint image-proxy card in
+ *                           SuwayomiPane, alongside the FlareSolverr card)
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
  *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
@@ -43,6 +46,8 @@
  *   :upgrading            — false static
  *   :flare-solverr        — config from useFlareSolverrSettings (QCAT-238)
  *   :flare-solverr-save   — flareSolverrSave from useFlareSolverrSettings
+ *   :impersonate          — config from useImpersonateSettings (GAP-111)
+ *   :impersonate-save     — impersonateSave from useImpersonateSettings
  *   :extensions           — extensions from useExtensions
  *   :available-extensions — availableExtensions from useExtensions
  *   :repos                — repos from useExtensions
@@ -73,6 +78,7 @@
  *   @save-library                → saveLibrary
  *   @toggle-auto-identify        → saveMetadataAutoIdentify
  *   @save-flaresolverr           → saveFlareSolverr (QCAT-238)
+ *   @save-impersonate            → saveImpersonate (GAP-111)
  *   @add-category                → addCategory
  *   @rename-category             → renameCategory
  *   @reorder-category            → reorderCategory
@@ -143,6 +149,13 @@ const {
   pending: flareSolverrPending,
   save: saveFlareSolverr,
 } = useFlareSolverrSettings()
+
+const {
+  config: impersonate,
+  impersonateSave,
+  pending: impersonatePending,
+  save: saveImpersonate,
+} = useImpersonateSettings()
 
 const {
   extensions,
@@ -304,7 +317,7 @@ if (route.query.trackersFlash) {
  */
 const loading = computed(
   () => settingsPending.value || categoriesPending.value
-    || flareSolverrPending.value || extPending.value,
+    || flareSolverrPending.value || impersonatePending.value || extPending.value,
 )
 </script>
 
@@ -324,6 +337,8 @@ const loading = computed(
       :upgrading="false"
       :flare-solverr="flareSolverr"
       :flare-solverr-save="flareSolverrSave"
+      :impersonate="impersonate"
+      :impersonate-save="impersonateSave"
       :extensions="extensions"
       :available-extensions="availableExtensions"
       :repos="repos"
@@ -364,6 +379,7 @@ const loading = computed(
       @save-library="saveLibrary"
       @toggle-auto-identify="saveMetadataAutoIdentify"
       @save-flaresolverr="saveFlareSolverr"
+      @save-impersonate="saveImpersonate"
       @add-category="addCategory"
       @rename-category="renameCategory"
       @reorder-category="reorderCategory"

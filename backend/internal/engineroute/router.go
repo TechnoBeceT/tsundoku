@@ -15,7 +15,7 @@ import (
 //
 // Only the SOURCE-ADDRESSED content calls (those taking a sourceID) are routed;
 // engine-GLOBAL management calls (Health, Sources, Extensions, repos, and the
-// FlareSolverr/SOCKS config push) always go to the default instance. The default
+// FlareSolverr/SOCKS/impersonate config push) always go to the default instance. The default
 // instance is the authoritative registry the boot reconcile provisions;
 // non-default instances are provisioned by ReconcileNetwork (which runs a full
 // reconcile against each), so a routed source's own instance carries the same
@@ -188,4 +188,11 @@ func (r *Router) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSo
 // SOCKS is pushed by ReconcileNetwork onto each non-default instance directly.
 func (r *Router) SetSocks(ctx context.Context, patch sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
 	return r.defaultClient.SetSocks(ctx, patch)
+}
+
+// SetImpersonate pushes the GLOBAL impersonate-gateway config onto the default
+// instance. Per-profile instances inherit the same global impersonate config,
+// pushed by ReconcileNetwork onto each non-default instance directly.
+func (r *Router) SetImpersonate(ctx context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	return r.defaultClient.SetImpersonate(ctx, patch)
 }

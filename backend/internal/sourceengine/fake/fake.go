@@ -47,6 +47,7 @@ type Client struct {
 	repos         []string
 	flareSolverr  sourceengine.FlareSolverrConfig
 	socks         sourceengine.SocksConfig
+	impersonate   sourceengine.ImpersonateConfig
 
 	lastInstallApkURL string
 
@@ -524,6 +525,22 @@ func (c *Client) SetSocks(_ context.Context, patch sourceengine.SocksPatch) (sou
 			c.socks.Password = *patch.Password
 		}
 		result = c.socks
+	})
+	return result, err
+}
+
+// SetImpersonate applies patch's non-nil fields onto the stored
+// impersonate-gateway config and returns the updated config.
+func (c *Client) SetImpersonate(_ context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	var result sourceengine.ImpersonateConfig
+	err := c.configCall("SetImpersonate", func() {
+		if patch.Enabled != nil {
+			c.impersonate.Enabled = *patch.Enabled
+		}
+		if patch.URL != nil {
+			c.impersonate.URL = *patch.URL
+		}
+		result = c.impersonate
 	})
 	return result, err
 }

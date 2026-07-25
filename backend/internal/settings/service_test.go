@@ -297,8 +297,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 34 {
-		t.Fatalf("List len = %d, want 34", len(list))
+	if len(list) != 36 {
+		t.Fatalf("List len = %d, want 36", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -770,6 +770,52 @@ func TestFlareSolverrDefaults(t *testing.T) {
 	}
 	if svc.FlareSolverrResponseFallback(ctx) {
 		t.Error("FlareSolverrResponseFallback default = true, want false")
+	}
+}
+
+// TestImpersonateDefaults proves both impersonate-gateway accessors return
+// their injected default (off / blank) when no override row exists (GAP-111).
+func TestImpersonateDefaults(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if svc.ImpersonateEnabled(ctx) {
+		t.Error("ImpersonateEnabled default = true, want false")
+	}
+	if got := svc.ImpersonateURL(ctx); got != "" {
+		t.Errorf("ImpersonateURL default = %q, want \"\"", got)
+	}
+}
+
+// TestImpersonateSetAndResolve proves the enabled flag + URL round-trip,
+// including clearing the URL back to blank (blank = disabled), and that a
+// malformed URL is rejected (shares the FlareSolverr URL validation kernel).
+func TestImpersonateSetAndResolve(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("Set enabled: %v", err)
+	}
+	if !svc.ImpersonateEnabled(ctx) {
+		t.Error("after Set true, ImpersonateEnabled = false")
+	}
+	if err := svc.Set(ctx, settings.KeyImpersonateURL, "http://impersonate-gateway:8788"); err != nil {
+		t.Fatalf("Set url: %v", err)
+	}
+	if got := svc.ImpersonateURL(ctx); got != "http://impersonate-gateway:8788" {
+		t.Errorf("ImpersonateURL after Set = %q, want http://impersonate-gateway:8788", got)
+	}
+	if err := svc.Set(ctx, settings.KeyImpersonateURL, ""); err != nil {
+		t.Fatalf("Set url blank: %v", err)
+	}
+	if got := svc.ImpersonateURL(ctx); got != "" {
+		t.Errorf("ImpersonateURL after Set \"\" = %q, want \"\"", got)
+	}
+	if err := svc.Set(ctx, settings.KeyImpersonateURL, "not-a-url"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set malformed url err = %v, want ErrInvalidSetting", err)
 	}
 }
 

@@ -18,3 +18,10 @@ func (c *httpClient) SetFlareSolverr(ctx context.Context, patch FlareSolverrPatc
 func (c *httpClient) SetSocks(ctx context.Context, patch SocksPatch) (SocksConfig, error) {
 	return doJSON[SocksConfig](ctx, c, http.MethodPut, "/config/socks", patch)
 }
+
+// SetImpersonate calls PUT /config/impersonate with patch, sending only its
+// non-nil fields (no-clobber — see ImpersonatePatch's doc comment), and returns
+// the config read back.
+func (c *httpClient) SetImpersonate(ctx context.Context, patch ImpersonatePatch) (ImpersonateConfig, error) {
+	return doJSON[ImpersonateConfig](ctx, c, http.MethodPut, "/config/impersonate", patch)
+}

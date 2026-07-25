@@ -209,4 +209,14 @@ data class SocksConfigRequest(
     val password: String? = null,
 )
 
+/**
+ * Partial impersonate-gateway config (GAP-111 — the Chrome-fingerprint image-fetch gateway); only
+ * non-null fields are applied. [url] is the gateway endpoint; a blank/absent url disables it. Unlike
+ * FlareSolverr/SOCKS this is NOT a Suwayomi `serverConfig` field — it lives in [ImpersonateConfig].
+ */
+data class ImpersonateConfigRequest(
+    val enabled: Boolean? = null,
+    val url: String? = null,
+)
+
 data class OkResponse(val ok: Boolean = true)

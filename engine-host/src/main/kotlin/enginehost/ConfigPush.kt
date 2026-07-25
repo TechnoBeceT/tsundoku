@@ -139,4 +139,41 @@ object ConfigPush {
             username = serverConfig.socksProxyUsername.value,
             password = null,
         )
+
+    /** Push a partial impersonate-gateway config; only non-null fields are applied (last-writer-wins). */
+    fun applyImpersonate(req: ImpersonateConfigRequest) {
+        req.enabled?.let { ImpersonateConfig.enabled = it }
+        req.url?.let { ImpersonateConfig.url = it }
+        logger.info {
+            "Impersonate config applied: enabled=${ImpersonateConfig.enabled} url=${ImpersonateConfig.url}"
+        }
+    }
+
+    /** Read back the current impersonate-gateway config (round-trip proof). */
+    fun readImpersonate(): ImpersonateConfigRequest =
+        ImpersonateConfigRequest(enabled = ImpersonateConfig.enabled, url = ImpersonateConfig.url)
+}
+
+/**
+ * ImpersonateConfig holds Tsundoku's pushed Chrome-fingerprint image-fetch gateway config (GAP-111).
+ *
+ * Unlike the FlareSolverr + SOCKS groups this is NOT a Suwayomi `serverConfig` field — Suwayomi has
+ * no such concept — so it lives in its own process-global holder. [SourceCalls.image] reads the
+ * [snapshot] LIVE on each image fetch, so a `PUT /config/impersonate` takes effect on the very next
+ * fetch with no restart. The two `@Volatile` fields are written only by [ConfigPush.applyImpersonate]
+ * (the single RPC writer) and read concurrently by the RPC image threads; a snapshot pairs the two
+ * reads so a fetch never sees a half-applied update.
+ */
+object ImpersonateConfig {
+    @Volatile
+    var enabled: Boolean = false
+
+    @Volatile
+    var url: String = ""
+
+    /** A consistent (enabled, url) pair read for one image fetch. */
+    fun snapshot(): Snapshot = Snapshot(enabled = enabled, url = url)
+
+    /** One image fetch's view of the impersonate config. */
+    data class Snapshot(val enabled: Boolean, val url: String)
 }

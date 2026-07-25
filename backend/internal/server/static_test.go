@@ -93,6 +93,9 @@ func (nullEngineClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareS
 func (nullEngineClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
 	panic("nullEngineClient.SetSocks called in test")
 }
+func (nullEngineClient) SetImpersonate(_ context.Context, _ sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	panic("nullEngineClient.SetImpersonate called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.

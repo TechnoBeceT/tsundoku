@@ -2645,6 +2645,32 @@ components:
         asResponseFallback:
           type: boolean
 
+    ImpersonateSettings:
+      type: object
+      required: [enabled, url]
+      description: >
+        Tsundoku-owned Chrome-fingerprint image-fetch gateway config (GAP-111).
+        A runtime setting on Tsundoku's settings overlay, NOT read from the
+        engine and NOT an env var.
+      properties:
+        enabled:
+          type: boolean
+          description: Route engine image fetches through the impersonate gateway when true.
+        url:
+          type: string
+          description: The impersonate-gateway endpoint (e.g. http://impersonate-gateway:8788); blank disables it.
+          example: http://impersonate-gateway:8788
+
+    ImpersonateUpdate:
+      type: object
+      description: Partial impersonate group; omitted fields are untouched. An empty body is a 400.
+      properties:
+        enabled:
+          type: boolean
+        url:
+          type: string
+          description: Absolute http(s) URL, or empty string to clear (disables the gateway).
+
     Extension:
       type: object
       description: |
@@ -8195,6 +8221,73 @@ paths:
                 $ref: "#/components/schemas/FlareSolverrSettings"
         "400":
           description: A validation failure (malformed URL, out-of-bounds timeout/sessionTtl, or empty body).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/impersonate:
+    get:
+      operationId: getImpersonateSettings
+      summary: Read Tsundoku-owned impersonate-gateway settings
+      description: |
+        Returns Tsundoku's OWN impersonate-gateway (Chrome-fingerprint
+        image-fetch) settings — a runtime setting on Tsundoku's settings
+        overlay (GAP-111), NOT read from the download engine and NOT an env var.
+      tags:
+        - impersonate
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The current Tsundoku-owned impersonate-gateway settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpersonateSettings"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateImpersonateSettings
+      summary: Update Tsundoku-owned impersonate-gateway settings
+      description: |
+        Applies a partial update to Tsundoku's own impersonate-gateway settings
+        (only the provided fields change; an empty body is a 400). On success,
+        the full resulting state is ALSO best-effort mirrored down to the engine
+        host's own impersonate config so its image fetches use the gateway — an
+        engine-down mirror failure is logged and NEVER fails this request, since
+        the Tsundoku save already persisted. The settings are RE-READ after the
+        write and returned so the caller sees the persisted values without a
+        refetch (§16).
+      tags:
+        - impersonate
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImpersonateUpdate"
+      responses:
+        "200":
+          description: Settings updated (and best-effort mirrored to the engine host). Returns the refreshed impersonate settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImpersonateSettings"
+        "400":
+          description: A validation failure (malformed URL or empty body).
           content:
             application/json:
               schema:

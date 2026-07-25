@@ -192,6 +192,11 @@ class RpcServer(
                     ConfigPush.applySocks(req)
                     ex.respondJson(200, ConfigPush.readSocks())
                 }
+                "/config/impersonate" -> {
+                    val req: ImpersonateConfigRequest = mapper.readValue(ex.requestBody.readBytes())
+                    ConfigPush.applyImpersonate(req)
+                    ex.respondJson(200, ConfigPush.readImpersonate())
+                }
                 else -> ex.respondJson(404, ErrorResponse("no route for $path"))
             }
         } catch (e: JacksonException) {

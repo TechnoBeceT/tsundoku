@@ -197,6 +197,10 @@ func (f *fakeEngineClient) SetSocks(context.Context, sourceengine.SocksPatch) (s
 	return sourceengine.SocksConfig{}, nil
 }
 
+func (f *fakeEngineClient) SetImpersonate(context.Context, sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	return sourceengine.ImpersonateConfig{}, nil
+}
+
 // makeChapters builds n stub chapters anchored under urlPrefix, numbered 1..n.
 func makeChapters(urlPrefix string, n int) []sourceengine.Chapter {
 	chs := make([]sourceengine.Chapter, n)

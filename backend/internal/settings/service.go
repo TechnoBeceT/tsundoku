@@ -237,6 +237,22 @@ func (s *Service) ReportingRetentionDays(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyReportingRetentionDays)
 }
 
+// ImpersonateEnabled reports whether routing engine image fetches through the
+// Chrome-fingerprint impersonate gateway is currently enabled (DB override else
+// default false). Pushed to the engine host, which reads it live per image
+// fetch (GAP-111 — Tsundoku-owned config, never read from the engine or an env
+// var).
+func (s *Service) ImpersonateEnabled(ctx context.Context) bool {
+	return s.resolveBool(ctx, KeyImpersonateEnabled)
+}
+
+// ImpersonateURL is the impersonate-gateway endpoint (DB override else default
+// ""). A blank value disables the gateway regardless of ImpersonateEnabled —
+// the engine host goes straight to okhttp when the URL is empty.
+func (s *Service) ImpersonateURL(ctx context.Context) string {
+	return s.resolve(ctx, KeyImpersonateURL)
+}
+
 // RetainedVersions is how many .apk versions per extension the apk cache keeps
 // — the reversible-update history depth (DB override else default 3). Read at
 // use-time by the harvest/update prune + the reinstall write-through, so a

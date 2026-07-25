@@ -61,6 +61,10 @@ type Static struct {
 	// RetentionDays backs the ReportingRetentionDays accessor — days of
 	// source-operation audit-log rows the daily purge keeps.
 	RetentionDays int
+	// ImpersonateOn / ImpersonateURLValue back the Impersonate* accessors below
+	// (the Chrome-fingerprint image-fetch gateway config, GAP-111).
+	ImpersonateOn       bool
+	ImpersonateURLValue string
 }
 
 // DownloadInterval returns the fixed download ticker period.
@@ -161,3 +165,9 @@ func (s Static) EngineSocksVersion(context.Context) int { return s.EngineSocksVe
 
 // ReportingRetentionDays returns the fixed audit-log retention window in days.
 func (s Static) ReportingRetentionDays(context.Context) int { return s.RetentionDays }
+
+// ImpersonateEnabled returns the fixed impersonate-gateway enabled toggle.
+func (s Static) ImpersonateEnabled(context.Context) bool { return s.ImpersonateOn }
+
+// ImpersonateURL returns the fixed impersonate-gateway endpoint.
+func (s Static) ImpersonateURL(context.Context) string { return s.ImpersonateURLValue }

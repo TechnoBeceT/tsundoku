@@ -133,3 +133,16 @@ func (p profileConfigProvider) EngineSocksVersion(context.Context) int {
 	}
 	return p.profile.Socks.Version
 }
+
+// ImpersonateEnabled inherits the base global impersonate-gateway toggle: the
+// Chrome-fingerprint image gateway (GAP-111) is a single global service, not a
+// per-profile network endpoint, so every profile instance uses the same value.
+func (p profileConfigProvider) ImpersonateEnabled(ctx context.Context) bool {
+	return p.base.ImpersonateEnabled(ctx)
+}
+
+// ImpersonateURL inherits the base global impersonate-gateway URL (see
+// ImpersonateEnabled — one shared gateway for every profile).
+func (p profileConfigProvider) ImpersonateURL(ctx context.Context) string {
+	return p.base.ImpersonateURL(ctx)
+}

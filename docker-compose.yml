@@ -64,12 +64,31 @@ services:
       #   TSUNDOKU_ENGINE_HTTPTIMEOUT: "3m"     # per-request deadline to the engine-host
       #   TSUNDOKU_ENGINE_SEARCHTIMEOUT: "85s"  # overall deadline for one multi-source search fan-out
       #   TSUNDOKU_ENGINE_RUNTIMEDIR: "/config/engine-cache"  # Go-side extension-.apk byte cache (image default)
+      # --- Optional: Chrome-fingerprint image proxy (impersonate-gateway) ------
+      # A few source image CDNs block Tsundoku's default fingerprint (they serve a
+      # browser-fingerprinted client fine). The impersonate-gateway service below
+      # fetches those images with a Chrome fingerprint. It is OFF until you enable
+      # it — its URL is set in Tsundoku Settings (Server config -> Chrome-fingerprint
+      # image proxy), NOT here: enter `http://impersonate-gateway:8788`.
     volumes:
       - ./config:/config
       - ./series:/series
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Optional Chrome-fingerprint image proxy — see the comment on the tsundoku
+  # service above. Leave it running; it does nothing until you set its URL
+  # (http://impersonate-gateway:8788) in Tsundoku Settings.
+  impersonate-gateway:
+    build: ./impersonate-gateway
+    container_name: impersonate-gateway
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8788/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   postgres:

@@ -193,6 +193,20 @@ export interface FlareSolverrConfig {
   fallback: boolean
 }
 
+/**
+ * Editable impersonate-gateway (Chrome-fingerprint image proxy) config, gated
+ * behind the toggle. Tsundoku-owned config served by its own endpoint
+ * (GAP-111) — routes engine image fetches through a browser-fingerprint proxy
+ * for sources whose CDN blocks the default client. Sits in the Server config
+ * pane alongside the FlareSolverr card.
+ */
+export interface ImpersonateConfig {
+  /** Route engine image fetches through the impersonate gateway when true. */
+  enabled: boolean
+  /** The impersonate-gateway URL; blank disables it regardless of `enabled`. */
+  url: string
+}
+
 /* ---- 2e. Sources & Extensions --------------------------------------------- */
 
 /** Which segment of the Sources & Extensions pane is showing. */

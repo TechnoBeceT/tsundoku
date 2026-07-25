@@ -82,6 +82,40 @@ func TestSetSocks_SendsOnlyProvidedFields(t *testing.T) {
 	}
 }
 
+// TestSetImpersonate_SendsOnlyProvidedFields mirrors the FlareSolverr
+// no-clobber proof for the impersonate-gateway config: only the patch's
+// non-nil fields hit the PUT /config/impersonate body.
+func TestSetImpersonate_SendsOnlyProvidedFields(t *testing.T) {
+	var captured map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/config/impersonate" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		decodeBody(t, r, &captured)
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"enabled": true, "url": "http://impersonate-gateway:8788",
+		})
+	}))
+	defer srv.Close()
+
+	enabled := true
+	patch := sourceengine.ImpersonatePatch{Enabled: &enabled}
+	got, err := newTestClient(t, srv).SetImpersonate(context.Background(), patch)
+	if err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	want := sourceengine.ImpersonateConfig{Enabled: true, URL: "http://impersonate-gateway:8788"}
+	if got != want {
+		t.Errorf("SetImpersonate result = %+v, want %+v", got, want)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("expected exactly 1 key in the request body, got %d: %v", len(captured), captured)
+	}
+	if _, ok := captured["url"]; ok {
+		t.Error("unset field \"url\" leaked into the request body (would clobber)")
+	}
+}
+
 // TestSetFlareSolverr_BadRequest proves a 400 maps to *BadRequestError.
 func TestSetFlareSolverr_BadRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

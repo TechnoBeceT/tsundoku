@@ -2057,6 +2057,39 @@ export interface paths {
         patch: operations["updateFlareSolverrSettings"];
         trace?: never;
     };
+    "/api/impersonate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Tsundoku-owned impersonate-gateway settings
+         * @description Returns Tsundoku's OWN impersonate-gateway (Chrome-fingerprint
+         *     image-fetch) settings — a runtime setting on Tsundoku's settings
+         *     overlay (GAP-111), NOT read from the download engine and NOT an env var.
+         */
+        get: operations["getImpersonateSettings"];
+        /**
+         * Update Tsundoku-owned impersonate-gateway settings
+         * @description Applies a partial update to Tsundoku's own impersonate-gateway settings
+         *     (only the provided fields change; an empty body is a 400). On success,
+         *     the full resulting state is ALSO best-effort mirrored down to the engine
+         *     host's own impersonate config so its image fetches use the gateway — an
+         *     engine-down mirror failure is logged and NEVER fails this request, since
+         *     the Tsundoku save already persisted. The settings are RE-READ after the
+         *     write and returned so the caller sees the persisted values without a
+         *     refetch (§16).
+         */
+        put: operations["updateImpersonateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/suwayomi/extensions": {
         parameters: {
             query?: never;
@@ -4149,6 +4182,22 @@ export interface components {
             /** @description Session TTL in minutes (non-negative). */
             sessionTtl?: number;
             asResponseFallback?: boolean;
+        };
+        /** @description Tsundoku-owned Chrome-fingerprint image-fetch gateway config (GAP-111). A runtime setting on Tsundoku's settings overlay, NOT read from the engine and NOT an env var. */
+        ImpersonateSettings: {
+            /** @description Route engine image fetches through the impersonate gateway when true. */
+            enabled: boolean;
+            /**
+             * @description The impersonate-gateway endpoint (e.g. http://impersonate-gateway:8788); blank disables it.
+             * @example http://impersonate-gateway:8788
+             */
+            url: string;
+        };
+        /** @description Partial impersonate group; omitted fields are untouched. An empty body is a 400. */
+        ImpersonateUpdate: {
+            enabled?: boolean;
+            /** @description Absolute http(s) URL, or empty string to clear (disables the gateway). */
+            url?: string;
         };
         /**
          * @description An extension (a Tachiyomi/Mihon source plugin), proxied verbatim from
@@ -9002,6 +9051,77 @@ export interface operations {
                 };
             };
             /** @description A validation failure (malformed URL, out-of-bounds timeout/sessionTtl, or empty body). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getImpersonateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current Tsundoku-owned impersonate-gateway settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImpersonateSettings"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateImpersonateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImpersonateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Settings updated (and best-effort mirrored to the engine host). Returns the refreshed impersonate settings. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImpersonateSettings"];
+                };
+            };
+            /** @description A validation failure (malformed URL or empty body). */
             400: {
                 headers: {
                     [name: string]: unknown;

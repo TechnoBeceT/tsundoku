@@ -316,6 +316,32 @@ func TestSetFlareSolverr_And_SetSocks_ApplyPartial(t *testing.T) {
 	}
 }
 
+// TestSetImpersonate_ApplyPartial proves SetImpersonate merges its two fields
+// and that an unset field on a later patch leaves the earlier value intact
+// (no-clobber parity with the FlareSolverr/SOCKS setters above).
+func TestSetImpersonate_ApplyPartial(t *testing.T) {
+	c := fake.New()
+
+	impEnabled := true
+	impURL := "http://impersonate-gateway:8788"
+	gotImp, err := c.SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{Enabled: &impEnabled, URL: &impURL})
+	if err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	if (gotImp != sourceengine.ImpersonateConfig{Enabled: true, URL: impURL}) {
+		t.Fatalf("SetImpersonate result = %+v", gotImp)
+	}
+
+	newURL := "http://other:8788"
+	gotImp2, err := c.SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{URL: &newURL})
+	if err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	if (gotImp2 != sourceengine.ImpersonateConfig{Enabled: true, URL: newURL}) {
+		t.Fatalf("SetImpersonate second patch = %+v, want Enabled preserved", gotImp2)
+	}
+}
+
 // TestWithError_ForcesTheNamedMethodToFail proves WithError makes exactly the
 // named method return the given error, leaving every other method unaffected.
 func TestWithError_ForcesTheNamedMethodToFail(t *testing.T) {
@@ -365,6 +391,10 @@ func TestWithError_CoversEveryMethod(t *testing.T) {
 			return err
 		},
 		"SetSocks": func(c *fake.Client) error { _, err := c.SetSocks(ctx, sourceengine.SocksPatch{}); return err },
+		"SetImpersonate": func(c *fake.Client) error {
+			_, err := c.SetImpersonate(ctx, sourceengine.ImpersonatePatch{})
+			return err
+		},
 	}
 
 	for method, call := range calls {

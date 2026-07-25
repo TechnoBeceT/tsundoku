@@ -221,6 +221,26 @@ type FlareSolverrConfig struct {
 	AsResponseFallback bool `json:"asResponseFallback"`
 }
 
+// ImpersonatePatch is a PARTIAL update to the impersonate-gateway config (the
+// Chrome-fingerprint image-fetch gateway, GAP-111). Every field is a pointer so
+// only the caller's explicitly-set fields are marshalled onto the wire (via
+// omitempty) — see FlareSolverrPatch's doc comment for the same no-clobber rule.
+type ImpersonatePatch struct {
+	// Enabled turns impersonate-gateway image routing on/off, if set.
+	Enabled *bool `json:"enabled,omitempty"`
+	// URL is the impersonate-gateway endpoint, if set.
+	URL *string `json:"url,omitempty"`
+}
+
+// ImpersonateConfig is the impersonate-gateway config read back after a
+// SetImpersonate call. Every field always carries the host's current value.
+type ImpersonateConfig struct {
+	// Enabled reports whether impersonate-gateway image routing is on.
+	Enabled bool `json:"enabled"`
+	// URL is the configured impersonate-gateway endpoint.
+	URL string `json:"url"`
+}
+
 // SocksPatch is a PARTIAL update to the SOCKS-proxy config. Every field is a
 // pointer so that only the caller's explicitly-set fields are marshalled
 // onto the wire — see FlareSolverrPatch's doc comment for the same

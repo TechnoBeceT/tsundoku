@@ -19,6 +19,7 @@ import (
 	engineh "github.com/technobecet/tsundoku/internal/handler/engine"
 	extensionsh "github.com/technobecet/tsundoku/internal/handler/extensions"
 	flaresolverrh "github.com/technobecet/tsundoku/internal/handler/flaresolverr"
+	impersonateh "github.com/technobecet/tsundoku/internal/handler/impersonate"
 	importsh "github.com/technobecet/tsundoku/internal/handler/imports"
 	libraryh "github.com/technobecet/tsundoku/internal/handler/library"
 	metadatah "github.com/technobecet/tsundoku/internal/handler/metadata"
@@ -120,6 +121,8 @@ import (
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
 //   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
+//   - /api/impersonate (GET)                        — read Tsundoku-owned impersonate-gateway settings (RequireOwner).
+//   - /api/impersonate (PUT)                        — update + best-effort mirror to the engine host (RequireOwner).
 //   - /api/network/endpoints (GET/POST)            — list / create reusable SOCKS|FlareSolverr egress endpoints (RequireOwner).
 //   - /api/network/endpoints/:id (PATCH/DELETE)    — update / delete an endpoint (delete blocked 409 when bound) (RequireOwner).
 //   - /api/network/bindings (GET)                  — list every per-source network binding (RequireOwner).
@@ -386,6 +389,15 @@ func registerRoutes(
 	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, engineClient)
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
+
+	// Tsundoku-owned impersonate-gateway settings (GAP-111): a runtime setting on
+	// settingsSvc (NOT an env var, NOT read from the engine) toggling the
+	// Chrome-fingerprint image-fetch gateway + its URL. PUT best-effort mirrors
+	// down to the engine host via engineClient.SetImpersonate — the engine reads
+	// the pushed value live per image fetch; reconcile-on-boot re-pushes it.
+	impersonateH := impersonateh.NewHandler(settingsSvc, engineClient)
+	authed.GET("/impersonate", impersonateH.Get)
+	authed.PUT("/impersonate", impersonateH.Update)
 
 	// Per-source network routing (QCAT-283 DB layer + QCAT-284 multi-instance
 	// routing). The owner defines reusable SOCKS / FlareSolverr endpoints and

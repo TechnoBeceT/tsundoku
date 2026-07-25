@@ -14,6 +14,7 @@ import type {
   EngineInfo,
   Extension,
   FlareSolverrConfig,
+  ImpersonateConfig,
   LibrarySettings,
   NetworkEndpoint,
   NetworkSource,
@@ -88,6 +89,16 @@ export const flareSolverrConfig: FlareSolverrConfig = {
   session: 'tsundoku',
   sessionTtl: { value: 15, unit: 'm' },
   fallback: true,
+}
+
+/**
+ * The Tsundoku-owned impersonate-gateway config (GAP-111) — the Chrome-fingerprint
+ * image proxy card that sits next to the FlareSolverr card in the "Server config"
+ * pane. On, pointing at the compose-network gateway.
+ */
+export const impersonateConfig: ImpersonateConfig = {
+  enabled: true,
+  url: 'http://impersonate-gateway:8788',
 }
 
 /**

@@ -173,6 +173,9 @@ func (f *fakeClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareSolv
 func (f *fakeClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
 	return sourceengine.SocksConfig{}, nil
 }
+func (f *fakeClient) SetImpersonate(_ context.Context, _ sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	return sourceengine.ImpersonateConfig{}, nil
+}
 
 // --- helpers -----------------------------------------------------------------
 

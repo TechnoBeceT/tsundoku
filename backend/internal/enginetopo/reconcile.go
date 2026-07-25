@@ -17,10 +17,10 @@ import (
 )
 
 // ConfigProvider is the narrow read surface Reconcile needs to push Tsundoku's
-// OWN FlareSolverr + SOCKS config onto the engine. It reads Tsundoku's OWN
-// runtime settings (never the engine), so it has no sourceengine dependency.
-// Kept to precisely the ten typed getters used here so a test double is
-// trivial; *settings.Service satisfies it directly.
+// OWN FlareSolverr + SOCKS + impersonate-gateway config onto the engine. It
+// reads Tsundoku's OWN runtime settings (never the engine), so it has no
+// sourceengine dependency. Kept to precisely the typed getters used here so a
+// test double is trivial; *settings.Service satisfies it directly.
 type ConfigProvider interface {
 	FlareSolverrEnabled(ctx context.Context) bool
 	FlareSolverrURL(ctx context.Context) string
@@ -32,6 +32,8 @@ type ConfigProvider interface {
 	EngineSocksHost(ctx context.Context) string
 	EngineSocksPort(ctx context.Context) int
 	EngineSocksVersion(ctx context.Context) int
+	ImpersonateEnabled(ctx context.Context) bool
+	ImpersonateURL(ctx context.Context) string
 }
 
 // Compile-time proof that the production settings overlay satisfies
@@ -598,10 +600,9 @@ func coercePrefValue(kind, stored string) (any, error) {
 // holds. The loss of drift detection here is intentional, not an oversight (see
 // isInSync, which excludes this step from InSync accordingly).
 //
-// Both SetFlareSolverr and SetSocks are attempted independently so a SOCKS
-// failure never blocks the FlareSolverr push (or vice versa); either failure
-// is isolated as its own gap. ConfigApplied reports whether BOTH calls
-// succeeded.
+// SetFlareSolverr, SetSocks and SetImpersonate are each attempted independently
+// so one failing push never blocks the others; each failure is isolated as its
+// own gap. ConfigApplied reports whether ALL of them succeeded.
 func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg ConfigProvider) (bool, []error) {
 	desired := snapshotConfig(ctx, cfg)
 
@@ -613,6 +614,10 @@ func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg Config
 	if _, err := client.SetSocks(ctx, desired.socksPatch()); err != nil {
 		slog.WarnContext(ctx, "enginetopo: reconcile could not push socks config, recording gap", "err", err)
 		gaps = append(gaps, fmt.Errorf("set socks config: %w", err))
+	}
+	if _, err := client.SetImpersonate(ctx, desired.impersonatePatch()); err != nil {
+		slog.WarnContext(ctx, "enginetopo: reconcile could not push impersonate config, recording gap", "err", err)
+		gaps = append(gaps, fmt.Errorf("set impersonate config: %w", err))
 	}
 	return len(gaps) == 0, gaps
 }
@@ -632,6 +637,8 @@ type desiredConfig struct {
 	socksHost     string
 	socksPort     string
 	socksVersion  int
+	impEnabled    bool
+	impURL        string
 }
 
 // snapshotConfig reads every ConfigProvider accessor once into a desiredConfig.
@@ -647,6 +654,8 @@ func snapshotConfig(ctx context.Context, cfg ConfigProvider) desiredConfig {
 		socksHost:     cfg.EngineSocksHost(ctx),
 		socksPort:     strconv.Itoa(cfg.EngineSocksPort(ctx)),
 		socksVersion:  cfg.EngineSocksVersion(ctx),
+		impEnabled:    cfg.ImpersonateEnabled(ctx),
+		impURL:        cfg.ImpersonateURL(ctx),
 	}
 }
 
@@ -676,6 +685,19 @@ func (d desiredConfig) socksPatch() sourceengine.SocksPatch {
 		Host:    &d.socksHost,
 		Port:    &d.socksPort,
 		Version: &d.socksVersion,
+	}
+}
+
+// impersonatePatch builds the ImpersonatePatch carrying this desiredConfig's
+// impersonate-gateway enabled+url — ALWAYS, including when disabled/blank
+// (Tsundoku's own "off" state is itself the desired state to push; "Tsundoku is
+// reality").
+func (d desiredConfig) impersonatePatch() sourceengine.ImpersonatePatch {
+	enabled := d.impEnabled
+	url := d.impURL
+	return sourceengine.ImpersonatePatch{
+		Enabled: &enabled,
+		URL:     &url,
 	}
 }
 
