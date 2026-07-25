@@ -4,9 +4,15 @@
 //     the OpenAPI spec) — it streams cached extension .apk bytes so the engine's
 //     extensions can be re-installed from Tsundoku's own store even when the
 //     upstream repo is offline; and
-//   - the owner-facing /api/engine/topology-status readout (IN the OpenAPI spec)
-//     that reports, from DB counts alone, how much engine topology Tsundoku has
-//     captured — the observable counterpart of the one-shot seed passes.
+//   - the owner-facing /api/engine/* endpoints (IN the OpenAPI spec): the
+//     topology-status readout that reports, from DB counts alone, how much engine
+//     topology Tsundoku has captured (the observable counterpart of the one-shot
+//     seed passes), the live source-status strip, the cycle-schedule readout, and
+//     the source/extension purge cascade.
+//
+// Nothing here calls the engine host: every read is a DB count or an in-memory
+// snapshot, so an observability endpoint can never itself hammer the sources it
+// reports on.
 package engine
 
 import (
@@ -45,6 +51,10 @@ type Handler struct {
 	// Optional source-purge service (WithPurge). Used only by the
 	// /api/engine/purge-* endpoints; nil for every other endpoint.
 	purge *sourcepurge.Service
+
+	// Optional cycle-schedule read port (WithSchedule). Used only by GET
+	// /api/engine/schedule; nil for every other endpoint.
+	schedule ScheduleSnapshotter
 }
 
 // NewHandler constructs a Handler bound to the APK cache store (serves the

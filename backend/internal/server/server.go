@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
+	engineh "github.com/technobecet/tsundoku/internal/handler/engine"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
@@ -47,6 +48,10 @@ import (
 // trigger is the runner's auto-converge hook (bound to runner.Trigger in main.go).
 // It is called by Adopt and ReorderProviders on success to kick an immediate
 // download/upgrade cycle (M5); passing a no-op func() disables the behaviour.
+//
+// cycleSchedule is the runner's cycle-schedule read port (the *job.Runner itself
+// in main.go) behind GET /api/engine/schedule — a pure in-memory read of whether
+// a download cycle / refresh sweep is running and when each may next start.
 //
 // apkStore is the SHARED extension-.apk byte cache constructed once in main.go
 // (and also handed to the boot-time enginetopo seed goroutine) — the engine
@@ -87,6 +92,7 @@ func New(
 	pushSubsSvc *pushsvc.Service,
 	vapidPublicKey string,
 	trigger func(),
+	cycleSchedule engineh.ScheduleSnapshotter,
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
 	onNetworkChange func(),
@@ -112,6 +118,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, seriesSync, apkStore, onNetworkChange)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange)
 	return e
 }

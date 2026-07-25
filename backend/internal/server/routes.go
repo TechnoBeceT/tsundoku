@@ -170,6 +170,7 @@ import (
 //   - /api/series/:id/tracking/sync (POST)         — pull + converge every binding for a series (RequireOwner).
 //   - /api/engine/topology-status (GET)          — read-only captured-engine-topology status (RequireOwner).
 //   - /api/engine/sources (GET)                  — live per-source status strip (downloading / cooling); pure DB + breaker-snapshot read, no engine call (RequireOwner).
+//   - /api/engine/schedule (GET)                 — download/refresh cycle schedule: running now? + next-run instants; pure in-memory runner read, no DB or engine call (RequireOwner).
 //   - /internal/extensions/apk/:pkg/:file (GET) — cached extension .apk bytes for engine recovery; :file = "<pkg>-<version>.apk" (RequireOwner; NOT in the OpenAPI spec).
 //   - /api/*                                       — catch-all 404 JSON for unknown API paths.
 //   - /*                                           — SPA static fallback for non-API routes (same-origin).
@@ -195,6 +196,7 @@ func registerRoutes(
 	pushSubsSvc *pushsvc.Service,
 	vapidPublicKey string,
 	trigger func(),
+	cycleSchedule engineh.ScheduleSnapshotter,
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
 	onNetworkChange func(),
@@ -567,11 +569,18 @@ func registerRoutes(
 	//     (pkg, version) back out.
 	engineH := engineh.NewHandler(apkStore, client).
 		WithSourceStatus(downloadsSvc, gate, settingsSvc).
-		WithPurge(purgeSvc)
+		WithPurge(purgeSvc).
+		WithSchedule(cycleSchedule)
 	authed.GET("/engine/topology-status", engineH.TopologyStatus)
 	// GET /api/engine/sources — the live per-source status strip (downloading /
 	// cooling), a pure DB + circuit-breaker-snapshot read (no engine call).
 	authed.GET("/engine/sources", engineH.Sources)
+	// GET /api/engine/schedule — the two background loops' cadence state (running
+	// now? when may the next cycle start?), read straight off the runner's
+	// in-memory snapshot: no DB query, no engine call. It is the server-side truth
+	// behind the header countdowns, which a client cannot derive on its own —
+	// connecting mid-cycle shows no SSE boundary event (GAP-115).
+	authed.GET("/engine/schedule", engineH.Schedule)
 	// Source/extension PURGE cascade (GAP-101): remove all of Tsundoku's DB state
 	// for a source or an extension's sources (keeps every CBZ), with dry-run
 	// previews backing the confirm dialog.

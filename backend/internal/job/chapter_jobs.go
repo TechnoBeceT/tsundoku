@@ -10,8 +10,12 @@
 // It adds only the orchestration layer:
 //   - RunDownloadCycle: one pass of RunOnce → DetectUpgrades → Upgrade per
 //     flagged chapter, with cycle-level SSE events.
-//   - Start: ticking goroutine that calls RunDownloadCycle every interval until
-//     the context is cancelled.
+//   - Start / StartRefresh: goroutines that run their cycle on a TRUE PERIOD
+//     (period_loop.go) until the context is cancelled — a cycle starts every
+//     interval measured from the previous cycle's START, ticks landing mid-cycle
+//     are skipped, and cycles never overlap.
+//   - ScheduleSnapshot: the race-free read model behind GET /api/engine/schedule
+//     (schedule.go) — is a cycle running, and when may the next one start.
 //   - Reconcile: thin wrapper around disk.Reconcile for the on-demand trigger.
 //
 // # M2 (LIVE)
@@ -111,6 +115,11 @@ type Runner struct {
 	// via SetBreakerSnapshotter. Held as the narrow BreakerSnapshotter interface
 	// (see sources_summary.go).
 	breakers BreakerSnapshotter
+	// schedule is the concurrency-safe cycle-schedule snapshot the download and
+	// refresh loops publish into and ScheduleSnapshot reads (see schedule.go).
+	// Its zero value is ready to use — a Runner whose loops were never started
+	// reports an unscheduled, not-running schedule.
+	schedule schedule
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -310,42 +319,48 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 	return r.dispatcher.UpgradeAll(ctx, downloadsConsumed, globalSem)
 }
 
-// Start launches a background goroutine that calls RunDownloadCycle on a dynamic
-// timer until ctx is cancelled. Each iteration re-reads the CURRENT download
-// interval from the settings overlay (intervals.DownloadInterval) and waits that
-// long, so a runtime change to the cadence takes effect on the very next cycle —
-// no restart, no captured ticker. Errors from individual cycles are logged but
-// do not stop the loop — a transient DB or network failure should not kill the
-// runner permanently. Start returns immediately; the goroutine runs until
-// ctx.Done() is closed.
+// Start launches a background goroutine that calls RunDownloadCycle on a TRUE
+// PERIOD until ctx is cancelled: one cycle starts every jobs.download_interval
+// measured from the PREVIOUS CYCLE'S START (GAP-115). The interval is therefore
+// the cadence the owner configured, not a gap bolted onto the end of a cycle —
+// it used to be the latter, which turned a 90s setting into a ~203s real cadence
+// once cycles averaged 113s.
+//
+// A tick that would land while a cycle is still running is SKIPPED, never queued:
+// cycles run on this one goroutine, so they can never overlap, and missed ticks
+// collapse into a single immediate catch-up run. When cycles take longer than the
+// period they simply run back-to-back — the period caps how often a cycle STARTS.
+//
+// Each iteration re-reads the CURRENT download interval from the settings overlay
+// (intervals.DownloadInterval), so a runtime change to the cadence takes effect on
+// the very next wait — no restart, no captured ticker. Trigger() still forces an
+// immediate cycle and re-bases the schedule onto that cycle's start. Errors from
+// individual cycles are logged but do not stop the loop — a transient DB or
+// network failure should not kill the runner permanently. Start returns
+// immediately; the goroutine runs until ctx.Done() is closed.
 //
 // In main.go, Start is called in a background goroutine after pm.Start
 // succeeds (Suwayomi is ready). If Suwayomi fails to start, downloads are
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context) {
-	go func() {
-		for {
-			timer := time.NewTimer(r.intervals.DownloadInterval(ctx))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				slog.InfoContext(ctx, "job.Runner: download loop stopped (context cancelled)")
-				return
-			case <-timer.C:
-				r.runDownloadCycleLogging(ctx, "download cycle error")
-			case <-r.trigger:
-				timer.Stop()
-				r.runDownloadCycleLogging(ctx, "triggered download cycle error")
-			}
-		}
-	}()
+	periodLoop{
+		name:     "download",
+		interval: r.intervals.DownloadInterval,
+		trigger:  r.trigger,
+		run:      r.runDownloadCycleLogging,
+		mark:     r.schedule.markDownload,
+	}.start(ctx)
 }
 
 // runDownloadCycleLogging runs one download cycle and logs (without aborting the
-// loop) any hard error, tagged with the given message so triggered vs ticked
-// cycles are distinguishable in the logs.
-func (r *Runner) runDownloadCycleLogging(ctx context.Context, msg string) {
+// loop) any hard error, tagged so triggered vs ticked cycles are distinguishable
+// in the logs.
+func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
+	msg := "download cycle error"
+	if triggered {
+		msg = "triggered download cycle error"
+	}
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)
 	}
@@ -364,30 +379,30 @@ func (r *Runner) Trigger() {
 }
 
 // StartRefresh launches a background goroutine that runs the discovery sweep
-// (svc.RefreshAll) on a dynamic timer until ctx is cancelled, then Triggers a
+// (svc.RefreshAll) on a TRUE PERIOD until ctx is cancelled, then Triggers a
 // download cycle so newly-discovered chapters download promptly instead of
-// waiting for the download ticker. Each iteration re-reads the CURRENT refresh
-// interval from the settings overlay (intervals.RefreshInterval), so a runtime
-// change to the sweep cadence takes effect on the next cycle without a restart.
-// After each successful sweep it calls healthCount to get the current number of
-// unhealthy sources and broadcasts a health.summary SSE event so UI badges stay
-// current without a manual refresh. If healthCount returns an error the broadcast
-// is skipped for that cycle (the error is logged). Sweep errors are logged and
-// never stop the loop. Returns immediately.
+// waiting for the download ticker. Like the download loop (GAP-115), the sweep
+// period is measured from the PREVIOUS SWEEP'S START, a tick landing mid-sweep is
+// skipped rather than queued, and sweeps never overlap (they share one goroutine).
+// Each iteration re-reads the CURRENT refresh interval from the settings overlay
+// (intervals.RefreshInterval), so a runtime change to the sweep cadence takes
+// effect on the next wait without a restart.
+//
+// After each successful sweep it runs upgrade detection, triggers a download
+// cycle, calls healthCount to get the current number of unhealthy sources and
+// broadcasts a health.summary SSE event so UI badges stay current without a
+// manual refresh. If healthCount returns an error the broadcast is skipped for
+// that cycle (the error is logged). Sweep errors are logged and never stop the
+// loop. Returns immediately.
 func (r *Runner) StartRefresh(ctx context.Context, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
-	go func() {
-		for {
-			timer := time.NewTimer(r.intervals.RefreshInterval(ctx))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				slog.InfoContext(ctx, "job.Runner: refresh loop stopped (context cancelled)")
-				return
-			case <-timer.C:
-				r.runRefreshSweep(ctx, svc, healthCount)
-			}
-		}
-	}()
+	periodLoop{
+		name:     "refresh",
+		interval: r.intervals.RefreshInterval,
+		// No trigger: the refresh sweep is driven by its period alone (a nil
+		// channel never fires in the loop's select).
+		run:  func(ctx context.Context, _ bool) { r.runRefreshSweep(ctx, svc, healthCount) },
+		mark: r.schedule.markRefresh,
+	}.start(ctx)
 }
 
 // runRefreshSweep performs one discovery sweep, triggers a download cycle, and

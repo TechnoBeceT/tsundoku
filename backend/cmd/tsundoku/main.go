@@ -446,7 +446,7 @@ func main() {
 	// async + single-flight per series. It does NOT alter the whole-library cadence.
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, seriesSync, apkStore, onNetworkChange)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange)
 
 	addr := ":" + cfg.Server.Port
 

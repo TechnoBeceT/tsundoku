@@ -1926,6 +1926,57 @@ components:
         breaker:
           type: integer
 
+    EngineSchedule:
+      type: object
+      description: |
+        The live cadence state of the two background loops (download cycle and
+        discovery sweep), read straight off the job runner's in-memory snapshot.
+      required: [download, refresh, serverTime]
+      properties:
+        download:
+          $ref: "#/components/schemas/CycleSchedule"
+        refresh:
+          $ref: "#/components/schemas/CycleSchedule"
+        serverTime:
+          type: string
+          format: date-time
+          description: |
+            The instant this snapshot was taken, by the SERVER's clock. Compute a
+            countdown as nextRunAt - serverTime so a skewed browser clock can never
+            show a wrong (or negative) remaining time.
+          example: "2026-07-25T12:00:00Z"
+
+    CycleSchedule:
+      type: object
+      description: |
+        One background loop's schedule. The interval is a TRUE PERIOD measured from
+        the previous cycle's START, so `nextRunAt` can already have passed while
+        `running` is true (an overrunning cycle) — it is reported honestly rather
+        than replaced with a fabricated future timestamp, and `overdue` says so.
+        Cycles never overlap: a tick landing mid-cycle is skipped, never queued.
+      required: [running, nextRunAt, overdue]
+      properties:
+        running:
+          type: boolean
+          description: Whether a cycle is executing right now.
+          example: true
+        nextRunAt:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            The EARLIEST instant the next cycle may start (the most recent cycle's
+            start + the configured interval). May be in the past — see `overdue`.
+            Null when the loop is not scheduled at all: it was never started, or
+            its context was cancelled and the goroutine has exited.
+          example: "2026-07-25T12:01:30Z"
+        overdue:
+          type: boolean
+          description: |
+            True when nextRunAt is known and has already passed: the next cycle is
+            due (it starts the moment the current one finishes, if any). Always
+            false when nextRunAt is null — "nothing is planned" is not "late".
+          example: false
+
     SourceStatus:
       type: object
       description: |
@@ -7961,6 +8012,45 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SourceStatus"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/engine/schedule:
+    get:
+      operationId: getEngineSchedule
+      summary: Download / refresh cycle schedule
+      description: |
+        Returns the live cadence state of the two background loops: whether a
+        download cycle or a discovery sweep is running right now, and the earliest
+        instant each may next start. It is a pure in-memory read of the job
+        runner's own snapshot — ZERO DB queries and ZERO engine calls — so it is
+        safe to poll.
+
+        It exists because the state is otherwise unobservable: a client that
+        connects mid-cycle sees no SSE boundary event and can only guess, which is
+        how a running cycle came to be displayed as "Idle".
+
+        `jobs.download_interval` / `jobs.refresh_interval` are TRUE PERIODS
+        measured from the previous cycle's START, so `nextRunAt` may already be in
+        the PAST while `running` is true — that is what an overrunning cycle looks
+        like, and `overdue` flags it. The missed tick is never queued: exactly one
+        cycle starts as soon as the current one returns. Compute a countdown
+        against `serverTime`, not the browser clock.
+      tags:
+        - engine
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The current cycle schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EngineSchedule"
         "401":
           description: Missing or invalid Bearer token.
           content:
