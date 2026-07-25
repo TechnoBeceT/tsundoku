@@ -25,6 +25,9 @@ type Static struct {
 	ExtCheck        time.Duration
 	WarmupIv        time.Duration
 	WarmupSlow      int
+	// SuperviseIv backs the EngineSuperviseInterval accessor; 0 disables the
+	// engine-host instance supervisor.
+	SuperviseIv time.Duration
 	// SearchCacheIv / ChapterCacheIv back the interactive cache TTL accessors;
 	// 0 disables the corresponding cache.
 	SearchCacheIv  time.Duration
@@ -102,6 +105,9 @@ func (s Static) WarmupInterval(context.Context) time.Duration { return s.WarmupI
 
 // WarmupSlowThresholdMs returns the fixed slow-latency threshold in milliseconds.
 func (s Static) WarmupSlowThresholdMs(context.Context) int { return s.WarmupSlow }
+
+// EngineSuperviseInterval returns the fixed engine-host supervisor period; 0 = disabled.
+func (s Static) EngineSuperviseInterval(context.Context) time.Duration { return s.SuperviseIv }
 
 // SearchCacheTTL returns the fixed interactive Search cache lifetime; 0 disables it.
 func (s Static) SearchCacheTTL(context.Context) time.Duration { return s.SearchCacheIv }

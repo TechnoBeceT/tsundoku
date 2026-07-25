@@ -101,8 +101,8 @@ func TestList_OK(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(got) != 36 {
-		t.Fatalf("want 36 settings, got %d", len(got))
+	if len(got) != 37 {
+		t.Fatalf("want 37 settings, got %d", len(got))
 	}
 	if got[0].Key != settingssvc.KeyDownloadInterval || got[0].Value != "15m0s" {
 		t.Errorf("first row = %+v, want download_interval=15m0s", got[0])

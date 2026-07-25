@@ -219,6 +219,15 @@ type JobsConfig struct {
 	// overlay (trackers.auto_update_track) can override without a restart.
 	// Set via TSUNDOKU_JOBS_AUTOUPDATETRACK.
 	AutoUpdateTrack bool
+
+	// EngineSuperviseInterval is the tick period for the engine-host instance
+	// supervisor (GAP-114), which probes each non-default profile instance's
+	// /health and auto-restarts (or degrades to the default engine) one that has
+	// died. Default 30s. Set to 0 to disable supervision. This is the env DEFAULT
+	// behind the runtime settings overlay (jobs.engine_supervise_interval), read
+	// at the top of every supervision pass so a change hot-reloads without a
+	// restart. Set via TSUNDOKU_JOBS_ENGINESUPERVISEINTERVAL.
+	EngineSuperviseInterval time.Duration
 }
 
 // SourcesConfig holds the env-sourced DEFAULTS for the source-politeness
@@ -476,21 +485,22 @@ func defaults() map[string]any {
 		"auth.secret":       "",
 		"auth.cookiesecure": true,
 		// Jobs — background-job scheduler.
-		"jobs.downloadinterval":       "15m",
-		"jobs.downloadconcurrency":    5,
-		"jobs.maxconcurrentdownloads": 6,
-		"jobs.refreshinterval":        "2h",
-		"jobs.refreshconcurrency":     4,
-		"jobs.maxretries":             5,
-		"jobs.retrybackoff":           "30m",
-		"jobs.extensioncheckinterval": "24h",
-		"jobs.warmupinterval":         "15m",
-		"jobs.warmupslowthresholdms":  5000,
-		"jobs.searchcachettl":         "1h",
-		"jobs.chaptercachettl":        "1h",
-		"jobs.suppresssplitparts":     true,
-		"jobs.trackretryinterval":     "5m",
-		"jobs.autoupdatetrack":        true,
+		"jobs.downloadinterval":        "15m",
+		"jobs.downloadconcurrency":     5,
+		"jobs.maxconcurrentdownloads":  6,
+		"jobs.refreshinterval":         "2h",
+		"jobs.refreshconcurrency":      4,
+		"jobs.maxretries":              5,
+		"jobs.retrybackoff":            "30m",
+		"jobs.extensioncheckinterval":  "24h",
+		"jobs.warmupinterval":          "15m",
+		"jobs.warmupslowthresholdms":   5000,
+		"jobs.searchcachettl":          "1h",
+		"jobs.chaptercachettl":         "1h",
+		"jobs.suppresssplitparts":      true,
+		"jobs.trackretryinterval":      "5m",
+		"jobs.autoupdatetrack":         true,
+		"jobs.enginesuperviseinterval": "30s",
 		// Health — M7 source-health computation.
 		"health.stalegracedays":       14,
 		"health.stalledthresholddays": 30,
@@ -596,6 +606,7 @@ func Load() (*Config, error) {
 //	TSUNDOKU_JOBS_CHAPTERCACHETTL           → jobs.chaptercachettl
 //	TSUNDOKU_JOBS_TRACKRETRYINTERVAL        → jobs.trackretryinterval
 //	TSUNDOKU_JOBS_AUTOUPDATETRACK           → jobs.autoupdatetrack
+//	TSUNDOKU_JOBS_ENGINESUPERVISEINTERVAL   → jobs.enginesuperviseinterval
 //	TSUNDOKU_STORAGE_FOLDER                 → storage.folder
 //	TSUNDOKU_SOURCES_FAILURETHRESHOLD       → sources.failurethreshold
 //	TSUNDOKU_SOURCES_COOLDOWN               → sources.cooldown

@@ -285,6 +285,11 @@ func main() {
 			KCEFBundle: cfg.Engine.KCEFBundle,
 		},
 		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
+		// The routing seam the launcher + supervisor use to degrade a down
+		// profile's sources to the default engine and restore them on recovery
+		// (GAP-114). The Router's degrade overlay is disjoint from its base table,
+		// so this never clobbers ReconcileNetwork's routing.
+		enginehost.WithRerouter(engineRouter),
 	)
 	engineLauncher := engineroute.Launcher(engineHostLauncher)
 	engineClient := sourceengine.Client(engineRouter)
@@ -411,6 +416,14 @@ func main() {
 	// boot goroutine, right after the default-instance reconcile.
 	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, netReconcile)
 
+	// Engine-host instance supervisor (GAP-114): probes each non-default profile
+	// instance the launcher spawned and auto-restarts (or degrades its sources to
+	// the default engine) one that has died — the ongoing supervision the launcher
+	// lacked, so a healthy-then-dead instance no longer strands its bound sources
+	// on a dead port. A pure no-op until a non-default profile is actually spawned
+	// (empty managed set). Reads its cadence from jobs.engine_supervise_interval.
+	enginehost.NewSupervisor(engineHostLauncher, settingsSvc.EngineSuperviseInterval).Start(ctx)
+
 	// onNetworkChange fires netReconcile (detached) after any endpoint/binding
 	// mutation so an owner's routing edit takes effect promptly.
 	onNetworkChange := func() { go netReconcile(ctx) }
@@ -511,6 +524,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		ExtensionCheckInterval:  cfg.Jobs.ExtensionCheckInterval,
 		WarmupInterval:          cfg.Jobs.WarmupInterval,
 		WarmupSlowThresholdMs:   cfg.Jobs.WarmupSlowThresholdMs,
+		EngineSuperviseInterval: cfg.Jobs.EngineSuperviseInterval,
 		SearchCacheTTL:          cfg.Jobs.SearchCacheTTL,
 		ChapterCacheTTL:         cfg.Jobs.ChapterCacheTTL,
 		SourcesFailureThreshold: cfg.Sources.FailureThreshold,

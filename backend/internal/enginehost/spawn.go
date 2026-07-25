@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // spawn allocates a port, seeds KCEF, launches a fresh engine-host process for p,
@@ -22,6 +23,39 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	}
 	dataDir := dataDirFor(l.cfg.DataDir, p.Key)
 
+	proc, client, baseURL, err := l.startProcess(ctx, p, port, dataDir)
+	if err != nil {
+		return engineroute.Instance{}, err
+	}
+
+	mi := &managedInstance{
+		key:     p.Key,
+		port:    port,
+		dataDir: dataDir,
+		baseURL: baseURL,
+		proc:    proc,
+		client:  client,
+		profile: p,
+	}
+	l.instances[p.Key] = mi
+	// A freshly-healthy instance: clear any stale degrade overlay for its sources
+	// left by a prior down episode + reset the supervision counters.
+	l.markHealthyLocked(mi)
+	slog.InfoContext(ctx, "enginehost: profile instance ready",
+		"profile", p.Key, "port", port, "pid", proc.Pid(), "data_dir", dataDir)
+	return mi.instance(), nil
+}
+
+// startProcess seeds KCEF, links the shared extensions dir, launches the
+// engine-host process for p on the given port + data dir, and waits for it to
+// become healthy-and-stable. On success it returns the running process, a
+// factory-built client aimed at the instance, and its base URL. On any failure
+// the (possibly-started) process is killed and reaped and an error is returned,
+// so the caller degrades p to the default instance. It is the SHARED core of both
+// the initial spawn (fresh allocated port) and a supervisor restart (existing
+// port + data dir), so the KCEF/extensions/health-gate logic lives in one place
+// (§2 DRY). Called with mu held.
+func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, error) {
 	// A profile that solves Cloudflare through its OWN FlareSolverr endpoint does
 	// not need the embedded Chromium (KCEF) WebView, so it is spawned with KCEF
 	// off. This is the GAP-094 fix: on prod, 2 bound profiles meant 3 engine-host
@@ -35,7 +69,8 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	// KCEF seeding is best-effort — a failure only degrades WebView sources on
 	// this instance, never the spawn (see seedKCEF). Skip it entirely when KCEF is
 	// disabled: there is no Chromium to seed, so touching the shared bundle symlink
-	// + singleton locks would be pointless work.
+	// + singleton locks would be pointless work. On a RESTART this also clears the
+	// dead instance's stale Chromium singleton locks, so the new Chromium can start.
 	if !disableKCEF {
 		l.seedKCEF(dataDir)
 	}
@@ -45,12 +80,12 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	// fails "unknown sourceId". A failure aborts the spawn so the profile
 	// degrades to the fully-provisioned default engine (see linkSharedExtensions).
 	if err := l.linkSharedExtensions(dataDir); err != nil {
-		return engineroute.Instance{}, fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
+		return nil, nil, "", fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
 	}
 
 	proc, err := l.starter.Start(port, dataDir, disableKCEF)
 	if err != nil {
-		return engineroute.Instance{}, fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
+		return nil, nil, "", fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -58,21 +93,39 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 		// The instance never came up: kill it so it does not linger, then report.
 		_ = proc.Kill()
 		<-proc.Done() // reap
-		return engineroute.Instance{}, fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
+		return nil, nil, "", fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
 	}
+	return proc, l.factory(baseURL), baseURL, nil
+}
 
-	mi := &managedInstance{
-		key:     p.Key,
-		port:    port,
-		dataDir: dataDir,
-		baseURL: baseURL,
-		proc:    proc,
-		client:  l.factory(baseURL),
+// restartLocked respawns a dead-or-wedged managed instance on its EXISTING port +
+// data dir, replacing its process + client IN PLACE (the *managedInstance pointer,
+// its key, profile, and supervision counters are preserved). Reusing the same port
+// keeps the base routing entry — a client keyed by the unchanged base URL — valid
+// the moment a fresh process listens there, so a restart needs no base-table
+// rebuild; clearing the degrade overlay (the caller's job on success) is enough to
+// restore routing. Called with mu held by the supervisor. Returns an error if the
+// respawn failed (the instance stays dead + degraded; the caller backs off).
+//
+// The supervisor restarts an instance that FAILS /health, which includes a
+// wedged-but-still-ALIVE JVM. Such a process still holds mi.port (and its Chromium
+// singleton lock), so a fresh process could never bind — the restart would fail
+// every attempt forever and the wedged process would leak. So, mirroring
+// EnsureProfile's not-reusable teardown, stop the old process first when it is
+// still alive: the crash case (already exited) skips it, and the hang case is
+// killed here, both freeing the port + clearing the stale singleton lock the
+// startProcess KCEF-reseed step expects.
+func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error {
+	if alive(mi.proc) {
+		l.stopInstance(mi)
 	}
-	l.instances[p.Key] = mi
-	slog.InfoContext(ctx, "enginehost: profile instance ready",
-		"profile", p.Key, "port", port, "pid", proc.Pid(), "data_dir", dataDir)
-	return mi.instance(), nil
+	proc, client, _, err := l.startProcess(ctx, mi.profile, mi.port, mi.dataDir)
+	if err != nil {
+		return err
+	}
+	mi.proc = proc
+	mi.client = client
+	return nil
 }
 
 // awaitReady gates a spawn on the instance being not just healthy but STABLE: it

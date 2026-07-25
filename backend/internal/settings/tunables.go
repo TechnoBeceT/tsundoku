@@ -102,6 +102,14 @@ const (
 	// KeyWarmupSlowThresholdMs is the EWMA-latency threshold in milliseconds above
 	// which a source is warmed by the WarmSlow pass (int, 100..600000).
 	KeyWarmupSlowThresholdMs = "jobs.warmup_slow_threshold_ms"
+	// KeyEngineSuperviseInterval is the engine-host instance-supervisor ticker
+	// period (duration, 0 = disabled or >= 5s, default 30s — GAP-114). The
+	// supervisor probes each non-default profile instance's /health and
+	// auto-restarts (or degrades to the default engine) one that has died. Read at
+	// the top of every supervision pass so a change hot-reloads without a restart;
+	// 0 disables supervision entirely (same idle-and-re-read semantics as the
+	// warm-up / extension-check intervals).
+	KeyEngineSuperviseInterval = "jobs.engine_supervise_interval"
 	// KeySearchCacheTTL is the lifetime of a cached interactive Search fan-out
 	// result (duration, 0 = caching disabled or >= 1s). Read PER-Get by the search
 	// cache, so a change hot-reloads and applies to entries already stored.
@@ -294,6 +302,7 @@ type Defaults struct {
 	ExtensionCheckInterval  time.Duration
 	WarmupInterval          time.Duration
 	WarmupSlowThresholdMs   int
+	EngineSuperviseInterval time.Duration
 	SearchCacheTTL          time.Duration
 	ChapterCacheTTL         time.Duration
 	SourcesFailureThreshold int
@@ -374,6 +383,7 @@ var tunableOrder = []string{
 	KeyExtensionCheckInterval,
 	KeyWarmupInterval,
 	KeyWarmupSlowThresholdMs,
+	KeyEngineSuperviseInterval,
 	KeySearchCacheTTL,
 	KeyChapterCacheTTL,
 	KeySourcesFailureThreshold,
@@ -450,6 +460,14 @@ var tunables = map[string]tunable{
 	KeyWarmupSlowThresholdMs: intTunable(
 		KeyWarmupSlowThresholdMs, "milliseconds", 100, 600000,
 		func(d Defaults) int { return d.WarmupSlowThresholdMs },
+	),
+	// KeyEngineSuperviseInterval: 0 = supervision disabled, else >= 5s.
+	// durationTunableMinOrZero gives it the same "off or floor" shape as the
+	// warm-up / extension-check intervals so an owner can turn the supervisor off
+	// live (GAP-114).
+	KeyEngineSuperviseInterval: durationTunableMinOrZero(
+		KeyEngineSuperviseInterval, "duration", 5*time.Second,
+		func(d Defaults) time.Duration { return d.EngineSuperviseInterval },
 	),
 	// KeySearchCacheTTL / KeyChapterCacheTTL: 0 = caching disabled, else >= 1s.
 	// durationTunableMinOrZero gives them the same "off or floor" shape as the

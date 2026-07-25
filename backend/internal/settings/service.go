@@ -95,6 +95,13 @@ func (s *Service) WarmupSlowThresholdMs(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyWarmupSlowThresholdMs)
 }
 
+// EngineSuperviseInterval is the engine-host instance-supervisor ticker period;
+// 0 = disabled (DB override else default). Read at the top of every supervision
+// pass by enginehost.Supervisor (hot reload).
+func (s *Service) EngineSuperviseInterval(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyEngineSuperviseInterval)
+}
+
 // SearchCacheTTL is the interactive Search result-cache lifetime; 0 = disabled
 // (DB override else default). Read per Get by the search cache (hot reload).
 func (s *Service) SearchCacheTTL(ctx context.Context) time.Duration {

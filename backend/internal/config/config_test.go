@@ -711,6 +711,26 @@ func TestJobsWarmupDefaults(t *testing.T) {
 	if cfg.Jobs.WarmupSlowThresholdMs != 5000 {
 		t.Errorf("Jobs.WarmupSlowThresholdMs default = %d, want 5000", cfg.Jobs.WarmupSlowThresholdMs)
 	}
+	// GAP-114: the engine-supervisor interval must map from jobs.enginesuperviseinterval.
+	if cfg.Jobs.EngineSuperviseInterval != 30*time.Second {
+		t.Errorf("Jobs.EngineSuperviseInterval default = %v, want 30s", cfg.Jobs.EngineSuperviseInterval)
+	}
+}
+
+// TestJobsEngineSuperviseIntervalEnvOverride confirms the supervisor-interval env
+// var overrides the default (GAP-114).
+func TestJobsEngineSuperviseIntervalEnvOverride(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+	t.Setenv("TSUNDOKU_JOBS_ENGINESUPERVISEINTERVAL", "45s")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Jobs.EngineSuperviseInterval != 45*time.Second {
+		t.Errorf("Jobs.EngineSuperviseInterval = %v, want 45s", cfg.Jobs.EngineSuperviseInterval)
+	}
 }
 
 // TestJobsWarmupEnvOverride confirms the warm-up env vars override the defaults.

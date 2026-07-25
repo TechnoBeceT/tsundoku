@@ -25,17 +25,36 @@ import (
 // atomically under a mutex by SetRoutes, and read under the same mutex by every
 // RPC, so a live reconcile can rebuild the table while requests are in flight.
 //
+// TWO WRITERS, DISJOINT STATE (GAP-114). The routing table has two independent
+// writers that must never clobber each other:
+//   - ReconcileNetwork owns the BASE table (SetRoutes) — the desired routing
+//     derived from DB-truth bindings. It is the sole caller of SetRoutes.
+//   - the enginehost supervisor owns the DEGRADE OVERLAY (Degrade/Restore) — a
+//     small set of source ids force-routed to the default instance while their
+//     profile's engine-host instance is observed DOWN, cleared the moment the
+//     instance is confirmed healthy again (or its profile is retired).
+//
+// clientFor MERGES them with the overlay winning: a degraded source always
+// routes to the default, masking a stale base entry that still points at a dead
+// instance, until the supervisor restores it. Because the two writers touch
+// SEPARATE maps (routes vs degraded) under the same mutex, a reconcile rebuild
+// and a supervisor degrade/restore never overwrite each other — no flapping.
+//
 // The zero value is not usable — construct one with NewRouter. With no routes
-// installed (the deploy-day state, and the state whenever no source has a
-// non-default binding) EVERY call delegates to the default instance, so the
-// Router is byte-for-byte the single-instance client it wraps.
+// installed and an empty overlay (the deploy-day state, and the state whenever no
+// source has a non-default binding) EVERY call delegates to the default instance,
+// so the Router is byte-for-byte the single-instance client it wraps.
 type Router struct {
 	// defaultClient is the client for the default engine-host instance. It never
 	// changes for the life of the Router.
 	defaultClient sourceengine.Client
 
 	mu     sync.RWMutex
-	routes map[int64]sourceengine.Client // source id → its instance client
+	routes map[int64]sourceengine.Client // source id → its instance client (base table, ReconcileNetwork-owned)
+	// degraded is the supervisor-owned overlay: a source id present here is
+	// force-routed to the default instance regardless of the base table, because
+	// its profile's instance is currently down. Empty ⇒ inert (no-op merge).
+	degraded map[int64]bool
 }
 
 // Compile-time assertion: *Router must satisfy sourceengine.Client so it is a
@@ -48,6 +67,7 @@ func NewRouter(defaultClient sourceengine.Client) *Router {
 	return &Router{
 		defaultClient: defaultClient,
 		routes:        map[int64]sourceengine.Client{},
+		degraded:      map[int64]bool{},
 	}
 }
 
@@ -67,10 +87,48 @@ func (r *Router) SetRoutes(routes map[int64]sourceengine.Client) {
 	r.mu.Unlock()
 }
 
-// clientFor returns the instance client for sourceID — its bound override if one
-// is installed, else the default instance.
+// Degrade force-routes each of sourceIDs to the DEFAULT instance, masking its
+// base-table entry. Called by the enginehost supervisor when a profile's
+// instance is observed down, so the profile's sources stop hitting the dead port
+// (a meaningful error against the default instead of connection-refused to a
+// corpse). Idempotent and additive: it only sets the overlay, never touches the
+// base table (ReconcileNetwork's domain). A nil/empty slice is a no-op.
+func (r *Router) Degrade(sourceIDs []int64) {
+	if len(sourceIDs) == 0 {
+		return
+	}
+	r.mu.Lock()
+	for _, id := range sourceIDs {
+		r.degraded[id] = true
+	}
+	r.mu.Unlock()
+}
+
+// Restore clears each of sourceIDs from the degrade overlay, so they resume using
+// the base table. Called when the supervisor confirms a profile's instance
+// healthy again, when EnsureProfile brings a profile up, and when a profile is
+// retired. Idempotent: clearing an id that is not degraded is a no-op, so it is
+// safe to call on every healthy confirmation.
+func (r *Router) Restore(sourceIDs []int64) {
+	if len(sourceIDs) == 0 {
+		return
+	}
+	r.mu.Lock()
+	for _, id := range sourceIDs {
+		delete(r.degraded, id)
+	}
+	r.mu.Unlock()
+}
+
+// clientFor returns the instance client for sourceID: the default instance when
+// the source is degraded (overlay wins), else its bound override if one is
+// installed, else the default instance.
 func (r *Router) clientFor(sourceID int64) sourceengine.Client {
 	r.mu.RLock()
+	if r.degraded[sourceID] {
+		r.mu.RUnlock()
+		return r.defaultClient
+	}
 	c, ok := r.routes[sourceID]
 	r.mu.RUnlock()
 	if ok {

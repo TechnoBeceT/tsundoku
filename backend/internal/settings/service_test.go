@@ -28,6 +28,7 @@ func testDefaults() settings.Defaults {
 		ExtensionCheckInterval:  24 * time.Hour,
 		WarmupInterval:          15 * time.Minute,
 		WarmupSlowThresholdMs:   5000,
+		EngineSuperviseInterval: 30 * time.Second,
 		SearchCacheTTL:          time.Hour,
 		ChapterCacheTTL:         time.Hour,
 		SourcesFailureThreshold: 5,
@@ -297,8 +298,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 36 {
-		t.Fatalf("List len = %d, want 36", len(list))
+	if len(list) != 37 {
+		t.Fatalf("List len = %d, want 37", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -467,6 +468,34 @@ func TestWarmupInterval(t *testing.T) {
 	}
 	if got := svc.WarmupInterval(ctx); got != 5*time.Minute {
 		t.Errorf("WarmupInterval after Set 5m = %v, want 5m", got)
+	}
+}
+
+// TestEngineSuperviseInterval proves the supervisor-interval accessor returns the
+// default (30s) when unset, accepts 0 (disabled) and >= 5s, and rejects sub-5s
+// values (GAP-114).
+func TestEngineSuperviseInterval(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.EngineSuperviseInterval(ctx); got != 30*time.Second {
+		t.Errorf("EngineSuperviseInterval default = %v, want 30s", got)
+	}
+	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "0"); err != nil {
+		t.Fatalf("Set 0: %v", err)
+	}
+	if got := svc.EngineSuperviseInterval(ctx); got != 0 {
+		t.Errorf("EngineSuperviseInterval after Set 0 = %v, want 0 (disabled)", got)
+	}
+	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "1s"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set 1s: want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "1m"); err != nil {
+		t.Fatalf("Set 1m: %v", err)
+	}
+	if got := svc.EngineSuperviseInterval(ctx); got != time.Minute {
+		t.Errorf("EngineSuperviseInterval after Set 1m = %v, want 1m", got)
 	}
 }
 

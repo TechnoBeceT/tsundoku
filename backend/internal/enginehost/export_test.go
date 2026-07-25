@@ -1,6 +1,9 @@
 package enginehost
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // export_test.go exposes unexported helpers to the black-box enginehost_test
 // package so pure/internal logic can be pinned directly without spawning a real
@@ -33,3 +36,22 @@ func HTTPHealthProber(timeout time.Duration) HealthProber { return newHTTPHealth
 
 // AllocFreePort exposes the production free-port allocator.
 func AllocFreePort() (int, error) { return allocFreePort() }
+
+// SuperviseOnce drives ONE supervision pass at the given wall-clock time, so a
+// test can exercise the probe→degrade→restart→restore state machine
+// deterministically without the background goroutine or real timers.
+func SuperviseOnce(s *Supervisor, ctx context.Context, now time.Time) { s.superviseOnce(ctx, now) }
+
+// InstanceSupervisionState reports a managed instance's supervision state
+// (whether its sources are degraded + its consecutive-restart-failure count) so a
+// test can assert the state machine's transitions. ok is false when no instance
+// for key is managed.
+func InstanceSupervisionState(l *Launcher, key string) (degraded bool, failures int, ok bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	mi, present := l.instances[key]
+	if !present {
+		return false, 0, false
+	}
+	return mi.degraded, mi.restartFailures, true
+}

@@ -40,6 +40,27 @@ type managedInstance struct {
 	baseURL string
 	proc    RunningProcess
 	client  sourceengine.Client
+	// profile is the full profile this instance serves — retained so a supervisor
+	// restart reuses the same port/data dir + KCEF mode, and so degrade/restore
+	// know which source ids to move (profile.SourceIDs).
+	profile engineroute.Profile
+
+	// Supervision state (GAP-114), mutated only under Launcher.mu by the
+	// supervisor: whether this instance's sources are currently degraded to the
+	// default engine, the count of consecutive failed restart attempts, and the
+	// earliest time the next restart may be attempted (backoff / post-cap cooldown
+	// gate).
+	degraded        bool
+	restartFailures int
+	nextRestartAt   time.Time
+	// restartTimes is a rolling window of restart-ATTEMPT timestamps — successful
+	// AND failed — bounding restarts to maxRestarts per cooldown-window even when
+	// each restart briefly passes /health then dies (the slow-crasher failure mode:
+	// a post-settle crash that would otherwise reset restartFailures and be
+	// restarted every interval forever). Entries age out of the window; a whole
+	// window with no restart empties it, which is the only thing that clears the
+	// cap — a transient post-restart health-pass deliberately does NOT (GAP-114).
+	restartTimes []time.Time
 }
 
 // instance projects a managedInstance into the engineroute.Instance the reconcile
@@ -60,6 +81,15 @@ func (m *managedInstance) instance() engineroute.Instance {
 // an in-flight spawn returns promptly and releases mu for Close. Retire and Close
 // collect their victims under mu but stop them OUTSIDE it, so a graceful-stop
 // wait never blocks an EnsureProfile.
+//
+// SUPERVISION (GAP-114). The Supervisor (supervisor.go) keeps managed instances
+// alive after spawn. It PROBES /health outside mu, then takes any restart under
+// mu via superviseInstance — a restart holds mu across its own health wait
+// exactly as EnsureProfile does, so a supervisor restart and a concurrent
+// reconcile EnsureProfile serialise on mu and can never double-spawn one profile.
+// Route degrade/restore go through the optional Rerouter (a disjoint overlay on
+// engineroute.Router), never the base routing table, so supervision never clobbers
+// ReconcileNetwork's routing.
 type Launcher struct {
 	cfg     EngineHostLauncherConfig
 	factory engineroute.ClientFactory
@@ -68,6 +98,13 @@ type Launcher struct {
 	starter   ProcessStarter
 	prober    HealthProber
 	allocPort PortAllocator
+
+	// rerouter degrades a down profile's sources to the default engine and
+	// restores them on recovery (GAP-114). Optional: nil in deployments/tests
+	// without per-source routing, in which case degrade/restore are pure no-ops
+	// and the launcher behaves exactly as before. Set via WithRerouter;
+	// *engineroute.Router satisfies it.
+	rerouter Rerouter
 
 	// Tunables (production defaults set by New; overridden in tests).
 	startTimeout time.Duration // how long a spawn waits for the first healthy /health
@@ -140,6 +177,11 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 
 	if mi, ok := l.instances[p.Key]; ok {
 		if l.reusable(mi) {
+			// A confirmed-healthy instance: clear any stale degrade overlay left by
+			// the supervisor from a prior down episode, so its sources resume using
+			// their base route.
+			mi.profile = p
+			l.markHealthyLocked(mi)
 			return mi.instance(), nil
 		}
 		// Dead or wedged: tear it down and fall through to a fresh spawn.
@@ -164,10 +206,46 @@ func (l *Launcher) reusable(mi *managedInstance) bool {
 // from the map. Best-effort: a stop failure is swallowed (a lingering process
 // wastes memory but never breaks routing). Retire on an empty launcher with an
 // empty keep-set is a safe no-op — the zero-disruption path.
+//
+// It also clears any degrade overlay for a retired profile's sources: a profile
+// no longer referenced by any binding must not leave its sources force-routed to
+// the default, or a stale overlay entry would mask a future rebinding.
 func (l *Launcher) Retire(_ context.Context, keep map[string]bool) {
 	doomed := l.detach(func(mi *managedInstance) bool { return !keep[mi.key] })
 	for _, mi := range doomed {
 		l.stopInstance(mi)
+		if l.rerouter != nil {
+			l.rerouter.Restore(mi.profile.SourceIDs)
+		}
+	}
+}
+
+// markHealthyLocked records that mi is confirmed healthy: it resets the
+// supervision backoff counters and clears any degrade overlay so mi's sources
+// resume using their base route. Idempotent (Restore of non-degraded ids is a
+// no-op). Called under mu whenever a path proves the instance up — a fresh spawn,
+// a reuse, or a successful supervisor restart.
+//
+// It deliberately does NOT clear mi.restartTimes: a slow-crasher passes /health on
+// every restart, so resetting the cap window on a transient health-pass would let
+// it be restarted every interval forever. The window is cleared only by genuine
+// stability — its entries ageing out over a whole cooldown-window (GAP-114).
+func (l *Launcher) markHealthyLocked(mi *managedInstance) {
+	mi.degraded = false
+	mi.restartFailures = 0
+	mi.nextRestartAt = time.Time{}
+	if l.rerouter != nil {
+		l.rerouter.Restore(mi.profile.SourceIDs)
+	}
+}
+
+// degradeLocked marks mi down and force-routes its sources to the default engine
+// (GAP-114), so they stop hitting the dead port. Idempotent — a second call while
+// already degraded only re-sets the (already-set) overlay. Called under mu.
+func (l *Launcher) degradeLocked(mi *managedInstance) {
+	mi.degraded = true
+	if l.rerouter != nil {
+		l.rerouter.Degrade(mi.profile.SourceIDs)
 	}
 }
 

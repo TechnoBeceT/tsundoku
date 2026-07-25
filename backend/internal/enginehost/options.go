@@ -21,6 +21,12 @@ func WithHealthProber(p HealthProber) Option { return func(l *Launcher) { l.prob
 // Tests pass a deterministic allocator.
 func WithPortAllocator(a PortAllocator) Option { return func(l *Launcher) { l.allocPort = a } }
 
+// WithRerouter wires the routing seam the launcher + supervisor use to degrade a
+// down profile's sources to the default instance and restore them on recovery
+// (GAP-114). Production passes the *engineroute.Router; without it degrade/restore
+// are no-ops. Tests pass a fake Rerouter to assert the route transitions.
+func WithRerouter(r Rerouter) Option { return func(l *Launcher) { l.rerouter = r } }
+
 // WithStartTimeout sets how long a spawn waits for the first healthy /health
 // before killing the process and failing (default 60s). Tests shrink it to keep
 // the timeout path fast.

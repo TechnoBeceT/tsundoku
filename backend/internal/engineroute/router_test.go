@@ -66,6 +66,57 @@ func TestRouter_RoutesContentBySourceID(t *testing.T) {
 	}
 }
 
+// TestRouter_DegradeOverlayForcesDefaultAndRestores proves the GAP-114 degrade
+// overlay: a degraded source is force-routed to the default engine even though its
+// base route points at its instance, and Restore returns it to the instance. The
+// overlay and the base table are disjoint (Degrade/Restore never disturb the base
+// route of a NON-degraded source), so the supervisor and ReconcileNetwork never
+// clobber each other.
+func TestRouter_DegradeOverlayForcesDefaultAndRestores(t *testing.T) {
+	def := fake.New(
+		fake.WithSearchResult(1, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "default-1"}}}),
+		fake.WithSearchResult(2, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "default-2"}}}),
+	)
+	inst := fake.New(
+		fake.WithSearchResult(1, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "instance-1"}}}),
+		fake.WithSearchResult(2, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "instance-2"}}}),
+	)
+	router := engineroute.NewRouter(def)
+	router.SetRoutes(map[int64]sourceengine.Client{1: inst, 2: inst})
+
+	// Degrade only source 1: it now hits the default; source 2's base route stands.
+	router.Degrade([]int64{1})
+
+	got1, err := router.Search(context.Background(), 1, "q", 1)
+	if err != nil {
+		t.Fatalf("Search(1): %v", err)
+	}
+	if got1.Manga[0].URL != "default-1" {
+		t.Fatalf("degraded Search(1) = %q, want default-1", got1.Manga[0].URL)
+	}
+	got2, err := router.Search(context.Background(), 2, "q", 1)
+	if err != nil {
+		t.Fatalf("Search(2): %v", err)
+	}
+	if got2.Manga[0].URL != "instance-2" {
+		t.Fatalf("non-degraded Search(2) = %q, want instance-2 (base route intact)", got2.Manga[0].URL)
+	}
+
+	// Restore source 1: it resumes using its (unchanged) base route.
+	router.Restore([]int64{1})
+	got1b, err := router.Search(context.Background(), 1, "q", 1)
+	if err != nil {
+		t.Fatalf("Search(1) after restore: %v", err)
+	}
+	if got1b.Manga[0].URL != "instance-1" {
+		t.Fatalf("restored Search(1) = %q, want instance-1", got1b.Manga[0].URL)
+	}
+
+	// Empty-slice degrade/restore are no-ops (do not panic, change nothing).
+	router.Degrade(nil)
+	router.Restore(nil)
+}
+
 // TestRouter_ManagementCallsAlwaysDefault proves engine-global calls (Sources,
 // SetSocks, ...) always target the default instance even when routes exist, so a
 // per-profile instance never receives the authoritative registry/config pushes.

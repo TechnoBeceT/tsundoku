@@ -84,14 +84,16 @@ type fakeStarter struct {
 	closeOnSignal bool
 	err           error
 
-	mu    sync.Mutex
-	calls []startCall
-	procs []*fakeProcess
+	mu       sync.Mutex
+	attempts int // every Start call, including ones that fail (err set)
+	calls    []startCall
+	procs    []*fakeProcess
 }
 
 func (s *fakeStarter) Start(port int, dataDir string, disableKCEF bool) (enginehost.RunningProcess, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.attempts++
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -105,6 +107,22 @@ func (s *fakeStarter) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.calls)
+}
+
+// attemptCount returns the number of Start invocations INCLUDING failed ones, so
+// a supervisor test can count restart attempts even when the starter errors.
+func (s *fakeStarter) attemptCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts
+}
+
+// setErr toggles the Start error at runtime, so a test can let the initial spawn
+// succeed and then make subsequent restarts fail (or recover).
+func (s *fakeStarter) setErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
 }
 
 func (s *fakeStarter) lastCall() startCall {
@@ -173,3 +191,54 @@ func (f *recordingFactory) factory() engineroute.ClientFactory { return f.build 
 
 // profile is a tiny helper to build a non-default engineroute.Profile with a key.
 func profile(key string) engineroute.Profile { return engineroute.Profile{Key: key} }
+
+// profileWithSources builds a non-default profile carrying the given source ids,
+// so a supervisor test can assert the degrade/restore overlay moves exactly those
+// sources.
+func profileWithSources(key string, ids ...int64) engineroute.Profile {
+	return engineroute.Profile{Key: key, SourceIDs: ids}
+}
+
+// fakeRerouter is an in-memory enginehost.Rerouter recording the degrade/restore
+// calls so a supervisor test can assert which sources were moved to/from the
+// default engine, and track the net currently-degraded set.
+type fakeRerouter struct {
+	mu           sync.Mutex
+	degradeCalls int
+	restoreCalls int
+	degraded     map[int64]bool
+}
+
+func newFakeRerouter() *fakeRerouter { return &fakeRerouter{degraded: map[int64]bool{}} }
+
+func (r *fakeRerouter) Degrade(ids []int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.degradeCalls++
+	for _, id := range ids {
+		r.degraded[id] = true
+	}
+}
+
+func (r *fakeRerouter) Restore(ids []int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.restoreCalls++
+	for _, id := range ids {
+		delete(r.degraded, id)
+	}
+}
+
+// isDegraded reports whether id is currently in the net degraded set.
+func (r *fakeRerouter) isDegraded(id int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.degraded[id]
+}
+
+// counts returns the number of Degrade / Restore calls received.
+func (r *fakeRerouter) counts() (degrade, restore int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.degradeCalls, r.restoreCalls
+}
