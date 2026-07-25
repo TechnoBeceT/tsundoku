@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import Downloads from './Downloads.vue'
 import { downloadItems, failedItems, queuedItems, queuedDeferredItems } from '../../fixtures/downloads'
 import type { DownloadTab } from './downloads.types'
+import type { CycleTimer } from '../../utils/cycleSchedule'
 // Load this screen's state-badge tokens directly: index.css does not @import them
 // yet (a coordinator wires that line to avoid parallel-worker conflicts), so the
 // side-effect import keeps every story rendering with the real palette.
@@ -31,6 +32,9 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
+/** The discovery sweep, mid-countdown — shared by every interactive story. */
+const refreshCycle: CycleTimer = { state: 'waiting', remainingMs: 6_728_000 }
+
 /** Fixture-derived counts — matches the downloadItems fixture data. */
 const fixtureCounts = {
   active: downloadItems.filter((i) => i.state === 'downloading' || i.state === 'upgrading').length,
@@ -40,19 +44,26 @@ const fixtureCounts = {
   ).length,
 }
 
-/** Renders the screen with a live `activeTab` so the tab bar actually switches. */
-const interactive = (startTab: DownloadTab, cycleActive = false, nextCycleMinutes: number | null = 14) => ({
+/**
+ * Renders the screen with a live `activeTab` so the tab bar actually switches.
+ * `downloadCycle` is the download loop's state as useCycleTimers derives it from
+ * the server's schedule; it defaults to a plain countdown.
+ */
+const interactive = (
+  startTab: DownloadTab,
+  downloadCycle: CycleTimer = { state: 'waiting', remainingMs: 843_000 },
+) => ({
   components: { Downloads },
   setup() {
     const activeTab = ref<DownloadTab>(startTab)
-    return { activeTab, downloadItems, cycleActive, nextCycleMinutes, fixtureCounts }
+    return { activeTab, downloadItems, downloadCycle, refreshCycle, fixtureCounts }
   },
   template: `
     <Downloads
       :items="downloadItems"
       :active-tab="activeTab"
-      :cycle-active="cycleActive"
-      :next-cycle-minutes="nextCycleMinutes"
+      :download-cycle="downloadCycle"
+      :refresh-cycle="refreshCycle"
       :counts="fixtureCounts"
       @set-tab="activeTab = $event"
     />
@@ -61,7 +72,31 @@ const interactive = (startTab: DownloadTab, cycleActive = false, nextCycleMinute
 
 /** Active tab — in-flight rows with the indeterminate progress bar (cycle running). */
 export const Active: Story = {
-  render: () => interactive('active', true, null),
+  render: () => interactive('active', { state: 'running', remainingMs: null }),
+}
+
+/**
+ * The BACK-TO-BACK steady state: the cycle is taking longer than its configured
+ * period, so the next run is already due and cycles run with no idle gap. Both the
+ * banner and the header countdown say so (amber, "next due now") instead of one of
+ * them claiming the engine is idle while rows are visibly downloading.
+ */
+export const CycleOverrunning: Story = {
+  render: () => interactive('active', { state: 'overrunning', remainingMs: null }),
+}
+
+/**
+ * The schedule endpoint could not be read: both pills state that plainly rather
+ * than counting down from a schedule invented on the client.
+ */
+export const ScheduleUnavailable: Story = {
+  args: {
+    items: downloadItems,
+    activeTab: 'active',
+    downloadCycle: null,
+    refreshCycle: null,
+    counts: fixtureCounts,
+  },
 }
 
 /** Failed tab — retryable + terminal rows, per-row retry + expandable errors. */
@@ -107,7 +142,7 @@ export const Empty: Story = {
   args: {
     items: [],
     activeTab: 'active',
-    nextCycleMinutes: 14,
+    downloadCycle: { state: 'waiting', remainingMs: 843_000 },
   },
 }
 

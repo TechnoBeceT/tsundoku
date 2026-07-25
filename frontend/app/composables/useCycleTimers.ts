@@ -1,113 +1,187 @@
 /**
- * useCycleTimers — the two live header countdowns on the Downloads screen: the
- * time until the next download cycle and until the next refresh sweep.
+ * useCycleTimers — the Downloads header's view of the two background loops: the
+ * download cycle and the discovery sweep.
  *
- * Derived ENTIRELY on the client from signals that already exist — NO new backend
- * endpoint:
- *   - the cycle/refresh boundaries come from the SSE stream (useProgressStream):
- *     `cycleActive` / `syncing` flag whether one is running right now, and the
- *     `cycle.done` / `refresh.done` events mark when the next one is scheduled
- *     (next fire = now + interval);
- *   - the two intervals come from GET /api/settings (`jobs.download_interval` /
- *     `jobs.refresh_interval`, Go duration strings parsed via parseGoDuration).
+ * THE BACKEND IS THE AUTHORITY. Everything rendered here comes from
+ * GET /api/engine/schedule (`running`, `nextRunAt`, `overdue`, `serverTime`) — a
+ * pure in-memory read of the job runner's own snapshot, no DB and no engine calls.
+ * The client never invents a schedule of its own.
  *
- * Self-correcting: if an early cycle fires (e.g. a manual "Download now"), the
- * next `cycle.done` re-seeds the countdown from that moment.
+ * WHY IT IS BUILT THIS WAY (GAP-115). The previous version derived both countdowns
+ * client-side from `GET /api/settings` + the SSE boundaries: it seeded "next fire =
+ * now + interval" on every mount and re-seeded on `cycle.done`. Three things were
+ * wrong with that. Every page reload restarted the countdowns at a full interval,
+ * because a fresh tab knows nothing about the running server. The re-seed encoded a
+ * post-cycle GAP, but the interval is a true PERIOD measured from the previous
+ * cycle's START, so the countdown was off by a whole cycle duration — worst exactly
+ * when cycles overrun. And a tab that connected mid-cycle saw no `cycle.start`, so
+ * the header claimed "Idle" while sources were visibly downloading beside it.
  *
- * First-mount edge (no SSE seen yet, so the last-cycle time is unknown): once the
- * intervals load, the next-fire is SEEDED to `now + interval` so a plausible
- * countdown shows immediately instead of a blank or a wrong-looking negative. It
- * self-corrects on the first real `cycle.done` / `refresh.done`.
+ * THE MODEL NOW:
+ *   - fetch the schedule on mount (this is what makes a mid-cycle reload correct),
+ *     and again on every SSE cycle/refresh boundary and on SSE reconnect;
+ *   - SSE is the LIVENESS signal, not the state: a `cycle.start` / `cycle.done`
+ *     edge flips `running` instantly, and the fetch it triggers brings the fresh
+ *     `nextRunAt` (which is re-anchored on each cycle START, so refetching on start
+ *     as well as on done is required — without it, a snapshot taken before the
+ *     cycle began makes every running cycle look overrun);
+ *   - a local 1-second ticker only drives the seconds-precision display. There is
+ *     no polling loop against the endpoint.
  *
- * A local 1-second ticker drives the seconds-precision display (useNow's shared
- * 30s clock is too coarse for the "0:43" download countdown); it is torn down when
- * the consumer's scope disposes.
+ * CLOCK SKEW. Countdowns are measured against the SERVER's clock, never the
+ * browser's. Each fetch samples the skew as `(sent + received) / 2 - serverTime`
+ * (the request midpoint, so the round trip is split rather than charged wholly to
+ * one side) and every subsequent tick is corrected by it. A browser clock minutes
+ * off therefore cannot produce a wrong or negative countdown.
  *
- * Returns the raw signals (running flags + remaining ms, null when unknown); the
- * presentational CycleTimers.vue formats them. `downloadRemainingMs` /
- * `refreshRemainingMs` are clamped to ≥0.
+ * BACK-TO-BACK CYCLES ARE A NORMAL STEADY STATE. At the owner's settings (a 90s
+ * period, ~113s cycles) the next run is due before the current one finishes and
+ * cycles run continuously with zero idle time. That surfaces as the `overrunning`
+ * state, which carries no countdown at all — the header reads "running, next due
+ * now" instead of pinning a misleading 0:00 clock or flapping every second.
+ *
+ * `jobs.download_interval` is no longer read here for anything: the period is the
+ * server's business, and re-deriving it client-side is the bug this replaced.
+ *
+ * Returns one `CycleTimer` per loop (state + remaining ms); the presentational
+ * CycleTimers.vue / CycleBanner.vue only format them.
  */
-import { ref, computed, onScopeDispose } from 'vue'
+import { ref, computed, watch, onScopeDispose } from 'vue'
 import { apiClient } from '~/utils/api/client'
-import { parseGoDuration } from './useSettings'
+import type { components } from '~/utils/api/schema.d.ts'
+import { deriveCycleTimer } from '~/utils/cycleSchedule'
 import { useProgressStream } from './useProgressStream'
 
-// Poll cadence of the seconds-precision countdown clock.
+type EngineScheduleDTO = components['schemas']['EngineSchedule']
+
+/** Cadence of the local clock that drives the seconds-precision countdown. */
 const TICK_MS = 1000
 
-/** Convert a Go duration string ("1m0s", "2h") to milliseconds (0 when unparseable). */
-function goDurationToMs(raw: string): number {
-  const { value, unit } = parseGoDuration(raw)
-  const unitMs = unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : 1000
-  return value * unitMs
+/**
+ * One loop's live running flag, with the two freshness guards that keep an SSE
+ * edge and an in-flight fetch from overwriting each other:
+ *
+ *   - `mark` records an SSE boundary. Edges are always the newest truth, so they
+ *     win outright and bump the edge counter.
+ *   - `applyFetched` writes a fetched flag only when no edge landed since the
+ *     fetch started, and only when the caller asked to re-seed at all. A fetch
+ *     triggered BY an edge must not re-seed: the server publishes its own
+ *     running flag around the SSE emission, so that response can legitimately
+ *     still describe the state the edge just superseded.
+ */
+function createLoopLiveness() {
+  const running = ref(false)
+  let edges = 0
+  return {
+    running,
+    /** The edge counter to hand back to applyFetched after an await. */
+    edge: (): number => edges,
+    /** Apply an SSE boundary: authoritative, and it invalidates in-flight fetches. */
+    mark(value: boolean): void {
+      edges += 1
+      running.value = value
+    },
+    /** Seed from a fetched snapshot unless an SSE edge landed while it was in flight. */
+    applyFetched(value: boolean, seenEdges: number): void {
+      if (edges === seenEdges) running.value = value
+    },
+  }
 }
 
 export function useCycleTimers() {
   const stream = useProgressStream()
   stream.connect()
 
-  // The two configured intervals (ms). null until GET /api/settings resolves.
-  const downloadIntervalMs = ref<number | null>(null)
-  const refreshIntervalMs = ref<number | null>(null)
+  // The last SUCCESSFUL schedule read. Null means "not known" and renders as the
+  // `unavailable` state: a failed read drops the snapshot rather than keeping a
+  // countdown ticking against a server that may have restarted and re-anchored its
+  // loops — a stale countdown is exactly the invented truth this composable exists
+  // to remove. Recovery is free: the SSE reconnect below refetches.
+  const schedule = ref<EngineScheduleDTO | null>(null)
 
-  // Epoch ms of the next scheduled fire, re-seeded on each *.done event. null when
-  // still unknown (intervals not loaded and no cycle seen yet).
-  const nextDownloadAt = ref<number | null>(null)
-  const nextRefreshAt = ref<number | null>(null)
+  // Browser clock minus server clock, in ms. Re-sampled on every successful read.
+  const skewMs = ref(0)
 
-  // Local seconds clock for the live countdown.
   const now = ref(Date.now())
-  const timer = setInterval(() => { now.value = Date.now() }, TICK_MS)
+  const ticker = setInterval(() => { now.value = Date.now() }, TICK_MS)
+
+  /** The current instant on the SERVER's clock — the reference for every countdown. */
+  const serverNow = computed(() => now.value - skewMs.value)
+
+  const downloadLoop = createLoopLiveness()
+  const refreshLoop = createLoopLiveness()
+
+  // Only the newest read may write: a slow response must never overwrite a fresher one.
+  let fetchSeq = 0
 
   /**
-   * Load the two intervals from settings and seed the initial next-fire times so a
-   * countdown shows on first mount before any SSE boundary arrives. Failures are
-   * swallowed (the timers just stay "waiting…") — this is passive header
-   * decoration, not a user action, so it never surfaces an error banner.
+   * Read the schedule endpoint and apply it.
+   *
+   * @param seedRunning whether this read may (re-)seed the running flags. True for
+   *   the mount and reconnect reads, which are the only ones that know more than
+   *   the SSE stream; false for reads triggered by an SSE boundary, whose response
+   *   may pre-date the edge that triggered it.
+   *
+   * Failures are not surfaced as a banner — this is passive header state, not a
+   * user action — but they are not swallowed either: the pills switch to the
+   * explicit "schedule unavailable" state rather than showing a fabricated one.
    */
-  async function loadIntervals(): Promise<void> {
+  async function load(seedRunning: boolean): Promise<void> {
+    const seq = ++fetchSeq
+    const downloadEdge = downloadLoop.edge()
+    const refreshEdge = refreshLoop.edge()
+    const sentAt = Date.now()
+
+    let data: EngineScheduleDTO | null = null
     try {
-      const res = await apiClient.GET('/api/settings')
-      if (res.error || !res.data) return
-      for (const s of res.data) {
-        if (s.key === 'jobs.download_interval') downloadIntervalMs.value = goDurationToMs(s.value)
-        if (s.key === 'jobs.refresh_interval') refreshIntervalMs.value = goDurationToMs(s.value)
-      }
-      if (nextDownloadAt.value == null && downloadIntervalMs.value != null) {
-        nextDownloadAt.value = Date.now() + downloadIntervalMs.value
-      }
-      if (nextRefreshAt.value == null && refreshIntervalMs.value != null) {
-        nextRefreshAt.value = Date.now() + refreshIntervalMs.value
-      }
+      const res = await apiClient.GET('/api/engine/schedule')
+      if (!res.error && res.data) data = res.data
     }
-    catch { /* passive decoration — never surfaced */ }
+    catch {
+      data = null
+    }
+
+    if (seq !== fetchSeq) return // a newer read already landed
+    schedule.value = data
+    if (data == null) return
+
+    // Split the round trip between the two clocks, then correct every later tick by it.
+    const serverTimeMs = Date.parse(data.serverTime)
+    if (!Number.isNaN(serverTimeMs)) {
+      skewMs.value = (sentAt + Date.now()) / 2 - serverTimeMs
+    }
+    if (seedRunning) {
+      downloadLoop.applyFetched(data.download.running, downloadEdge)
+      refreshLoop.applyFetched(data.refresh.running, refreshEdge)
+    }
   }
 
-  // Re-seed the next-fire the moment a cycle/refresh completes: next = now + interval.
-  const offCycle = stream.on('cycle.done', () => {
-    if (downloadIntervalMs.value != null) nextDownloadAt.value = Date.now() + downloadIntervalMs.value
-  })
-  const offRefresh = stream.on('refresh.done', () => {
-    if (refreshIntervalMs.value != null) nextRefreshAt.value = Date.now() + refreshIntervalMs.value
+  // SSE boundaries: flip the running flag instantly, then refresh the instants.
+  const unsubscribe = [
+    stream.on('cycle.start', () => { downloadLoop.mark(true); void load(false) }),
+    stream.on('cycle.done', () => { downloadLoop.mark(false); void load(false) }),
+    stream.on('refresh.start', () => { refreshLoop.mark(true); void load(false) }),
+    stream.on('refresh.done', () => { refreshLoop.mark(false); void load(false) }),
+  ]
+
+  // A reconnect means the tab may have missed whole cycles (or the server
+  // restarted): re-seed everything from the endpoint, exactly like a fresh mount.
+  const stopWatch = watch(stream.connected, (isConnected) => {
+    if (isConnected) void load(true)
   })
 
   onScopeDispose(() => {
-    clearInterval(timer)
-    offCycle()
-    offRefresh()
+    clearInterval(ticker)
+    unsubscribe.forEach((off) => off())
+    stopWatch()
   })
 
-  void loadIntervals()
-
-  const remaining = (at: number | null): number | null =>
-    at == null ? null : Math.max(0, at - now.value)
+  void load(true)
 
   return {
-    // Running flags, forwarded from the SSE stream.
-    downloadRunning: stream.cycleActive,
-    refreshRunning: stream.syncing,
-    // Live remaining milliseconds (null when unknown), clamped ≥0.
-    downloadRemainingMs: computed(() => remaining(nextDownloadAt.value)),
-    refreshRemainingMs: computed(() => remaining(nextRefreshAt.value)),
+    /** The download-cycle loop's live state (state + remaining ms). */
+    download: computed(() => deriveCycleTimer(schedule.value?.download ?? null, downloadLoop.running.value, serverNow.value)),
+    /** The discovery-sweep loop's live state (state + remaining ms). */
+    refresh: computed(() => deriveCycleTimer(schedule.value?.refresh ?? null, refreshLoop.running.value, serverNow.value)),
   }
 }

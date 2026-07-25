@@ -9,10 +9,9 @@
  * Prop wiring:
  *   :items            — flat DownloadItem[] (screen derives tab views from it)
  *   :active-tab       — which top-level tab is active
- *   :cycle-active     — true while a download cycle is running (SSE-driven)
- *   :next-cycle-minutes — null (no countdown available from SSE)
- *   :download-running / :refresh-running — SSE running flags for the CycleTimers header
- *   :download-remaining-ms / :refresh-remaining-ms — live countdowns (useCycleTimers)
+ *   :download-cycle / :refresh-cycle — the two background loops' live state from
+ *                       useCycleTimers (the server's own schedule), feeding the cycle
+ *                       banner and the header countdowns
  *   :source-statuses  — the live per-source status strip (useEngineStatus, polled)
  *   :retrying-ids     — chapter ids with a single retry in flight
  *   :retrying-all     — bulk retry scope in flight, or null
@@ -46,8 +45,6 @@ const {
   retryingIds,
   retryingAll,
   retryError,
-  cycleActive,
-  nextCycleMinutes,
   running,
   runMessage,
   runError,
@@ -65,10 +62,11 @@ const {
 const { coolingDownSources, connect } = useProgressStream()
 onMounted(connect)
 
-// Engine visibility: the two live header countdowns (derived from SSE + settings)
-// and the per-source status strip (polled while the page is visible). Both
-// composables own their own data/lifecycle; the screen renders the results.
-const { downloadRunning, refreshRunning, downloadRemainingMs, refreshRemainingMs } = useCycleTimers()
+// Engine visibility: the two background loops' live state (read from the server's
+// own schedule, kept fresh by the SSE cycle boundaries) and the per-source status
+// strip (polled while the page is visible). Both composables own their own
+// data/lifecycle; the screen renders the results.
+const { download: downloadCycle, refresh: refreshCycle } = useCycleTimers()
 const { sources: sourceStatuses } = useEngineStatus()
 </script>
 
@@ -77,8 +75,8 @@ const { sources: sourceStatuses } = useEngineStatus()
     <Downloads
       :items="items"
       :active-tab="activeTab"
-      :cycle-active="cycleActive"
-      :next-cycle-minutes="nextCycleMinutes"
+      :download-cycle="downloadCycle"
+      :refresh-cycle="refreshCycle"
       :retrying-ids="retryingIds"
       :retrying-all="retryingAll"
       :retry-error="retryError"
@@ -91,10 +89,6 @@ const { sources: sourceStatuses } = useEngineStatus()
       :run-message="runMessage"
       :run-error="runError"
       :cooling-down-sources="coolingDownSources"
-      :download-running="downloadRunning"
-      :refresh-running="refreshRunning"
-      :download-remaining-ms="downloadRemainingMs"
-      :refresh-remaining-ms="refreshRemainingMs"
       :source-statuses="sourceStatuses"
       @set-tab="setTab"
       @retry="retry"

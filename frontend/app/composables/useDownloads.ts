@@ -25,8 +25,9 @@
  *   Both refetch on success; failure sets retryError (dismissible via dismissError).
  *
  * Auto-refetches on cycle.done and download.done SSE events so the list stays
- * current while a download cycle is active. cycleActive is forwarded from
- * useProgressStream (true on cycle.start, false on cycle.done).
+ * current while a download cycle is active. The cycle's own running/next-run state
+ * is NOT modelled here — that is useCycleTimers' job (it reads the server's
+ * schedule); this composable only uses the events as a refetch trigger.
  *
  * "Download now": runNow() — POST /api/downloads/run; mirrors useSourceMetrics'
  * warmNow() §16 pattern (busy → started-message, never swallowed). The endpoint
@@ -155,12 +156,8 @@ export function useDownloads() {
   // More results exist when the loaded page is shorter than the server total.
   const hasMore = computed(() => items.value.length < total.value)
 
-  // cycleActive: forwarded from the module-singleton SSE composable.
-  const { cycleActive, on } = useProgressStream()
-
-  // No event-driven next-cycle countdown is available — be honest rather than
-  // guessing. The screen hides the countdown pill when this is null.
-  const nextCycleMinutes: number | null = null
+  // The SSE hub is used purely as a refetch signal here (see the doc comment).
+  const { on } = useProgressStream()
 
   /**
    * Fetch one page of the given tab's chapters.
@@ -353,8 +350,6 @@ export function useDownloads() {
     retryingIds,
     retryingAll,
     retryError,
-    cycleActive,
-    nextCycleMinutes,
     running,
     runMessage,
     runError,

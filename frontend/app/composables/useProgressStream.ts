@@ -45,13 +45,25 @@ import { ref } from 'vue'
  *   - `unhealthyCount`   ← health.summary payload { unhealthy } — exact, server-authoritative.
  *   - `erroringSources`  ← sources.summary payload { erroring } — exact, server-authoritative.
  *   - `coolingDownSources` ← sources.summary payload { coolingDown } — exact, server-authoritative.
- *   - `syncing`         ← true on refresh.start, false on refresh.done — accurate for the
- *                          "Syncing sources…" header indicator.
+ *   - `syncing`         ← true on refresh.start, false on refresh.done. EDGE-ONLY, with the
+ *                          blind spot every edge-only flag has (see below): a tab that
+ *                          connects while a sweep is already running shows nothing until the
+ *                          next sweep. Adequate for the shell's transient "Syncing sources…"
+ *                          hint; NOT adequate for a claim about the engine's current state.
  *   - `lastCycle`       ← 'start'/'done' on cycle.start/cycle.done — available for callers
  *                          that want to react to download-cycle boundaries.
  *   - activeDownloads / failedDownloads — the download.* events carry no running total in
  *     their payloads, so a reliable per-event count cannot be maintained here. Both remain
  *     at 0 in the layout; the Downloads screen (Milestone B) is the authoritative source.
+ *
+ * WHAT THIS STREAM CANNOT TELL YOU (GAP-115). Every flag here is derived purely from
+ * EDGES, so it only knows what happened while this tab was listening. A page loaded
+ * mid-cycle has seen no `cycle.start` and would render "Idle" beside a source strip
+ * that is visibly downloading — which is exactly the contradiction the owner hit. A
+ * running/next-run claim therefore belongs to `useCycleTimers`, which reads
+ * GET /api/engine/schedule for the truth and uses these events only as the liveness
+ * signal that it is time to re-read. This composable deliberately no longer exposes a
+ * `cycleActive` flag: keeping one invited exactly that mistake.
  *
  * EventSource auto-reconnects on network loss; onerror sets connected=false but does NOT
  * tear down the source (the browser will retry automatically).
@@ -62,7 +74,6 @@ const unhealthyCount = ref(0)
 const erroringSources = ref(0)
 const coolingDownSources = ref(0)
 const syncing = ref(false)
-const cycleActive = ref(false)
 const lastCycle = ref<'start' | 'done' | null>(null)
 
 let source: EventSource | null = null
@@ -127,8 +138,8 @@ export function useProgressStream() {
         }
         if (name === 'refresh.start') syncing.value = true
         if (name === 'refresh.done') syncing.value = false
-        if (name === 'cycle.start') { cycleActive.value = true; lastCycle.value = 'start' }
-        if (name === 'cycle.done') { cycleActive.value = false; lastCycle.value = 'done' }
+        if (name === 'cycle.start') lastCycle.value = 'start'
+        if (name === 'cycle.done') lastCycle.value = 'done'
 
         emit(name, data)
       })
@@ -151,5 +162,5 @@ export function useProgressStream() {
     return () => listeners.get(event)?.delete(cb)
   }
 
-  return { connected, unhealthyCount, erroringSources, coolingDownSources, syncing, cycleActive, lastCycle, connect, disconnect, on }
+  return { connected, unhealthyCount, erroringSources, coolingDownSources, syncing, lastCycle, connect, disconnect, on }
 }

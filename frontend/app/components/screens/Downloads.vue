@@ -14,6 +14,7 @@ import CycleBanner from '../downloads/CycleBanner.vue'
 import CycleTimers from '../downloads/CycleTimers.vue'
 import SourceStatusStrip from '../downloads/SourceStatusStrip.vue'
 import type { SourceStatus } from '../downloads/sourceStatus.types'
+import type { CycleTimer } from '../../utils/cycleSchedule'
 import DeferralNote from '../downloads/DeferralNote.vue'
 import FailedDownloadCard from '../downloads/FailedDownloadCard.vue'
 import ActiveFailureBanner from '../downloads/ActiveFailureBanner.vue'
@@ -41,10 +42,13 @@ const props = withDefaults(defineProps<{
   items: DownloadItem[]
   /** Which top-level tab is active. */
   activeTab?: DownloadTab
-  /** Whether a download cycle is currently running (SSE-driven). */
-  cycleActive?: boolean
-  /** Minutes until the next cycle, for the idle banner ("~14 min"); null hides it. */
-  nextCycleMinutes?: number | null
+  /**
+   * The download-cycle loop's live state (useCycleTimers → GET /api/engine/schedule),
+   * feeding both the cycle banner and the header countdown. null = not known yet.
+   */
+  downloadCycle?: CycleTimer | null
+  /** The discovery-sweep loop's live state, for the header countdown. null = not known yet. */
+  refreshCycle?: CycleTimer | null
   /** Chapter ids with a single retry in flight — disables that row + shows a spinner. */
   retryingIds?: string[]
   /** A bulk retry/reset in flight (its scope), or null when idle. */
@@ -78,20 +82,12 @@ const props = withDefaults(defineProps<{
    * awareness banner — so an empty Active list reads as WAITING, not "up to date".
    */
   coolingDownSources?: number
-  /** Whether a download cycle is running now (SSE) — drives the CycleTimers header. */
-  downloadRunning?: boolean
-  /** Whether a refresh sweep is running now (SSE) — drives the CycleTimers header. */
-  refreshRunning?: boolean
-  /** Milliseconds until the next download cycle; null → "waiting…". */
-  downloadRemainingMs?: number | null
-  /** Milliseconds until the next refresh sweep; null → "waiting…". */
-  refreshRemainingMs?: number | null
   /** The live per-source status strip (sources downloading / cooling right now). */
   sourceStatuses?: SourceStatus[]
 }>(), {
   activeTab: 'active',
-  cycleActive: false,
-  nextCycleMinutes: null,
+  downloadCycle: null,
+  refreshCycle: null,
   retryingIds: () => [],
   retryingAll: null,
   retryError: '',
@@ -104,10 +100,6 @@ const props = withDefaults(defineProps<{
   runMessage: '',
   runError: '',
   coolingDownSources: 0,
-  downloadRunning: false,
-  refreshRunning: false,
-  downloadRemainingMs: null,
-  refreshRemainingMs: null,
   sourceStatuses: () => [],
 })
 
@@ -252,7 +244,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       <!-- Top-level tabs + cycle banner + manual "Download now" trigger -->
       <div class="downloads__head">
         <SegmentedTabs :model-value="activeTab" :tabs="mainTabs" @update:model-value="selectTab($event as DownloadTab)" />
-        <CycleBanner class="downloads__cycle" :cycle-active="cycleActive" :next-cycle-minutes="nextCycleMinutes" :deferral-summary="deferralSummary" />
+        <CycleBanner class="downloads__cycle" :cycle="downloadCycle" :deferral-summary="deferralSummary" />
         <AppButton variant="mini" size="sm" :loading="running" @click="emit('run-now')">
           <template #icon>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -268,12 +260,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
            the per-source status strip (which sources are downloading / cooling
            right now). Both are additive to the existing CycleBanner. -->
       <div class="downloads__status">
-        <CycleTimers
-          :download-running="downloadRunning"
-          :refresh-running="refreshRunning"
-          :download-remaining-ms="downloadRemainingMs"
-          :refresh-remaining-ms="refreshRemainingMs"
-        />
+        <CycleTimers :download="downloadCycle" :refresh="refreshCycle" />
         <SourceStatusStrip :sources="sourceStatuses" />
       </div>
 

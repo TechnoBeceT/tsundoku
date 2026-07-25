@@ -1903,6 +1903,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/engine/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download / refresh cycle schedule
+         * @description Returns the live cadence state of the two background loops: whether a
+         *     download cycle or a discovery sweep is running right now, and the earliest
+         *     instant each may next start. It is a pure in-memory read of the job
+         *     runner's own snapshot — ZERO DB queries and ZERO engine calls — so it is
+         *     safe to poll.
+         *
+         *     It exists because the state is otherwise unobservable: a client that
+         *     connects mid-cycle sees no SSE boundary event and can only guess, which is
+         *     how a running cycle came to be displayed as "Idle".
+         *
+         *     `jobs.download_interval` / `jobs.refresh_interval` are TRUE PERIODS
+         *     measured from the previous cycle's START, so `nextRunAt` may already be in
+         *     the PAST while `running` is true — that is what an overrunning cycle looks
+         *     like, and `overdue` flags it. The missed tick is never queued: exactly one
+         *     cycle starts as soon as the current one returns. Compute a countdown
+         *     against `serverTime`, not the browser clock.
+         */
+        get: operations["getEngineSchedule"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/engine/purge-source": {
         parameters: {
             query?: never;
@@ -3629,6 +3664,52 @@ export interface components {
             chaptersDeleted: number;
             metrics: number;
             breaker: number;
+        };
+        /**
+         * @description The live cadence state of the two background loops (download cycle and
+         *     discovery sweep), read straight off the job runner's in-memory snapshot.
+         */
+        EngineSchedule: {
+            download: components["schemas"]["CycleSchedule"];
+            refresh: components["schemas"]["CycleSchedule"];
+            /**
+             * Format: date-time
+             * @description The instant this snapshot was taken, by the SERVER's clock. Compute a
+             *     countdown as nextRunAt - serverTime so a skewed browser clock can never
+             *     show a wrong (or negative) remaining time.
+             * @example 2026-07-25T12:00:00Z
+             */
+            serverTime: string;
+        };
+        /**
+         * @description One background loop's schedule. The interval is a TRUE PERIOD measured from
+         *     the previous cycle's START, so `nextRunAt` can already have passed while
+         *     `running` is true (an overrunning cycle) — it is reported honestly rather
+         *     than replaced with a fabricated future timestamp, and `overdue` says so.
+         *     Cycles never overlap: a tick landing mid-cycle is skipped, never queued.
+         */
+        CycleSchedule: {
+            /**
+             * @description Whether a cycle is executing right now.
+             * @example true
+             */
+            running: boolean;
+            /**
+             * Format: date-time
+             * @description The EARLIEST instant the next cycle may start (the most recent cycle's
+             *     start + the configured interval). May be in the past — see `overdue`.
+             *     Null when the loop is not scheduled at all: it was never started, or
+             *     its context was cancelled and the goroutine has exited.
+             * @example 2026-07-25T12:01:30Z
+             */
+            nextRunAt: string | null;
+            /**
+             * @description True when nextRunAt is known and has already passed: the next cycle is
+             *     due (it starts the moment the current one finishes, if any). Always
+             *     false when nextRunAt is null — "nothing is planned" is not "late".
+             * @example false
+             */
+            overdue: boolean;
         };
         /**
          * @description One row of the live engine source-status strip: a physical source that is
@@ -8789,6 +8870,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceStatus"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getEngineSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current cycle schedule. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EngineSchedule"];
                 };
             };
             /** @description Missing or invalid Bearer token. */
