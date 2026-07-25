@@ -323,6 +323,16 @@ func main() {
 		WithEventRecorder(eventsSvc) // logs a `download` audit event per source attempt
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
+	// One-time startup upgrade-detection pass. ResetOrphanedChapters above unflagged
+	// every stranded upgrade_available chapter back to downloaded; re-run detection
+	// ONCE here so the upgrade queue is re-populated immediately on boot instead of
+	// sitting empty until the first discovery sweep — a full refresh_interval (~2h)
+	// after startup (GAP-112 moved detection onto the post-refresh pass, and the
+	// refresh loop waits one whole interval before its first sweep). It reads the
+	// already-synced ProviderChapter feeds, so it must run AFTER the reset. Placed
+	// here (dispatcher built, DB ready) and BEFORE startEngine launches the tickers.
+	runStartupUpgradeDetection(ctx, dispatcher)
+
 	// Wire the breaker→SSE alert seam (Source Health Console proactive alerting):
 	// the runner reads its erroring/coolingDown counts from the gate's snapshot,
 	// and the gate fires runner.SourcesSummaryHook on every breaker trip/clear so a
@@ -470,6 +480,28 @@ func runStartupStagingGC(ctx context.Context, entClient *ent.Client, stagingRoot
 		slog.Error("startup: staging GC failed", "error", err)
 	} else if removed > 0 {
 		slog.Info("startup: staging GC reclaimed leaked dirs", "removed", removed)
+	}
+}
+
+// runStartupUpgradeDetection runs ONE convergence-upgrade DETECTION pass at boot,
+// immediately after ResetOrphanedChapters unflagged every stranded upgrade_available
+// chapter back to downloaded. Without it the upgrade queue would sit EMPTY until the
+// first discovery sweep — a full refresh_interval (~2h) after startup — because
+// GAP-112 moved detection out of the per-download-cycle path onto the post-refresh
+// pass (job.Runner.runRefreshSweep) and the refresh loop waits one whole interval
+// before its first sweep. Re-flagging here from the already-synced ProviderChapter
+// feeds re-populates the queue right away, so a restart converges without that gap.
+// It is pure-DB (batched, no-N+1, zero source calls — GAP-112), so it is cheap even
+// on a large library. Uses the SAME per-source retry budget the post-refresh
+// detection uses (dispatcher.MaxRetries), so the exhaustion rule is identical on both
+// paths. Best-effort: a detection error is logged, never fatal — the API must keep
+// serving regardless. Extracted from main so its two-branch logging does not push
+// main's cyclomatic complexity over the lint cap.
+func runStartupUpgradeDetection(ctx context.Context, dispatcher *download.Dispatcher) {
+	if flagged, err := dispatcher.DetectUpgrades(ctx, dispatcher.MaxRetries(ctx)); err != nil {
+		slog.Error("startup: upgrade detection failed", "error", err)
+	} else {
+		slog.Info("startup: detected upgrades", "flagged", flagged)
 	}
 }
 
