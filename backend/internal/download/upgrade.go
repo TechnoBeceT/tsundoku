@@ -40,6 +40,12 @@ type upgradeResult struct {
 	// cleanup) so the byte cache holds bytes only for in-progress chapters. "" when
 	// no fetch staged pages (a stale/no-op upgrade).
 	stagingDir string
+
+	// usedCachedLinks reports whether the fetch drove its image loop from the page
+	// links stored on pc rather than resolving them from the source. It is captured
+	// BEFORE the fetch and handed to handleUpgradeFailure so a failed attempt on
+	// EXPIRED cached links invalidates them (GAP-119) — see fetchAttempt.
+	usedCachedLinks bool
 }
 
 // DetectUpgrades scans all Chapter rows in state=downloaded and transitions
@@ -427,7 +433,10 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// every failure path (fetch, render, or persist). res.stagingDir is populated
 		// on the fetch/render failure returns for exactly this.
 		d.cleanupStaging(ctx, res.stagingDir)
-		return d.handleUpgradeFailure(ctx, chapterID, res.pc, err)
+		return d.handleUpgradeFailure(ctx, chapterID, res.pc, fetchAttempt{
+			stagingDir:      res.stagingDir,
+			usedCachedLinks: res.usedCachedLinks,
+		}, err)
 	}
 
 	if err := d.persistUpgradeSuccess(ctx, chapterID, res); err != nil {
@@ -435,7 +444,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// bump (failedPC is nil). Still wipe the staging dir (correctness over resume,
 		// like every upgrade-failure path); the working copy on disk is untouched.
 		d.cleanupStaging(ctx, res.stagingDir)
-		return d.handleUpgradeFailure(ctx, chapterID, nil, err)
+		return d.handleUpgradeFailure(ctx, chapterID, nil, fetchAttempt{}, err)
 	}
 
 	// The staged bytes are now inside the upgraded CBZ — delete the staging dir
@@ -505,6 +514,10 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// Politeness delay before the fetch (runtime-tunable per-source minimum gap).
 	d.gateWait(pctx, sourceKey)
 	release := limiter.acquire(sourceKey)
+	// Read BEFORE the fetch: the upgrade target's stored links are what an expiry
+	// makes stale, and only a pre-fetch read can distinguish "re-used" from
+	// "resolved this attempt" (GAP-119; see fetchAttempt).
+	usedCachedLinks := len(pc.PageLinks) > 0
 	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
 	release()
 	if err != nil {
@@ -519,7 +532,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// with the SAME classified rule as the download path (chapter-specific → bump,
 		// source-wide → cooldown), and stagingDir so the caller wipes the
 		// partially-staged pages — Fetch populates StagingDir even on error.
-		return upgradeResult{pc: pc, sp: sp, stagingDir: pages.StagingDir}, err
+		return upgradeResult{pc: pc, sp: sp, stagingDir: pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
 	}
 	// The fetch succeeded → the source is reachable; clear its breaker state.
 	// (A later render/persist failure is not the source's fault, so it does not
@@ -682,14 +695,18 @@ func (d *Dispatcher) finishStaleUpgrade(ctx context.Context, chapterID uuid.UUID
 // oscillation), while a SOURCE-WIDE/ban upgrade failure only COOLS IT DOWN
 // (attempts untouched — a preferred source temporarily down recovers as the swap
 // target once it is back). A render/persist fault passes failedPC==nil, so it
-// charges nothing (⑥). It always returns nil so callers treat upgrade failures as
-// handled outcomes, not infrastructure errors.
-func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, chapterID uuid.UUID, failedPC *ent.ProviderChapter, cause error) error {
+// charges nothing (⑥) and attempt is ignored. It always returns nil so callers
+// treat upgrade failures as handled outcomes, not infrastructure errors.
+//
+// attempt describes the fetch that failed. Its stagingDir has ALREADY been wiped by
+// the caller (a failed upgrade never resumes); passing it on anyway makes
+// chargeFetchFailure re-run the removal as a CHECK — a no-op when that wipe
+// succeeded, and the guard that keeps the page links when it did not, so links and
+// staged pages stay consistent on the upgrade path exactly as they do on the
+// download path.
+func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, chapterID uuid.UUID, failedPC *ent.ProviderChapter, attempt fetchAttempt, cause error) error {
 	if failedPC != nil {
-		// stagingDir "" — the upgrade path already wiped the target's staging dir before
-		// calling this (a failed upgrade never resumes); chargeFetchFailure then only
-		// clears stale page_links on a not_found.
-		d.chargeFetchFailure(ctx, failedPC, "", cause, time.Now())
+		d.chargeFetchFailure(ctx, failedPC, attempt, cause, time.Now())
 	}
 
 	// Transition upgrading → downloaded (restores working state).

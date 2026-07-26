@@ -715,10 +715,16 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// the per-source concurrency cap below).
 	d.gateWait(pctx, sourceKey)
 	release := limiter.acquire(sourceKey)
+	// Capture whether this attempt will drive its image loop from the links ALREADY
+	// STORED on the row — it must be read BEFORE the fetch, because persistPageLinks
+	// below writes freshly-resolved links onto the same in-memory row and makes the
+	// two cases indistinguishable afterwards (GAP-119; see fetchAttempt).
+	attempt := fetchAttempt{usedCachedLinks: len(cand.ProviderChapter.PageLinks) > 0}
 	fetchStart := time.Now()
 	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
 	fetchDuration := time.Since(fetchStart)
 	release()
+	attempt.stagingDir = pages.StagingDir
 
 	// Write-through the resolved page links the instant they are known (even on a
 	// byte-fetch failure), so a retry SKIPS the source's page-resolution step.
@@ -726,7 +732,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 
 	if fetchErr != nil {
 		d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusFailed, fetchDuration, nil, fetchErr)
-		d.chargeFetchFailure(ctx, cand.ProviderChapter, pages.StagingDir, fetchErr, now)
+		d.chargeFetchFailure(ctx, cand.ProviderChapter, attempt, fetchErr, now)
 		// Circuit-breaker bookkeeping is SEPARATE from the per-chapter retry
 		// state above: it tracks whether this source is down ENTIRELY (see
 		// filterGated), not whether it can serve this one chapter. Recorded ONLY
@@ -765,6 +771,26 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	return true, nil
 }
 
+// fetchAttempt carries what ONE completed fetch attempt left behind, so its
+// failure accounting can decide what to invalidate. It travels with the error, not
+// inside it.
+//
+// usedCachedLinks MUST be captured BEFORE the fetch runs. persistPageLinks
+// write-throughs freshly-resolved links onto the SAME in-memory ProviderChapter row
+// during the attempt, so once the failure is charged, pc.PageLinks is non-empty
+// whether the attempt re-used stored links or resolved them itself — reading the
+// row afterwards cannot tell the two apart (GAP-119).
+type fetchAttempt struct {
+	// stagingDir is the failed fetch's on-disk page-staging directory, or "" when
+	// the attempt staged nothing.
+	stagingDir string
+
+	// usedCachedLinks reports whether the attempt drove its image loop from the
+	// links STORED on the ProviderChapter row instead of resolving them from the
+	// source.
+	usedCachedLinks bool
+}
+
 // chargeFetchFailure applies the per-(chapter,source) retry accounting for a FETCH
 // failure, CLASSIFIED (owner-ratified — see isChapterSpecificFailure):
 //   - CHAPTER-SPECIFIC (this chapter is broken on this source) → bumpSourceFailure
@@ -778,34 +804,64 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 // (handleUpgradeFailure), so a fetch failure is accounted identically wherever it
 // happens (an upgrade is a download).
 //
-// A not_found is treated as a STALE RESOLUTION: the stored page links, and the
-// pages already staged from them, may point at moved/renamed resources, so BOTH are
-// invalidated (links cleared, staging dir wiped) and the next attempt re-resolves +
-// re-downloads from scratch. stagingDir is the failed fetch's staging directory ("" if none).
-func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, stagingDir string, cause error, now time.Time) {
+// It also invalidates the cached page links when this attempt proved them
+// untrustworthy — see linksWentStale for the two triggers. Invalidation wipes the
+// staged pages too, and only clears the links if that wipe succeeded, so the links
+// and the (index-keyed) staged files can never drift apart.
+func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, attempt fetchAttempt, cause error, now time.Time) {
 	if isChapterSpecificFailure(cause) {
 		d.bumpSourceFailure(ctx, pc, cause, now)
 	} else {
 		d.cooldownSource(ctx, pc, cause, now)
 	}
-	if errorclass.Classify(cause) == errorclass.CategoryNotFound {
-		// Wipe the staging dir FIRST and clear the page links ONLY if the wipe
-		// succeeded: the two must stay consistent. If the links were cleared but the
-		// (index-keyed) staged files survived, the next attempt would re-resolve a
-		// fresh, possibly-reordered page list and pack it against those stale files —
-		// the mismatched-page corruption FIX-2 guards on the upgrade path. Keeping the
-		// links on a wipe failure means the next attempt re-uses the SAME links +
-		// staging (consistent, if still stale); the not_found bump exhausts it anyway.
-		if err := d.removeStaging(stagingDir); err != nil {
-			slog.WarnContext(ctx, "download.chargeFetchFailure: staging wipe failed on not_found — keeping page links to avoid re-resolve against stale staging",
-				"provider_chapter_id", pc.ID,
-				"staging_dir", stagingDir,
-				"err", err,
-			)
-			return
-		}
-		d.clearPageLinks(ctx, pc)
+	if !linksWentStale(ctx, attempt, cause) {
+		return
 	}
+	// Wipe the staging dir FIRST and clear the page links ONLY if the wipe
+	// succeeded: the two must stay consistent. If the links were cleared but the
+	// (index-keyed) staged files survived, the next attempt would re-resolve a
+	// fresh, possibly-reordered page list and pack it against those stale files —
+	// the mismatched-page corruption FIX-2 guards on the upgrade path. Keeping the
+	// links on a wipe failure means the next attempt re-uses the SAME links +
+	// staging (consistent, if still stale); the failure's own bump/cooldown still
+	// applies, so a permanently stale pair exhausts rather than looping forever.
+	if err := d.removeStaging(attempt.stagingDir); err != nil {
+		slog.WarnContext(ctx, "download.chargeFetchFailure: staging wipe failed — keeping page links to avoid re-resolve against stale staging",
+			"provider_chapter_id", pc.ID,
+			"staging_dir", attempt.stagingDir,
+			"err", err,
+		)
+		return
+	}
+	d.clearPageLinks(ctx, pc)
+}
+
+// linksWentStale reports whether a failed fetch attempt invalidated the page links
+// stored on its ProviderChapter row. Two triggers:
+//
+//   - not_found — a STALE RESOLUTION: the list points at moved/renamed resources.
+//     This fires even for a list resolved THIS attempt, because the resolution
+//     itself is what the source contradicted.
+//   - the attempt RE-USED the stored links and still failed (GAP-119). Some sources
+//     serve TIME-LIMITED, SIGNED image URLs (an expiry embedded in the query
+//     string); once the signature lapses, every retry replays the same dead URL and
+//     burns the chapter's whole per-source budget on it — observed as an endless
+//     mix of 404s and truncated bodies on a source whose content was fine. Links
+//     that were FRESHLY resolved this attempt are kept: that failure is a genuine
+//     source problem, not an expiry, so re-resolving would only add a source call.
+//     The cost of the rule is therefore bounded at ONE wasted attempt per expiry.
+//
+// A cancelled context (graceful shutdown) is never staleness — the attempt was cut
+// short rather than answered — so it invalidates nothing and the next run resumes
+// from the same links and staged pages. Same reasoning as shouldRecordGateFailure.
+func linksWentStale(ctx context.Context, attempt fetchAttempt, cause error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	if errorclass.Classify(cause) == errorclass.CategoryNotFound {
+		return true
+	}
+	return attempt.usedCachedLinks
 }
 
 // persistPageLinks write-throughs the freshly-resolved page links onto the
@@ -813,6 +869,10 @@ func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderCha
 // best-effort (a write failure is logged, never fatal) and a NO-OP when the row
 // already carries links (they were re-used this attempt, not re-resolved) or none
 // were resolved.
+//
+// It MUTATES pc.PageLinks in memory, which is why a caller that must later tell
+// "re-used" from "just resolved" has to record that before the fetch — see
+// fetchAttempt.usedCachedLinks (GAP-119).
 func (d *Dispatcher) persistPageLinks(ctx context.Context, pc *ent.ProviderChapter, links []fetcher.PageLink) {
 	if len(links) == 0 || len(pc.PageLinks) > 0 {
 		return
