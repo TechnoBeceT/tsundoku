@@ -95,3 +95,39 @@ describe('LibraryDedupDialog', () => {
     expect(wrapper.text()).toContain('Dedup failed — engine unreachable')
   })
 })
+
+/**
+ * The busy-skip line. The library-wide sweep yields any series whose merge latch
+ * another operation already holds (GAP-120), so the owner must be told how many
+ * were skipped AND what to do about it — otherwise a run that quietly did less
+ * than the whole library looks identical to one that did all of it.
+ */
+describe('LibraryDedupDialog — skipped-busy series', () => {
+  it('renders nothing when no series were busy', () => {
+    const wrapper = mountDialog({ message: 'Clean-up finished — merged 2 duplicate sources across 10 series' })
+    expect(wrapper.find('.dedup__notice').exists()).toBe(false)
+  })
+
+  it('surfaces the count with the re-run instruction, separately from the summary', () => {
+    const wrapper = mountDialog({
+      message: 'Clean-up finished — merged 2 duplicate sources across 10 series',
+      skippedBusy: 3,
+    })
+    const notice = wrapper.find('.dedup__notice')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text()).toContain('3 series')
+    expect(notice.text()).toContain('run the clean-up again')
+    // It is its own line, not swallowed into the summary sentence.
+    expect(wrapper.find('.dedup__msg').text()).not.toContain('3 series')
+  })
+
+  it('reads correctly for a single busy series', () => {
+    const wrapper = mountDialog({ skippedBusy: 1 })
+    expect(wrapper.find('.dedup__notice').text()).toContain('1 series was busy and was skipped')
+  })
+
+  it('is a notice, not an error — the failure line stays empty', () => {
+    const wrapper = mountDialog({ skippedBusy: 2 })
+    expect(wrapper.find('.dedup__err').exists()).toBe(false)
+  })
+})

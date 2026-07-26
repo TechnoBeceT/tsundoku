@@ -34,11 +34,57 @@ func (s *Service) SeriesDetail(ctx context.Context, id uuid.UUID) (series.Series
 // and then delete the disk row, orphaning the disk chapters. The owner should
 // let that source fetch (or refresh) first, then re-run dedup.
 //
-// The provider set is re-loaded each pass because a merge deletes the disk row
-// and re-points chapters. Idempotent: with no drifted pairs it returns (0, 0)
-// and changes nothing. trigger() fires only when at least one merge happened.
-// ErrSeriesNotFound is returned for an unknown series id.
+// It runs under the per-series merge single-flight latch (dedupOneSeries), so it
+// can never relabel CBZs another merge is already relabeling. When that latch is
+// held it returns ErrMergeInFlight (→ 409) having touched NOTHING — deliberately
+// an error rather than a 200 reporting zero work, which the caller could not tell
+// apart from "there was nothing to merge" (GAP-120).
+//
+// Idempotent: with no drifted pairs it returns (0, 0) and changes nothing.
+// trigger() fires only when at least one merge happened. ErrSeriesNotFound is
+// returned for an unknown series id.
 func (s *Service) DedupProviders(ctx context.Context, seriesID uuid.UUID) (merged, skipped int, err error) {
+	merged, skipped, ok, err := s.dedupOneSeries(ctx, seriesID)
+	if !ok {
+		return 0, 0, ErrMergeInFlight
+	}
+	return merged, skipped, err
+}
+
+// dedupOneSeries folds ONE series' drifted provider pairs under the SHARED
+// per-series merge single-flight latch (acquireMerge — the same latch
+// StartMatchDiskProvider and StartConsolidateProviders take), so no two
+// mergeDiskIntoLive calls can ever run over one series' CBZs at once. Two that
+// do corrupt it: relabelMoveIntoPlace is idempotent, so the loser does not fail
+// fast on the already-moved file — it proceeds, and only its commitMatch fails
+// (the drained disk row is already gone), at which point its rollback renames
+// every CBZ BACK to the old name while the winner's committed rows name the new
+// one. Every file then sits where the DB is not looking.
+//
+// It TRIES the latch and gives up instead of waiting: ok=false means a merge is
+// already in flight for this series and nothing at all was touched. Every caller
+// re-runs — the owner by clicking again (the endpoint says so with a 409), the
+// two sweeps on their next pass — so yielding costs nothing, whereas blocking
+// would stall a whole-library walk behind one series and queueing would run the
+// dedup on state the winning merge has already rewritten. The release is
+// deferred, so the latch is freed on every path including an error and a panic.
+//
+// This is THE single latched entry point to the dedup core: the owner's
+// per-series endpoint (DedupProviders), the owner's library-wide sweep
+// (DedupAllProviders) and the unattended self-heal (HealDriftedProviders) all go
+// through it, so none of the three can race another (GAP-120).
+func (s *Service) dedupOneSeries(ctx context.Context, seriesID uuid.UUID) (merged, skipped int, ok bool, err error) {
+	if !s.acquireMerge(seriesID) {
+		return 0, 0, false, nil
+	}
+	defer s.releaseMerge(seriesID)
+	merged, skipped, err = s.dedupProvidersLocked(ctx, seriesID)
+	return merged, skipped, true, err
+}
+
+// dedupProvidersLocked is the dedup core. The caller MUST already hold the
+// series' merge latch (dedupOneSeries is the only way in).
+func (s *Service) dedupProvidersLocked(ctx context.Context, seriesID uuid.UUID) (merged, skipped int, err error) {
 	// WithCategory so mergeDiskIntoLive → relabelOverlap can resolve the on-disk
 	// series folder. The category never changes across merges, so this single
 	// load is reused for every pass inside dedupDriftedPairs.

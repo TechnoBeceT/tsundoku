@@ -4124,6 +4124,13 @@ paths:
                   the event type (e.g. `chapter.downloaded`, `series.synced`,
                   `scan.start`/`scan.progress`/`scan.done` — emitted by the async
                   library scan, see POST /api/library/scan).
+
+                  `library.dedup.done` is the TERMINAL summary of the detached
+                  library-wide provider dedup sweep (see POST
+                  /api/library/dedup-providers), carrying
+                  `{seriesProcessed, merged, skipped, busy, error?}` — the only
+                  channel that sweep's outcome reaches the client on, since its
+                  own response is a bare 202.
         "401":
           description: Missing or invalid Bearer token.
           content:
@@ -4846,6 +4853,12 @@ paths:
         (merging would orphan the disk chapters). Idempotent: with no drifted
         pairs it changes nothing. Returns the merged/skipped counts plus the
         refreshed series detail (§16 round-trip).
+
+        Returns 409 when another merge already holds this series' merge
+        single-flight latch (an async match, a consolidation, the library-wide
+        sweep, or the automatic self-heal). Nothing was touched — retry once the
+        in-flight merge lands. It is deliberately NOT a 200 with merged=0, which
+        would be indistinguishable from "there was nothing to merge".
       tags:
         - library
       security:
@@ -4879,6 +4892,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No series with the given id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: A merge is already running for this series; nothing was touched. Retry shortly.
           content:
             application/json:
               schema:
@@ -7189,6 +7208,15 @@ paths:
         already-drifted disk/live source pairs into one row without
         re-downloading. Returns 202 immediately; the sweep runs in the
         background and per-series results appear as each series is next viewed.
+
+        A series whose merge single-flight latch is already held (an async match,
+        a consolidation, or the automatic self-heal) is SKIPPED, never blocked —
+        the sweep carries on and re-running it catches whatever was busy.
+
+        Because the sweep is detached, this 202 cannot carry its counts. The
+        terminal summary — seriesProcessed / merged / skipped / busy — arrives on
+        the `library.dedup.done` SSE event (GET /api/progress), which the
+        Settings dialog renders.
       tags:
         - library
       security:

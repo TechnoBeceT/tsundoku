@@ -40,3 +40,21 @@ func TestMapServiceError_SourceStatuses(t *testing.T) {
 		})
 	}
 }
+
+// TestMapServiceError_MergeInFlight pins the single-flight status: a per-series
+// dedup that found the series' merge latch already held is a 409, carrying the
+// sentinel's own caller-safe text. It must never fall through to a 500, and it
+// must never be answered as a 200 with zero counts — the caller has to be able
+// to tell "retry in a moment" apart from "there was nothing to merge" (GAP-120).
+func TestMapServiceError_MergeInFlight(t *testing.T) {
+	var he *echo.HTTPError
+	if !errors.As(mapServiceError(library.ErrMergeInFlight), &he) {
+		t.Fatal("ErrMergeInFlight did not map to an *echo.HTTPError")
+	}
+	if he.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d", he.Code, http.StatusConflict)
+	}
+	if he.Message != library.ErrMergeInFlight.Error() {
+		t.Errorf("message = %v, want the sentinel's own text", he.Message)
+	}
+}

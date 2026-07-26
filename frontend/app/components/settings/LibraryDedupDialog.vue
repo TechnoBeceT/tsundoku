@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
 
@@ -22,9 +22,16 @@ import ConfirmModal from '../ui/ConfirmModal.vue'
  *   - `busy`: the trigger request is in flight — spins confirm, disables the button.
  *   - `message`: the started/success line shown under the button, or null.
  *   - `error`: the failure line shown under the button, or null.
+ *   - `skippedBusy`: how many series the finished sweep had to skip because
+ *     another merge was already running on them. Rendered as its own actionable
+ *     line ("run it again to catch them") rather than folded into `message` —
+ *     the owner reacts to it differently from the empty-feed skips the summary
+ *     mentions, and a count hidden inside a sentence is a count nobody acts on.
  *
  * Emits `confirm` — and only from the ConfirmModal's own confirm button.
  */
+import { busyNotice } from '~/utils/dedupSweepSummary'
+
 const props = withDefaults(defineProps<{
   /** True while the trigger request is in flight. */
   busy?: boolean
@@ -32,11 +39,17 @@ const props = withDefaults(defineProps<{
   message?: string | null
   /** Failure message from the last trigger, or null. */
   error?: string | null
+  /** Series the last sweep skipped because a merge was already running (0 = none). */
+  skippedBusy?: number
 }>(), {
   busy: false,
   message: null,
   error: null,
+  skippedBusy: 0,
 })
+
+/** The actionable "run it again" line, or null when nothing was skipped. */
+const busyLine = computed(() => busyNotice(props.skippedBusy))
 
 const emit = defineEmits<{
   /** The sweep was confirmed — reachable ONLY via the ConfirmModal. */
@@ -65,6 +78,7 @@ function requestConfirm(): void {
       {{ busy ? 'Starting…' : 'Clean up duplicate sources (library-wide)' }}
     </AppButton>
     <p v-if="message" class="dedup__msg">{{ message }}</p>
+    <p v-if="busyLine" class="dedup__notice">{{ busyLine }}</p>
     <p v-if="error" class="dedup__err">{{ error }}</p>
 
     <!-- QCAT-222: the sweep can ONLY be started from this shared destructive
@@ -95,6 +109,14 @@ function requestConfirm(): void {
   margin: 0;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* Amber, not rose: series skipped for being busy are not a failure — they are
+   work still to do. Reuses the Settings screen's existing attention amber. */
+.dedup__notice {
+  margin: 0;
+  font-size: 12px;
+  color: var(--set-update-text);
 }
 
 .dedup__err {

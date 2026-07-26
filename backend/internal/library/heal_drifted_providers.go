@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-
-	"github.com/google/uuid"
 )
 
 // HealDriftedProviders folds every already-drifted (disk-origin row, live twin)
@@ -65,8 +63,9 @@ import (
 // not looking.
 //
 // So this pass takes the SAME latch, per series, and SKIPS a series whose latch is
-// already held rather than blocking or queueing (healOneSeries). An owner action
-// always wins: it never waits behind an unattended pass, and the skipped series is
+// already held rather than blocking or queueing (dedupOneSeries — the one latched
+// entry to the dedup core, shared with both owner paths). An owner action always
+// wins: it never waits behind an unattended pass, and the skipped series is
 // re-examined by the very next sweep at no extra cost.
 //
 // # Importance: a merge adopts the HIGHER of the two ranks
@@ -113,7 +112,7 @@ func (s *Service) HealDriftedProviders(ctx context.Context) (merged, skipped int
 		if ctx.Err() != nil {
 			return merged, skipped, ctx.Err()
 		}
-		m, sk, ok, derr := s.healOneSeries(ctx, id)
+		m, sk, ok, derr := s.dedupOneSeries(ctx, id)
 		if !ok {
 			// An owner merge holds this series' latch. Yield to it — the next
 			// sweep re-examines the series for free.
@@ -151,25 +150,4 @@ func (s *Service) HealDriftedProviders(ctx context.Context) (merged, skipped int
 		}
 	}
 	return merged, skipped, nil
-}
-
-// healOneSeries folds one series' drifted provider pairs under the SHARED
-// per-series merge single-flight latch (acquireMerge — the same latch
-// StartMatchDiskProvider and StartConsolidateProviders take), so an unattended
-// heal can never run a second mergeDiskIntoLive over CBZs an owner merge is
-// already relabeling.
-//
-// It TRIES the latch and gives up instead of waiting: ok=false means an owner
-// merge is in flight for this series and nothing at all was touched. The heal is
-// recurring, so yielding costs nothing — the next sweep retries — whereas blocking
-// would let a background pass hold up nothing useful and queueing would run the
-// heal on state the owner merge has already rewritten. The release is deferred, so
-// the latch is freed on every path including a panic.
-func (s *Service) healOneSeries(ctx context.Context, id uuid.UUID) (merged, skipped int, ok bool, err error) {
-	if !s.acquireMerge(id) {
-		return 0, 0, false, nil
-	}
-	defer s.releaseMerge(id)
-	merged, skipped, err = s.DedupProviders(ctx, id)
-	return merged, skipped, true, err
 }

@@ -121,6 +121,8 @@ withDefaults(defineProps<{
   dedupAllMessage?: string | null
   /** Error from the last dedup sweep trigger. */
   dedupAllError?: string | null
+  /** Series the last dedup sweep skipped because a merge was already running. */
+  dedupAllSkippedBusy?: number
   /** Every registered tracker's connect status (2g, Trackers pane). */
   trackers?: TrackerStatus[]
   /** §16 state of the one in-flight tracker connect/login/logout action. */
@@ -186,6 +188,7 @@ withDefaults(defineProps<{
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
+  dedupAllSkippedBusy: 0,
   trackers: () => [],
   trackerAction: () => ({ busyId: null }),
   misconfiguredTrackerIds: () => [],
@@ -364,6 +367,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :dedup-all-busy="dedupAllBusy"
             :dedup-all-message="dedupAllMessage"
             :dedup-all-error="dedupAllError"
+            :dedup-all-skipped-busy="dedupAllSkippedBusy"
             @save="emit('save-sources-settings', $event)"
             @dedup-all="emit('dedup-all')"
           />

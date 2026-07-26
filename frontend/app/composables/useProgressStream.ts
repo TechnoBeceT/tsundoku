@@ -31,6 +31,12 @@ import { ref } from 'vue'
  *     (StartMatchDiskProvider) finished for that series. Forwarded raw via `on()`;
  *     useSeriesDetail listens for its own series id to clear the "matching…" state
  *     and refetch (or surface `error` on failure). Fires on success AND failure.
+ *   library.dedup.done → payload { seriesProcessed, merged, skipped, busy, error? }
+ *     — TERMINAL summary of the library-wide duplicate-source sweep (POST
+ *     /api/library/dedup-providers). That endpoint answers a bare 202 and runs
+ *     detached, so this event is the ONLY channel its outcome ever reaches the
+ *     client on. Forwarded raw via `on()`; useLibraryMaintenance parses it
+ *     (utils/dedupSweepSummary) into the Settings dialog's outcome lines.
  *   scan.start | scan.progress | scan.done — the Library-Import scan (see
  *     useScanLibrary): scan.start carries no payload; scan.progress carries
  *     { processed, total, path }; scan.done is TERMINAL and carries either
@@ -97,6 +103,7 @@ const NAMED_EVENTS = [
   'scan.start',
   'scan.progress',
   'scan.done',
+  'library.dedup.done',
 ] as const
 
 function emit(event: string, data: unknown): void {

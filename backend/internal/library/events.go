@@ -56,3 +56,36 @@ func (s *Service) broadcastMerge(data MergeEvent) {
 	}
 	s.hub.Broadcast(sse.Event{Type: "provider.merged", Data: json.RawMessage(raw)})
 }
+
+// DedupSweepEvent is the SSE payload for library.dedup.done — the TERMINAL
+// summary of the library-wide provider dedup sweep (DedupAllProviders). The
+// endpoint that starts the sweep answers 202 and detaches, so this event is the
+// only way its outcome ever reaches the owner.
+//
+// The three counts are independent and mean different things (see
+// DedupAllProviders): SeriesProcessed = series whose dedup ran to completion,
+// Skipped = drifted pairs left alone because the linked twin has no chapter feed
+// yet, Busy = series skipped because another merge held their latch. Busy is the
+// one the owner acts on by simply running the sweep again. Error is set (and
+// non-empty) only when the sweep itself failed, and is always a fixed
+// caller-safe sentence — never raw error text (see sweepErrorText).
+type DedupSweepEvent struct {
+	SeriesProcessed int    `json:"seriesProcessed"`
+	Merged          int    `json:"merged"`
+	Skipped         int    `json:"skipped"`
+	Busy            int    `json:"busy"`
+	Error           string `json:"error,omitempty"`
+}
+
+// broadcastDedupSweep emits the library.dedup.done SSE event. JSON-encoding
+// failures are discarded — a missing event beats crashing the background sweep
+// (mirrors broadcastMerge). Unreachable in practice: DedupSweepEvent is ints +
+// a string, which Marshal cannot fail on; documented rather than faked for
+// coverage.
+func (s *Service) broadcastDedupSweep(data DedupSweepEvent) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	s.hub.Broadcast(sse.Event{Type: "library.dedup.done", Data: json.RawMessage(raw)})
+}

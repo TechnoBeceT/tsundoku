@@ -30,7 +30,9 @@ import type { SaveState, SourcesSettings } from '../screens/settings.types'
  * (QCAT-222) because the sweep renames CBZ files across the whole library.
  * `dedupAllBusy`/`dedupAllMessage`/`dedupAllError` are the §16 trio for that
  * action, owned by the parent (mirrors how SourceMetricsPane owns
- * `warming`/`warmMessage`/`warmError`).
+ * `warming`/`warmMessage`/`warmError`), and `dedupAllSkippedBusy` carries the
+ * count of series the finished sweep had to skip because a merge was already
+ * running on them — its own actionable line, not part of the summary sentence.
  *
  * Emits `save` with the full edited copy, and `dedupAll` to trigger the sweep.
  */
@@ -45,11 +47,14 @@ const props = withDefaults(defineProps<{
   dedupAllMessage?: string | null
   /** Error from the last dedup sweep trigger. */
   dedupAllError?: string | null
+  /** Series the last dedup sweep skipped because a merge was already running. */
+  dedupAllSkippedBusy?: number
 }>(), {
   save: () => ({ status: 'idle' }),
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
+  dedupAllSkippedBusy: 0,
 })
 
 const emit = defineEmits<{
@@ -127,6 +132,7 @@ function onSave() {
       :busy="dedupAllBusy"
       :message="dedupAllMessage"
       :error="dedupAllError"
+      :skipped-busy="dedupAllSkippedBusy"
       @confirm="emit('dedupAll')"
     />
   </SurfaceCard>

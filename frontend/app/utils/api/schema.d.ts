@@ -404,6 +404,12 @@ export interface paths {
          *     (merging would orphan the disk chapters). Idempotent: with no drifted
          *     pairs it changes nothing. Returns the merged/skipped counts plus the
          *     refreshed series detail (§16 round-trip).
+         *
+         *     Returns 409 when another merge already holds this series' merge
+         *     single-flight latch (an async match, a consolidation, the library-wide
+         *     sweep, or the automatic self-heal). Nothing was touched — retry once the
+         *     in-flight merge lands. It is deliberately NOT a 200 with merged=0, which
+         *     would be indistinguishable from "there was nothing to merge".
          */
         post: operations["dedupSeriesProviders"];
         delete?: never;
@@ -1470,6 +1476,15 @@ export interface paths {
          *     already-drifted disk/live source pairs into one row without
          *     re-downloading. Returns 202 immediately; the sweep runs in the
          *     background and per-series results appear as each series is next viewed.
+         *
+         *     A series whose merge single-flight latch is already held (an async match,
+         *     a consolidation, or the automatic self-heal) is SKIPPED, never blocked —
+         *     the sweep carries on and re-running it catches whatever was busy.
+         *
+         *     Because the sweep is detached, this 202 cannot carry its counts. The
+         *     terminal summary — seriesProcessed / merged / skipped / busy — arrives on
+         *     the `library.dedup.done` SSE event (GET /api/progress), which the
+         *     Settings dialog renders.
          */
         post: operations["dedupAllProviders"];
         delete?: never;
@@ -5932,6 +5947,15 @@ export interface operations {
             };
             /** @description No series with the given id. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A merge is already running for this series; nothing was touched. Retry shortly. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

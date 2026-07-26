@@ -54,6 +54,16 @@ var (
 	// It maps to 409: the request is well-formed but the target is not ready
 	// (refresh it, then retry).
 	ErrTargetNoFeed = errors.New("target provider has no chapter feed")
+	// ErrMergeInFlight is returned by DedupProviders when another merge on the
+	// SAME series already holds the per-series merge single-flight latch (an
+	// async Match, a Consolidation, the library-wide sweep, or the unattended
+	// self-heal). The dedup is SKIPPED, not queued and not blocked — nothing at
+	// all was touched — so the caller can simply retry once the in-flight merge
+	// lands. It maps to 409, matching the 409 the Match/Consolidate starts
+	// already return for the same latch (GAP-120). Reporting it as an error is
+	// deliberate: a 200 carrying merged=0/skipped=0 would be indistinguishable
+	// from "there was nothing to merge", which is the opposite conclusion.
+	ErrMergeInFlight = errors.New("a merge is already running for this series, retry shortly")
 )
 
 // SourceLister lists the engine host's currently-loaded sources. AddProvider and

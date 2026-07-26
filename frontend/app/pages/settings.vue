@@ -22,7 +22,7 @@
  *                           SuwayomiPane, alongside the FlareSolverr card)
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
- *   useLibraryMaintenance() → dedupAllBusy/Message/Error + dedupAllProviders
+ *   useLibraryMaintenance() → dedupAllBusy/Message/Error/SkippedBusy + dedupAllProviders
  *                           (library-wide duplicate-source dedup sweep)
  *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
  *                           + connect/loginCredentials/logout (Trackers pane)
@@ -62,6 +62,7 @@
  *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
  *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
  *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
+ *   :dedup-all-skipped-busy — dedupAllSkippedBusy from useLibraryMaintenance
  *   :trackers             — trackers from useTrackers
  *   :tracker-action       — { busyId: actionBusyId, error: actionError } from useTrackers
  *   :misconfigured-tracker-ids — [...misconfigured] from useTrackers
@@ -184,6 +185,7 @@ const {
   dedupAllBusy,
   dedupAllMessage,
   dedupAllError,
+  dedupAllSkippedBusy,
   dedupAllProviders,
 } = useLibraryMaintenance()
 
@@ -351,6 +353,7 @@ const loading = computed(
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
+      :dedup-all-skipped-busy="dedupAllSkippedBusy"
       :trackers="trackers"
       :tracker-action="trackerAction"
       :misconfigured-tracker-ids="misconfiguredTrackerIds"

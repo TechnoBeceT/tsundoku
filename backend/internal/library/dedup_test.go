@@ -527,3 +527,89 @@ func TestDedupProviders_UnknownSeries(t *testing.T) {
 		t.Fatalf("want ErrSeriesNotFound, got %v", err)
 	}
 }
+
+// TestDedupProviders_BusySeriesIsReportedNotSilentlyNoOp pins what the
+// single-series owner endpoint does when another merge already holds this
+// series' latch (an async Match, a consolidation, the library-wide sweep, or the
+// unattended self-heal): it touches NOTHING and says so with ErrMergeInFlight,
+// which the handler maps to 409.
+//
+// Reporting it as an error rather than a 200 carrying merged=0/skipped=0 is the
+// whole point: those two outcomes are indistinguishable to the caller, and they
+// mean opposite things — "your click did nothing, click again in a moment" vs
+// "there was nothing to merge". The frontend already renders the message, so the
+// owner is told rather than misled.
+//
+// FAILS on the unfixed code: DedupProviders took no latch at all, so it merged
+// straight over the in-flight merge — err was nil, merged was 1, and the disk
+// provider row was gone. (ErrMergeInFlight did not exist there either.)
+func TestDedupProviders_BusySeriesIsReportedNotSilentlyNoOp(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	ser, _ := setupDriftedSeries(t, client, storage, 5, true)
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	// Stand in for a merge already in flight on this series.
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("could not take the merge latch")
+	}
+
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if !errors.Is(err, library.ErrMergeInFlight) {
+		t.Fatalf("DedupProviders err = %v, want ErrMergeInFlight — a busy series must be reported, never answered as a silent no-op", err)
+	}
+	if merged != 0 || skipped != 0 {
+		t.Errorf("DedupProviders = (merged=%d, skipped=%d), want (0, 0) — nothing may be touched", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 2)
+
+	// It is a yield, not a refusal: once the in-flight merge lands, the same
+	// click works.
+	svc.ReleaseMerge(ser.ID)
+	merged, skipped, err = svc.DedupProviders(ctx, ser.ID)
+	if err != nil || merged != 1 || skipped != 0 {
+		t.Fatalf("after the latch freed: (merged=%d, skipped=%d, err=%v), want (1, 0, nil)", merged, skipped, err)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+}
+
+// TestDedupProviders_ReleasesTheLatchWhenTheMergeFails is the anti-wedge guard.
+// The latch is now taken on the owner path too, so a merge that fails partway
+// MUST still free it — a stranded latch would lock that series out of every
+// merge path (owner dedup, Match, consolidation AND the recurring self-heal)
+// for the lifetime of the process, converting a recoverable disk error into a
+// permanent one.
+//
+// The failure is real, not injected: the series folder is removed before the
+// merge, so disk.RelabelChapterFile fails on the first chapter and
+// mergeDiskIntoLive returns with the DB untouched.
+//
+// This is a GUARD, not a test that fails on the unfixed code — there the owner
+// path took no latch, so there was none to strand. It exists because the release
+// is a `defer` one refactor could drop, and nothing else would notice.
+func TestDedupProviders_ReleasesTheLatchWhenTheMergeFails(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	ser, _ := setupDriftedSeries(t, client, storage, 5, true)
+	svc := library.NewService(client, nil, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	// Make the disk phase fail: the CBZs the merge must relabel are gone.
+	if err := os.RemoveAll(filepath.Join(storage, "Manga", "My Series")); err != nil {
+		t.Fatalf("remove series folder: %v", err)
+	}
+
+	if _, _, err := svc.DedupProviders(ctx, ser.ID); err == nil {
+		t.Fatal("DedupProviders succeeded with the series folder removed; want a relabel failure")
+	} else if errors.Is(err, library.ErrMergeInFlight) {
+		t.Fatalf("DedupProviders err = %v, want the underlying merge failure", err)
+	}
+
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("the merge latch is still held after a failed merge — the series is wedged out of every merge path")
+	}
+	svc.ReleaseMerge(ser.ID)
+}

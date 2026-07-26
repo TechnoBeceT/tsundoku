@@ -320,6 +320,11 @@ type providerDedupResponse struct {
 // display name + scanlator) — into one row WITHOUT re-downloading (see
 // library.Service.DedupProviders), then returns the merged/skipped counts plus
 // the refreshed series detail (§16 round-trip).
+//
+// 409 when another merge already holds this series' merge latch (an async Match,
+// a consolidation, the library-wide sweep, or the unattended self-heal): nothing
+// was touched and the owner should retry in a moment. Saying so is the point — a
+// 200 carrying merged=0 would read as "there was nothing to merge" (GAP-120).
 func (h *Handler) DedupProviders(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -347,17 +352,20 @@ const dedupAllTimeout = 10 * time.Minute
 
 // libraryDedupStartedResponse is the JSON body of POST /api/library/dedup-providers:
 // {"started":true} on 202 once the async library-wide dedup sweep is launched.
-// The sweep runs detached (it can touch every series); per-series outcomes are
-// logged server-side and surface in each series' refreshed detail on next view.
+// The sweep runs detached (it can touch every series), so this response CANNOT
+// carry its counts: the outcome arrives later on the library.dedup.done SSE
+// event, which the Settings dialog renders (§16 — the 202 alone would leave the
+// operation silent).
 type libraryDedupStartedResponse struct {
 	Started bool `json:"started"`
 }
 
 // DedupAllProviders handles POST /api/library/dedup-providers. The sweep runs
-// DedupProviders across every series; over a large library that can take a
+// the per-series dedup across every series; over a large library that can take a
 // while, so — like POST /api/sources/warmup — it runs on a detached,
 // time-bounded background goroutine and returns 202 immediately. A background
-// failure is logged, never returned.
+// failure is logged, never returned; either way the service broadcasts the
+// terminal library.dedup.done summary, so the owner sees the outcome.
 func (h *Handler) DedupAllProviders(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request().Context()), dedupAllTimeout)
 	go func() {
@@ -426,13 +434,14 @@ func mapServiceError(err error) error {
 	if mapped, ok := mapSourceError(err); ok {
 		return mapped
 	}
+	if mapped, ok := mapConflictError(err); ok {
+		return mapped
+	}
 	switch {
 	case errors.Is(err, library.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "series not found")
 	case errors.Is(err, library.ErrEntryNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "import entry not found")
-	case errors.Is(err, library.ErrProviderAlreadyPresent):
-		return echo.NewHTTPError(http.StatusConflict, "provider already attached to series")
 	case errors.Is(err, library.ErrProviderNotInSeries):
 		return echo.NewHTTPError(http.StatusBadRequest, "provider does not belong to series")
 	case errors.Is(err, library.ErrNotADiskProvider):
@@ -444,6 +453,26 @@ func mapServiceError(err error) error {
 	default:
 		return err
 	}
+}
+
+// mapConflictError maps the 409 family — the two "your request was fine, the
+// resource just is not available for it right now, retry" outcomes — returning
+// ok=false when err is neither, so mapServiceError falls through to the rest.
+// Split out for the same reason as mapSourceError: to keep every mapper inside
+// the fleet cyclop budget. ErrProviderAlreadyPresent → the source is already
+// attached to that series; ErrMergeInFlight → another merge holds the series'
+// merge single-flight latch, so the dedup touched NOTHING (the sentinel's own
+// text is caller-safe and says to retry). The latter is deliberately not a 200
+// with merged=0, which the caller could not tell apart from "there was nothing
+// to merge" (GAP-120).
+func mapConflictError(err error) (error, bool) {
+	switch {
+	case errors.Is(err, library.ErrProviderAlreadyPresent):
+		return echo.NewHTTPError(http.StatusConflict, "provider already attached to series"), true
+	case errors.Is(err, library.ErrMergeInFlight):
+		return echo.NewHTTPError(http.StatusConflict, err.Error()), true
+	}
+	return nil, false
 }
 
 // mapSourceError maps the source-attach error family (AddProvider /
