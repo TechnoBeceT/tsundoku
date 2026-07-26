@@ -52,8 +52,8 @@ func (s *Service) DedupProviders(ctx context.Context, seriesID uuid.UUID) (merge
 }
 
 // dedupOneSeries folds ONE series' drifted provider pairs under the SHARED
-// per-series merge single-flight latch (acquireMerge — the same latch
-// StartMatchDiskProvider and StartConsolidateProviders take), so no two
+// per-series merge single-flight latch (acquireMerge — the same latch every
+// other merge path takes; see mergeDiskIntoLive for the full list), so no two
 // mergeDiskIntoLive calls can ever run over one series' CBZs at once. Two that
 // do corrupt it: relabelMoveIntoPlace is idempotent, so the loser does not fail
 // fast on the already-moved file — it proceeds, and only its commitMatch fails

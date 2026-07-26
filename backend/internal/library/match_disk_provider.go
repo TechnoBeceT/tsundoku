@@ -140,10 +140,36 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 
 // mergeDiskIntoLive folds an unlinked disk-origin provider into an already
 // resolved real, linked SeriesProvider WITHOUT re-downloading the disk
-// chapters. It is the shared no-redownload core, reused by three callers that
-// differ only in HOW they obtain liveSP: MatchDiskProvider (the owner picks the
-// source, attachRealSource ingests it), AddProvider (merge-at-attach, the just-
-// ingested source), and DedupProviders (cleanup of an already-drifted pair).
+// chapters. It is the shared no-redownload core.
+//
+// # The five entries, and the ONE latch they all hold (GAP-122)
+//
+// Five call sites reach this core; they differ only in HOW they obtain liveSP.
+// EVERY one of them holds the per-series merge single-flight latch (acquireMerge,
+// consolidate_async.go) for the whole fold, so no two mergeDiskIntoLive calls can
+// ever run over one series' CBZs at once — the corruption this latch exists to
+// prevent (relabelMoveIntoPlace is idempotent, so the loser does not fail fast on
+// the already-moved file; it proceeds to a commitMatch that fails on the
+// already-deleted disk row and then renames every CBZ BACK, while the winner's
+// committed rows name the new one):
+//
+//   - MatchDiskProvider — the owner picks the source, attachRealSource ingests
+//     it. Latched by StartMatchDiskProvider (match_disk_provider_async.go);
+//     a busy series is a 409.
+//   - ConsolidateProviders — the owner folds several providers into one chosen
+//     target. Latched by StartConsolidateProviders (consolidate_async.go);
+//     a busy series is a 409.
+//   - dedupProvidersLocked — cleanup of an already-drifted pair, shared by the
+//     owner's per-series dedup, the library-wide sweep and the unattended
+//     self-heal. Latched by dedupOneSeries (dedup.go); a busy series is
+//     ErrMergeInFlight (409) on the endpoint and a counted skip on both sweeps.
+//   - linkAttachedProvider — merge-at-attach on the just-ingested source
+//     (provider.go). Latched around the MERGE BRANCH ONLY, so an attach with
+//     nothing to fold is never affected; a busy series is ErrMergeInFlight (409).
+//   - collapseSourceInSeriesLocked — the ignore-scanlator on-enable collapse
+//     (collapse_ignored_scanlator.go). Latched PER SERIES inside its source-wide
+//     walk by collapseSourceInSeries; a busy series is skipped and counted, so
+//     one busy series never aborts the rest.
 //
 // It runs the disk-first phase (relabelOverlap: rename each overlapping CBZ +
 // rewrite ComicInfo/sidecar to liveSP's identity, rollback-on-fail) then the

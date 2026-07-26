@@ -35,7 +35,27 @@ import (
 // and skipped (one bad series never aborts the sweep); a series that vanished
 // mid-sweep is silently ignored. It returns how many series were collapsed
 // (seriesProcessed), how many per-uploader rows were folded in total (merged),
-// and how many series were skipped after an error (skipped).
+// and how many series were NOT collapsed and are worth re-running for (skipped).
+//
+// # Each series is collapsed under the per-series merge latch (GAP-122)
+//
+// A collapse is a mergeDiskIntoLive fold like every other merge path, so it must
+// never run over a series another merge is already relabeling — the loser of such
+// a race renames every CBZ back out from under the winner's committed rows. The
+// latch is taken PER SERIES INSIDE the walk (collapseSourceInSeries), not once for
+// the whole sweep: this is a source-wide sweep that can touch hundreds of series,
+// and holding one library-wide lock would stall every unrelated merge, while
+// aborting on the first busy series would abandon all the others for one
+// unrelated in-flight merge.
+//
+// A busy series is therefore SKIPPED — never blocked and never queued, exactly as
+// DedupAllProviders skips one — and counted in `skipped`, whose meaning here has
+// always been "this series was not collapsed; re-running finishes it". That is the
+// owner's action for a busy series too, and the collapse is idempotent, so a
+// re-run picks up precisely what was missed. (The dedup sweep keeps a SEPARATE
+// `busy` count because ITS `skipped` means something else entirely — pairs whose
+// live twin has an empty feed, which re-running would skip again.) The log line
+// names the real reason so a busy skip is never mistaken for a failure.
 //
 // ONE-WAY: this is only ever invoked when the flag is turned ON. Un-flagging a
 // source does NOT un-merge — the collapsed [Source] provider and its relabeled
@@ -58,7 +78,16 @@ func (s *Service) CollapseIgnoredScanlatorSource(ctx context.Context, sourceID i
 		if ctx.Err() != nil {
 			return seriesProcessed, merged, skipped, ctx.Err()
 		}
-		folded, cErr := s.collapseSourceInSeries(ctx, sid, provider)
+		folded, ok, cErr := s.collapseSourceInSeries(ctx, sid, provider)
+		if !ok {
+			// Another merge holds this series' latch (an owner Match, a
+			// consolidation, a dedup, or the unattended self-heal). Yield to it and
+			// carry on — re-running the toggle finishes this series.
+			slog.InfoContext(ctx, "library.CollapseIgnoredScanlatorSource: series skipped — a merge is already in flight, re-run to finish it",
+				"series_id", sid, "source_id", sourceID)
+			skipped++
+			continue
+		}
 		if cErr != nil {
 			slog.WarnContext(ctx, "library.CollapseIgnoredScanlatorSource: series collapse failed, skipping",
 				"series_id", sid, "source_id", sourceID, "err", cErr)
@@ -104,10 +133,36 @@ func (s *Service) seriesWithSource(ctx context.Context, provider string) ([]uuid
 	return out, nil
 }
 
-// collapseSourceInSeries folds every per-uploader SeriesProvider of one source
-// in one series into a single scanlator="" survivor, relabelling the affected
-// CBZs [Source-Uploader] → [Source]. It returns how many per-uploader rows were
-// folded (0 = already collapsed / nothing to do).
+// collapseSourceInSeries collapses ONE series under the SHARED per-series merge
+// single-flight latch (acquireMerge — the same latch every other merge path
+// takes), so its folds can never relabel CBZs a concurrent merge is relabeling.
+//
+// It TRIES the latch and gives up instead of waiting: ok=false means a merge is
+// already in flight for this series and NOTHING was touched (not even the
+// survivor row), so the sweep counts it and moves on. Blocking would stall a
+// source-wide sweep behind one unrelated merge, and the collapse is idempotent, so
+// yielding costs only a re-run. The release is deferred, so the latch is freed on
+// every path including an error and a panic.
+//
+// The WHOLE per-series collapse is latched, not just its folds: creating the
+// survivor, unioning the uploaders' feeds and finalising the survivor's rank are
+// all part of the same relabel window, and finalizeCollapsedSurvivor rewrites
+// importances a concurrent merge may have DB-parked at 0 — which would re-arm a
+// re-download mid-relabel (the same hazard Match-vs-Consolidate was latched for).
+func (s *Service) collapseSourceInSeries(ctx context.Context, seriesID uuid.UUID, provider string) (folded int, ok bool, err error) {
+	if !s.acquireMerge(seriesID) {
+		return 0, false, nil
+	}
+	defer s.releaseMerge(seriesID)
+	folded, err = s.collapseSourceInSeriesLocked(ctx, seriesID, provider)
+	return folded, true, err
+}
+
+// collapseSourceInSeriesLocked folds every per-uploader SeriesProvider of one
+// source in one series into a single scanlator="" survivor, relabelling the
+// affected CBZs [Source-Uploader] → [Source]. It returns how many per-uploader
+// rows were folded (0 = already collapsed / nothing to do). The caller MUST
+// already hold the series' merge latch (collapseSourceInSeries is the only way in).
 //
 // Design (reuses the battle-tested merge engine, one fold per uploader):
 //  1. Load the series (WithCategory — relabelOverlap needs the on-disk folder
@@ -146,7 +201,7 @@ func (s *Service) seriesWithSource(ctx context.Context, provider string) ([]uuid
 // only rows deleted are the drained per-uploader SeriesProvider rows + their
 // (now-merged) ProviderChapter feeds (sanctioned, exactly like the existing merge
 // path); CBZs are RELABELED, never deleted — never-auto-delete holds.
-func (s *Service) collapseSourceInSeries(ctx context.Context, seriesID uuid.UUID, provider string) (int, error) {
+func (s *Service) collapseSourceInSeriesLocked(ctx context.Context, seriesID uuid.UUID, provider string) (int, error) {
 	row, err := s.loadSeriesForCollapse(ctx, seriesID)
 	if err != nil {
 		return 0, err

@@ -80,7 +80,8 @@ type IgnoreScanlatorStore interface {
 // per-uploader SeriesProvider rows across ALL series into one [Source] provider
 // and relabels the affected CBZs (see library.Service.CollapseIgnoredScanlatorSource).
 // It returns how many series were collapsed, how many per-uploader rows were
-// folded, and how many series were skipped after an error. *library.Service
+// folded, and how many series were left for a re-run (an error, or another merge
+// already holding that series' merge latch — GAP-122). *library.Service
 // satisfies it. A nil collapser (focused proxy tests, or a deployment without the
 // library service) makes flip-ON persist the flag WITHOUT migrating existing
 // series — the apply-forward Slice-A behaviour, still correct.

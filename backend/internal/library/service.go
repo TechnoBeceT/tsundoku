@@ -54,15 +54,19 @@ var (
 	// It maps to 409: the request is well-formed but the target is not ready
 	// (refresh it, then retry).
 	ErrTargetNoFeed = errors.New("target provider has no chapter feed")
-	// ErrMergeInFlight is returned by DedupProviders when another merge on the
-	// SAME series already holds the per-series merge single-flight latch (an
-	// async Match, a Consolidation, the library-wide sweep, or the unattended
-	// self-heal). The dedup is SKIPPED, not queued and not blocked — nothing at
+	// ErrMergeInFlight is returned by DedupProviders and by AddProvider's
+	// merge-at-attach when another merge on the SAME series already holds the
+	// per-series merge single-flight latch (an async Match, a Consolidation, the
+	// library-wide sweep, the ignore-scanlator collapse, or the unattended
+	// self-heal). The fold is SKIPPED, not queued and not blocked — nothing at
 	// all was touched — so the caller can simply retry once the in-flight merge
 	// lands. It maps to 409, matching the 409 the Match/Consolidate starts
-	// already return for the same latch (GAP-120). Reporting it as an error is
-	// deliberate: a 200 carrying merged=0/skipped=0 would be indistinguishable
-	// from "there was nothing to merge", which is the opposite conclusion.
+	// already return for the same latch (GAP-120, GAP-122). Reporting it as an
+	// error is deliberate: for dedup, a 200 carrying merged=0/skipped=0 would be
+	// indistinguishable from "there was nothing to merge", the opposite
+	// conclusion; for an attach, quietly skipping the fold would raise the live
+	// twin above the disk chapters' watermark and re-download the whole imported
+	// series.
 	ErrMergeInFlight = errors.New("a merge is already running for this series, retry shortly")
 )
 
@@ -104,16 +108,18 @@ type Service struct {
 	scanMu   sync.Mutex
 	scanning bool
 
-	// mergeMu guards mergeRunning, the per-SERIES in-flight set SHARED by BOTH the
-	// single Match (StartMatchDiskProvider, match_disk_provider_async.go) AND the
-	// multi-provider consolidation (StartConsolidateProviders,
-	// consolidate_async.go). Both detach a background CBZ-relabel merge, and a
+	// mergeMu guards mergeRunning, the per-SERIES in-flight set SHARED by EVERY
+	// path that folds CBZs through mergeDiskIntoLive — the single Match, the
+	// multi-provider consolidation, the dedup core (owner endpoint, library-wide
+	// sweep, unattended self-heal), merge-at-attach and the ignore-scanlator
+	// collapse (GAP-122; mergeDiskIntoLive's doc enumerates all five). Two
+	// concurrent folds leave a series' CBZs where the DB is not looking, and a
 	// consolidation's finaliseSurvivorRanks rewrites EVERY provider's importance —
 	// including one a concurrent Match DB-parked at 0 for its relabel window, which
 	// would re-arm a re-download mid-window (QCAT-295 review). Keying the guard by
-	// SERIES makes Match and Consolidate MUTUALLY EXCLUSIVE per series: a second
-	// start of EITHER kind for a series already merging returns 409. Lazily
-	// initialised under the lock so every NewService call site is unaffected.
+	// SERIES makes them all MUTUALLY EXCLUSIVE per series while leaving different
+	// series fully concurrent. Lazily initialised under the lock so every
+	// NewService call site is unaffected.
 	mergeMu      sync.Mutex
 	mergeRunning map[uuid.UUID]struct{}
 

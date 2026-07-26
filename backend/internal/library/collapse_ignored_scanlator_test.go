@@ -401,3 +401,127 @@ func corruptCBZ(t *testing.T, storage, title, filename string) {
 		t.Fatal(err)
 	}
 }
+
+// TestCollapseIgnoredScanlator_BusySeriesIsSkippedAndTheOthersStillCollapse is
+// the GAP-122 proof for the second merge entry that took no latch at all.
+//
+// The collapse folds CBZs through the SAME mergeDiskIntoLive core as every other
+// merge path, so it must never run over a series another merge is already
+// relabeling: the loser of such a race renames every CBZ back out from under the
+// winner's committed rows. The latch is therefore taken PER SERIES inside the
+// source-wide walk, not once for the whole sweep — a busy series is skipped and
+// counted, and every other series still collapses. Aborting the sweep because one
+// unrelated merge happened to be running would abandon all the rest.
+//
+// FAILS on the unfixed code: the collapse took no latch, so the busy series was
+// collapsed straight over the in-flight merge — the summary was (2, 2, 0) and its
+// CBZs had already been renamed.
+func TestCollapseIgnoredScanlator_BusySeriesIsSkippedAndTheOthersStillCollapse(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	const busyTitle = "Busy Series"
+	const freeTitle = "Free Series"
+	const maxCh = 2.0
+
+	busy := newIgnoreFlaggedSeries(t, client, busyTitle)
+	busyUploader := createUploaderProvider(t, client, storage, busyTitle, "Admin", 20, []float64{1, 2}, maxCh)
+	free := newIgnoreFlaggedSeries(t, client, freeTitle)
+	createUploaderProvider(t, client, storage, freeTitle, "Admin", 20, []float64{1, 2}, maxCh)
+
+	svc := newCollapseService(client, storage)
+
+	// Stand in for a merge already in flight on the FIRST series only.
+	if !svc.AcquireMerge(busy.ID) {
+		t.Fatal("could not take the merge latch")
+	}
+
+	sp, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	assertCollapseSummary(t, "with one busy series", [3]int{sp, merged, skipped}, [3]int{1, 1, 1}, err)
+
+	// The busy series is byte-for-byte untouched, and the other collapsed normally.
+	assertSeriesNotCollapsed(t, client, storage, busy.ID, busyUploader.ID, busyTitle, maxCh)
+	freeSurvivor := client.SeriesProvider.Query().Where(entseriesprovider.SeriesID(free.ID)).OnlyX(ctx)
+	assertCollapsedChapters(t, client, storage, free.ID, freeSurvivor.ID, freeTitle, []float64{1, 2}, maxCh, 20)
+
+	// It is a yield, not a refusal: re-running once the merge lands finishes the
+	// series that was busy (the collapse is idempotent, so the re-run is safe).
+	svc.ReleaseMerge(busy.ID)
+	sp, merged, skipped, err = svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	assertCollapseSummary(t, "re-run after the latch freed", [3]int{sp, merged, skipped}, [3]int{1, 1, 0}, err)
+	busySurvivor := client.SeriesProvider.Query().Where(entseriesprovider.SeriesID(busy.ID)).OnlyX(ctx)
+	assertCollapsedChapters(t, client, storage, busy.ID, busySurvivor.ID, busyTitle, []float64{1, 2}, maxCh, 20)
+}
+
+// assertCollapseSummary fails on a non-nil sweep error, then unless the sweep's
+// (seriesProcessed, merged, skipped) triple equals want. label names the run in
+// the failure message, so a test asserting several runs says which one broke.
+func assertCollapseSummary(t *testing.T, label string, got, want [3]int, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("CollapseIgnoredScanlatorSource (%s): %v", label, err)
+	}
+	if got != want {
+		t.Fatalf("summary (%s) = (seriesProcessed=%d, merged=%d, skipped=%d), want (%d, %d, %d)",
+			label, got[0], got[1], got[2], want[0], want[1], want[2])
+	}
+}
+
+// assertSeriesNotCollapsed fails unless the series is exactly as it was before
+// the sweep: one per-uploader "Admin" provider row, every chapter still satisfied
+// by it, every CBZ still under its [Hive Scans-Admin] name, and no [Hive Scans]
+// file created. This is what "skipped" has to mean for a busy series — not
+// "half-collapsed".
+func assertSeriesNotCollapsed(t *testing.T, client *ent.Client, storage string, seriesID, uploaderID uuid.UUID, title string, maxCh float64) {
+	t.Helper()
+	ctx := context.Background()
+	rows := client.SeriesProvider.Query().Where(entseriesprovider.SeriesID(seriesID)).AllX(ctx)
+	if len(rows) != 1 || rows[0].Scanlator != "Admin" {
+		t.Fatalf("%s providers = %d rows, want 1 row still scanlator \"Admin\"", title, len(rows))
+	}
+	for _, num := range []float64{1, 2} {
+		assertChapterSatisfaction(t, client, ctx, seriesID, chapterKeyOf(num), &uploaderID, 20)
+		if !fileExists(t, storage, title, disk.GenerateCBZFilename(uploaderMeta(title, "Admin", num, maxCh))) {
+			t.Errorf("%s chapter %v lost its [Hive Scans-Admin] CBZ — a skipped series must not be touched", title, num)
+		}
+		if fileExists(t, storage, title, collapsedFilename(title, num, maxCh)) {
+			t.Errorf("%s chapter %v was relabeled anyway — the latch did not hold", title, num)
+		}
+	}
+}
+
+// TestCollapseIgnoredScanlator_ReleasesTheMergeLatchWhenAFoldFails is the
+// anti-wedge guard for the collapse path. A per-series collapse that fails
+// partway MUST still free the latch — a stranded latch would lock that series
+// out of EVERY merge path (dedup, Match, consolidation, merge-at-attach and the
+// recurring self-heal) for the lifetime of the process, turning a recoverable
+// disk error into a permanent one. The failure is real, not injected: chapter
+// 1's CBZ is corrupted so RelabelChapterFile fails inside the fold.
+//
+// This is a GUARD, not a test that fails on the unfixed code — there the collapse
+// took no latch, so there was none to strand. It exists because the release is a
+// `defer` that one refactor could drop (Go also runs it while unwinding a panic,
+// which is why the acquire and the release live in the same function), and
+// nothing else would notice.
+func TestCollapseIgnoredScanlator_ReleasesTheMergeLatchWhenAFoldFails(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	const title = "Flagged Series"
+	const maxCh = 2.0
+
+	ser := newIgnoreFlaggedSeries(t, client, title)
+	createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1, 2}, maxCh)
+
+	ch1 := client.Chapter.Query().Where(entchapter.SeriesID(ser.ID), entchapter.ChapterKey(chapterKeyOf(1))).OnlyX(ctx)
+	corruptCBZ(t, storage, title, ch1.Filename)
+
+	svc := newCollapseService(client, storage)
+	sp, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	assertCollapseSummary(t, "with a corrupted CBZ", [3]int{sp, merged, skipped}, [3]int{0, 0, 1}, err)
+
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("the merge latch is still held after a failed collapse — the series is wedged out of every merge path")
+	}
+	svc.ReleaseMerge(ser.ID)
+}

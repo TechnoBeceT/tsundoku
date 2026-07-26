@@ -4516,15 +4516,20 @@ export interface components {
         /**
          * @description Summary of the ignore-scanlator on-enable collapse migration — how many
          *     already-adopted series had their per-uploader providers folded into one
-         *     [Source] provider (with CBZs relabeled), and how many were skipped after
-         *     an error. Mirrors the dedup-providers sweep summary shape.
+         *     [Source] provider (with CBZs relabeled), and how many were left for a
+         *     re-run. Mirrors the dedup-providers sweep summary shape.
          */
         ScanlatorMigration: {
             /** @description How many series had at least one per-uploader provider folded. */
             seriesProcessed: number;
             /** @description Total per-uploader provider rows folded away across all series. */
             merged: number;
-            /** @description How many series errored during the sweep and were skipped. */
+            /**
+             * @description How many series were NOT collapsed and are worth re-running for —
+             *     either the collapse errored, or another merge already held that
+             *     series' merge single-flight latch (the collapse yields rather than
+             *     racing it). Both have the same owner action: run it again.
+             */
             skipped: number;
         };
         /**
@@ -5632,7 +5637,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The source is already attached to this series. */
+            /**
+             * @description The source is already attached to this series, OR another merge is
+             *     already running for it. The second case only arises when the attach
+             *     would fold an already-drifted disk-origin provider into the new
+             *     source: that fold takes the series' merge single-flight latch and
+             *     yields rather than racing a Match / consolidation / dedup / the
+             *     unattended self-heal. Nothing beyond the source's own chapter-feed
+             *     ingest was touched — retry in a moment.
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -5767,7 +5780,12 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description One of the sources is already attached to this series (sources attached before the failing entry are NOT rolled back). */
+            /**
+             * @description One of the sources is already attached to this series, or another
+             *     merge is already running for it (see POST /api/series/{id}/providers
+             *     — the same merge-at-attach latch applies to every entry in the
+             *     batch). Sources attached before the failing entry are NOT rolled back.
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

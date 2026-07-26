@@ -97,14 +97,16 @@ type SourceIgnoreScanlatorDTO struct {
 
 // ScanlatorMigrationDTO summarises the on-enable collapse migration: how many
 // series were collapsed, how many per-uploader provider rows were folded in
-// total, and how many series were skipped after an error (left for a re-run).
+// total, and how many series were left for a re-run.
 // Mirrors library.DedupAllProviders' (seriesProcessed, merged, skipped) shape.
 type ScanlatorMigrationDTO struct {
 	// SeriesProcessed is how many series had at least one per-uploader row folded.
 	SeriesProcessed int `json:"seriesProcessed"`
 	// Merged is the total number of per-uploader provider rows folded away.
 	Merged int `json:"merged"`
-	// Skipped is how many series errored during the sweep and were skipped.
+	// Skipped is how many series were NOT collapsed and are worth re-running for
+	// — either the collapse errored, or another merge already held that series'
+	// merge latch (GAP-122). Both have the same owner action: run it again.
 	Skipped int `json:"skipped"`
 }
 

@@ -198,6 +198,11 @@ func (h *Handler) Batch(c echo.Context) error {
 // an EXISTING series (upgrade-aware — see library.Service.AddProvider) and
 // returns the refreshed series.SeriesDetailDTO. mangaId is bound but unused
 // (kept for FE wire compatibility — see addProviderBody's doc comment).
+//
+// 409 when the source is already attached, OR — when the attach would fold a
+// drifted disk-origin provider into it — when another merge already holds this
+// series' merge latch (GAP-122). The latter touched nothing beyond the ingest and
+// says to retry shortly.
 func (h *Handler) AddProvider(c echo.Context) error {
 	id, err := validateID(c.Param("id"))
 	if err != nil {
@@ -461,16 +466,21 @@ func mapServiceError(err error) error {
 // Split out for the same reason as mapSourceError: to keep every mapper inside
 // the fleet cyclop budget. ErrProviderAlreadyPresent → the source is already
 // attached to that series; ErrMergeInFlight → another merge holds the series'
-// merge single-flight latch, so the dedup touched NOTHING (the sentinel's own
-// text is caller-safe and says to retry). The latter is deliberately not a 200
-// with merged=0, which the caller could not tell apart from "there was nothing
-// to merge" (GAP-120).
+// merge single-flight latch, so the dedup (or an attach's merge-at-attach fold)
+// touched NOTHING and the owner should retry in a moment. For dedup that is
+// deliberately not a 200 with merged=0, which the caller could not tell apart
+// from "there was nothing to merge" (GAP-120); for an attach it is deliberately
+// not a silent skip, which would re-download the whole imported series (GAP-122).
+//
+// Both render the SENTINEL's own caller-safe text rather than err.Error(): the
+// batch attach wraps the sentinel with which providers landed before the failure
+// (providers_batch.go), and that internal detail must never reach the client.
 func mapConflictError(err error) (error, bool) {
 	switch {
 	case errors.Is(err, library.ErrProviderAlreadyPresent):
 		return echo.NewHTTPError(http.StatusConflict, "provider already attached to series"), true
 	case errors.Is(err, library.ErrMergeInFlight):
-		return echo.NewHTTPError(http.StatusConflict, err.Error()), true
+		return echo.NewHTTPError(http.StatusConflict, library.ErrMergeInFlight.Error()), true
 	}
 	return nil, false
 }

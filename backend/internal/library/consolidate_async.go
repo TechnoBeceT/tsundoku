@@ -24,12 +24,19 @@ var consolidatePerProviderTimeout = matchTimeout
 // deterministically while it fires a second start. Nil in production.
 var consolidateBlock chan struct{}
 
-// acquireMerge claims the per-series merge single-flight latch shared by the
-// single Match and the multi-provider consolidation (Service.mergeRunning). It
-// returns false when a merge of EITHER kind is already in flight for seriesID, so
-// the two can never run concurrently on the same series (a consolidation's
+// acquireMerge claims the per-series merge single-flight latch
+// (Service.mergeRunning) shared by EVERY path that folds CBZs through
+// mergeDiskIntoLive — the single Match, the multi-provider consolidation, the
+// dedup core (owner endpoint, library-wide sweep and unattended self-heal),
+// merge-at-attach, and the ignore-scanlator collapse. See mergeDiskIntoLive for
+// the enumeration and what each does when the latch is held.
+//
+// It returns false when a merge of ANY kind is already in flight for seriesID, so
+// no two can ever run concurrently on the same series (a consolidation's
 // importance re-densify would otherwise re-arm a re-download inside a concurrent
-// Match's park window). Lazily initialises the map under the lock.
+// Match's park window, and two concurrent relabels leave every CBZ where the DB is
+// not looking). Every caller TRIES and yields — nothing blocks or queues on it.
+// Lazily initialises the map under the lock.
 func (s *Service) acquireMerge(seriesID uuid.UUID) bool {
 	s.mergeMu.Lock()
 	defer s.mergeMu.Unlock()
@@ -43,8 +50,10 @@ func (s *Service) acquireMerge(seriesID uuid.UUID) bool {
 	return true
 }
 
-// releaseMerge frees the per-series merge latch acquired by acquireMerge (called
-// from the background goroutine's defer in both async merge paths).
+// releaseMerge frees the per-series merge latch acquired by acquireMerge. Every
+// holder releases from a defer, so the latch is freed on every path including an
+// error and a panic — a stranded latch would lock a series out of every merge
+// path for the lifetime of the process.
 func (s *Service) releaseMerge(seriesID uuid.UUID) {
 	s.mergeMu.Lock()
 	delete(s.mergeRunning, seriesID)

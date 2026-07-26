@@ -3,6 +3,8 @@ package library_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -12,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -319,4 +322,180 @@ func assertAddProviderErrors(t *testing.T, ctx context.Context, svc *library.Ser
 	if _, err := svc.AddProvider(ctx, uuid.New(), "1", "/manga/99", 5, ""); !errors.Is(err, library.ErrSeriesNotFound) {
 		t.Fatalf("want ErrSeriesNotFound on unknown series, got %v", err)
 	}
+}
+
+// newDriftedAttachFixture writes + imports a disk series ("mangadex"/"Alpha",
+// 2 CBZs) and returns the service, the series, the disk-origin provider, and a
+// live source whose resolved display name + scanlator MATCH the disk row — i.e.
+// the exact shape where AddProvider takes the merge-at-attach branch. Shared by
+// the three GAP-122 latch tests below so they differ only in what they perturb.
+func newDriftedAttachFixture(t *testing.T, storage string, client *ent.Client) (*library.Service, *ent.Series, *ent.SeriesProvider) {
+	t.Helper()
+	ctx := context.Background()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+	diskSP := client.SeriesProvider.Query().Where(entseriesprovider.SeriesID(ser.ID)).OnlyX(ctx)
+
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "mangadex", scanlator: "Alpha"}
+	svc := library.NewService(client, ingest.NewIngest(fake, client), nil,
+		series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+	return svc, ser, diskSP
+}
+
+// TestAddProvider_MergeAtAttachYieldsToAnInFlightMerge is the GAP-122 proof for
+// the first of the two merge entries that took no latch at all.
+//
+// Merge-at-attach folds CBZs through the SAME mergeDiskIntoLive core as every
+// other merge path, and its window is the widest of them: it opens the instant
+// the ingest commits the live twin's feed — which is exactly what makes the
+// series eligible for the unattended self-heal — and stays open for the whole
+// multi-minute relabel. Two concurrent folds over one series do not fail fast
+// (relabelMoveIntoPlace is idempotent); the loser proceeds to a commitMatch that
+// dies on the already-deleted disk row and then renames every CBZ BACK, leaving
+// every file where the winner's committed rows are not looking.
+//
+// So the fold must YIELD. And it must yield LOUDLY: quietly falling through to
+// the ordinary importance-set path would raise a live twin that now HAS a feed
+// above the disk chapters' watermark, which is precisely what arms
+// DetectUpgrades to re-download the entire imported series. The attach instead
+// reports ErrMergeInFlight (409) and leaves the fresh row at the reserved park
+// sentinel 0, so nothing can out-rank anything.
+//
+// FAILS on the unfixed code: AddProvider took no latch, so it merged straight
+// over the in-flight merge — err was nil and one provider row was left.
+func TestAddProvider_MergeAtAttachYieldsToAnInFlightMerge(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	svc, ser, diskSP := newDriftedAttachFixture(t, storage, client)
+
+	// Stand in for a merge already in flight on this series (an owner Match, a
+	// consolidation, a dedup, the collapse, or the unattended self-heal).
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("could not take the merge latch")
+	}
+
+	if _, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha"); !errors.Is(err, library.ErrMergeInFlight) {
+		t.Fatalf("AddProvider err = %v, want ErrMergeInFlight — the fold must never run over a merge already in flight", err)
+	}
+
+	// Nothing was folded: both rows survive and every disk chapter is still
+	// satisfied by the disk provider at its original watermark.
+	assertProviderCount(t, client, ctx, ser.ID, 2)
+	for _, key := range []string{"1", "2"} {
+		assertChapterSatisfaction(t, client, ctx, ser.ID, key, &diskSP.ID, 1)
+	}
+
+	// The freshly-ingested live row stays at the reserved park sentinel 0.
+	live := client.SeriesProvider.Query().
+		Where(entseriesprovider.SeriesID(ser.ID), entseriesprovider.Provider("1")).
+		OnlyX(ctx)
+	if live.Importance != 0 {
+		t.Fatalf("live provider importance = %d after the yield, want 0 — any real rank re-downloads the whole imported series", live.Importance)
+	}
+	assertNoUpgradesFlagged(t, ctx, client)
+
+	// It is a yield, not a wedge: once the in-flight merge lands, the ordinary
+	// dedup path folds exactly the pair the attach left behind (and the
+	// unattended self-heal does the same on its next sweep, unprompted).
+	svc.ReleaseMerge(ser.ID)
+	merged, skipped, err := svc.DedupProviders(ctx, ser.ID)
+	if err != nil || merged != 1 || skipped != 0 {
+		t.Fatalf("DedupProviders after the yield = (merged=%d, skipped=%d, err=%v), want (1, 0, nil)", merged, skipped, err)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+}
+
+// TestAddProvider_PlainAttachIsUnaffectedByAnInFlightMerge protects the common
+// case from the fix: attaching a source to a series with NO drifted disk row to
+// fold must keep working exactly as before, even while another merge holds that
+// series' latch. The latch guards the MERGE BRANCH, not the attach.
+//
+// This is a GUARD, not a test that fails on the unfixed code — there no latch
+// was taken at all, so of course the attach succeeded. It exists because the
+// obvious over-correction (latching the whole of linkAttachedProvider, or the
+// whole of AddProvider) would turn every ordinary attach into a 409 for the
+// duration of an unrelated background merge, and nothing else would catch that.
+func TestAddProvider_PlainAttachIsUnaffectedByAnInFlightMerge(t *testing.T) {
+	storage := t.TempDir()
+	writeKaizokuSeries(t, storage, "Manga", "My Series", "mangadex", "Alpha", 2)
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	facts, err := diskScanFirst(t, storage)
+	if err != nil {
+		t.Fatalf("diskScanFirst: %v", err)
+	}
+	importOneFromFacts(t, client, facts)
+	ser := client.Series.Query().OnlyX(ctx)
+
+	// Resolved display name "WeebCentral" != the disk row's "mangadex", so there
+	// is nothing to fold and the merge branch is never entered.
+	fake := &fakeNamedSourceClient{sourceID: 1, sourceName: "WeebCentral"}
+	svc := library.NewService(client, ingest.NewIngest(fake, client), nil,
+		series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("could not take the merge latch")
+	}
+	defer svc.ReleaseMerge(ser.ID)
+
+	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha")
+	if err != nil {
+		t.Fatalf("AddProvider: %v — an attach with nothing to fold must not be blocked by an unrelated merge", err)
+	}
+	if len(dto.Providers) != 2 {
+		t.Fatalf("providers = %d, want 2 (disk + the newly attached source)", len(dto.Providers))
+	}
+	live := client.SeriesProvider.Query().
+		Where(entseriesprovider.SeriesID(ser.ID), entseriesprovider.Provider("1")).
+		OnlyX(ctx)
+	if live.Importance != 5 {
+		t.Fatalf("attached provider importance = %d, want 5 (the owner's requested rank still applied)", live.Importance)
+	}
+}
+
+// TestAddProvider_ReleasesTheMergeLatchWhenTheFoldFails is the anti-wedge guard
+// for the attach path. A fold that fails partway MUST still free the latch — a
+// stranded latch would lock that series out of EVERY merge path (dedup, Match,
+// consolidation, the collapse and the recurring self-heal) for the lifetime of
+// the process, converting a recoverable disk error into a permanent one.
+//
+// The failure is real, not injected: the series folder is removed before the
+// attach, so disk.RelabelChapterFile fails on the first chapter and
+// mergeDiskIntoLive returns with the database untouched.
+//
+// This is a GUARD, not a test that fails on the unfixed code — there the attach
+// took no latch, so there was none to strand. It exists because the release is a
+// `defer` that one refactor could drop (Go also runs it while unwinding a panic,
+// which is why the acquire and the release live in the same function), and
+// nothing else would notice.
+func TestAddProvider_ReleasesTheMergeLatchWhenTheFoldFails(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+
+	svc, ser, _ := newDriftedAttachFixture(t, storage, client)
+
+	// Make the disk phase fail: the CBZs the fold must relabel are gone.
+	if err := os.RemoveAll(filepath.Join(storage, "Manga", "My Series")); err != nil {
+		t.Fatalf("remove series folder: %v", err)
+	}
+
+	if _, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "Alpha"); err == nil {
+		t.Fatal("AddProvider succeeded with the series folder removed; want a relabel failure")
+	} else if errors.Is(err, library.ErrMergeInFlight) {
+		t.Fatalf("AddProvider err = %v, want the underlying merge failure", err)
+	}
+
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("the merge latch is still held after a failed fold — the series is wedged out of every merge path")
+	}
+	svc.ReleaseMerge(ser.ID)
 }
