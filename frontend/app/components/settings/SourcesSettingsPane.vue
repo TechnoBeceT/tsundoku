@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import AppButton from '../ui/AppButton.vue'
 import DurationInput from '../ui/DurationInput.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import TextField from '../ui/TextField.vue'
+import LibraryDedupDialog from './LibraryDedupDialog.vue'
 import SettingRow from './SettingRow.vue'
 import type { SaveState, SourcesSettings } from '../screens/settings.types'
 
@@ -23,12 +23,14 @@ import type { SaveState, SourcesSettings } from '../screens/settings.types'
  *   - `sources`: the 5 runtime-editable knobs (the source of truth).
  *   - `save`: the §16 state of the Save button.
  *
- * Also renders a second "Library maintenance" card: a one-shot button that
- * triggers the library-wide duplicate-source dedup sweep
- * (`POST /api/library/dedup-providers`, fire-and-forget 202 — see
- * useLibraryMaintenance). `dedupAllBusy`/`dedupAllMessage`/`dedupAllError`
- * are the §16 trio for that action, owned by the parent (mirrors how
- * SourceMetricsPane owns `warming`/`warmMessage`/`warmError`).
+ * Also renders a second "Library maintenance" card, which COMPOSES
+ * LibraryDedupDialog: the trigger for the library-wide duplicate-source dedup
+ * sweep (`POST /api/library/dedup-providers`, fire-and-forget 202 — see
+ * useLibraryMaintenance), gated behind the shared destructive ConfirmModal
+ * (QCAT-222) because the sweep renames CBZ files across the whole library.
+ * `dedupAllBusy`/`dedupAllMessage`/`dedupAllError` are the §16 trio for that
+ * action, owned by the parent (mirrors how SourceMetricsPane owns
+ * `warming`/`warmMessage`/`warmError`).
  *
  * Emits `save` with the full edited copy, and `dedupAll` to trigger the sweep.
  */
@@ -121,32 +123,11 @@ function onSave() {
     title="Library maintenance"
     sub="One-shot cleanup. Merges the same physical source represented twice on a series (a disk-import artifact) across your whole library — no re-downloading."
   >
-    <div class="maint-row">
-      <AppButton :disabled="dedupAllBusy" @click="emit('dedupAll')">
-        {{ dedupAllBusy ? 'Starting…' : 'Clean up duplicate sources (library-wide)' }}
-      </AppButton>
-      <p v-if="dedupAllMessage" class="maint-msg">{{ dedupAllMessage }}</p>
-      <p v-if="dedupAllError" class="maint-err">{{ dedupAllError }}</p>
-    </div>
+    <LibraryDedupDialog
+      :busy="dedupAllBusy"
+      :message="dedupAllMessage"
+      :error="dedupAllError"
+      @confirm="emit('dedupAll')"
+    />
   </SurfaceCard>
 </template>
-
-<style scoped>
-.maint-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 4px 0;
-}
-
-.maint-msg {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.maint-err {
-  font-size: 12px;
-  color: var(--danger-text);
-}
-</style>

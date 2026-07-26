@@ -3,7 +3,20 @@
 // library, not package library_test, so it can reach unexported identifiers).
 package library
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// DriftedSeriesIDs exposes the unexported targeting query behind the recurring
+// provider self-heal (GAP-120) so the black-box test package can pin exactly
+// which series it selects — only those carrying an UNLINKED disk-origin
+// SeriesProvider, and no others.
+func (s *Service) DriftedSeriesIDs(ctx context.Context) ([]uuid.UUID, error) {
+	return s.driftedSeriesIDs(ctx)
+}
 
 // SetScanTimeout overrides the package-level scanTimeout (the watchdog bound
 // on StartScan's single-flight latch, production default 30m) and returns a

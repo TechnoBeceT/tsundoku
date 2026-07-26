@@ -35,6 +35,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ignorescanlator"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
@@ -200,6 +201,7 @@ func registerRoutes(
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
 	onNetworkChange func(),
+	registerProviderHealer func(job.ProviderHealer),
 ) {
 	// Infrastructure routes — no authentication required.
 	e.GET("/health", HealthCheck)
@@ -532,6 +534,13 @@ func registerRoutes(
 		WithAutoIdentifier(metaSvc).    // fires a detached background rich-metadata pass after Import (spec/metadata-engine-phase1 §4)
 		WithSourceLister(engineClient). // membership check for AddProvider/MatchDiskProvider — true 404 only on a real miss (not a cooled-down source)
 		WithSeriesSync(seriesSync)      // GAP-113: add-provider → scoped refresh+detect for that series
+	// Hand the library service to the background runner so the post-sweep
+	// source-identity-drift self-heal can run unattended (GAP-120). It reuses the
+	// SAME instance the HTTP routes below use — one merge core, one single-flight
+	// state. Nil-guarded so test call sites can pass no sink.
+	if registerProviderHealer != nil {
+		registerProviderHealer(librarySvc)
+	}
 	// Wire the Slice-B ignore-scanlator on-enable migration into the extensions
 	// handler now that the library service exists (it owns the provider-merge +
 	// CBZ-relabel machinery). extensionsH was constructed earlier; its route

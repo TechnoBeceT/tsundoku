@@ -13,6 +13,7 @@ import (
 	engineh "github.com/technobecet/tsundoku/internal/handler/engine"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
@@ -71,6 +72,15 @@ import (
 // service (spec/trackers-sync-phase4) built over the same registry — it
 // serves the manual update/sync-now endpoints AND is injected as the
 // series.ProgressPusher so a reader-marked chapter fires a background push.
+//
+// registerProviderHealer hands the library service — which owns the
+// source-identity-drift merge core — to the background job runner, so the
+// post-sweep provider self-heal can run (GAP-120). It is a callback rather than a
+// return value because the library service is constructed HERE, with the routes,
+// while the runner was built (and its refresh loop started) back in main;
+// job.Runner.SetProviderHealer is the production implementation and is
+// concurrency-safe for exactly this late wiring. Nil is allowed and disables the
+// pass, which is what test call sites do.
 func New(
 	cfg *config.Config,
 	client *entpkg.Client,
@@ -96,6 +106,7 @@ func New(
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
 	onNetworkChange func(),
+	registerProviderHealer func(job.ProviderHealer),
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -118,6 +129,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
 	return e
 }

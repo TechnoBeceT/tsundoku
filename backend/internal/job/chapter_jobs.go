@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -120,6 +121,12 @@ type Runner struct {
 	// Its zero value is ready to use — a Runner whose loops were never started
 	// reports an unscheduled, not-running schedule.
 	schedule schedule
+	// healer runs the post-sweep source-identity-drift self-heal (provider_heal.go).
+	// Optional (nil ⇒ the pass is skipped) and guarded by healMu because it is
+	// wired from the route layer AFTER the refresh loop has already started — see
+	// SetProviderHealer.
+	healMu sync.RWMutex
+	healer ProviderHealer
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -388,7 +395,8 @@ func (r *Runner) Trigger() {
 // (intervals.RefreshInterval), so a runtime change to the sweep cadence takes
 // effect on the next wait without a restart.
 //
-// After each successful sweep it runs upgrade detection, triggers a download
+// After each successful sweep it runs the provider self-heal (GAP-120) then
+// upgrade detection — in that order, see runRefreshSweep — triggers a download
 // cycle, calls healthCount to get the current number of unhealthy sources and
 // broadcasts a health.summary SSE event so UI badges stay current without a
 // manual refresh. If healthCount returns an error the broadcast is skipped for
@@ -405,9 +413,10 @@ func (r *Runner) StartRefresh(ctx context.Context, svc *refresh.Service, healthC
 	}.start(ctx)
 }
 
-// runRefreshSweep performs one discovery sweep, triggers a download cycle, and
-// broadcasts the health summary. Sweep / count errors are logged and swallowed so
-// the refresh loop survives transient failures.
+// runRefreshSweep performs one discovery sweep, heals source-identity drift,
+// detects upgrades, triggers a download cycle, and broadcasts the health summary.
+// Sweep / heal / count errors are logged and swallowed so the refresh loop
+// survives transient failures.
 func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, healthCount func(context.Context) (int, error)) {
 	res, err := svc.RefreshAll(ctx)
 	if err != nil {
@@ -419,6 +428,26 @@ func (r *Runner) runRefreshSweep(ctx context.Context, svc *refresh.Service, heal
 		"new_chapters", res.NewChapters,
 		"errors", res.Errors,
 	)
+	// Source-identity-drift self-heal (GAP-120). It sits BETWEEN the sweep and
+	// upgrade detection, and both edges are load-bearing:
+	//
+	//   - AFTER RefreshAll, because a merge is gated on the live twin actually
+	//     having a chapter feed (the empty-feed orphan guard) and the sweep is
+	//     what fills that feed. Refresh is therefore the exact moment a merge
+	//     declined at attach time becomes possible.
+	//   - BEFORE runUpgradeDetection, because a merge REWRITES detection's two
+	//     inputs: it re-points the disk-satisfied chapters onto the live provider
+	//     and sets satisfied_importance == that provider's importance in one tx.
+	//     Detect first and it would read the PRE-merge state — chapters still
+	//     satisfied by the disk row at importance 1 while the freshly-refreshed
+	//     live twin offers the same keys at its real rank — and flag the whole
+	//     imported series upgrade_available on a strict `>`, so the Trigger below
+	//     would re-download files the merge was about to relabel in place. Healing
+	//     first leaves importance == satisfied_importance, which detection ignores.
+	//
+	// GAP-112's ordering survives: detection still runs ONCE per sweep and still
+	// runs BEFORE the Trigger.
+	r.runProviderHeal(ctx)
 	// A discovery sweep is what surfaces the new provider chapters that create
 	// upgrade candidates, so upgrade detection runs here — ONCE per sweep, at the
 	// refresh cadence — instead of on every download cycle (GAP-112: the library-

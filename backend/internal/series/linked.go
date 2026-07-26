@@ -29,7 +29,7 @@ import (
 // Both `series` and `library` need this predicate (`library` already imports
 // `series`, never the reverse), so it lives here rather than in `library`.
 func IsLinkedProvider(p *ent.SeriesProvider) bool {
-	_, ok := ProviderSourceID(p)
+	_, ok := LinkedProviderSourceID(p.Provider)
 	return ok
 }
 
@@ -42,6 +42,19 @@ func IsLinkedProvider(p *ent.SeriesProvider) bool {
 // display NAME) has no engine source at all, so ok is false and the caller
 // falls back to its existing cold-fetch-failed handling.
 func ProviderSourceID(p *ent.SeriesProvider) (int64, bool) {
-	id, err := strconv.ParseInt(strings.TrimSpace(p.Provider), 10, 64)
+	return LinkedProviderSourceID(p.Provider)
+}
+
+// LinkedProviderSourceID is the string-level primitive both predicates above
+// delegate to: it parses a RAW SeriesProvider.provider value as the engine-host's
+// numeric source id, reporting ok=false for a disk-origin display NAME. It exists
+// for callers that only ever hold the column value and not the whole row — a
+// PROJECTED query that selects (series_id, provider) alone to find the
+// disk-origin providers in a library (see library.driftedSeriesIDs, GAP-120)
+// would otherwise have to hydrate every entity just to ask this one question.
+// One implementation, three entry points (§2 DRY) — so the linked/disk-origin
+// rule can never fork.
+func LinkedProviderSourceID(provider string) (int64, bool) {
+	id, err := strconv.ParseInt(strings.TrimSpace(provider), 10, 64)
 	return id, err == nil
 }
