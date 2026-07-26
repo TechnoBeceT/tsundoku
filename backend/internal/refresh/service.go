@@ -28,6 +28,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
@@ -246,7 +247,13 @@ func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Seri
 	var order []key
 	for _, sr := range seriesList {
 		for _, p := range sr.Edges.Providers {
-			sourceID, ok := parseProviderSourceID(p.Provider)
+			// The linked/disk-origin decision is ONE rule shared with series +
+			// library (series.LinkedProviderSourceID). Refresh used to carry its own
+			// copy, which had already diverged (it did not trim surrounding
+			// whitespace), so a provider stored as " 8 " counted as disk-origin here
+			// and as a live source everywhere else. That is precisely the predicate
+			// deciding which providers the sweep skips, so the copies must not fork.
+			sourceID, ok := series.LinkedProviderSourceID(p.Provider)
 			if !ok {
 				slog.WarnContext(ctx, "refresh: skipping provider with non-numeric provider id (disk-origin)",
 					"series", sr.Title, "provider", p.Provider)
@@ -281,19 +288,6 @@ func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Seri
 		groups = append(groups, *grp)
 	}
 	return groups
-}
-
-// parseProviderSourceID parses a SeriesProvider.Provider column into the
-// numeric engine-host source id ingest.Ingest expects. A disk-origin provider
-// stores a display name (e.g. "Other" or a slug), which never parses — ok is
-// false in that case, and the caller skips the provider (there is no live
-// source to re-fetch from).
-func parseProviderSourceID(provider string) (id int64, ok bool) {
-	n, err := strconv.ParseInt(provider, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
 }
 
 // refreshGroup fetches one source-manga's chapter list ONCE (politeness delay +

@@ -80,8 +80,9 @@ type relabeledChapter struct {
 //     those chapters are never left pointing at a row about to be deleted);
 //     delete the (now fully drained) disk provider row, its ProviderChapter
 //     feed (always empty for a disk provider), and its SuwayomiSyncState. A tx
-//     failure rolls back every disk relabel too (same undo path), so a
-//     non-nil error from MatchDiskProvider always means NO net change.
+//     failure rolls back every disk relabel too (same undo path), so a non-nil
+//     error from MatchDiskProvider leaves no DB change at all — see
+//     mergeDiskIntoLive for the two best-effort residuals on the disk side.
 //  5. Trigger an immediate download-cycle convergence (parity with
 //     Adopt/AddProvider) and return the refreshed SeriesDetailDTO (§16).
 func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source string, url string, scanlator string, importance int) (series.SeriesDetailDTO, error) {
@@ -154,8 +155,18 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 // targetImportance is applied ONLY inside commitMatch's tx, atomically with each
 // chapter's satisfied_importance — see attachRealSource + commitMatch for why
 // elevating it any earlier would re-arm a re-download during the relabel window.
-// A non-nil error means NO net change (a commit failure rolls every relabel
-// back). Returns how many chapters were relabeled + re-pointed.
+// Returns how many chapters were relabeled + re-pointed.
+//
+// FAILURE SEMANTICS — all-or-nothing in the DATABASE, best-effort on DISK. The DB
+// phase is one tx, so a non-nil error never leaves a half-migrated series: no
+// chapter is re-pointed and the disk provider row survives. The compensations that
+// return DISK and the parked rank to their pre-merge values are best-effort and
+// each has one documented residual: rollbackRelabels can leave a CBZ under its NEW
+// name (logRollbackFailure says so), and restoreImportance can leave liveSP parked
+// at the reserved 0. Both are SAFE — a stranded rename is re-applied by the next
+// merge attempt because relabelMoveIntoPlace is idempotent, and importance 0 is
+// <= every watermark so nothing re-downloads — but "a failed merge leaves the
+// series byte-for-byte unchanged" is the common case, not a guarantee.
 //
 // IMPORTANCE PARKING (centralised here so EVERY caller is race-safe): the
 // background upgrade ticker runs DetectUpgrades unsynchronised with this merge.

@@ -3,9 +3,11 @@ package library_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sort"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
@@ -24,7 +26,13 @@ import (
 // healSvc builds the library service the self-heal needs: db + storage root +
 // a trigger spy. Ingest/imports/series are unused by the dedup/merge core.
 func healSvc(client *ent.Client, storage string, triggered *int) *library.Service {
-	return library.NewService(client, nil, nil, nil, func() { *triggered++ }, storage, sse.NewHub())
+	return healSvcWithHub(client, storage, triggered, sse.NewHub())
+}
+
+// healSvcWithHub is healSvc with a caller-supplied SSE hub, so a test can
+// subscribe before the pass runs and assert what it broadcasts.
+func healSvcWithHub(client *ent.Client, storage string, triggered *int, hub *sse.Hub) *library.Service {
+	return library.NewService(client, nil, nil, nil, func() { *triggered++ }, storage, hub)
 }
 
 // attachLinkedTwin creates a LINKED SeriesProvider (numeric provider id ⇒
@@ -160,11 +168,17 @@ func TestHealDriftedProviders_MergesDriftedPairWithFeed(t *testing.T) {
 	assertRepointed(t, client, ctx, ser.ID, remaining)
 }
 
-// assertRepointed pins the post-merge chapter state: every chapter of the series
+// assertRepointed pins the post-merge chapter STATE: every chapter of the series
 // is satisfied by `live` at `live.Importance` (so importance ==
-// satisfied_importance and upgrade detection's strict `>` can never fire), still
-// has a filename (the CBZ was relabeled and KEPT, never removed), and none is
-// flagged upgrade_available.
+// satisfied_importance, the input on which upgrade detection's strict `>` can
+// never fire), and still has a filename (the CBZ was relabeled and KEPT, never
+// removed).
+//
+// The final upgrade_available check is a STATE assertion, not an ordering one: it
+// proves the merge itself never flags a chapter, but it never runs DetectUpgrades,
+// so it cannot prove detection would decline. That property is proved separately —
+// see TestProviderHeal_MustRunBeforeUpgradeDetection, which drives the real
+// detector on both orderings.
 func assertRepointed(t *testing.T, client *ent.Client, ctx context.Context, seriesID uuid.UUID, live *ent.SeriesProvider) {
 	t.Helper()
 	chapters := client.Chapter.Query().Where(entchapter.SeriesID(seriesID)).AllX(ctx)
@@ -186,7 +200,164 @@ func assertRepointed(t *testing.T, client *ent.Client, ctx context.Context, seri
 	if flagged := client.Chapter.Query().
 		Where(entchapter.SeriesID(seriesID), entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
 		CountX(ctx); flagged != 0 {
-		t.Errorf("upgrade_available chapters = %d, want 0 (the heal must not arm a re-download)", flagged)
+		t.Errorf("upgrade_available chapters = %d, want 0 (the merge itself must not arm a re-download)", flagged)
+	}
+}
+
+// TestHealDriftedProviders_YieldsToAnOwnerMergeInFlight is the single-flight proof
+// and the reason this pass is safe to run unattended. acquireMerge exists so two
+// CBZ-relabel merges never run concurrently on ONE series; before GAP-120 it only
+// had to arbitrate owner-vs-owner (two clicks). A background timer is a third
+// participant aimed at exactly the drifted series an owner is most likely to be
+// matching by hand.
+//
+// A concurrent second merge corrupts the series rather than failing cleanly:
+// disk.relabelMoveIntoPlace is IDEMPOTENT, so the loser does not stop at the
+// already-moved file — it proceeds and only its commitMatch fails (the drained
+// disk row is gone), at which point its rollback renames every CBZ BACK while the
+// winner's committed rows name the new one.
+//
+// So with the latch held (exactly as StartMatchDiskProvider holds it) the pass must
+// SKIP the series entirely — not block, not queue — leaving both providers and both
+// chapters untouched, and must merge it on the very next pass once the latch frees.
+//
+// FAILS on the unfixed code: HealDriftedProviders called DedupProviders directly
+// and took no latch at all, so it merged straight through an in-flight owner merge.
+func TestHealDriftedProviders_YieldsToAnOwnerMergeInFlight(t *testing.T) {
+	ctx := context.Background()
+	storage := t.TempDir()
+	client := testdb.New(t)
+
+	ser := importedDiskSeries(t, client, storage, "My Series", "mangadex", "Alpha")
+	diskSP := diskProviderOf(t, client, ctx, ser.ID)
+	attachLinkedTwin(t, client, ctx, ser.ID, "mangadex", "Alpha", 5, true)
+
+	triggered := 0
+	svc := healSvc(client, storage, &triggered)
+
+	// Stand in for an owner Match/Consolidation already in flight on this series.
+	if !svc.AcquireMerge(ser.ID) {
+		t.Fatal("could not take the merge latch on a fresh service")
+	}
+
+	merged, skipped, err := svc.HealDriftedProviders(ctx)
+	if err != nil {
+		t.Fatalf("HealDriftedProviders: %v", err)
+	}
+	if merged != 0 || skipped != 0 {
+		t.Fatalf("merged/skipped = %d/%d, want 0/0 — the pass must yield the whole series to the owner merge", merged, skipped)
+	}
+	if triggered != 0 {
+		t.Errorf("trigger fired %d time(s); a yielded series changes nothing", triggered)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 2)
+	if !client.SeriesProvider.Query().Where(seriesprovider.IDEQ(diskSP.ID)).ExistX(ctx) {
+		t.Fatal("the disk provider was merged away while an owner merge held the latch")
+	}
+
+	// The skip is a YIELD, not an abandonment: once the owner merge finishes, the
+	// next sweep heals the same series.
+	svc.ReleaseMerge(ser.ID)
+	merged, skipped, err = svc.HealDriftedProviders(ctx)
+	if err != nil {
+		t.Fatalf("HealDriftedProviders (after release): %v", err)
+	}
+	if merged != 1 || skipped != 0 {
+		t.Fatalf("after the latch freed, merged/skipped = %d/%d, want 1/0", merged, skipped)
+	}
+	assertProviderCount(t, client, ctx, ser.ID, 1)
+}
+
+// TestHealDriftedProviders_BroadcastsProviderMerged pins the real-time contract
+// (§17 / the repo's SSE rule: "state an async actor changes DOES emit"). The heal
+// deletes a provider row and renames CBZs with no owner action and no HTTP
+// response to carry the new state, so a user with the series open would keep
+// showing a provider that no longer exists until they reloaded.
+//
+// It must reuse the EXISTING provider.merged event — the frontend subscribes by
+// name, so a new name would be a breaking change — carrying the series id the
+// listener refetches.
+//
+// FAILS on the unfixed code: provider.merged had exactly two emitters, both async
+// OWNER paths, and the heal broadcast nothing.
+func TestHealDriftedProviders_BroadcastsProviderMerged(t *testing.T) {
+	ctx := context.Background()
+	storage := t.TempDir()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	events, unsub := hub.Subscribe()
+	t.Cleanup(unsub)
+
+	ser := importedDiskSeries(t, client, storage, "My Series", "mangadex", "Alpha")
+	attachLinkedTwin(t, client, ctx, ser.ID, "mangadex", "Alpha", 5, true)
+
+	triggered := 0
+	if merged, _, err := healSvcWithHub(client, storage, &triggered, hub).HealDriftedProviders(ctx); err != nil || merged != 1 {
+		t.Fatalf("HealDriftedProviders = %d, %v; want 1, nil", merged, err)
+	}
+
+	payload := awaitProviderMerged(t, events)
+	if payload.SeriesID != ser.ID.String() {
+		t.Errorf("provider.merged seriesId = %q, want %q", payload.SeriesID, ser.ID)
+	}
+	if payload.Error != "" {
+		t.Errorf("provider.merged carried error %q on a successful heal", payload.Error)
+	}
+	if payload.Merged != 1 {
+		t.Errorf("provider.merged merged = %d, want 1", payload.Merged)
+	}
+}
+
+// TestHealDriftedProviders_SilentWhenNothingMerged proves the push is tied to an
+// actual state change: a pass that merges nothing (here the empty-feed skip) must
+// broadcast nothing, so an unmergeable library does not spray an event every sweep.
+func TestHealDriftedProviders_SilentWhenNothingMerged(t *testing.T) {
+	ctx := context.Background()
+	storage := t.TempDir()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	events, unsub := hub.Subscribe()
+	t.Cleanup(unsub)
+
+	ser := importedDiskSeries(t, client, storage, "My Series", "mangadex", "Alpha")
+	attachLinkedTwin(t, client, ctx, ser.ID, "mangadex", "Alpha", 5, false)
+
+	triggered := 0
+	if _, skipped, err := healSvcWithHub(client, storage, &triggered, hub).HealDriftedProviders(ctx); err != nil || skipped != 1 {
+		t.Fatalf("HealDriftedProviders skipped = %d, %v; want 1, nil", skipped, err)
+	}
+
+	select {
+	case ev := <-events:
+		t.Fatalf("a pass that merged nothing broadcast %q", ev.Type)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// awaitProviderMerged drains the SSE stream until a provider.merged event arrives
+// and returns its decoded payload, failing the test if none does.
+func awaitProviderMerged(t *testing.T, events <-chan sse.Event) library.MergeEvent {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type != "provider.merged" {
+				continue
+			}
+			raw, ok := ev.Data.(json.RawMessage)
+			if !ok {
+				t.Fatalf("provider.merged payload is %T, want json.RawMessage", ev.Data)
+			}
+			var payload library.MergeEvent
+			if err := json.Unmarshal(raw, &payload); err != nil {
+				t.Fatalf("unmarshal provider.merged: %v", err)
+			}
+			return payload
+		case <-deadline:
+			t.Fatal("no provider.merged event — an unattended merge must push its state change")
+			return library.MergeEvent{}
+		}
 	}
 }
 

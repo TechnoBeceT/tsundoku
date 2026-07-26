@@ -20,11 +20,9 @@ import (
 // SeriesProvider.Provider itself: a live provider stores the engine-host's
 // NUMERIC source id string (e.g. "99"); a disk-origin provider stores a
 // display NAME (e.g. "Asura Scans"). So "linked" is simply "Provider parses
-// as an integer" — mirrors internal/refresh's parseProviderSourceID, which
-// relies on the exact same rule to build its refresh groups. It is not
-// reused directly: refresh needs the parsed int64 id itself (to key a fetch
-// group) where every caller here only needs the bool, and refresh does not
-// import this package.
+// as an integer" — the same rule internal/refresh applies to build its refresh
+// groups, and it calls LinkedProviderSourceID directly for it (refresh once
+// carried a private copy that had already diverged by not trimming whitespace).
 //
 // Both `series` and `library` need this predicate (`library` already imports
 // `series`, never the reverse), so it lives here rather than in `library`.
@@ -51,9 +49,11 @@ func ProviderSourceID(p *ent.SeriesProvider) (int64, bool) {
 // for callers that only ever hold the column value and not the whole row — a
 // PROJECTED query that selects (series_id, provider) alone to find the
 // disk-origin providers in a library (see library.driftedSeriesIDs, GAP-120)
-// would otherwise have to hydrate every entity just to ask this one question.
-// One implementation, three entry points (§2 DRY) — so the linked/disk-origin
-// rule can never fork.
+// would otherwise have to hydrate every entity just to ask this one question,
+// and internal/refresh needs the parsed id itself to key a fetch group.
+// One implementation, four entry points (§2 DRY) — IsLinkedProvider,
+// ProviderSourceID, library.driftedSeriesIDs and refresh.buildRefreshGroups —
+// so the linked/disk-origin rule can never fork.
 func LinkedProviderSourceID(provider string) (int64, bool) {
 	id, err := strconv.ParseInt(strings.TrimSpace(provider), 10, 64)
 	return id, err == nil

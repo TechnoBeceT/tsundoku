@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+
+	"github.com/google/uuid"
 )
 
 // HealDriftedProviders folds every already-drifted (disk-origin row, live twin)
@@ -34,16 +36,50 @@ import (
 // (deleteDrainedDiskProvider) with no owner action. It is safe by construction:
 //
 //   - NO CBZ is ever deleted. Files are relabeled to the live source's identity
-//     and kept; only a DB row goes away.
-//   - The relabel is 2-phase with rollback — any disk or tx failure unwinds every
-//     rename already done, so a failed heal leaves the series byte-for-byte
-//     unchanged (mergeDiskIntoLive).
+//     and kept; only a DB row goes away. This is the load-bearing claim.
+//   - The relabel is 2-phase and the DB phase is all-or-nothing, so a failed heal
+//     never half-migrates a series: either every overlapping chapter is re-pointed
+//     and relabeled, or none is (mergeDiskIntoLive → commitMatch's single tx).
+//   - The rollback that unwinds an already-done rename is BEST-EFFORT, so "a
+//     failed heal leaves the series byte-for-byte unchanged" holds in the common
+//     case but is NOT a guarantee — see rollbackRelabels / restoreImportance for
+//     the two residual states and why both are safe and self-correcting.
 //   - It is idempotent. With no drifted pair it merges nothing and changes nothing.
 //   - It makes ZERO live source calls, so it can neither trip an anti-ban breaker
 //     nor consume a retry budget.
 //   - The empty-feed orphan guard is honoured identically to the owner path (the
 //     shared providerHasFeed gate, via pickTwin) — a pair whose live twin has no
 //     feed is SKIPPED, never merged.
+//
+// # It never races an owner merge — it yields
+//
+// Before GAP-120 the per-series merge single-flight latch (acquireMerge) only had
+// to arbitrate owner-vs-owner: two Match clicks, or a Match against a
+// Consolidation. A background timer is a THIRD participant, and it targets exactly
+// the drifted series the owner is most likely to be matching by hand. Two
+// concurrent mergeDiskIntoLive calls on one series corrupt it: relabelMoveIntoPlace
+// is idempotent, so the loser does not fail fast on the already-moved file — it
+// proceeds, and only its commitMatch fails (the drained disk row is already gone),
+// at which point its rollback renames every CBZ BACK to the old name while the
+// winner's committed rows name the new one. Every file then sits where the DB is
+// not looking.
+//
+// So this pass takes the SAME latch, per series, and SKIPS a series whose latch is
+// already held rather than blocking or queueing (healOneSeries). An owner action
+// always wins: it never waits behind an unattended pass, and the skipped series is
+// re-examined by the very next sweep at no extra cost.
+//
+// # Importance: a merge adopts the HIGHER of the two ranks
+//
+// dedupDriftedPairs folds at max(liveSP.Importance, diskSP.Importance) so a disk
+// row the owner deliberately re-ranked keeps that rank through the fold. When the
+// live twin was ranked LOWER than the disk row, the fold therefore RAISES the
+// twin's importance for the whole series, and chapters that some OTHER provider
+// satisfies at a rank now below it become genuine upgrade candidates — so the same
+// sweep's detection pass can flag them and the next download cycle will re-fetch
+// them. That is the owner's own ranking being honoured, not a heal side effect,
+// and it is identical to what the owner-triggered dedup has always done; but on
+// this path it happens unattended, so it is stated here explicitly.
 //
 // # Cost, and why an unmatchable row cannot thrash
 //
@@ -77,7 +113,14 @@ func (s *Service) HealDriftedProviders(ctx context.Context) (merged, skipped int
 		if ctx.Err() != nil {
 			return merged, skipped, ctx.Err()
 		}
-		m, sk, derr := s.DedupProviders(ctx, id)
+		m, sk, ok, derr := s.healOneSeries(ctx, id)
+		if !ok {
+			// An owner merge holds this series' latch. Yield to it — the next
+			// sweep re-examines the series for free.
+			slog.DebugContext(ctx, "library.HealDriftedProviders: series skipped — an owner merge is already in flight",
+				"series_id", id)
+			continue
+		}
 		if errors.Is(derr, ErrSeriesNotFound) {
 			// Deleted mid-pass — benign, skip.
 			continue
@@ -92,6 +135,13 @@ func (s *Service) HealDriftedProviders(ctx context.Context) (merged, skipped int
 		if m > 0 {
 			slog.InfoContext(ctx, "library.HealDriftedProviders: folded drifted provider(s) into their live source",
 				"series_id", id, "merged", m)
+			// This is an UNATTENDED mutation of shared state (a provider row is
+			// gone and CBZs were renamed), so it MUST push — a user with the
+			// series open would otherwise keep showing a provider that no longer
+			// exists until they reload. Reuses the SAME provider.merged event the
+			// two owner merge paths emit, so the existing frontend listener
+			// (refetch this series' detail) covers it unchanged.
+			s.broadcastMerge(MergeEvent{SeriesID: id.String(), Merged: m, Skipped: sk})
 		} else if sk > 0 {
 			// The live twin still has no chapter feed. Expected and self-healing
 			// (the next sweep that populates it merges), so DEBUG — logging this
@@ -101,4 +151,25 @@ func (s *Service) HealDriftedProviders(ctx context.Context) (merged, skipped int
 		}
 	}
 	return merged, skipped, nil
+}
+
+// healOneSeries folds one series' drifted provider pairs under the SHARED
+// per-series merge single-flight latch (acquireMerge — the same latch
+// StartMatchDiskProvider and StartConsolidateProviders take), so an unattended
+// heal can never run a second mergeDiskIntoLive over CBZs an owner merge is
+// already relabeling.
+//
+// It TRIES the latch and gives up instead of waiting: ok=false means an owner
+// merge is in flight for this series and nothing at all was touched. The heal is
+// recurring, so yielding costs nothing — the next sweep retries — whereas blocking
+// would let a background pass hold up nothing useful and queueing would run the
+// heal on state the owner merge has already rewritten. The release is deferred, so
+// the latch is freed on every path including a panic.
+func (s *Service) healOneSeries(ctx context.Context, id uuid.UUID) (merged, skipped int, ok bool, err error) {
+	if !s.acquireMerge(id) {
+		return 0, 0, false, nil
+	}
+	defer s.releaseMerge(id)
+	merged, skipped, err = s.DedupProviders(ctx, id)
+	return merged, skipped, true, err
 }

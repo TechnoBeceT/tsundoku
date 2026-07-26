@@ -18,6 +18,20 @@ func (s *Service) DriftedSeriesIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return s.driftedSeriesIDs(ctx)
 }
 
+// AcquireMerge exposes the per-series merge single-flight latch to the black-box
+// test package so a test can hold it exactly as an owner-triggered merge does
+// (StartMatchDiskProvider / StartConsolidateProviders) and prove the recurring
+// self-heal YIELDS the series instead of racing it. Deterministic and
+// goroutine-free, unlike driving a real background merge through the block seam.
+func (s *Service) AcquireMerge(seriesID uuid.UUID) bool {
+	return s.acquireMerge(seriesID)
+}
+
+// ReleaseMerge frees a latch taken via AcquireMerge.
+func (s *Service) ReleaseMerge(seriesID uuid.UUID) {
+	s.releaseMerge(seriesID)
+}
+
 // SetScanTimeout overrides the package-level scanTimeout (the watchdog bound
 // on StartScan's single-flight latch, production default 30m) and returns a
 // restore func that puts the previous value back. Tests use this to shrink

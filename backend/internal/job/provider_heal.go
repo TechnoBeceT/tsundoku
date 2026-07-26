@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"log/slog"
+	"time"
 )
 
 // ProviderHealer folds already-drifted (disk-origin, live twin) provider pairs
@@ -41,9 +42,28 @@ func (r *Runner) providerHealer() ProviderHealer {
 	return r.healer
 }
 
-// runProviderHeal runs one provider self-heal pass. Errors are logged and
-// swallowed — exactly like runUpgradeDetection — so a heal failure can never kill
-// the refresh loop or abort the rest of the sweep; the next sweep retries. A
+// providerHealTimeout bounds ONE post-sweep self-heal pass. The heal runs
+// SYNCHRONOUSLY inside runRefreshSweep, ahead of upgrade detection and the
+// download Trigger, and its cost is unbounded by nature: it is a merge per drifted
+// series, and a single merge rewrites every overlapping CBZ zip over NFS (~7 min
+// worst case observed on prod for a 238-chapter provider). A first sweep after a
+// long-drifted library came online could therefore stall detection and downloads
+// for tens of minutes while the period loop skipped tick after tick.
+//
+// 10m matches the owner's library-wide sweep budget (handler/library's
+// dedupAllTimeout), which does the same work from the same core.
+//
+// Cutting the pass off is a CLEAN stop, not a corrupting abort: the heal checks
+// ctx between series, and within a series the DB phase is a single all-or-nothing
+// tx — a cancellation lands either before it (the disk relabels are unwound and no
+// row changed) or on it (the tx fails and is rolled back, then the relabels are
+// unwound). A partially-completed pass is fine by design: the series it did not
+// reach are still drifted, so the very next sweep resumes with them.
+const providerHealTimeout = 10 * time.Minute
+
+// runProviderHeal runs one time-bounded provider self-heal pass. Errors are logged
+// and swallowed — exactly like runUpgradeDetection — so a heal failure can never
+// kill the refresh loop or abort the rest of the sweep; the next sweep retries. A
 // no-op when no healer is wired, and ~free when nothing needs healing (the pass
 // short-circuits after one targeting query).
 func (r *Runner) runProviderHeal(ctx context.Context) {
@@ -51,7 +71,9 @@ func (r *Runner) runProviderHeal(ctx context.Context) {
 	if healer == nil {
 		return
 	}
-	merged, skipped, err := healer.HealDriftedProviders(ctx)
+	healCtx, cancel := context.WithTimeout(ctx, providerHealTimeout)
+	defer cancel()
+	merged, skipped, err := healer.HealDriftedProviders(healCtx)
 	if err != nil {
 		slog.ErrorContext(ctx, "job.Runner: provider self-heal error", "err", err)
 		return
