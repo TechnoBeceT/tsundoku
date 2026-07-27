@@ -96,6 +96,7 @@ describe('useSettings – downloadConcurrency', () => {
         { key: 'health.stale_grace_days', value: '14' },
         { key: 'jobs.refresh_concurrency', value: '4' },
         { key: 'jobs.download_concurrency', value: '12' },
+        { key: 'jobs.max_concurrent_downloads', value: '6' },
       ],
     })
 
