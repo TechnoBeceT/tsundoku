@@ -213,7 +213,13 @@ func parseOptionalTitle(raw string) string {
 // validateAdoptBody validates the parsed AdoptRequestBody:
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.
-//   - each provider's importance must be >= 0.
+//   - each provider's importance must be >= 1. Not >= 0: importance 0 is the
+//     RESERVED park sentinel the library merge engine writes while it renames a
+//     series' CBZ files, and the upgrade engine reads it as "this provider has no
+//     rank at all". Adopting a provider straight onto it would make it look parked
+//     forever — it could never heal a chapter's satisfied-importance watermark, so
+//     every chapter it satisfies would stay pinned to a frozen value. Same bound
+//     as the attach endpoint (handler/library's validateAddProviderBody).
 //   - each provider's url must be non-blank (P2 Suwayomi-removal — the
 //     backend is URL-addressed; see adoptProviderRequest's doc comment).
 //   - each (source, scanlator) pair must be distinct across providers (a
@@ -233,8 +239,8 @@ func validateAdoptBody(req adoptRequestBody) error {
 	}
 	seen := make(map[string]bool, len(req.Providers))
 	for _, p := range req.Providers {
-		if p.Importance < 0 {
-			return echo.NewHTTPError(http.StatusBadRequest, "provider importance must be >= 0")
+		if p.Importance < 1 {
+			return echo.NewHTTPError(http.StatusBadRequest, "provider importance must be >= 1")
 		}
 		if strings.TrimSpace(p.URL) == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "provider url is required")

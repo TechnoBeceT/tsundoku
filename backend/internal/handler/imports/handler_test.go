@@ -1108,6 +1108,22 @@ func TestAdopt_NegativeImportance_400(t *testing.T) {
 	}
 }
 
+// TestAdopt_ReservedSentinelImportance_400 pins the lower bound at 1, not 0.
+// Importance 0 is the reserved park sentinel the library merge engine writes
+// while it renames a series' CBZ files, and the upgrade engine reads it as "this
+// provider has no rank". A provider adopted straight onto it would look parked
+// forever: it could never heal a chapter's satisfied-importance watermark, so
+// every chapter it satisfies would stay pinned to a frozen value. This matches
+// the attach endpoint's own >= 1 bound (handler/library).
+func TestAdopt_ReservedSentinelImportance_400(t *testing.T) {
+	env := newTestEnv(t, &fakeEngineClient{})
+	body := `{"title":"Test","providers":[{"source":"a","mangaId":1,"url":"/manga/1","importance":0}]}`
+	rec := env.do(http.MethodPost, "/api/series", body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Adopt importance 0 (the reserved park sentinel): want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
 // TestAdopt_DuplicateSource_400 verifies that two providers sharing the same
 // source — even with different urls — are rejected with 400. A series may
 // carry at most one SeriesProvider per (source, scanlator); allowing two

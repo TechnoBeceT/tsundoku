@@ -3354,7 +3354,7 @@ export interface components {
             mangaId: number;
             /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
             url?: string;
-            /** @description Provider rank for this series (higher = preferred). */
+            /** @description Provider rank for this series (higher = preferred). Ranks start at 1, matching the attach endpoint; the backend responds 400 below that. 0 is reserved as the sentinel a library merge writes onto a provider while it renames that series' files, and a provider adopted onto it would be read as unranked ever after. */
             importance: number;
             /**
              * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
@@ -5302,7 +5302,7 @@ export interface operations {
                     "application/json": components["schemas"]["SeriesDetail"];
                 };
             };
-            /** @description Validation error (blank title, empty providers, invalid category, duplicate provider pair, negative importance). */
+            /** @description Validation error (blank title, empty providers, invalid category, duplicate provider pair, importance below 1). */
             400: {
                 headers: {
                     [name: string]: unknown;
