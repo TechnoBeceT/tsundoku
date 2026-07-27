@@ -13,7 +13,7 @@ import "strings"
 // outranks it.
 func kaizokuProvenance(filename string, ci *ComicInfo) (provider, scanlator string, importance int) {
 	var ciProvider, ciScanlator, ciPublisher, ciTranslator string
-	importance = 1
+	importance = diskProviderMinImportance
 	if ci != nil {
 		ciProvider, ciScanlator = ci.Provider, ci.Scanlator
 		ciPublisher, ciTranslator = ci.Publisher, ci.Translator

@@ -456,6 +456,22 @@ type providerKey struct {
 	scanlator string
 }
 
+// diskProviderMinImportance is the rank a disk-origin SeriesProvider is CREATED
+// at when the sidecar records something lower. Every disk-origin row then sits on
+// the same known rank — the one MatchDiskProvider, the merge engine and the
+// orphan-CBZ path (kaizokuProvenance) all assume — below every live source the
+// owner ranks (those start at 10 and step by 10) and, crucially, ABOVE 0.
+//
+// 0 is reserved: it is the sentinel a library merge writes onto a provider for
+// the whole window in which it renames that series' CBZ files, and
+// download.effectiveSatisfiedImportance reads it as "parked, no rank at all". A
+// disk-origin row created on it would look parked forever — it could never heal
+// the satisfied-importance watermark of any chapter it satisfies. A sidecar can
+// genuinely carry 0 (it records whatever importance the renderer wrote, and a
+// provider nothing ever ranked has none), so the floor is load-bearing, not
+// belt-and-braces.
+const diskProviderMinImportance = 1
+
 // upsertProviders builds a providerKey→SeriesProvider.ID map for all distinct
 // (provider, scanlator) pairs referenced in chapters, finding or creating each
 // SeriesProvider row.
@@ -467,13 +483,21 @@ func upsertProviders(
 	result *ReconcileResult,
 ) (map[providerKey]uuid.UUID, error) {
 	// Collect distinct (provider, scanlator) pairs with their maximum importance.
+	//
+	// Presence in the map is tested EXPLICITLY rather than by comparing against the
+	// zero value. A sidecar records whatever importance the renderer wrote, and 0 is
+	// a value it really can carry (a provider nothing ever ranked). Comparing
+	// `cf.Importance > provImportance[key]` never fires for an all-zero provider —
+	// a map MISS also reads 0 — so the pair was silently left out of the map
+	// entirely and every one of its chapters was then adopted with no
+	// satisfied_by source at all.
 	provImportance := make(map[providerKey]int)
 	for _, cf := range chapters {
 		if cf.Provider == "" {
 			continue
 		}
 		key := providerKey{provider: cf.Provider, scanlator: cf.Scanlator}
-		if cf.Importance > provImportance[key] {
+		if best, seen := provImportance[key]; !seen || cf.Importance > best {
 			provImportance[key] = cf.Importance
 		}
 	}
@@ -529,6 +553,28 @@ func reconcileChapters(
 // There is no unique index on SeriesProvider(series_id, provider, scanlator),
 // so the lookup-then-create pattern is the correct idempotency strategy here
 // (mirrors suwayomi.Ingest.upsertSeriesProvider's identity key).
+//
+// IMPORTANCE IS WRITTEN ON CREATE ONLY (GAP-125). A CREATED row takes the
+// sidecar's recorded rank, floored at diskProviderMinImportance so it matches the
+// orphan-CBZ path (kaizokuProvenance) and sits below every live source the owner
+// ranks.
+//
+// An EXISTING row's rank is left alone. The sidecar's value is a render-time
+// snapshot and NOTHING propagates a later rank change back into it — the owner's
+// re-rank writes the database only, and a merge's relabel bakes in whatever the
+// provider carried mid-merge — so for a row that already exists it is stale by
+// construction. Writing it back is pure data loss: it silently demotes the
+// provider, reorders the series, and turns every chapter that provider satisfies
+// into an upgrade candidate. It also defeats the create-time floor outright,
+// which is what made the floor alone insufficient: reconcile #1 creates the row
+// at 1, reconcile #2 writes the sidecar's 0 straight back over it, and with an
+// owner rank set in between the round trip reads 30 → 0. And because the write
+// was unconditional it could land on a provider a merge had parked, un-parking it
+// mid-relabel (GAP-124 named this branch as one of those writers).
+//
+// The database is the authority for an existing row's rank; the sidecar SEEDS a
+// row that does not exist yet, which is what makes a rebuild after total database
+// loss work.
 func findOrCreateSeriesProvider(
 	ctx context.Context,
 	client *ent.Client,
@@ -549,22 +595,15 @@ func findOrCreateSeriesProvider(
 		return nil, fmt.Errorf("disk.Reconcile: query SeriesProvider (series=%s provider=%q scanlator=%q): %w", seriesID, provName, scanlator, err)
 	}
 	if existing != nil {
-		// Update importance in case it changed.
-		updated, err := client.SeriesProvider.UpdateOne(existing).
-			SetImportance(importance).
-			Save(ctx)
-		if err != nil {
-			// Defensive path: reachable only on DB connection loss mid-run.
-			return nil, fmt.Errorf("disk.Reconcile: update SeriesProvider (series=%s provider=%q scanlator=%q): %w", seriesID, provName, scanlator, err)
-		}
-		return updated, nil
+		// Rank left untouched — see this function's doc comment.
+		return existing, nil
 	}
 
 	sp, err := client.SeriesProvider.Create().
 		SetSeriesID(seriesID).
 		SetProvider(provName).
 		SetScanlator(scanlator).
-		SetImportance(importance).
+		SetImportance(max(importance, diskProviderMinImportance)).
 		Save(ctx)
 	if err != nil {
 		// Defensive path: reachable only on DB connection loss or a concurrent

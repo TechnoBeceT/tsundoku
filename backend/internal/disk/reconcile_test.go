@@ -933,3 +933,90 @@ func assertRichMetadataColumnsZero(t *testing.T, row *ent.Series) {
 		}
 	}
 }
+
+// TestReconcile_creates_a_disk_provider_on_the_floor covers the all-zero sidecar,
+// which used to lose the provider entirely.
+//
+// A sidecar records whatever importance the renderer wrote, and 0 is a value it
+// really can carry (a provider nothing ever ranked). The provider-upsert takes
+// the MAXIMUM importance across a provider's chapters, and a map MISS also reads
+// 0 — so an all-zero provider never beat the zero value, was left out of the map
+// entirely, and every chapter it owned was rebuilt with NO source at all.
+// Presence is now tested explicitly.
+//
+// The created row also lands on the disk-origin floor of 1, matching the
+// orphan-CBZ path (kaizokuProvenance) so every disk-origin provider sits on one
+// rank — below every live source the owner ranks, and above the reserved 0 the
+// upgrade engine reads as "parked, no rank".
+//
+// Reconcile runs TWICE here deliberately. A floor applied only on CREATE is
+// undone by the next pass if the existing-row branch writes the sidecar's value
+// back, so a single-pass assertion would pass while the floor did not actually
+// hold.
+func TestReconcile_creates_a_disk_provider_on_the_floor(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num, max := 1.0, 1.0
+	// Importance 0 in the sidecar — the state this test exists for.
+	renderForRebuild(t, storage, &num, "1", "mangadex", 0, &max)
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	if sp.Importance != 1 {
+		t.Fatalf("disk-origin provider importance = %d after two reconciles, want the disk-origin floor 1", sp.Importance)
+	}
+
+	// The provider must also still CARRY its chapter — the defect above.
+	ch := client.Chapter.Query().OnlyX(ctx)
+	if ch.SatisfiedByProviderID == nil || *ch.SatisfiedByProviderID != sp.ID {
+		t.Fatalf("rebuilt chapter satisfied_by = %v, want the disk-origin provider %s", ch.SatisfiedByProviderID, sp.ID)
+	}
+}
+
+// TestReconcile_keeps_an_existing_providers_rank pins that a reconcile NEVER
+// rewrites the importance of a SeriesProvider row that already exists.
+//
+// A sidecar's importance is a render-time snapshot and nothing propagates a
+// re-rank back into it: the owner's re-rank writes the database only, and a
+// merge's relabel bakes whatever the provider carried mid-merge into every file
+// it touched. So for a row that already exists the sidecar's value is stale by
+// construction, and writing it back is pure data loss — here it would drop a
+// provider the owner ranked at 30 down to 1, silently reordering the whole series
+// and turning every chapter the demoted source satisfies into an upgrade
+// candidate. The database is the authority for an existing row's rank; the
+// sidecar only SEEDS a row that does not exist yet, which is what makes a rebuild
+// after total database loss work.
+func TestReconcile_keeps_an_existing_providers_rank(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storage := t.TempDir()
+
+	num, max := 1.0, 1.0
+	// Rendered while the provider sat on the disk-origin floor.
+	renderForRebuild(t, storage, &num, "1", "mangadex", 1, &max)
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+
+	// The owner then promotes the source — a database-only write, exactly as
+	// series.ReorderProviders performs it.
+	sp := client.SeriesProvider.Query().OnlyX(ctx)
+	client.SeriesProvider.UpdateOneID(sp.ID).SetImportance(30).ExecX(ctx)
+
+	if _, err := disk.Reconcile(ctx, client, storage); err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+
+	if got := client.SeriesProvider.GetX(ctx, sp.ID).Importance; got != 30 {
+		t.Fatalf("provider importance = %d after a reconcile, want 30 — the owner's rank must survive a rescan of files rendered before it", got)
+	}
+}
