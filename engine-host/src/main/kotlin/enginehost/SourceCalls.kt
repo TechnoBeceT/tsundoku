@@ -296,16 +296,31 @@ object SourceCalls {
      * win never applied to a per-image path anyway. Applied to BOTH branches — a cover on the same
      * CDN can flag too.
      *
-     * GAP-111 — IMPERSONATE GATEWAY FIRST (default off, fallback-safe). A few CDNs (Hive's
-     * storage.hivetoon.com is the confirmed one) block a request on its TLS/JA3 fingerprint alone:
-     * okhttp is 403'd/stalled while a browser-fingerprinted client (curl_cffi's Chrome impersonation)
-     * gets 200. When the pushed [ImpersonateConfig] is enabled AND has a url, the SAME okhttp request
-     * built below (verbatim headers: Referer/User-Agent/cookies) is forwarded to the gateway's
-     * `/fetch`, carrying this instance's SOCKS egress so a routed source keeps its VPN. A gateway
-     * success (gateway 200 with an upstream 2xx) returns those bytes; ANY other outcome (gateway
-     * failure, an upstream non-2xx, a transport error, an exception) logs a concise reason and falls
-     * through to the okhttp path below — so the default (disabled/blank) behaviour is exactly the
-     * pre-GAP-111 okhttp fetch.
+     * GAP-111 — IMPERSONATE GATEWAY FIRST, but only for an OPTED-IN source (GAP-131). A few CDNs
+     * (Hive's storage.hivetoon.com is the confirmed one) block a request on its TLS/JA3 fingerprint
+     * alone: okhttp is 403'd/stalled while a browser-fingerprinted client (curl_cffi's Chrome
+     * impersonation) gets 200. When the pushed [ImpersonateConfig] is enabled AND has a url AND
+     * lists THIS source's id, the SAME okhttp request built below (verbatim headers:
+     * Referer/User-Agent/cookies) is forwarded to the gateway's `/fetch`, carrying this instance's
+     * SOCKS egress so a routed source keeps its VPN. A gateway success (gateway 200 with an upstream
+     * 2xx) returns those bytes; ANY other outcome (gateway failure, an upstream non-2xx, a transport
+     * error, an exception) logs a concise reason and falls through to the okhttp path below.
+     *
+     * 🔴 THE TWO PATHS ARE NOT EQUIVALENT — this is why the gateway is per-source and default-off.
+     * The fallback is safe for REACHABILITY and silently LOSSY for CONTENT. The gateway client is
+     * deliberately built without the source's interceptors (it speaks plain local HTTP to the
+     * gateway), and a Mihon extension implements image DESCRAMBLING as an OkHttp interceptor on the
+     * source's own client. So a gateway SUCCESS stores raw scrambled tiles, while a gateway FAILURE
+     * falls back to okhttp, runs the interceptor, and yields a correct page — which is exactly why
+     * the corruption presented as RANDOM images rather than all of them (GAP-131, confirmed live on
+     * Comix while only Hive Scans needed the fingerprint). Nothing downstream can detect it: the
+     * chapter is marked downloaded, the CBZ is a valid zip, and the images are valid images. Gate a
+     * source here ONLY when its CDN genuinely blocks the default fingerprint.
+     *
+     * A source that is not listed behaves EXACTLY as it did before GAP-111: the gateway client is
+     * never touched, no request is sent, nothing is logged. ([impersonateGatewayClient] is a `by
+     * lazy` on this object, so once ANY gated source has used it the instance exists process-wide —
+     * the guarantee for an ungated source is "never touched", not "never built".)
      */
     fun image(
         source: Source,
@@ -331,10 +346,11 @@ object SourceCalls {
                 request = imageRequestFor(http, page)
             }
 
-            // GAP-111: try the Chrome-fingerprint gateway first. A non-null result is the SUCCESS path
-            // (okhttp is never touched); null means fall through — the default disabled/blank no-op,
-            // or ANY throw on the enabled path (config read, SOCKS build, or the fetch itself).
-            tryImpersonateGateway(request)?.let { return@runBlocking it }
+            // GAP-111/GAP-131: try the Chrome-fingerprint gateway first, but ONLY for a source the
+            // owner opted in. A non-null result is the SUCCESS path (okhttp is never touched); null
+            // means fall through — an ungated source, the disabled/blank no-op, or ANY throw on the
+            // gated path (config read, SOCKS build, or the fetch itself).
+            tryImpersonateGateway(source.id, request)?.let { return@runBlocking it }
 
             // Fallback / default: the GAP-110 fresh-connection okhttp path. A fresh-connection client
             // keeps no idle connection for reuse (see the GAP-110 note above); interceptors, headers,
@@ -363,22 +379,31 @@ object SourceCalls {
     }
 
     /**
-     * Attempts one image fetch through the impersonate gateway, returning the bytes+content-type on
-     * success or null on ANY failure (so [image] falls back to okhttp). It never throws: the config
-     * snapshot read, the SOCKS-string build AND the gateway fetch all sit INSIDE the `runCatching`, so
-     * a throwing config/proxy read falls back to okhttp exactly like a transport error would.
+     * Attempts one image fetch through the impersonate gateway FOR [sourceId], returning the
+     * bytes+content-type on success or null on ANY failure (so [image] falls back to okhttp). It
+     * never throws: the config snapshot read, the SOCKS-string build AND the gateway fetch all sit
+     * INSIDE the `runCatching`, so a throwing config/proxy read falls back to okhttp exactly like a
+     * transport error would.
      *
-     * The default-off no-op is byte-identical to the pre-GAP-111 okhttp path: when the pushed
-     * [ImpersonateConfig] is disabled or has a blank url the gateway is skipped entirely (no client
-     * built, no request sent, nothing logged) and null is returned so [image] runs okhttp.
+     * [sourceId] is the gate (GAP-131): a source the pushed [ImpersonateConfig] does not list is
+     * skipped before anything else happens, which is what preserves its OkHttp interceptor chain —
+     * and therefore its image descrambling. See [image]'s doc for why the two paths are not
+     * interchangeable.
+     *
+     * The skip is byte-identical to the pre-GAP-111 okhttp path: when the group is disabled, the url
+     * is blank, or this source is not gated, the gateway is skipped entirely (no client built, no
+     * request sent, nothing logged) and null is returned so [image] runs okhttp.
      *
      * Marked `internal` so the routing tests can drive it (config set via [ConfigPush.applyImpersonate])
      * against a stub / closed-port gateway, proving the catch actually fires.
      */
-    internal fun tryImpersonateGateway(upstream: Request): Pair<ByteArray, String>? =
+    internal fun tryImpersonateGateway(
+        sourceId: Long,
+        upstream: Request,
+    ): Pair<ByteArray, String>? =
         runCatching {
             val snap = ImpersonateConfig.snapshot()
-            if (!snap.enabled || snap.url.isBlank()) return@runCatching null
+            if (!snap.allows(sourceId)) return@runCatching null
             fetchViaGateway(impersonateGatewayClient, snap.url, socksProxyString(), upstream)
         }.getOrElse { e ->
             logger.warn { "impersonate gateway fetch failed (${e.javaClass.simpleName}: ${e.message}), falling back to okhttp" }

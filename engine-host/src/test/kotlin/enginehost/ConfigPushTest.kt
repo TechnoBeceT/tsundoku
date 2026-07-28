@@ -10,36 +10,11 @@ package enginehost
  * instead — the exact surface OkHttp's ambient SOCKS support reads.
  */
 
-import suwayomi.tachidesk.server.ServerConfig
-import suwayomi.tachidesk.server.serverConfig
-import suwayomi.tachidesk.server.util.ConfigTypeRegistration
-import xyz.nulldev.ts.config.GlobalConfigManager
 import java.net.Authenticator
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-
-/**
- * Mirrors the registration step Main.kt's `bootstrapAndroidCompat` performs — the top-level
- * `serverConfig` property is a lazy singleton resolved through `GlobalConfigManager`'s module map,
- * which nothing else in a plain test JVM registers. A Kotlin `object`'s initializer runs at most
- * ONCE per JVM (lazily, on first access) — load-bearing here: `ServerConfig()`'s constructor
- * registers every setting name into the process-global `SettingsRegistry`
- * (`SettingsRegistry.register`), which throws `IllegalStateException` ("uses protoNumber N already
- * used by ...") if the SAME setting is registered twice. JUnit5 creates a FRESH `ConfigPushTest`
- * instance per `@Test` method, so this setup must NOT live in `ConfigPushTest`'s own `init` block —
- * that would re-run (and blow up) on the second test.
- */
-private object ServerConfigTestSetup {
-    init {
-        ConfigTypeRegistration.registerCustomTypes()
-        GlobalConfigManager.registerModule(ServerConfig.register { GlobalConfigManager.config })
-    }
-
-    /** No-op call site — merely referencing this object is enough to trigger its one-time [init]. */
-    fun ensureRegistered() = Unit
-}
 
 class ConfigPushTest {
     init {

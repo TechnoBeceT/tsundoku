@@ -14,6 +14,7 @@ package settings
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -236,21 +237,46 @@ const (
 	// Read at USE-TIME (harvest/update write-through), so a change hot-reloads on
 	// the next prune without a restart.
 	KeyRetainedVersions = "extensions.retained_versions"
-	// KeyImpersonateEnabled toggles routing engine image fetches through the
-	// Chrome-fingerprint impersonate gateway (bool, default false). Like the
-	// flaresolverr.* group (GAP-111) this whole impersonate.* group is
-	// TSUNDOKU-OWNED runtime config — it is NOT an env var and NOT read from the
-	// engine. The engine host reads the pushed value LIVE per image fetch: with
-	// it on AND KeyImpersonateURL set, a page/cover fetch tries the gateway first
-	// and transparently falls back to the default (okhttp) client on any gateway
-	// failure. The safe default is off (straight to okhttp), so a source's image
-	// fetches are unchanged until an owner opts in.
+	// KeyImpersonateEnabled is the MASTER switch for the Chrome-fingerprint
+	// impersonate gateway (bool, default false). Like the flaresolverr.* group
+	// (GAP-111) this whole impersonate.* group is TSUNDOKU-OWNED runtime config —
+	// it is NOT an env var and NOT read from the engine. The engine host reads
+	// the pushed value LIVE per image fetch.
+	//
+	// It is only ONE of THREE conditions (GAP-131). A page/cover fetch uses the
+	// gateway only when this is on AND KeyImpersonateURL is set AND the fetching
+	// source's id is in KeyImpersonateSources; anything else takes the plain
+	// okhttp path. Turning this off is the kill switch for the whole group
+	// WITHOUT discarding the per-source selection.
 	KeyImpersonateEnabled = "impersonate.enabled"
 	// KeyImpersonateURL is the impersonate-gateway endpoint (e.g.
 	// http://impersonate-gateway:8788). Blank (default) disables it regardless of
 	// KeyImpersonateEnabled — the engine host goes straight to okhttp when the URL
-	// is empty, exactly like the FlareSolverr URL gates the Kitsu transport.
+	// is empty, exactly like the FlareSolverr URL gates the Kitsu transport. It
+	// stays GLOBAL: there is one gateway process, only the SOURCES that use it are
+	// scoped.
 	KeyImpersonateURL = "impersonate.url"
+	// KeyImpersonateSources is the per-source gating set (GAP-131): a
+	// comma-separated list of engine-host source IDs (decimal, non-negative)
+	// allowed to use the gateway. Empty (the default) means NO source uses it.
+	//
+	// 🔴 WHY THIS EXISTS AND WHY IT DEFAULTS EMPTY. The gateway path and the
+	// okhttp path are NOT equivalent. The gateway client deliberately carries none
+	// of the source's OkHttp interceptors, and Mihon extensions implement image
+	// DESCRAMBLING as an interceptor on that chain — so a gateway success stores
+	// raw, scrambled tiles while a gateway FAILURE falls back to okhttp and
+	// produces a correct page. The fallback is safe for REACHABILITY and silently
+	// lossy for CONTENT. A global "on" therefore corrupts every descrambling
+	// source to buy one fingerprint-gated source its images; scoping the gateway
+	// to the sources that genuinely need it is the fix.
+	//
+	// IDS, NEVER NAMES. The value holds the engine host's own numeric source id —
+	// the only identity the engine can resolve (RpcServer resolves every content
+	// call by sourceId) and the same key internal/engineroute routes on. Names are
+	// display strings that change with an extension update; a name on this wire
+	// would be a second identity axis, the GAP-120 drift class. The owner-facing
+	// name→id mapping lives ONLY in the frontend picker.
+	KeyImpersonateSources = "impersonate.sources"
 )
 
 // retainedVersionsMin/Max bound the extensions.retained_versions tunable.
@@ -346,12 +372,15 @@ type Defaults struct {
 	// ReportingRetentionDays backs the reporting.retention_days tunable — how many
 	// days of source-operation audit-log rows the daily purge keeps.
 	ReportingRetentionDays int
-	// ImpersonateEnabled / ImpersonateURL back the impersonate.* tunables (the
-	// Chrome-fingerprint image-fetch gateway, GAP-111). Like the FlareSolverr
-	// group these have no env var — main injects fixed factory defaults
-	// (off / blank) an owner overrides via the Settings UI.
+	// ImpersonateEnabled / ImpersonateURL / ImpersonateSources back the
+	// impersonate.* tunables (the Chrome-fingerprint image-fetch gateway,
+	// GAP-111 + the GAP-131 per-source gating). Like the FlareSolverr group
+	// these have no env var — main injects fixed factory defaults
+	// (off / blank / no sources) an owner overrides via the Settings UI.
+	// ImpersonateSources is the canonical comma-separated source-id list form.
 	ImpersonateEnabled bool
 	ImpersonateURL     string
+	ImpersonateSources string
 }
 
 // tunable is one allowlisted key's metadata + validation. validate parses a raw
@@ -408,6 +437,7 @@ var tunableOrder = []string{
 	KeyRetainedVersions,
 	KeyImpersonateEnabled,
 	KeyImpersonateURL,
+	KeyImpersonateSources,
 }
 
 // tunables is the key→tunable registry, built once from the bounds in the design
@@ -582,6 +612,10 @@ var tunables = map[string]tunable{
 		KeyImpersonateURL, "url",
 		func(d Defaults) string { return d.ImpersonateURL },
 	),
+	KeyImpersonateSources: sourceIDSetTunable(
+		KeyImpersonateSources, "source-ids",
+		func(d Defaults) string { return d.ImpersonateSources },
+	),
 }
 
 // durationTunable builds a duration-typed tunable that rejects values below min
@@ -708,6 +742,72 @@ func stringTunable(key, unit string, def func(Defaults) string) tunable {
 		},
 		def: func(d Defaults) string { return def(d) },
 	}
+}
+
+// sourceIDSetTunable builds a string-typed tunable holding a SET of engine-host
+// source ids as a comma-separated decimal list. Validation is fail-closed: every
+// token must parse as a non-negative int64, so a source NAME (or any other
+// non-numeric token) is rejected rather than silently stored — the settings
+// overlay is the last place that can stop a name reaching the engine wire, where
+// only ids resolve.
+//
+// The canonical stored form is de-duplicated and sorted ASCENDING, so the same
+// selection always serialises identically regardless of the order the owner
+// submitted it in (a stable value keeps List/round-trip assertions honest and
+// avoids a pointless write on a re-save). Blank (or all-whitespace) is the empty
+// set — the "no source uses the gateway" default.
+func sourceIDSetTunable(key, unit string, def func(Defaults) string) tunable {
+	return tunable{
+		key:  key,
+		typ:  TypeString,
+		unit: unit,
+		validate: func(raw string) (string, error) {
+			ids, err := parseSourceIDSet(raw)
+			if err != nil {
+				return "", fmt.Errorf("%w: %s %s", ErrInvalidSetting, key, err.Error())
+			}
+			return formatSourceIDSet(ids), nil
+		},
+		def: func(d Defaults) string { return def(d) },
+	}
+}
+
+// parseSourceIDSet parses a comma-separated source-id list into a de-duplicated,
+// ascending []int64. Surrounding whitespace on the whole value and on each token
+// is ignored; a blank value is the empty set. An empty token ("1,,2"), a
+// non-numeric token, or a negative id is an error — the caller wraps it with
+// ErrInvalidSetting and the key name. Shared by the tunable's validator and the
+// typed accessor so "what is a valid source-id set" is defined exactly once.
+func parseSourceIDSet(raw string) ([]int64, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	seen := map[int64]bool{}
+	ids := make([]int64, 0, strings.Count(trimmed, ",")+1)
+	for _, tok := range strings.Split(trimmed, ",") {
+		tok = strings.TrimSpace(tok)
+		id, err := strconv.ParseInt(tok, 10, 64)
+		if err != nil || id < 0 {
+			return nil, fmt.Errorf("must be a comma-separated list of non-negative source ids (bad entry %q)", tok)
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
+// formatSourceIDSet renders an id set back into the canonical comma-separated
+// string the Settings table stores (the empty set is "").
+func formatSourceIDSet(ids []int64) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.FormatInt(id, 10)
+	}
+	return strings.Join(parts, ",")
 }
 
 // urlOrBlankTunable builds a string-typed tunable that accepts either an

@@ -1,16 +1,22 @@
 // Package impersonate holds the thin HTTP handlers for Tsundoku's OWN
 // impersonate-gateway settings (GAP-111): the Chrome-fingerprint image-fetch
-// gateway toggle + URL, a runtime setting on Tsundoku's own settings overlay —
-// never an env var, never read from the download engine. GET/PUT read + write
-// that overlay via settings.Service; PUT additionally best-effort MIRRORS the
-// saved values down to the engine host's own impersonate config (via
-// sourceengine.Client.SetImpersonate) so the engine's image fetches use the
-// gateway — a mirror failure never fails the Tsundoku save.
+// gateway toggle + URL + its per-source gating set (GAP-131), runtime settings
+// on Tsundoku's own settings overlay — never an env var, never read from the
+// download engine. GET/PUT read + write that overlay via settings.Service; PUT
+// additionally best-effort MIRRORS the saved values down to the engine host's
+// own impersonate config (via sourceengine.Client.SetImpersonate) so the
+// engine's image fetches use the gateway — a mirror failure never fails the
+// Tsundoku save.
 //
 // It mirrors handler/flaresolverr one-for-one (GET reads the overlay, the
 // mutating verb saves + best-effort mirrors + returns the persisted state), just
-// over the two-field impersonate group instead of the six-field FlareSolverr
+// over the three-field impersonate group instead of the six-field FlareSolverr
 // group.
+//
+// The gating set crosses this boundary as STRINGIFIED numeric source ids
+// (matching the Source schema's own 64-bit-int-as-string convention) and is
+// converted to int64 here; a source NAME never appears on any wire — see
+// settings.KeyImpersonateSources for why.
 package impersonate
 
 import (
@@ -37,8 +43,8 @@ func NewHandler(settings *settingssvc.Service, engine sourceengine.Client) *Hand
 	return &Handler{settings: settings, engine: engine}
 }
 
-// Get handles GET /api/impersonate — returns the two Tsundoku-owned
-// impersonate-gateway values. Never touches the engine host (a pure
+// Get handles GET /api/impersonate — returns the Tsundoku-owned
+// impersonate-gateway values (toggle, URL, per-source gating set). Never touches the engine host (a pure
 // Tsundoku-settings read).
 func (h *Handler) Get(c echo.Context) error {
 	return c.JSON(http.StatusOK, currentDTO(c.Request().Context(), h.settings))
@@ -68,7 +74,7 @@ func (h *Handler) Update(c echo.Context) error {
 	}
 
 	dto := currentDTO(ctx, h.settings)
-	h.mirrorToEngine(ctx, dto)
+	h.mirrorToEngine(ctx, dto, h.settings.ImpersonateSources(ctx))
 	return c.JSON(http.StatusOK, dto)
 }
 
@@ -76,14 +82,20 @@ func (h *Handler) Update(c echo.Context) error {
 // down to the engine host's own impersonate config, so the engine's image
 // fetches use the same gateway. Sends the FULL current state (not just the
 // fields this PUT touched) so a partial Tsundoku update still leaves the engine
-// fully in sync. Never returns an error — an engine-down mirror failure is
-// logged and swallowed; reconcile-on-boot re-pushes it anyway (the durable
-// settings are the truth).
-func (h *Handler) mirrorToEngine(ctx context.Context, dto SettingsDTO) {
+// fully in sync — including an EMPTY gating set, which is a meaningful value
+// ("no source uses the gateway") and must actively clear a stale engine-side
+// selection. Never returns an error — an engine-down mirror failure is logged
+// and swallowed; reconcile-on-boot re-pushes it anyway (the durable settings are
+// the truth).
+func (h *Handler) mirrorToEngine(ctx context.Context, dto SettingsDTO, sourceIDs []int64) {
 	enabled, url := dto.Enabled, dto.URL
+	if sourceIDs == nil {
+		sourceIDs = []int64{}
+	}
 	patch := sourceengine.ImpersonatePatch{
-		Enabled: &enabled,
-		URL:     &url,
+		Enabled:   &enabled,
+		URL:       &url,
+		SourceIDs: &sourceIDs,
 	}
 	if _, err := h.engine.SetImpersonate(ctx, patch); err != nil {
 		slog.WarnContext(ctx, "impersonate: mirror to engine host failed (Tsundoku save already persisted)", "err", err)

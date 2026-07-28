@@ -34,6 +34,7 @@ type ConfigProvider interface {
 	EngineSocksVersion(ctx context.Context) int
 	ImpersonateEnabled(ctx context.Context) bool
 	ImpersonateURL(ctx context.Context) string
+	ImpersonateSources(ctx context.Context) []int64
 }
 
 // Compile-time proof that the production settings overlay satisfies
@@ -639,6 +640,7 @@ type desiredConfig struct {
 	socksVersion  int
 	impEnabled    bool
 	impURL        string
+	impSourceIDs  []int64
 }
 
 // snapshotConfig reads every ConfigProvider accessor once into a desiredConfig.
@@ -656,6 +658,7 @@ func snapshotConfig(ctx context.Context, cfg ConfigProvider) desiredConfig {
 		socksVersion:  cfg.EngineSocksVersion(ctx),
 		impEnabled:    cfg.ImpersonateEnabled(ctx),
 		impURL:        cfg.ImpersonateURL(ctx),
+		impSourceIDs:  cfg.ImpersonateSources(ctx),
 	}
 }
 
@@ -689,15 +692,26 @@ func (d desiredConfig) socksPatch() sourceengine.SocksPatch {
 }
 
 // impersonatePatch builds the ImpersonatePatch carrying this desiredConfig's
-// impersonate-gateway enabled+url — ALWAYS, including when disabled/blank
-// (Tsundoku's own "off" state is itself the desired state to push; "Tsundoku is
-// reality").
+// impersonate-gateway enabled+url+per-source gating set — ALWAYS, including when
+// disabled/blank/empty (Tsundoku's own "off" state is itself the desired state
+// to push; "Tsundoku is reality").
+//
+// The EMPTY source set is pushed as an empty slice, never omitted: an engine
+// that came back holding a stale selection must be cleared, otherwise it would
+// keep routing a source through the gateway that Tsundoku no longer gates —
+// and the gateway path silently drops the source's image-descrambling
+// interceptors (GAP-131).
 func (d desiredConfig) impersonatePatch() sourceengine.ImpersonatePatch {
 	enabled := d.impEnabled
 	url := d.impURL
+	sourceIDs := d.impSourceIDs
+	if sourceIDs == nil {
+		sourceIDs = []int64{}
+	}
 	return sourceengine.ImpersonatePatch{
-		Enabled: &enabled,
-		URL:     &url,
+		Enabled:   &enabled,
+		URL:       &url,
+		SourceIDs: &sourceIDs,
 	}
 }
 

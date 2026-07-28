@@ -146,3 +146,12 @@ func (p profileConfigProvider) ImpersonateEnabled(ctx context.Context) bool {
 func (p profileConfigProvider) ImpersonateURL(ctx context.Context) string {
 	return p.base.ImpersonateURL(ctx)
 }
+
+// ImpersonateSources inherits the base per-source gating set (GAP-131). Which
+// sources need a browser TLS fingerprint is a property of the SOURCE's CDN, not
+// of the network profile the source egresses through, so every profile instance
+// receives the same set — and a source routed to a profile instance is gated
+// there exactly as it would be on the default instance.
+func (p profileConfigProvider) ImpersonateSources(ctx context.Context) []int64 {
+	return p.base.ImpersonateSources(ctx)
+}

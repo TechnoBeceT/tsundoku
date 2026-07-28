@@ -316,19 +316,23 @@ func TestSetFlareSolverr_And_SetSocks_ApplyPartial(t *testing.T) {
 	}
 }
 
-// TestSetImpersonate_ApplyPartial proves SetImpersonate merges its two fields
+// TestSetImpersonate_ApplyPartial proves SetImpersonate merges its three fields
 // and that an unset field on a later patch leaves the earlier value intact
-// (no-clobber parity with the FlareSolverr/SOCKS setters above).
+// (no-clobber parity with the FlareSolverr/SOCKS setters above) — including the
+// per-source gating set, whose omission must not silently un-gate a source.
 func TestSetImpersonate_ApplyPartial(t *testing.T) {
 	c := fake.New()
 
 	impEnabled := true
 	impURL := "http://impersonate-gateway:8788"
-	gotImp, err := c.SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{Enabled: &impEnabled, URL: &impURL})
+	impSources := []int64{42}
+	gotImp, err := c.SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{
+		Enabled: &impEnabled, URL: &impURL, SourceIDs: &impSources,
+	})
 	if err != nil {
 		t.Fatalf("SetImpersonate: %v", err)
 	}
-	if (gotImp != sourceengine.ImpersonateConfig{Enabled: true, URL: impURL}) {
+	if !reflect.DeepEqual(gotImp, sourceengine.ImpersonateConfig{Enabled: true, URL: impURL, SourceIDs: []int64{42}}) {
 		t.Fatalf("SetImpersonate result = %+v", gotImp)
 	}
 
@@ -337,8 +341,18 @@ func TestSetImpersonate_ApplyPartial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetImpersonate: %v", err)
 	}
-	if (gotImp2 != sourceengine.ImpersonateConfig{Enabled: true, URL: newURL}) {
-		t.Fatalf("SetImpersonate second patch = %+v, want Enabled preserved", gotImp2)
+	if !reflect.DeepEqual(gotImp2, sourceengine.ImpersonateConfig{Enabled: true, URL: newURL, SourceIDs: []int64{42}}) {
+		t.Fatalf("SetImpersonate second patch = %+v, want Enabled + SourceIDs preserved", gotImp2)
+	}
+
+	// An explicitly EMPTY set CLEARS the gating (the meaningful "no source" value).
+	empty := []int64{}
+	gotImp3, err := c.SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{SourceIDs: &empty})
+	if err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	if len(gotImp3.SourceIDs) != 0 {
+		t.Fatalf("SetImpersonate with an empty set = %+v, want the gating cleared", gotImp3)
 	}
 }
 

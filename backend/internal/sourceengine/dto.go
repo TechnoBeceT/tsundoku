@@ -226,10 +226,19 @@ type FlareSolverrConfig struct {
 // only the caller's explicitly-set fields are marshalled onto the wire (via
 // omitempty) — see FlareSolverrPatch's doc comment for the same no-clobber rule.
 type ImpersonatePatch struct {
-	// Enabled turns impersonate-gateway image routing on/off, if set.
+	// Enabled turns impersonate-gateway image routing on/off, if set. It is the
+	// MASTER switch only — a source still has to be listed in SourceIDs.
 	Enabled *bool `json:"enabled,omitempty"`
-	// URL is the impersonate-gateway endpoint, if set.
+	// URL is the impersonate-gateway endpoint, if set. Global: one gateway
+	// serves every gated source.
 	URL *string `json:"url,omitempty"`
+	// SourceIDs is the set of engine-host source ids allowed to use the gateway,
+	// if set (GAP-131). A source absent from it NEVER reaches the gateway and so
+	// keeps its own OkHttp interceptor chain — which is what actually
+	// descrambles images. An explicitly EMPTY slice is a meaningful value ("no
+	// source"), so callers that own this state always send it; nil omits the
+	// field entirely (no-clobber, like every other patch field).
+	SourceIDs *[]int64 `json:"sourceIds,omitempty"`
 }
 
 // ImpersonateConfig is the impersonate-gateway config read back after a
@@ -239,6 +248,9 @@ type ImpersonateConfig struct {
 	Enabled bool `json:"enabled"`
 	// URL is the configured impersonate-gateway endpoint.
 	URL string `json:"url"`
+	// SourceIDs is the set of source ids currently allowed to use the gateway
+	// (ascending). Empty means no source uses it.
+	SourceIDs []int64 `json:"sourceIds"`
 }
 
 // SocksPatch is a PARTIAL update to the SOCKS-proxy config. Every field is a

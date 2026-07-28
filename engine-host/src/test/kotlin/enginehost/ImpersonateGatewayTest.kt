@@ -17,6 +17,15 @@ package enginehost
  * pushed ImpersonateConfig + SOCKS INSIDE its runCatching), proving the fall-through is exception-safe:
  *   - a transport error (refused localhost port) is caught -> null == falls back to okhttp
  *   - a disabled config skips the gateway entirely         -> null == byte-identical okhttp path
+ *
+ * A third group covers the GAP-131 PER-SOURCE gate. The gateway is opt-in per source because its
+ * client carries none of the source's interceptors, and a Mihon extension descrambles images IN that
+ * chain — so an ungated source must never so much as send a request to the gateway:
+ *   - a gated source uses it, an ungated one does not (and sends nothing)
+ *   - an empty gating set gates nothing == the pre-GAP-111 okhttp path exactly
+ *   - the enabled master switch and a blank url each still veto a gated source
+ *   - a gated source falls back on EVERY gateway failure kind (the gate narrows WHICH sources try,
+ *     never what happens when the attempt fails)
  */
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -41,7 +50,20 @@ private data class StubResponse(
     val body: ByteArray = ByteArray(0),
 )
 
+/** A source id the tests put IN the gating set, and one they deliberately leave out. */
+private const val GATED_SOURCE_ID = 1998416842837112832L
+private const val UNGATED_SOURCE_ID = 42L
+
 class ImpersonateGatewayTest {
+    init {
+        // tryImpersonateGateway reads this JVM's SOCKS egress from Suwayomi's process-global
+        // `serverConfig` to forward it to the gateway. Unregistered, that read THROWS and the
+        // guard's runCatching swallows it into a null — which is indistinguishable from a correct
+        // skip, so a gating assertion would pass (or fail) for the wrong reason. See
+        // ServerConfigTestSetup for why this is shared rather than per-file.
+        ServerConfigTestSetup.ensureRegistered()
+    }
+
     private var server: HttpServer? = null
     private val client = OkHttpClient()
     private val mapper = jacksonObjectMapper()
@@ -66,6 +88,11 @@ class ImpersonateGatewayTest {
         srv.start()
         server = srv
         return "http://127.0.0.1:${srv.address.port}"
+    }
+
+    /** Reset the process-global impersonate holder so a test never leaks into the next one. */
+    private fun resetImpersonate() {
+        ConfigPush.applyImpersonate(ImpersonateConfigRequest(enabled = false, url = "", sourceIds = emptyList()))
     }
 
     private fun upstreamRequest(): Request =
@@ -184,14 +211,17 @@ class ImpersonateGatewayTest {
         // Bind then immediately release a localhost port, so nothing is listening on it.
         val closedPort = ServerSocket(0).use { it.localPort }
         ConfigPush.applyImpersonate(
-            ImpersonateConfigRequest(enabled = true, url = "http://127.0.0.1:$closedPort"),
+            ImpersonateConfigRequest(
+                enabled = true,
+                url = "http://127.0.0.1:$closedPort",
+                sourceIds = listOf(GATED_SOURCE_ID),
+            ),
         )
         try {
-            val result = SourceCalls.tryImpersonateGateway(upstreamRequest())
+            val result = SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest())
             assertNull(result, "a refused gateway connection must be caught and return null (fall back to okhttp)")
         } finally {
-            // Reset the process-global holder so it does not leak into other tests.
-            ConfigPush.applyImpersonate(ImpersonateConfigRequest(enabled = false, url = ""))
+            resetImpersonate()
         }
     }
 
@@ -203,14 +233,187 @@ class ImpersonateGatewayTest {
     @Test
     fun `disabled config skips the gateway (null)`() {
         ConfigPush.applyImpersonate(
-            ImpersonateConfigRequest(enabled = false, url = "http://impersonate-gateway:8788"),
+            ImpersonateConfigRequest(
+                enabled = false,
+                url = "http://impersonate-gateway:8788",
+                sourceIds = listOf(GATED_SOURCE_ID),
+            ),
         )
         try {
-            val result = SourceCalls.tryImpersonateGateway(upstreamRequest())
+            val result = SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest())
             assertNull(result, "a disabled config must skip the gateway and return null (okhttp fall-through)")
         } finally {
-            ConfigPush.applyImpersonate(ImpersonateConfigRequest(enabled = false, url = ""))
+            resetImpersonate()
         }
+    }
+
+    /**
+     * GAP-131 — the gateway is PER SOURCE. A source explicitly listed in the pushed gating set gets
+     * the gateway; the SAME config leaves every other source on the okhttp path, so an unlisted
+     * source keeps its own interceptor chain (which is what descrambles its images).
+     */
+    @Test
+    fun `only a gated source reaches the gateway`() {
+        val url = startGateway(
+            StubResponse(
+                status = 200,
+                headers = mapOf("X-Upstream-Status" to "200", "Content-Type" to "image/jpeg"),
+                body = "IMGBYTES".toByteArray(),
+            ),
+        )
+        ConfigPush.applyImpersonate(
+            ImpersonateConfigRequest(enabled = true, url = url, sourceIds = listOf(GATED_SOURCE_ID)),
+        )
+        try {
+            val gated = SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest())
+            assertNotNull(gated, "a gated source must use the gateway")
+            assertEquals("IMGBYTES", String(gated.first))
+
+            captured = null
+            val ungated = SourceCalls.tryImpersonateGateway(UNGATED_SOURCE_ID, upstreamRequest())
+            assertNull(ungated, "an ungated source must NEVER use the gateway (it needs its interceptors)")
+            assertNull(captured, "an ungated source must not even send a request to the gateway")
+        } finally {
+            resetImpersonate()
+        }
+    }
+
+    /**
+     * The DEFAULT (empty gating set) is the pre-GAP-111 okhttp path exactly: even with the group
+     * enabled and a working gateway url, NO source is gated, so no request is ever sent.
+     */
+    @Test
+    fun `an empty gating set gates nothing`() {
+        val url = startGateway(
+            StubResponse(status = 200, headers = mapOf("X-Upstream-Status" to "200"), body = "X".toByteArray()),
+        )
+        ConfigPush.applyImpersonate(ImpersonateConfigRequest(enabled = true, url = url, sourceIds = emptyList()))
+        try {
+            assertNull(
+                SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest()),
+                "an empty gating set must skip the gateway for every source",
+            )
+            assertNull(captured, "an empty gating set must not send a request to the gateway")
+        } finally {
+            resetImpersonate()
+        }
+    }
+
+    /**
+     * The master switch still wins: a source IN the gating set is skipped while the group is
+     * disabled, so turning the group off is a kill switch that does not discard the selection.
+     */
+    @Test
+    fun `the master switch overrides the gating set`() {
+        val url = startGateway(
+            StubResponse(status = 200, headers = mapOf("X-Upstream-Status" to "200"), body = "X".toByteArray()),
+        )
+        ConfigPush.applyImpersonate(
+            ImpersonateConfigRequest(enabled = false, url = url, sourceIds = listOf(GATED_SOURCE_ID)),
+        )
+        try {
+            assertNull(
+                SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest()),
+                "a disabled group must skip the gateway even for a gated source",
+            )
+            assertNull(captured, "a disabled group must not send a request to the gateway")
+        } finally {
+            resetImpersonate()
+        }
+    }
+
+    /**
+     * A blank url still wins over a gated source — the third condition of the gate. Proves the
+     * per-source set ADDS a condition rather than replacing the existing ones.
+     */
+    @Test
+    fun `a blank url skips the gateway for a gated source`() {
+        ConfigPush.applyImpersonate(
+            ImpersonateConfigRequest(enabled = true, url = "", sourceIds = listOf(GATED_SOURCE_ID)),
+        )
+        try {
+            assertNull(
+                SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest()),
+                "a blank url must skip the gateway even for a gated source",
+            )
+        } finally {
+            resetImpersonate()
+        }
+    }
+
+    /**
+     * EVERY gateway failure kind still falls back to okhttp for a GATED source — the gating narrows
+     * WHICH sources try the gateway, it must not change what happens when the attempt fails. Covers
+     * a gateway 502, a non-2xx upstream status, and a missing X-Upstream-Status header (the
+     * transport-error kind is covered by `a transport error is caught and falls back`).
+     */
+    @Test
+    fun `a gated source still falls back on every gateway failure kind`() {
+        val failures = listOf(
+            "gateway 502" to StubResponse(status = 502, headers = mapOf("X-Gateway-Error" to "DNSError")),
+            "upstream 403" to StubResponse(status = 200, headers = mapOf("X-Upstream-Status" to "403")),
+            "missing upstream status" to StubResponse(status = 200, headers = mapOf("Content-Type" to "image/png")),
+        )
+        for ((label, resp) in failures) {
+            val url = startGateway(resp)
+            ConfigPush.applyImpersonate(
+                ImpersonateConfigRequest(enabled = true, url = url, sourceIds = listOf(GATED_SOURCE_ID)),
+            )
+            try {
+                assertNull(
+                    SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest()),
+                    "$label must fall back to okhttp for a gated source",
+                )
+            } finally {
+                resetImpersonate()
+                server?.stop(0)
+            }
+        }
+    }
+
+    /**
+     * A transport error on a GATED source is caught and falls back to okhttp — the guarded entry
+     * point's `runCatching` covers the per-source read too (a throwing config read must never
+     * escape into the RPC handler). Drives a localhost port with nothing listening.
+     */
+    @Test
+    fun `a gated source falls back on a transport error`() {
+        val closedPort = ServerSocket(0).use { it.localPort }
+        ConfigPush.applyImpersonate(
+            ImpersonateConfigRequest(
+                enabled = true,
+                url = "http://127.0.0.1:$closedPort",
+                sourceIds = listOf(GATED_SOURCE_ID),
+            ),
+        )
+        try {
+            assertNull(
+                SourceCalls.tryImpersonateGateway(GATED_SOURCE_ID, upstreamRequest()),
+                "a refused gateway connection must be caught and return null (fall back to okhttp)",
+            )
+        } finally {
+            resetImpersonate()
+        }
+    }
+
+    /** applyImpersonate round-trips the gating set and treats it as partial (last-writer-wins). */
+    @Test
+    fun `applyImpersonate round-trips the gating set`() {
+        ConfigPush.applyImpersonate(
+            ImpersonateConfigRequest(enabled = true, url = "http://gw:8788", sourceIds = listOf(9L, 1L, 9L)),
+        )
+        // Read back de-duplicated and ascending, so the pushed order never leaks into the holder.
+        assertEquals(listOf(1L, 9L), ConfigPush.readImpersonate().sourceIds)
+
+        // A patch that omits sourceIds leaves the set intact (no-clobber, like enabled/url).
+        ConfigPush.applyImpersonate(ImpersonateConfigRequest(url = "http://gw2:8788"))
+        assertEquals(listOf(1L, 9L), ConfigPush.readImpersonate().sourceIds)
+
+        // An explicitly EMPTY list CLEARS it — the meaningful "no source" value.
+        ConfigPush.applyImpersonate(ImpersonateConfigRequest(sourceIds = emptyList()))
+        assertEquals(emptyList(), ConfigPush.readImpersonate().sourceIds)
+
+        resetImpersonate()
     }
 
     /** (d) buildSocksString covers enabled/auth/version/disabled/blank-host. */
@@ -253,7 +456,6 @@ class ImpersonateGatewayTest {
         assertEquals("http://impersonate-gateway:8788", read.url)
         assertTrue(!ImpersonateConfig.snapshot().enabled)
 
-        // Reset the process-global holder so it does not leak into other tests.
-        ConfigPush.applyImpersonate(ImpersonateConfigRequest(enabled = false, url = ""))
+        resetImpersonate()
     }
 }

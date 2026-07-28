@@ -140,29 +140,46 @@ object ConfigPush {
             password = null,
         )
 
-    /** Push a partial impersonate-gateway config; only non-null fields are applied (last-writer-wins). */
+    /**
+     * Push a partial impersonate-gateway config; only non-null fields are applied (last-writer-wins).
+     * An explicitly EMPTY [ImpersonateConfigRequest.sourceIds] is applied as the empty set — it is the
+     * meaningful "no source uses the gateway" value, not an omission.
+     */
     fun applyImpersonate(req: ImpersonateConfigRequest) {
         req.enabled?.let { ImpersonateConfig.enabled = it }
         req.url?.let { ImpersonateConfig.url = it }
+        req.sourceIds?.let { ImpersonateConfig.sourceIds = it.toSortedSet() }
         logger.info {
-            "Impersonate config applied: enabled=${ImpersonateConfig.enabled} url=${ImpersonateConfig.url}"
+            "Impersonate config applied: enabled=${ImpersonateConfig.enabled} url=${ImpersonateConfig.url} " +
+                "sources=${ImpersonateConfig.sourceIds}"
         }
     }
 
     /** Read back the current impersonate-gateway config (round-trip proof). */
     fun readImpersonate(): ImpersonateConfigRequest =
-        ImpersonateConfigRequest(enabled = ImpersonateConfig.enabled, url = ImpersonateConfig.url)
+        ImpersonateConfigRequest(
+            enabled = ImpersonateConfig.enabled,
+            url = ImpersonateConfig.url,
+            sourceIds = ImpersonateConfig.sourceIds.toList(),
+        )
 }
 
 /**
- * ImpersonateConfig holds Tsundoku's pushed Chrome-fingerprint image-fetch gateway config (GAP-111).
+ * ImpersonateConfig holds Tsundoku's pushed Chrome-fingerprint image-fetch gateway config (GAP-111,
+ * scoped per source by GAP-131).
  *
  * Unlike the FlareSolverr + SOCKS groups this is NOT a Suwayomi `serverConfig` field — Suwayomi has
  * no such concept — so it lives in its own process-global holder. [SourceCalls.image] reads the
  * [snapshot] LIVE on each image fetch, so a `PUT /config/impersonate` takes effect on the very next
- * fetch with no restart. The two `@Volatile` fields are written only by [ConfigPush.applyImpersonate]
- * (the single RPC writer) and read concurrently by the RPC image threads; a snapshot pairs the two
- * reads so a fetch never sees a half-applied update.
+ * fetch with no restart. The three `@Volatile` fields are written only by
+ * [ConfigPush.applyImpersonate] (the single RPC writer) and read concurrently by the RPC image
+ * threads; a snapshot pairs the reads so a fetch never sees a half-applied update.
+ *
+ * [sourceIds] is the per-source gating set. Each push builds a FRESH sorted set and REPLACES the
+ * reference; the set is never mutated after assignment, so a concurrent reader always sees one
+ * complete generation of it rather than a half-updated collection. It is empty by default: the
+ * gateway is opt-in per source, because the gateway path and the okhttp path are NOT equivalent —
+ * see [SourceCalls.image].
  */
 object ImpersonateConfig {
     @Volatile
@@ -171,9 +188,20 @@ object ImpersonateConfig {
     @Volatile
     var url: String = ""
 
-    /** A consistent (enabled, url) pair read for one image fetch. */
-    fun snapshot(): Snapshot = Snapshot(enabled = enabled, url = url)
+    @Volatile
+    var sourceIds: Set<Long> = emptySet()
+
+    /** A consistent (enabled, url, sourceIds) triple read for one image fetch. */
+    fun snapshot(): Snapshot = Snapshot(enabled = enabled, url = url, sourceIds = sourceIds)
 
     /** One image fetch's view of the impersonate config. */
-    data class Snapshot(val enabled: Boolean, val url: String)
+    data class Snapshot(val enabled: Boolean, val url: String, val sourceIds: Set<Long>) {
+        /**
+         * Whether [sourceId] may use the gateway on this fetch — ALL THREE conditions: the group is
+         * enabled, a gateway url is configured, and this source is in the gating set. An unlisted
+         * source is never gated, which is what keeps its OkHttp interceptor chain (and therefore its
+         * image descrambling) in play.
+         */
+        fun allows(sourceId: Long): Boolean = enabled && url.isNotBlank() && sourceId in sourceIds
+    }
 }

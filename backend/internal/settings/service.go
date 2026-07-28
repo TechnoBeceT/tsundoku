@@ -260,6 +260,22 @@ func (s *Service) ImpersonateURL(ctx context.Context) string {
 	return s.resolve(ctx, KeyImpersonateURL)
 }
 
+// ImpersonateSources is the set of engine-host source IDs allowed to use the
+// impersonate gateway (DB override else default: EMPTY). Returned de-duplicated
+// and ascending; nil/empty means no source uses the gateway, so every source
+// keeps the plain okhttp path with its interceptor chain intact (GAP-131).
+// Pushed to the engine host, which reads it live per image fetch.
+func (s *Service) ImpersonateSources(ctx context.Context) []int64 {
+	ids, err := parseSourceIDSet(s.resolve(ctx, KeyImpersonateSources))
+	if err != nil {
+		// Structurally impossible: resolve only ever returns a canonical value
+		// the same parser produced. Fail CLOSED (no source gated on) rather than
+		// widening the gateway on a value we could not read.
+		return nil
+	}
+	return ids
+}
+
 // RetainedVersions is how many .apk versions per extension the apk cache keeps
 // — the reversible-update history depth (DB override else default 3). Read at
 // use-time by the harvest/update prune + the reinstall write-through, so a

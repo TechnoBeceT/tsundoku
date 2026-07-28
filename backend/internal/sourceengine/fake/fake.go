@@ -147,6 +147,13 @@ func WithRepos(repos []string) Option {
 	return func(c *Client) { c.repos = repos }
 }
 
+// WithImpersonate seeds the impersonate-gateway config the fake starts with, so
+// a test can prove a push OVERWRITES a pre-existing (e.g. stale) engine-side
+// state rather than merely adding to it.
+func WithImpersonate(cfg sourceengine.ImpersonateConfig) Option {
+	return func(c *Client) { c.impersonate = cfg }
+}
+
 // WithError forces the named Client method (e.g. "Pages", "Image",
 // "SetPreferences" — the exported method name, verbatim) to return err
 // instead of its configured result. The call is still recorded by
@@ -531,6 +538,15 @@ func (c *Client) SetSocks(_ context.Context, patch sourceengine.SocksPatch) (sou
 
 // SetImpersonate applies patch's non-nil fields onto the stored
 // impersonate-gateway config and returns the updated config.
+//
+// It CANNOT distinguish a pointer to an EMPTY SourceIDs slice from a pointer to
+// a NIL one — the copy below yields nil for both, and so does Impersonate. On
+// the real wire those are two different messages (`"sourceIds":[]` clears the
+// engine's set, `"sourceIds":null` leaves it untouched), so a caller's
+// nil→empty conversion is invisible here and no assertion through this fake can
+// pin it. That distinction is pinned on the MARSHALLED PATCH instead — see the
+// wire-byte assertions in enginetopo's TestReconcile_PushesEmptyImpersonateSourceSet
+// and handler/impersonate's TestUpdate_SourceGatingSetClears.
 func (c *Client) SetImpersonate(_ context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
 	var result sourceengine.ImpersonateConfig
 	err := c.configCall("SetImpersonate", func() {
@@ -540,7 +556,23 @@ func (c *Client) SetImpersonate(_ context.Context, patch sourceengine.Impersonat
 		if patch.URL != nil {
 			c.impersonate.URL = *patch.URL
 		}
+		if patch.SourceIDs != nil {
+			c.impersonate.SourceIDs = append([]int64(nil), *patch.SourceIDs...)
+		}
 		result = c.impersonate
 	})
 	return result, err
+}
+
+// Impersonate returns the impersonate-gateway config the fake currently holds —
+// what the last SetImpersonate push left behind. Lets a test assert the pushed
+// per-source gating set (GAP-131) instead of only that the call happened.
+func (c *Client) Impersonate() sourceengine.ImpersonateConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return sourceengine.ImpersonateConfig{
+		Enabled:   c.impersonate.Enabled,
+		URL:       c.impersonate.URL,
+		SourceIDs: append([]int64(nil), c.impersonate.SourceIDs...),
+	}
 }

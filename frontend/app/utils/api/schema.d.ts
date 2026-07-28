@@ -4346,21 +4346,30 @@ export interface components {
             sessionTtl?: number;
             asResponseFallback?: boolean;
         };
-        /** @description Tsundoku-owned Chrome-fingerprint image-fetch gateway config (GAP-111). A runtime setting on Tsundoku's settings overlay, NOT read from the engine and NOT an env var. */
+        /** @description Tsundoku-owned Chrome-fingerprint image-fetch gateway config (GAP-111, scoped per source by GAP-131). A runtime setting on Tsundoku's settings overlay, NOT read from the engine and NOT an env var. A fetch uses the gateway only when enabled is true AND url is set AND the fetching source's id appears in sourceIds; anything else takes the engine's plain default (okhttp) path. The two paths are NOT equivalent — only the default path runs the source's own image interceptors — so the gateway is opt-in per source. */
         ImpersonateSettings: {
-            /** @description Route engine image fetches through the impersonate gateway when true. */
+            /** @description Master switch for the gateway; necessary but not sufficient (see sourceIds). */
             enabled: boolean;
             /**
-             * @description The impersonate-gateway endpoint (e.g. http://impersonate-gateway:8788); blank disables it.
+             * @description The impersonate-gateway endpoint (e.g. http://impersonate-gateway:8788); blank disables it. Global — one gateway serves every gated source.
              * @example http://impersonate-gateway:8788
              */
             url: string;
+            /**
+             * @description The sources allowed to use the gateway, de-duplicated and ascending. Each entry is an engine source id (64-bit integer serialised as a string, matching Source.id). Empty means no source uses it.
+             * @example [
+             *       "1998416842837112832"
+             *     ]
+             */
+            sourceIds: string[];
         };
         /** @description Partial impersonate group; omitted fields are untouched. An empty body is a 400. */
         ImpersonateUpdate: {
             enabled?: boolean;
             /** @description Absolute http(s) URL, or empty string to clear (disables the gateway). */
             url?: string;
+            /** @description Replaces the whole gating set. Every entry must be a non-negative decimal source id (a source NAME is a 400) — the engine resolves sources by id only. An empty array clears the set (no source uses the gateway); omitting the field leaves it untouched. */
+            sourceIds?: string[];
         };
         /**
          * @description An extension (a Tachiyomi/Mihon source plugin), proxied verbatim from

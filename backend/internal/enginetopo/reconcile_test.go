@@ -2,6 +2,7 @@ package enginetopo_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -44,9 +45,10 @@ type reconcileClient struct {
 	// intent. See TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent.
 	rejectKeys map[int64]map[string]bool
 
-	mu               sync.Mutex
-	lastFlareSolverr sourceengine.FlareSolverrConfig
-	lastSocks        sourceengine.SocksConfig
+	mu                   sync.Mutex
+	lastFlareSolverr     sourceengine.FlareSolverrConfig
+	lastSocks            sourceengine.SocksConfig
+	lastImpersonatePatch sourceengine.ImpersonatePatch
 	// lastBatchKeys records the sorted key set Reconcile attempted to push
 	// for a source on its MOST RECENT SetPreferences call, regardless of
 	// whether that call ultimately succeeded — lets a test prove exactly
@@ -120,6 +122,25 @@ func (c *reconcileClient) SetFlareSolverr(ctx context.Context, patch sourceengin
 	return cfg, err
 }
 
+// SetImpersonate records the PATCH itself, not the config the fake derives from
+// it. The distinction is the whole point: the fake normalises a nil and an empty
+// SourceIDs slice to the same stored value, so only the raw patch still carries
+// which of the two Reconcile actually sent — and that is the difference between
+// `"sourceIds":[]` and `"sourceIds":null` on the wire.
+func (c *reconcileClient) SetImpersonate(ctx context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	c.mu.Lock()
+	c.lastImpersonatePatch = patch
+	c.mu.Unlock()
+	return c.Client.SetImpersonate(ctx, patch)
+}
+
+// impersonatePatch returns the last ImpersonatePatch Reconcile pushed.
+func (c *reconcileClient) impersonatePatch() sourceengine.ImpersonatePatch {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastImpersonatePatch
+}
+
 func (c *reconcileClient) SetSocks(ctx context.Context, patch sourceengine.SocksPatch) (sourceengine.SocksConfig, error) {
 	cfg, err := c.Client.SetSocks(ctx, patch)
 	if err == nil {
@@ -147,6 +168,7 @@ type fakeConfig struct {
 	socksVersion  int
 	impEnabled    bool
 	impURL        string
+	impSources    []int64
 }
 
 func (c fakeConfig) FlareSolverrEnabled(context.Context) bool          { return c.fsEnabled }
@@ -161,6 +183,7 @@ func (c fakeConfig) EngineSocksPort(context.Context) int               { return 
 func (c fakeConfig) EngineSocksVersion(context.Context) int            { return c.socksVersion }
 func (c fakeConfig) ImpersonateEnabled(context.Context) bool           { return c.impEnabled }
 func (c fakeConfig) ImpersonateURL(context.Context) string             { return c.impURL }
+func (c fakeConfig) ImpersonateSources(context.Context) []int64        { return c.impSources }
 
 // baseConfig is a fixed FlareSolverr+SOCKS ConfigProvider fixture shared by
 // every test below (the specific values are arbitrary — reconcileConfig no
@@ -1144,5 +1167,76 @@ func assertPrefsAndConfigStillPushed(t *testing.T, client *reconcileClient, res 
 	if client.CallCount("SetFlareSolverr") != 1 || client.CallCount("SetSocks") != 1 {
 		t.Errorf("config push calls = flare:%d socks:%d, want 1/1",
 			client.CallCount("SetFlareSolverr"), client.CallCount("SetSocks"))
+	}
+}
+
+// TestReconcile_PushesImpersonateSourceGatingSet proves the per-source
+// impersonate gating set (GAP-131) crosses the reconcile boundary as NUMERIC
+// SOURCE IDS — the only identity the engine host can resolve — and reaches the
+// engine exactly as Tsundoku holds it. Without it a restarted engine would come
+// back with an empty set and quietly stop using the gateway for the one source
+// that needs it.
+func TestReconcile_PushesImpersonateSourceGatingSet(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	cfg := baseConfig()
+	cfg.impSources = []int64{42, 1998416842837112832}
+
+	client := &reconcileClient{Client: sourceenginefake.New()}
+
+	if _, err := enginetopo.Reconcile(ctx, client, db, cache, cfg); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	got := client.Impersonate()
+	if !got.Enabled || got.URL != "http://impersonate.test:8788" {
+		t.Errorf("pushed impersonate config = %+v, want enabled with the configured url", got)
+	}
+	if len(got.SourceIDs) != 2 || got.SourceIDs[0] != 42 || got.SourceIDs[1] != 1998416842837112832 {
+		t.Errorf("pushed SourceIDs = %v, want [42 1998416842837112832]", got.SourceIDs)
+	}
+}
+
+// TestReconcile_PushesEmptyImpersonateSourceSet proves the DEFAULT (no source
+// selected) is pushed as an EMPTY set rather than omitted — "Tsundoku is
+// reality", so a stale non-empty set on the engine is actively cleared and every
+// source falls back to the plain okhttp path with its interceptors intact.
+func TestReconcile_PushesEmptyImpersonateSourceSet(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+
+	cfg := baseConfig() // impSources left nil
+
+	client := &reconcileClient{Client: sourceenginefake.New(
+		sourceenginefake.WithImpersonate(sourceengine.ImpersonateConfig{
+			Enabled: true, URL: "http://stale", SourceIDs: []int64{999},
+		}),
+	)}
+
+	if _, err := enginetopo.Reconcile(ctx, client, db, cache, cfg); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if got := client.Impersonate().SourceIDs; len(got) != 0 {
+		t.Errorf("pushed SourceIDs = %v, want empty (a stale engine-side set must be cleared)", got)
+	}
+
+	// The WIRE BYTES, not just the length. impersonatePatch's nil→[]int64{}
+	// conversion IS the clearing mechanism, and a length check cannot see it: a
+	// *[]int64 pointing at a NIL slice also reads as len 0, but marshals to
+	// `"sourceIds":null`, which the engine host's `req.sourceIds?.let { … }`
+	// treats as "field omitted — leave the stored set alone". The engine would
+	// then keep gating a source the owner un-ticked and go on writing corrupted
+	// images, with every length-based assertion still green.
+	raw, err := json.Marshal(client.impersonatePatch())
+	if err != nil {
+		t.Fatalf("marshal pushed impersonate patch: %v", err)
+	}
+	const want = `{"enabled":true,"url":"http://impersonate.test:8788","sourceIds":[]}`
+	if string(raw) != want {
+		t.Errorf("pushed impersonate patch marshals to %s, want %s", raw, want)
 	}
 }

@@ -2,8 +2,10 @@ package sourceengine_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -105,7 +107,7 @@ func TestSetImpersonate_SendsOnlyProvidedFields(t *testing.T) {
 		t.Fatalf("SetImpersonate: %v", err)
 	}
 	want := sourceengine.ImpersonateConfig{Enabled: true, URL: "http://impersonate-gateway:8788"}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("SetImpersonate result = %+v, want %+v", got, want)
 	}
 	if len(captured) != 1 {
@@ -113,6 +115,59 @@ func TestSetImpersonate_SendsOnlyProvidedFields(t *testing.T) {
 	}
 	if _, ok := captured["url"]; ok {
 		t.Error("unset field \"url\" leaked into the request body (would clobber)")
+	}
+	if _, ok := captured["sourceIds"]; ok {
+		t.Error("unset field \"sourceIds\" leaked into the request body (would clobber the gating set)")
+	}
+}
+
+// TestSetImpersonate_SendsSourceIDsAsNumbers pins the exact GAP-131 wire shape
+// the engine host's ImpersonateConfigRequest deserialises: the field is named
+// "sourceIds" and carries JSON NUMBERS (int64), never names and never strings.
+// The owner-facing string form stops at the HTTP handler; a rename or a type
+// change on either side would silently un-gate every source (the host would
+// deserialise a null list and leave its set untouched), so this is asserted on
+// the raw body rather than through a Go round-trip.
+func TestSetImpersonate_SendsSourceIDsAsNumbers(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"enabled": true, "url": "http://gw:8788", "sourceIds": []int64{42, 1998416842837112832},
+		})
+	}))
+	defer srv.Close()
+
+	ids := []int64{42, 1998416842837112832}
+	got, err := newTestClient(t, srv).SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{SourceIDs: &ids})
+	if err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	if body := string(raw); body != `{"sourceIds":[42,1998416842837112832]}` {
+		t.Errorf("request body = %s, want the sourceIds array as bare JSON numbers", body)
+	}
+	if !reflect.DeepEqual(got.SourceIDs, []int64{42, 1998416842837112832}) {
+		t.Errorf("read-back SourceIDs = %v, want the host's set decoded as int64s", got.SourceIDs)
+	}
+}
+
+// TestSetImpersonate_SendsAnExplicitEmptySourceSet proves an EMPTY (non-nil)
+// gating set still reaches the wire, so pushing "no source" actively CLEARS a
+// stale engine-side selection instead of being omitted as if untouched.
+func TestSetImpersonate_SendsAnExplicitEmptySourceSet(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		writeJSON(t, w, http.StatusOK, map[string]any{"enabled": false, "url": "", "sourceIds": []int64{}})
+	}))
+	defer srv.Close()
+
+	empty := []int64{}
+	if _, err := newTestClient(t, srv).SetImpersonate(context.Background(), sourceengine.ImpersonatePatch{SourceIDs: &empty}); err != nil {
+		t.Fatalf("SetImpersonate: %v", err)
+	}
+	if body := string(raw); body != `{"sourceIds":[]}` {
+		t.Errorf("request body = %s, want an explicit empty sourceIds array", body)
 	}
 }
 

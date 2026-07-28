@@ -213,10 +213,17 @@ data class SocksConfigRequest(
  * Partial impersonate-gateway config (GAP-111 — the Chrome-fingerprint image-fetch gateway); only
  * non-null fields are applied. [url] is the gateway endpoint; a blank/absent url disables it. Unlike
  * FlareSolverr/SOCKS this is NOT a Suwayomi `serverConfig` field — it lives in [ImpersonateConfig].
+ *
+ * [sourceIds] is the GAP-131 per-source gating set: the source ids allowed to use the gateway. It
+ * carries IDS, never names — a source id is the only identity this host resolves (see RpcServer's
+ * `resolve(sourceId)`), so Tsundoku maps its owner-facing source names to ids before pushing. An
+ * absent (null) list leaves the stored set untouched, like every other field here; an explicitly
+ * EMPTY list is the meaningful "no source uses the gateway" value and CLEARS it.
  */
 data class ImpersonateConfigRequest(
     val enabled: Boolean? = null,
     val url: String? = null,
+    val sourceIds: List<Long>? = null,
 )
 
 data class OkResponse(val ok: Boolean = true)

@@ -298,8 +298,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 37 {
-		t.Fatalf("List len = %d, want 37", len(list))
+	if len(list) != 38 {
+		t.Fatalf("List len = %d, want 38", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -845,6 +845,66 @@ func TestImpersonateSetAndResolve(t *testing.T) {
 	}
 	if err := svc.Set(ctx, settings.KeyImpersonateURL, "not-a-url"); !errors.Is(err, settings.ErrInvalidSetting) {
 		t.Errorf("Set malformed url err = %v, want ErrInvalidSetting", err)
+	}
+}
+
+// TestImpersonateSourcesDefaultEmpty proves the per-source gating set (GAP-131)
+// defaults to EMPTY — the fail-safe that makes an unlisted source take the plain
+// okhttp path, i.e. the pre-GAP-111 behaviour, even while the group is enabled.
+func TestImpersonateSourcesDefaultEmpty(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.ImpersonateSources(ctx); len(got) != 0 {
+		t.Errorf("ImpersonateSources default = %v, want empty", got)
+	}
+}
+
+// TestImpersonateSourcesSetAndResolve proves the gating set round-trips through
+// the overlay as numeric source ids, is canonicalised (trimmed, de-duplicated,
+// ascending) so the stored value is stable regardless of submission order, and
+// clears back to empty.
+func TestImpersonateSourcesSetAndResolve(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if err := svc.Set(ctx, settings.KeyImpersonateSources, " 1998416842837112832 , 42, 42 "); err != nil {
+		t.Fatalf("Set sources: %v", err)
+	}
+	got := svc.ImpersonateSources(ctx)
+	want := []int64{42, 1998416842837112832}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("ImpersonateSources = %v, want %v (deduped + ascending)", got, want)
+	}
+	// The stored canonical form is the normalised one, not the raw submission.
+	row := findSetting(t, svc.List(ctx), settings.KeyImpersonateSources)
+	if row.Value != "42,1998416842837112832" {
+		t.Errorf("stored value = %q, want %q", row.Value, "42,1998416842837112832")
+	}
+
+	if err := svc.Set(ctx, settings.KeyImpersonateSources, ""); err != nil {
+		t.Fatalf("Set sources blank: %v", err)
+	}
+	if got := svc.ImpersonateSources(ctx); len(got) != 0 {
+		t.Errorf("ImpersonateSources after clearing = %v, want empty", got)
+	}
+}
+
+// TestImpersonateSourcesRejectsNonNumeric proves the set is fail-closed: a
+// source NAME (or any non-numeric token) is rejected, so the owner-facing
+// name→id mapping can never leak an id-shaped-as-name onto the engine wire —
+// the GAP-120 drift class this boundary deliberately avoids.
+func TestImpersonateSourcesRejectsNonNumeric(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	for _, raw := range []string{"Hive Scans", "42,Comix", "42,,43", "1e9", "-1"} {
+		if err := svc.Set(ctx, settings.KeyImpersonateSources, raw); !errors.Is(err, settings.ErrInvalidSetting) {
+			t.Errorf("Set %q err = %v, want ErrInvalidSetting", raw, err)
+		}
 	}
 }
 

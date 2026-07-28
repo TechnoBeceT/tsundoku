@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -138,7 +139,7 @@ func TestUpdate_OK(t *testing.T) {
 	if err := json.Unmarshal(rec2.Body.Bytes(), &got2); err != nil {
 		t.Fatalf("decode re-GET: %v", err)
 	}
-	if got2 != got {
+	if !reflect.DeepEqual(got2, got) {
 		t.Errorf("re-GET = %+v, want it to match the Update response %+v", got2, got)
 	}
 
@@ -158,6 +159,126 @@ func assertMirrorPatch(t *testing.T, fake *fakeEngineClient) {
 	}
 	if p.URL == nil || *p.URL != "http://impersonate-gateway:8788" {
 		t.Error("mirror patch URL missing/mismatched")
+	}
+}
+
+// TestUpdate_SourceGatingSetRoundTrips proves the per-source gating set
+// (GAP-131) round-trips through the endpoint as STRINGIFIED numeric source ids
+// — the same wire convention Source.id already uses, so a 64-bit id survives a
+// JSON client — is canonicalised (deduped + ascending), and reaches the engine
+// mirror as real int64s.
+func TestUpdate_SourceGatingSetRoundTrips(t *testing.T) {
+	env := newTestEnv(t)
+	body := `{"enabled":true,"url":"http://impersonate-gateway:8788","sourceIds":["1998416842837112832","42","42"]}`
+	rec := env.do(http.MethodPut, "/api/impersonate", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.SettingsDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	assertSourceIDs(t, got.SourceIDs, []string{"42", "1998416842837112832"})
+
+	// §16 round-trip: a re-GET returns the persisted, canonical set.
+	rec2 := env.do(http.MethodGet, "/api/impersonate", "")
+	var got2 handler.SettingsDTO
+	if err := json.Unmarshal(rec2.Body.Bytes(), &got2); err != nil {
+		t.Fatalf("decode re-GET: %v", err)
+	}
+	assertSourceIDs(t, got2.SourceIDs, []string{"42", "1998416842837112832"})
+
+	// The engine mirror carries the ids as numbers, not names.
+	if env.fake.lastPatch.SourceIDs == nil {
+		t.Fatal("mirror patch SourceIDs missing")
+	}
+	ids := *env.fake.lastPatch.SourceIDs
+	if len(ids) != 2 || ids[0] != 42 || ids[1] != 1998416842837112832 {
+		t.Errorf("mirror patch SourceIDs = %v, want [42 1998416842837112832]", ids)
+	}
+}
+
+// TestUpdate_SourceGatingSetClears proves an explicitly EMPTY array clears the
+// selection (the fail-safe state: no source uses the gateway) rather than being
+// treated as "field omitted".
+func TestUpdate_SourceGatingSetClears(t *testing.T) {
+	env := newTestEnv(t)
+	if rec := env.do(http.MethodPut, "/api/impersonate", `{"sourceIds":["42"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed Update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec := env.do(http.MethodPut, "/api/impersonate", `{"sourceIds":[]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear Update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.SettingsDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.SourceIDs) != 0 {
+		t.Errorf("SourceIDs after clearing = %v, want empty", got.SourceIDs)
+	}
+	if env.fake.lastPatch.SourceIDs == nil || len(*env.fake.lastPatch.SourceIDs) != 0 {
+		t.Errorf("mirror patch SourceIDs = %v, want an explicit empty set", env.fake.lastPatch.SourceIDs)
+	}
+
+	// The WIRE BYTES, not just the length. mirrorToEngine's nil→[]int64{}
+	// conversion IS the clearing mechanism, and a length check cannot see it: a
+	// *[]int64 pointing at a NIL slice also reads as len 0, but marshals to
+	// `"sourceIds":null`, which the engine host's `req.sourceIds?.let { … }`
+	// treats as "field omitted — leave the stored set alone". The engine would
+	// then keep gating a source the owner un-ticked and go on writing corrupted
+	// images, with every length-based assertion still green.
+	raw, err := json.Marshal(env.fake.lastPatch)
+	if err != nil {
+		t.Fatalf("marshal mirror patch: %v", err)
+	}
+	const want = `{"enabled":false,"url":"","sourceIds":[]}`
+	if string(raw) != want {
+		t.Errorf("mirror patch marshals to %s, want %s", raw, want)
+	}
+}
+
+// TestUpdate_SourceGatingSetRejectsNames proves a source NAME is a 400 and never
+// reaches the engine mirror: only ids resolve on the engine side, and letting a
+// name through would fork this boundary into two identity axes (the GAP-120
+// drift class).
+func TestUpdate_SourceGatingSetRejectsNames(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodPut, "/api/impersonate", `{"sourceIds":["Hive Scans"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Update with a source name: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if env.fake.setCalled {
+		t.Error("SetImpersonate must not be attempted when the Tsundoku save was rejected")
+	}
+}
+
+// TestGet_SourceGatingSetDefaultsEmpty proves the default is the EMPTY set — an
+// unlisted source keeps the plain okhttp path, which is the whole point of the
+// gating (GAP-131).
+func TestGet_SourceGatingSetDefaultsEmpty(t *testing.T) {
+	env := newTestEnv(t)
+	rec := env.do(http.MethodGet, "/api/impersonate", "")
+	var got handler.SettingsDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.SourceIDs) != 0 {
+		t.Errorf("default SourceIDs = %v, want empty", got.SourceIDs)
+	}
+}
+
+// assertSourceIDs compares a DTO's source-id list against the expected canonical
+// (deduped, ascending) form.
+func assertSourceIDs(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("SourceIDs = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SourceIDs = %v, want %v", got, want)
+		}
 	}
 }
 
