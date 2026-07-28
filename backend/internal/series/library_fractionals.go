@@ -99,6 +99,16 @@ func (s *Service) LibraryFractionals(ctx context.Context) (LibraryFractionalsDTO
 // their availability feeds (the carriers behind the resurrection guard / the
 // zero-carrier sourceless rule), and category (the display + folder name).
 // Mirrors loadSeriesWithHealthData's no-N+1 shape.
+//
+// Chapters are loaded UNORDERED here, unlike the per-series loadSeriesForCleanup
+// (which orders by number then chapter_key) — and LibraryDuplicateFiles still
+// resolves the SAME plan through it. That is safe because the file-only pass is
+// order-INDEPENDENT as a SET: each chapter of number N claims "every .cbz of N
+// except my own filename", and the passes union those claims, so with two or more
+// distinct keepers for one number every file is claimed by someone and the union
+// is the whole set regardless of who is walked first. Only the number LABEL an
+// individual item carries can differ, and this page reports counts and bytes.
+// Pinned by TestLibraryDuplicateFiles_MatchesPerSeriesWithTwoChaptersOnOneNumber.
 func (s *Service) loadAllSeriesForCleanup(ctx context.Context) ([]*ent.Series, error) {
 	rows, err := s.client.Series.Query().
 		Order(entseries.ByTitle()).

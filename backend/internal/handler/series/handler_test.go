@@ -116,6 +116,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.GET("/series/:id/sourceless-cleanup", h.SourcelessCleanupPreview)
 	authed.POST("/series/:id/sourceless-cleanup", h.RemoveSourcelessChapters)
 	authed.GET("/library/sourceless", h.LibrarySourceless)
+	authed.GET("/library/duplicate-files", h.LibraryDuplicateFiles)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -438,6 +439,7 @@ func TestAuthz_AllRoutesReject401(t *testing.T) {
 		{http.MethodGet, "/api/series/" + id + "/sourceless-cleanup"},
 		{http.MethodPost, "/api/series/" + id + "/sourceless-cleanup"},
 		{http.MethodGet, "/api/library/sourceless"},
+		{http.MethodGet, "/api/library/duplicate-files"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {

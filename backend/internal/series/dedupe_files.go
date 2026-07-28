@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -182,7 +183,20 @@ func (s *Service) dedupeFilesPlan(ctx context.Context, client *ent.Client, id uu
 	if err != nil {
 		return dedupePlan{}, nil, err
 	}
+	plan, err := s.resolveDedupePlan(row, s.diskDuplicateLister(row))
+	if err != nil {
+		return dedupePlan{}, nil, err
+	}
+	return plan, row, nil
+}
 
+// resolveDedupePlan resolves the removal set for ONE already-loaded series against
+// a duplicate lister — the pure core of dedupeFilesPlan, split out so the
+// library-wide duplicate-file scan (which loads every series in one bounded query
+// and reads each folder once) resolves through the SAME passes as the per-series
+// plan instead of re-deriving them. Everything except the file enumeration is
+// in-memory over the eager-loaded edges.
+func (s *Service) resolveDedupePlan(row *ent.Series, list duplicateLister) (dedupePlan, error) {
 	mergePairs := detectEngineSwitchDuplicates(row)
 
 	// Pass 0 (merge) and pass 0b (ignored fractionals) are resolved from the SAME
@@ -220,16 +234,47 @@ func (s *Service) dedupeFilesPlan(ctx context.Context, client *ent.Client, id uu
 		}
 	}
 
-	fileOnly, err := s.planFileOnlySweeps(row, removedChapters, claimedFiles)
+	fileOnly, err := s.planFileOnlySweeps(row, removedChapters, claimedFiles, list)
 	if err != nil {
-		return dedupePlan{}, nil, err
+		return dedupePlan{}, err
 	}
 
 	return dedupePlan{
 		mergePairs:         mergePairs,
 		ignoredFractionals: ignoredFractionals,
 		fileOnly:           fileOnly,
-	}, row, nil
+	}, nil
+}
+
+// duplicateLister enumerates the removable duplicate CBZ filenames for ONE chapter
+// number in a series folder, keeping keepFilename. It is the seam that lets the
+// per-series plan and the library-wide duplicate scan share the SAME pass-1/pass-2
+// walk — and therefore the same strict matching rule — while reading the disk
+// differently: the per-series plan reads the folder per chapter number
+// (diskDuplicateLister), the library-wide scan reads it once and matches against
+// the retained listing (entriesDuplicateLister). Re-implementing the match for the
+// second caller is exactly how the two would silently drift.
+type duplicateLister func(number float64, keepFilename string) ([]string, error)
+
+// diskDuplicateLister is the per-series lister: it reads the series folder for
+// every chapter number it is asked about, which is what the single-series preview
+// and executor have always done (one series, one folder, warm page cache).
+func (s *Service) diskDuplicateLister(row *ent.Series) duplicateLister {
+	categoryName := category.NameOf(row)
+	return func(number float64, keepFilename string) ([]string, error) {
+		return disk.ListOtherChapterFiles(s.storage, categoryName, row.Title,
+			chapter.FormatChapterNumber(number), keepFilename)
+	}
+}
+
+// entriesDuplicateLister is the library-wide lister: it matches against an
+// ALREADY-READ series-directory listing, so a whole library costs one directory
+// read per series instead of one per chapter. It never fails — there is no disk
+// access left to fail.
+func entriesDuplicateLister(entries []os.DirEntry) duplicateLister {
+	return func(number float64, keepFilename string) ([]string, error) {
+		return disk.ListOtherChapterFilesIn(entries, chapter.FormatChapterNumber(number), keepFilename), nil
+	}
 }
 
 // excludeMergeRemoved drops every chapter the merge pass (pass 0) will delete from the
@@ -260,18 +305,17 @@ func excludeMergeRemoved(fractionals []*ent.Chapter, mergeRemoved map[uuid.UUID]
 // pass 1 already listed, is never listed twice (which would inflate the count). Files
 // are enumerated in the series' loaded (number-ASC) chapter order, replicating the
 // executor's per-chapter re-read semantics exactly.
-func (s *Service) planFileOnlySweeps(row *ent.Series, removedChapters map[uuid.UUID]struct{}, claimedFiles map[string]struct{}) ([]dedupeFileItem, error) {
-	categoryName := category.NameOf(row)
+func (s *Service) planFileOnlySweeps(row *ent.Series, removedChapters map[uuid.UUID]struct{}, claimedFiles map[string]struct{}, list duplicateLister) ([]dedupeFileItem, error) {
 	planned := make(map[string]struct{}, len(claimedFiles))
 	for f := range claimedFiles {
 		planned[f] = struct{}{}
 	}
 
-	items, err := s.planWinningDuplicates(categoryName, row, removedChapters, planned)
+	items, err := planWinningDuplicates(row, removedChapters, planned, list)
 	if err != nil {
 		return nil, err
 	}
-	orphans, err := s.planSupersededOrphans(categoryName, row, removedChapters, planned)
+	orphans, err := planSupersededOrphans(row, removedChapters, planned, list)
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +324,8 @@ func (s *Service) planFileOnlySweeps(row *ent.Series, removedChapters map[uuid.U
 
 // planWinningDuplicates is DedupeFiles pass 1: for every downloaded chapter with a
 // winning filename AND a number (not claimed by pass 0/0b), list the OTHER CBZs of
-// that number — the winner is kept by ListOtherChapterFiles.
-func (s *Service) planWinningDuplicates(categoryName string, row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}) ([]dedupeFileItem, error) {
+// that number — the winner is kept by the lister.
+func planWinningDuplicates(row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}, list duplicateLister) ([]dedupeFileItem, error) {
 	var items []dedupeFileItem
 	for _, ch := range row.Edges.Chapters {
 		if _, gone := removedChapters[ch.ID]; gone {
@@ -290,7 +334,7 @@ func (s *Service) planWinningDuplicates(categoryName string, row *ent.Series, re
 		if ch.Filename == "" || ch.Number == nil {
 			continue
 		}
-		listed, err := s.listFileOnly(categoryName, row.Title, *ch.Number, ch.Filename, planned)
+		listed, err := listFileOnly(list, *ch.Number, ch.Filename, planned)
 		if err != nil {
 			return nil, fmt.Errorf("series.DedupeFiles: chapter %s: %w", ch.ID, err)
 		}
@@ -303,7 +347,7 @@ func (s *Service) planWinningDuplicates(categoryName string, row *ent.Series, re
 // chapter (not claimed by pass 0/0b), list EVERY CBZ of that number with no keeper.
 // Whole-integer superseded chapters are skipped — their file, if any, is a legitimate
 // keeper elsewhere.
-func (s *Service) planSupersededOrphans(categoryName string, row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}) ([]dedupeFileItem, error) {
+func planSupersededOrphans(row *ent.Series, removedChapters map[uuid.UUID]struct{}, planned map[string]struct{}, list duplicateLister) ([]dedupeFileItem, error) {
 	var items []dedupeFileItem
 	for _, ch := range row.Edges.Chapters {
 		if _, gone := removedChapters[ch.ID]; gone {
@@ -312,7 +356,7 @@ func (s *Service) planSupersededOrphans(categoryName string, row *ent.Series, re
 		if ch.State != entchapter.StateSuperseded || ch.Number == nil || !chapterrange.IsFractional(*ch.Number) {
 			continue
 		}
-		listed, err := s.listFileOnly(categoryName, row.Title, *ch.Number, "", planned)
+		listed, err := listFileOnly(list, *ch.Number, "", planned)
 		if err != nil {
 			return nil, fmt.Errorf("series.DedupeFiles: superseded chapter %s: %w", ch.ID, err)
 		}
@@ -324,8 +368,8 @@ func (s *Service) planSupersededOrphans(categoryName string, row *ent.Series, re
 // listFileOnly enumerates the removable duplicate CBZs for one chapter number
 // (keeping keepFilename), skipping any filename already in planned and recording the
 // rest into it — so the same file is never planned twice across passes/chapters.
-func (s *Service) listFileOnly(categoryName, title string, number float64, keepFilename string, planned map[string]struct{}) ([]dedupeFileItem, error) {
-	names, err := disk.ListOtherChapterFiles(s.storage, categoryName, title, chapter.FormatChapterNumber(number), keepFilename)
+func listFileOnly(list duplicateLister, number float64, keepFilename string, planned map[string]struct{}) ([]dedupeFileItem, error) {
+	names, err := list(number, keepFilename)
 	if err != nil {
 		return nil, err
 	}

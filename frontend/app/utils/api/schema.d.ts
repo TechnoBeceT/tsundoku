@@ -1184,6 +1184,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/library/duplicate-files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Library-wide list of series with removable duplicate CBZs
+         * @description Returns every series whose folder carries CBZ files the per-series
+         *     "Remove duplicate files" action would delete — leftover copies of a
+         *     chapter that already has a winning file, and orphaned files of a
+         *     superseded fractional part — with how many files that is and how much
+         *     disk they hold. Sorted most-actionable first (fileCount desc, then
+         *     reclaimableBytes desc, then title).
+         *
+         *     DISCOVERY ONLY: it deletes nothing and has no execute counterpart. Each
+         *     row links to its series, where the existing owner-triggered removal
+         *     lives. Files whose final name token is not a plain number are refused by
+         *     the strict chapter-number rule, so a series carrying only such files is
+         *     correctly absent — the list shows what is actually removable.
+         */
+        get: operations["getLibraryDuplicateFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/sourceless": {
         parameters: {
             query?: never;
@@ -3516,6 +3547,42 @@ export interface components {
             providersIgnoring: number;
             /** @description True when every source ignores fractionals (the toggle's ON state). */
             allProvidersIgnoring: boolean;
+        };
+        /**
+         * @description The library-wide Duplicates page: every series with at least one
+         *     removable duplicate CBZ, sorted most-actionable first (fileCount desc,
+         *     then reclaimableBytes desc, then title), plus the library totals.
+         */
+        LibraryDuplicateFiles: {
+            series: components["schemas"]["SeriesDuplicateFilesRow"][];
+            /** @description Total removable duplicate files across every listed series. */
+            totalFiles: number;
+            /**
+             * Format: int64
+             * @description Total reclaimable bytes across every listed series.
+             */
+            totalBytes: number;
+        };
+        /**
+         * @description One series with removable duplicate CBZs. The counts cover the FILE-ONLY
+         *     removals of the per-series dedupe; its row-deleting passes are excluded.
+         */
+        SeriesDuplicateFilesRow: {
+            /** Format: uuid */
+            seriesId: string;
+            title: string;
+            /** @description Resolved display title (falls back to the canonical title). */
+            displayName: string;
+            category: string;
+            /** @description Series cover proxy path, or "" when no cover is available. */
+            coverUrl: string;
+            /** @description How many duplicate CBZ files this series has that are removable. */
+            fileCount: number;
+            /**
+             * Format: int64
+             * @description Total on-disk size of those files, in bytes.
+             */
+            reclaimableBytes: number;
         };
         /**
          * @description The library-wide Sourceless page: every series that has at least one
@@ -7626,6 +7693,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryFractionals"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getLibraryDuplicateFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The series with removable duplicate files (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDuplicateFiles"];
                 };
             };
             /** @description Missing or invalid Bearer token. */

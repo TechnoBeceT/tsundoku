@@ -66,22 +66,58 @@ func RemoveOtherChapterFiles(storage, category, title, chapterNumber, keepFilena
 // number (strictChapterKey) so an imported library's arbitrary filenames can never
 // be mis-parsed into a real chapter number. A non-clean target number, or a missing
 // series directory, yields no names (nil, nil) — never an error; only a genuine
-// directory-read failure is returned.
+// directory-read failure is returned. (Precisely: the directory is read BEFORE the
+// target number is judged, so a non-clean number over an UNREADABLE directory
+// surfaces that read failure rather than returning nil. Both inputs are broken
+// there, and an unreadable library folder is worth reporting either way.)
+//
+// It is the READ-then-MATCH composition of ReadSeriesDir + ListOtherChapterFilesIn,
+// so one directory read serves one chapter number. A caller that sweeps MANY
+// chapter numbers in the same series (the library-wide duplicate scan) must call
+// those two directly instead: read the folder ONCE and reuse the listing, or it
+// pays a directory read per chapter.
 func ListOtherChapterFiles(storage, category, title, chapterNumber, keepFilename string) ([]string, error) {
-	targetKey, ok := strictChapterKey(chapterNumber)
-	if !ok {
-		// A non-clean target number can never be safely matched — list nothing
-		// rather than risk deleting a file on an ambiguous compare.
-		return nil, nil
+	entries, err := ReadSeriesDir(storage, category, title)
+	if err != nil {
+		return nil, err
 	}
+	return ListOtherChapterFilesIn(entries, chapterNumber, keepFilename), nil
+}
 
+// ReadSeriesDir lists a series' library folder — the thin, single directory read
+// behind every duplicate-file enumeration. A series that was never rendered has no
+// folder, so a not-exist error is an EMPTY listing (nil, nil), not a failure; any
+// other read failure is returned so a library-wide sweep fails honestly instead of
+// silently under-reporting.
+func ReadSeriesDir(storage, category, title string) ([]os.DirEntry, error) {
 	dir := SeriesDir(storage, category, title)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("disk.ListOtherChapterFiles: read dir %q: %w", dir, err)
+		return nil, fmt.Errorf("disk.ReadSeriesDir: read dir %q: %w", dir, err)
+	}
+	return entries, nil
+}
+
+// ListOtherChapterFilesIn is the PURE matcher behind ListOtherChapterFiles: given
+// an ALREADY-READ series-directory listing, it returns the CBZ filenames that
+// share chapterNumber's STRICT chapter number, except keepFilename. It touches no
+// disk at all.
+//
+// It exists so a caller sweeping many chapter numbers in ONE series reads the
+// folder once (ReadSeriesDir) and reuses the listing, instead of re-reading it per
+// chapter. Both callers share this ONE matcher — and therefore the one
+// strictChapterKey / isPlainNumberToken rule — so the per-series and library-wide
+// paths can never drift on what counts as a duplicate.
+//
+// A non-clean target number matches nothing: it can never be safely compared, so
+// listing nothing is the only safe answer (this feeds a deletion path).
+func ListOtherChapterFilesIn(entries []os.DirEntry, chapterNumber, keepFilename string) []string {
+	targetKey, ok := strictChapterKey(chapterNumber)
+	if !ok {
+		return nil
 	}
 
 	var names []string
@@ -90,7 +126,7 @@ func ListOtherChapterFiles(storage, category, title, chapterNumber, keepFilename
 			names = append(names, e.Name())
 		}
 	}
-	return names, nil
+	return names
 }
 
 // isRemovableDuplicate reports whether a directory entry is a CBZ (other than

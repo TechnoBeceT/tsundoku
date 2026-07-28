@@ -109,6 +109,7 @@ import (
 //   - /api/series/:id/sourceless-cleanup (GET)      — preview a series' removable sourceless chapters (RequireOwner).
 //   - /api/series/:id/sourceless-cleanup (POST)     — remove selected sourceless chapters (CBZ + row) (RequireOwner).
 //   - /api/library/sourceless                       — library-wide list of series with downloaded sourceless chapters (RequireOwner).
+//   - /api/library/duplicate-files                  — library-wide list of series with removable duplicate CBZs; read-only, no execute counterpart (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
@@ -306,6 +307,7 @@ func registerRoutes(
 	authed.GET("/series/:id/sourceless-cleanup", seriesH.SourcelessCleanupPreview)
 	authed.POST("/series/:id/sourceless-cleanup", seriesH.RemoveSourcelessChapters)
 	authed.GET("/library/sourceless", seriesH.LibrarySourceless)
+	authed.GET("/library/duplicate-files", seriesH.LibraryDuplicateFiles)
 
 	// Phase-1 native metadata engine (spec/metadata-engine-phase1): cross-
 	// provider search, per-series identify, cover-candidate gallery, and cover
