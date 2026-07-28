@@ -201,10 +201,20 @@ export interface FlareSolverrConfig {
  * pane alongside the FlareSolverr card.
  */
 export interface ImpersonateConfig {
-  /** Route engine image fetches through the impersonate gateway when true. */
+  /**
+   * Master switch. Necessary but NOT sufficient — a source also has to be in
+   * `sourceIds` before any of its images go through the gateway.
+   */
   enabled: boolean
   /** The impersonate-gateway URL; blank disables it regardless of `enabled`. */
   url: string
+  /**
+   * The sources allowed to use the gateway (engine source ids as strings).
+   * Empty = no source uses it, which is the default and the safe state: the
+   * gateway path skips the source's own image interceptors, so opting a source
+   * in that does not need it silently corrupts its pages (GAP-131).
+   */
+  sourceIds: string[]
 }
 
 /* ---- 2e. Sources & Extensions --------------------------------------------- */
@@ -427,15 +437,22 @@ export interface SourceBinding {
 }
 
 /**
- * NetworkSource — one engine source shown as a row in the assignment table
- * (`GET /api/sources`). Only the id/name/lang are needed to render + address a
- * binding row.
+ * SourceOption — one engine source offered as a selectable option in a settings
+ * surface (`GET /api/sources`). Only the id/name/lang are needed to render and
+ * address it. The id is the wire identity everywhere; the name is a LABEL only.
  */
-export interface NetworkSource {
-  /** Engine-host source id (stringified decimal int64) — the binding target. */
+export interface SourceOption {
+  /** Engine-host source id (stringified decimal int64) — the wire identity. */
   id: string
-  /** Human-readable source name. */
+  /** Human-readable source name — display only, never sent as an identity. */
   name: string
   /** BCP-47 content language tag (e.g. "en", "ko"). */
   lang: string
 }
+
+/**
+ * NetworkSource — one engine source shown as a row in the Network pane's
+ * assignment table. Structurally a [SourceOption]; the alias keeps that pane's
+ * own vocabulary without duplicating the shape.
+ */
+export type NetworkSource = SourceOption

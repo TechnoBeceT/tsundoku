@@ -20,6 +20,7 @@ import type {
   NetworkEndpoint,
   NetworkEndpointInput,
   NetworkSource,
+  SourceOption,
   NotificationPermissionState,
   Repo,
   ReorderDirection,
@@ -97,6 +98,8 @@ withDefaults(defineProps<{
   impersonate: ImpersonateConfig
   /** §16 state of the impersonate Save button. */
   impersonateSave?: SaveState
+  /** Engine sources the impersonate card offers as per-source opt-ins (GAP-131). */
+  impersonateSources?: SourceOption[]
   /** Installed extensions (2e). */
   extensions: Extension[]
   /** Available (installable) extensions (2e). */
@@ -181,6 +184,7 @@ withDefaults(defineProps<{
   upgrading: false,
   flareSolverrSave: () => ({ status: 'idle' }),
   impersonateSave: () => ({ status: 'idle' }),
+  impersonateSources: () => [],
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
@@ -336,6 +340,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :flare-solverr-save="flareSolverrSave"
           :impersonate="impersonate"
           :impersonate-save="impersonateSave"
+          :impersonate-sources="impersonateSources"
           @save-flaresolverr="emit('save-flaresolverr', $event)"
           @save-impersonate="emit('save-impersonate', $event)"
         />

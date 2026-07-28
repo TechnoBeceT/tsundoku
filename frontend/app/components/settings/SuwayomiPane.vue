@@ -3,7 +3,7 @@ import { computed, reactive, watch } from 'vue'
 import SaveFooter from '../ui/SaveFooter.vue'
 import FlareSolverrCard from './FlareSolverrCard.vue'
 import ImpersonateCard from './ImpersonateCard.vue'
-import type { FlareSolverrConfig, ImpersonateConfig, SaveState } from '../screens/settings.types'
+import type { FlareSolverrConfig, ImpersonateConfig, SaveState, SourceOption } from '../screens/settings.types'
 
 /**
  * SuwayomiPane — the "Server config" settings pane. Holds two Tsundoku-owned
@@ -28,6 +28,8 @@ import type { FlareSolverrConfig, ImpersonateConfig, SaveState } from '../screen
  *   - `flareSolverrSave`: the §16 save lifecycle for the FlareSolverr card.
  *   - `impersonate`: the Tsundoku-owned impersonate-gateway config.
  *   - `impersonateSave`: the §16 save lifecycle for the impersonate card.
+ *   - `impersonateSources`: the engine sources the impersonate card offers as
+ *     per-source opt-ins (labels for the ids the config carries).
  *
  * Emits `save-flaresolverr` / `save-impersonate` with the full merged config.
  */
@@ -40,9 +42,12 @@ const props = withDefaults(defineProps<{
   impersonate: ImpersonateConfig
   /** §16 state of the impersonate Save button. */
   impersonateSave?: SaveState
+  /** The engine sources the impersonate card offers as per-source opt-ins. */
+  impersonateSources?: SourceOption[]
 }>(), {
   flareSolverrSave: () => ({ status: 'idle' }),
   impersonateSave: () => ({ status: 'idle' }),
+  impersonateSources: () => [],
 })
 
 const emit = defineEmits<{
@@ -75,7 +80,12 @@ function onSaveFlareSolverr() {
 }
 
 // The impersonate card mirrors the same local-copy + dirty + §16 machinery.
-const cloneImp = (i: ImpersonateConfig): ImpersonateConfig => ({ ...i })
+// Clone the sourceIds ARRAY too, so the local copy and the emitted payload never
+// alias the prop's array. ImpersonateCard happens to replace the array rather
+// than mutate it, so a shallow spread would work TODAY — this keeps the copy
+// genuinely detached (matching cloneFlare's nested clones) so a future in-place
+// edit cannot silently mutate the source of truth and freeze `impDirty`.
+const cloneImp = (i: ImpersonateConfig): ImpersonateConfig => ({ ...i, sourceIds: [...i.sourceIds] })
 
 const imp = reactive(cloneImp(props.impersonate))
 
@@ -95,7 +105,7 @@ function onSaveImpersonate() {
   <div class="pane-stack">
     <FlareSolverrCard :model-value="flare" @update:model-value="v => Object.assign(flare, v)" />
     <SaveFooter :state="flareFooterState" :dirty="flareDirty" label="Save FlareSolverr settings" @save="onSaveFlareSolverr" />
-    <ImpersonateCard :model-value="imp" @update:model-value="v => Object.assign(imp, v)" />
+    <ImpersonateCard :model-value="imp" :sources="impersonateSources" @update:model-value="v => Object.assign(imp, v)" />
     <SaveFooter :state="impFooterState" :dirty="impDirty" label="Save image-proxy settings" @save="onSaveImpersonate" />
   </div>
 </template>

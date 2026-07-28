@@ -18,6 +18,7 @@ import type {
   LibrarySettings,
   NetworkEndpoint,
   NetworkSource,
+  SourceOption,
   Repo,
   SettingsCategory,
   SourceBinding,
@@ -92,14 +93,27 @@ export const flareSolverrConfig: FlareSolverrConfig = {
 }
 
 /**
- * The Tsundoku-owned impersonate-gateway config (GAP-111) — the Chrome-fingerprint
- * image proxy card that sits next to the FlareSolverr card in the "Server config"
- * pane. On, pointing at the compose-network gateway.
+ * The Tsundoku-owned impersonate-gateway config (GAP-111, scoped per source by
+ * GAP-131) — the Chrome-fingerprint image proxy card that sits next to the
+ * FlareSolverr card in the "Server config" pane. On, pointing at the
+ * compose-network gateway, with ONE source opted in (the realistic shape: the
+ * proxy exists for the rare source whose CDN blocks the default client).
  */
 export const impersonateConfig: ImpersonateConfig = {
   enabled: true,
   url: 'http://impersonate-gateway:8788',
+  sourceIds: ['1998416842837112832'],
 }
+
+/**
+ * The engine sources the impersonate card offers as per-source opt-ins. Reuses
+ * the same ids as [networkSources] so a story showing both panes stays coherent.
+ */
+export const impersonateSources: SourceOption[] = [
+  { id: '1998416842837112832', name: 'Source A', lang: 'en' },
+  { id: '2035199668263834297', name: 'Source B', lang: 'en' },
+  { id: '9127482910938471028', name: 'Source C', lang: 'en' },
+]
 
 /**
  * Installed extensions — two carry an available update (UPDATE badge). No

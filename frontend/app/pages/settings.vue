@@ -17,7 +17,7 @@
  *                           QCAT-238 — a card in SuwayomiPane; the proxied SOCKS
  *                           card/composable was RETIRED with the P2 Suwayomi-removal
  *                           backend cutover)
- *   useImpersonateSettings() → config + impersonateSave + save (Tsundoku-owned,
+ *   useImpersonateSettings() → config + sources + impersonateSave + save (Tsundoku-owned,
  *                           GAP-111 — the Chrome-fingerprint image-proxy card in
  *                           SuwayomiPane, alongside the FlareSolverr card)
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
@@ -48,6 +48,8 @@
  *   :flare-solverr-save   — flareSolverrSave from useFlareSolverrSettings
  *   :impersonate          — config from useImpersonateSettings (GAP-111)
  *   :impersonate-save     — impersonateSave from useImpersonateSettings
+ *   :impersonate-sources  — sources from useImpersonateSettings (the per-source
+ *                           opt-in picker's labels, GAP-131)
  *   :extensions           — extensions from useExtensions
  *   :available-extensions — availableExtensions from useExtensions
  *   :repos                — repos from useExtensions
@@ -153,6 +155,7 @@ const {
 
 const {
   config: impersonate,
+  sources: impersonateSources,
   impersonateSave,
   pending: impersonatePending,
   save: saveImpersonate,
@@ -341,6 +344,7 @@ const loading = computed(
       :flare-solverr-save="flareSolverrSave"
       :impersonate="impersonate"
       :impersonate-save="impersonateSave"
+      :impersonate-sources="impersonateSources"
       :extensions="extensions"
       :available-extensions="availableExtensions"
       :repos="repos"
