@@ -15,6 +15,11 @@
  * gates the manual re-poll (keeps cards visible). A successful removal re-polls
  * the list so the count reflects the change.
  *
+ * By default the initial load fires on creation (`immediate: true`). Pass
+ * `{ immediate: false }` to defer it — the Cleanup console does this so a tab's
+ * library-wide scan only runs when that tab is first shown, then triggers the load
+ * itself via `refetch()`.
+ *
  * §16: the removal is an owner-driven mutation, so its failure is surfaced
  * (`removeError`), never swallowed. The preview is a BACKGROUND read the owner
  * never triggered (it fills the dialog on open), so it resolves null on failure
@@ -39,7 +44,9 @@ function mapRow(dto: SeriesSourcelessDTO): SeriesSourceless {
   }
 }
 
-export function useSourceless() {
+export function useSourceless(options: { immediate?: boolean } = {}) {
+  const { immediate = true } = options
+
   const series = ref<SeriesSourceless[]>([])
   const pending = ref(false)
   const refreshing = ref(false)
@@ -120,8 +127,13 @@ export function useSourceless() {
     }
   }
 
-  // Kick off the initial load immediately (mirrors useHealth).
-  void load(false)
+  /** Perform the (possibly deferred) initial load — the lazy tab's entry point. */
+  function refetch(): Promise<void> {
+    return load(false)
+  }
+
+  // Kick off the initial load immediately unless the caller deferred it.
+  if (immediate) void load(false)
 
   return {
     series,
@@ -131,6 +143,7 @@ export function useSourceless() {
     removeBusy,
     removeError,
     refresh,
+    refetch,
     fetchPreview,
     removeSourceless,
   }

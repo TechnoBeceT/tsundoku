@@ -1,80 +1,21 @@
 <script setup lang="ts">
 /**
- * Fractionals page — route "/fractionals".
+ * Fractionals — LEGACY ROUTE, kept as a REDIRECT to "/cleanup?tab=fractionals".
  *
- * The library-wide "fix fractional chapters in one place" surface. Data + actions
- * come from useFractionals(); the Fractionals screen and the reused
- * FractionalCleanupDialog are auto-imported from app/components/.
+ * The library-wide Fractionals surface moved into the 3-tab Cleanup console; the
+ * screen component itself is unchanged and is now rendered as that console's first
+ * tab. This file exists solely so bookmarks and any in-app link to the old path
+ * keep working — the Cleanup page's `?tab=` deep-link resolution beats its stored
+ * session tab, so the redirect always lands on Fractionals.
  *
- * The cleanup dialog lives HERE (not in the screen) for the same reason it lives
- * on the Series-Detail page: only the page learns whether a removal succeeded, so
- * it closes the dialog ONLY on success and shows the failure inside it otherwise
- * (§16). Opening "Clean files" fetches that series' preview, then opens the dialog.
+ * vue-router applies the redirect before this component renders, so the template
+ * below is never shown.
  */
-import { ref } from 'vue'
-import type { FractionalCleanupPreview } from '~/components/screens/seriesDetail.types'
-
-const {
-  series,
-  pending,
-  refreshing,
-  error,
-  togglingIds,
-  toggleError,
-  removeBusy,
-  removeError,
-  refresh,
-  setIgnoreForSeries,
-  fetchPreview,
-  removeFractionals,
-} = useFractionals()
-
-// ---- Cleanup dialog (owned by the page, per §16) ---------------------------
-const cleanupOpen = ref(false)
-const cleanupSeriesId = ref<string | null>(null)
-const cleanupPreview = ref<FractionalCleanupPreview | null>(null)
-
-async function openCleanup(seriesId: string): Promise<void> {
-  cleanupSeriesId.value = seriesId
-  cleanupPreview.value = await fetchPreview(seriesId)
-  cleanupOpen.value = true
-}
-
-async function onConfirmCleanup(chapterIds: string[]): Promise<void> {
-  if (!cleanupSeriesId.value) return
-  const ok = await removeFractionals(cleanupSeriesId.value, chapterIds)
-  if (ok) cleanupOpen.value = false
-}
+definePageMeta({
+  redirect: { path: '/cleanup', query: { tab: 'fractionals' } },
+})
 </script>
 
 <template>
-  <div class="page-fractionals">
-    <ErrorBanner v-if="error" :message="error" />
-    <ErrorBanner v-if="toggleError" :message="toggleError" />
-    <Fractionals
-      :series="series"
-      :loading="pending"
-      :refreshing="refreshing"
-      :busy-ids="togglingIds"
-      @open-series="(id: string) => navigateTo(`/series/${id}`)"
-      @toggle-ignore="(p: { seriesId: string, ignore: boolean }) => setIgnoreForSeries(p.seriesId, p.ignore)"
-      @clean-files="openCleanup"
-      @refresh="refresh"
-    />
-
-    <FractionalCleanupDialog
-      v-model:open="cleanupOpen"
-      :chapters="cleanupPreview?.chapters ?? []"
-      :typical-page-count="cleanupPreview?.typicalPageCount ?? 0"
-      :busy="removeBusy"
-      :error="removeError"
-      @confirm="onConfirmCleanup"
-    />
-  </div>
+  <div />
 </template>
-
-<style scoped>
-.page-fractionals {
-  min-height: 100%;
-}
-</style>

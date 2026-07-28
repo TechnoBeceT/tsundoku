@@ -15,7 +15,7 @@ import { categories, seriesPage } from '../../fixtures/series'
  * in BOTH dark and light.
  */
 /**
- * The six nav rail items — five primary, plus Settings bottom-pinned. Badges are
+ * The nav rail items — six primary, plus Settings bottom-pinned. Badges are
  * caller-wired (Downloads → failed count amber, Health → unhealthy rose), proving
  * the shell renders whatever badges it is handed.
  */
@@ -24,7 +24,7 @@ const navItems: NavItem[] = [
   { key: 'discover', label: 'Discover', icon: 'compass' },
   { key: 'downloads', label: 'Downloads', icon: 'download', badge: { count: 1, tone: 'warn' } },
   { key: 'health', label: 'Health', icon: 'activity', badge: { count: 3, tone: 'danger' } },
-  { key: 'fractionals', label: 'Fractionals', icon: 'scissors' },
+  { key: 'cleanup', label: 'Cleanup', icon: 'eraser' },
   { key: 'categories', label: 'Categories', icon: 'layout-grid' },
   { key: 'settings', label: 'Settings', icon: 'settings', pinned: true },
 ]

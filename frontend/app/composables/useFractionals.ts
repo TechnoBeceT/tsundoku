@@ -14,6 +14,11 @@
  * gates the manual re-poll (keeps cards visible). A successful toggle or removal
  * re-polls the list so both counts (fractional / removable) reflect the change.
  *
+ * By default the initial load fires on creation (`immediate: true`). Pass
+ * `{ immediate: false }` to defer it — the Cleanup console does this so a tab's
+ * library-wide scan only runs when that tab is first shown, then triggers the load
+ * itself via `refetch()`.
+ *
  * §16: the toggle and the removal are owner-driven mutations, so their failures
  * are surfaced (`toggleError` / `removeError`), never swallowed. The preview is a
  * BACKGROUND read the owner never triggered (it fills the dialog on open), so it
@@ -43,7 +48,9 @@ function mapRow(dto: SeriesFractionalsDTO): SeriesFractionals {
   }
 }
 
-export function useFractionals() {
+export function useFractionals(options: { immediate?: boolean } = {}) {
+  const { immediate = true } = options
+
   const series = ref<SeriesFractionals[]>([])
   const pending = ref(false)
   const refreshing = ref(false)
@@ -156,8 +163,13 @@ export function useFractionals() {
     }
   }
 
-  // Kick off the initial load immediately (mirrors useHealth).
-  void load(false)
+  /** Perform the (possibly deferred) initial load — the lazy tab's entry point. */
+  function refetch(): Promise<void> {
+    return load(false)
+  }
+
+  // Kick off the initial load immediately unless the caller deferred it.
+  if (immediate) void load(false)
 
   return {
     series,
@@ -169,6 +181,7 @@ export function useFractionals() {
     removeBusy,
     removeError,
     refresh,
+    refetch,
     setIgnoreForSeries,
     fetchPreview,
     removeFractionals,
