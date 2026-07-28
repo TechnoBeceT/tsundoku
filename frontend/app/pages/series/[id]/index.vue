@@ -2,6 +2,7 @@
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { ReaderChapter } from '~/composables/useReader'
 import type { CoverCandidate, DedupePlan, FractionalCleanupPreview, MetadataCandidate, UpdateTrackPatch } from '~/components/screens/seriesDetail.types'
+import { isReadableChapter } from '~/utils/readableChapters'
 
 /**
  * Series detail page — route /series/:id.
@@ -178,6 +179,9 @@ const {
   settingProgress,
   progressError,
   setReadingProgress,
+  redownloadingId,
+  redownloadError,
+  redownloadChapter,
 } = useSeriesDetail(id)
 
 const {
@@ -534,6 +538,27 @@ function onResetProgress(chapter: number): void {
   void onSetReadingProgress(chapter)
 }
 
+// ---- Chapter re-download (QCAT-343) ----------------------------------------
+// A chapter row's refresh action. No confirm gate on purpose: the re-download
+// deletes nothing — the existing CBZ stays on disk until its replacement lands —
+// so this is a re-queue, not a destructive action. The composable owns the §16
+// trio; the page only relays the click and folds the failure into the screen's
+// single error banner so it can never fail silently.
+function onRedownloadChapter(chapterId: string): void {
+  void redownloadChapter(chapterId)
+}
+
+// The screen renders ONE error banner, so a re-download failure surfaces through
+// it alongside the shared mutation error rather than needing a second surface.
+const screenError = computed<string | null>(() => error.value ?? redownloadError.value)
+
+// Dismissing that banner must clear BOTH sources, or a dismissed re-download
+// error would immediately re-render itself.
+function onDismissError(): void {
+  dismissError()
+  redownloadError.value = null
+}
+
 // A chapter row's "Set as current progress" — the page owns the confirm
 // dialog (mirrors RemoveSourceDialog) since only it learns whether the reset
 // succeeded, and closes it ONLY on success (§16).
@@ -563,22 +588,24 @@ async function onConfirmSetChapterProgress(): Promise<void> {
 // itself (only record/markRead read it), so an empty ref is fine.
 const { resumeTarget } = useReadingProgress(ref<ReaderChapter[]>([]), '')
 
-// Downloaded chapters only, ascending by number (mirrors the reader's own
-// ordering) — the FAB's candidate list. Chapter.pageCount is nullable on the
-// screen type; ReaderChapter wants a real number, so an unset count reads 0
-// (matches useReader's own mapReaderChapter fallback).
-const downloadedChapters = computed<ReaderChapter[]>(() =>
+// Readable chapters only, ascending by number — the FAB's candidate list, built
+// from the SAME `isReadableChapter` gate and the same ordering the reader itself
+// uses, so the FAB can never offer (or skip) a chapter the reader disagrees about.
+// Chapter.pageCount is nullable on the screen type; ReaderChapter wants a real
+// number, so an unset count reads 0 (matches useReader's own mapReaderChapter
+// fallback).
+const readableChapters = computed<ReaderChapter[]>(() =>
   (series.value?.chapters ?? [])
-    .filter((c) => c.state === 'downloaded')
+    .filter((c) => isReadableChapter(c))
     .map((c) => ({ id: c.id, number: c.number, name: c.name, pageCount: c.pageCount ?? 0, read: c.read, lastReadPage: c.lastReadPage }))
     .sort((a, b) => (a.number ?? Number.POSITIVE_INFINITY) - (b.number ?? Number.POSITIVE_INFINITY)),
 )
 
-// Nothing downloaded → no FAB (nothing to resume). Otherwise "Continue" once
-// any downloaded chapter shows progress, else "Start" (never opened).
+// Nothing readable → no FAB (nothing to resume). Otherwise "Continue" once any
+// readable chapter shows progress, else "Start" (never opened).
 const resumeLabel = computed<string | null>(() => {
-  if (downloadedChapters.value.length === 0) return null
-  const hasProgress = downloadedChapters.value.some((c) => c.read || c.lastReadPage > 0)
+  if (readableChapters.value.length === 0) return null
+  const hasProgress = readableChapters.value.some((c) => c.read || c.lastReadPage > 0)
   return hasProgress ? 'Continue' : 'Start'
 })
 
@@ -593,7 +620,7 @@ const resumeLabel = computed<string | null>(() => {
  *  branch instead lands on that chapter's saved `lastReadPage`, its FINAL
  *  page — so the page must be carried explicitly, not recomputed. */
 function onResume(): void {
-  const target = resumeTarget(downloadedChapters.value)
+  const target = resumeTarget(readableChapters.value)
   if (!target.chapterId) return
   void navigateTo(`/series/${id}/read/${target.chapterId}?page=${target.page}`)
 }
@@ -611,7 +638,7 @@ function onResume(): void {
       :category-options="categoryOptions"
       :saving="saving"
       :delete-busy="deleteBusy"
-      :error="error"
+      :error="screenError"
       :dedup-busy="dedupBusy"
       :dedupe-files-busy="dedupeButtonBusy"
       :fractional-cleanup-count="fractionalCount"
@@ -638,6 +665,7 @@ function onResume(): void {
       :track-sync-error="trackSyncError"
       :setting-progress="settingProgress"
       :progress-error="progressError"
+      :redownloading-id="redownloadingId"
       @change-category="setCategory"
       @toggle-monitored="setMonitored"
       @toggle-completed="setCompleted"
@@ -649,7 +677,7 @@ function onResume(): void {
       @request-cover-picker="coverPickerOpen = true"
       @delete-series="deleteSeries"
       @add-source="matchOpen = true"
-      @dismiss-error="dismissError"
+      @dismiss-error="onDismissError"
       @dedup-providers="dedupProviders"
       @dedupe-files="onRequestDedupe"
       @request-fractional-cleanup="fractionalOpen = true"
@@ -665,6 +693,7 @@ function onResume(): void {
       @track-clear-search="onClearSearchTracker"
       @reset-progress="onResetProgress"
       @request-set-chapter-progress="openSetChapterProgress"
+      @redownload-chapter="onRedownloadChapter"
     />
 
     <DedupeCleanupDialog

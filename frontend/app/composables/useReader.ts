@@ -2,7 +2,8 @@
  * useReader — data + windowing layer for the long-strip chapter reader.
  *
  * Loads GET /api/series/{id} (mirrors useSeriesDetail's client call), derives the
- * reader's chapter list — READABLE chapters only (see `READABLE_STATES`),
+ * reader's chapter list — READABLE chapters only (every chapter with a CBZ on
+ * disk; see `isReadableChapter`),
  * number-ascending — and
  * maintains a bounded MOUNTED WINDOW of chapters the ReaderStrip renders. The
  * window grows in BOTH directions: as the reader nears the tail the strip calls
@@ -36,7 +37,7 @@ import { ref, computed } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import { chaptersToUnmountDirectional, MAX_MOUNTED } from '~/components/reader/ReaderStrip.logic'
-import { isReadableState } from '~/utils/readableStates'
+import { isReadableChapter } from '~/utils/readableChapters'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type ChapterDTO = components['schemas']['Chapter']
@@ -70,7 +71,7 @@ export interface ReaderChapter {
   pageVersion?: string
 }
 
-/** Maps a readable ChapterDTO (see `READABLE_STATES`) to the reader's slimmer ReaderChapter. */
+/** Maps a readable ChapterDTO (see `isReadableChapter`) to the reader's slimmer ReaderChapter. */
 function mapReaderChapter(dto: ChapterDTO): ReaderChapter {
   return {
     id: dto.id,
@@ -264,7 +265,7 @@ export function useReader(seriesId: string, startChapterId: string) {
   /**
    * refresh — (re)load the series and rebuild the chapter list + window. The
    * window opens at `startChapterId`; if that chapter is absent (not readable —
-   * see `READABLE_STATES` — or unknown) it falls back to the first readable
+   * see `isReadableChapter` — or unknown) it falls back to the first readable
    * chapter. §16: sets `loading` while in flight and surfaces a real message on
    * failure.
    */
@@ -277,7 +278,7 @@ export function useReader(seriesId: string, startChapterId: string) {
       const detail: SeriesDetailDTO = res.data
       seriesTitle.value = detail.displayName || detail.title || ''
       const list = detail.chapters
-        .filter((ch) => isReadableState(ch.state))
+        .filter((ch) => isReadableChapter(ch))
         .map(mapReaderChapter)
         .sort(byNumberAsc)
       chapters.value = list

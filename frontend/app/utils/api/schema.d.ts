@@ -1337,6 +1337,85 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chapters/{id}/redownload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-download one already-downloaded chapter
+         * @description Re-queues a single DOWNLOADED chapter so the engine fetches it again — the
+         *     remedy when the stored CBZ's bytes are wrong but every state field says the
+         *     chapter is fine.
+         *
+         *     This is NOT a retry and it does not widen the retry rules: a retry gives a
+         *     chapter with NO file another go, so only failed/permanently_failed chapters are
+         *     retryable. Returns 409 for a chapter that is not downloaded.
+         *
+         *     The existing CBZ is KEPT. The chapter's filename is left in place and no file
+         *     is removed: the same source rendering the same chapter produces the same
+         *     filename, so the fresh download overwrites it. A FAILED re-download therefore
+         *     leaves the old file intact rather than nothing, and no orphan is created.
+         *
+         *     On success this also triggers an immediate download cycle (the same coalescing
+         *     trigger as POST /api/downloads/run).
+         */
+        post: operations["redownloadChapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/downloads/redownload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview a filtered bulk re-download
+         * @description Reports how many downloaded chapters the filter would re-queue, and the honest
+         *     throughput cost of doing it, WITHOUT mutating anything.
+         *
+         *     The filter is deliberately blind: it does not attempt to detect which files are
+         *     damaged. Image scrambling is a permutation of tiles, so it preserves every
+         *     pixel, the histogram, the dimensions and the edge count — every cheap image
+         *     statistic is permutation-invariant and cannot see it even in principle.
+         *
+         *     Selection keys on the chapter's `download_date` (the last time the CBZ was
+         *     WRITTEN, which a convergence upgrade updates), never on its first-download
+         *     timestamp. A downloaded chapter carrying no download_date is not matched.
+         */
+        get: operations["previewRedownload"];
+        put?: never;
+        /**
+         * Apply a filtered bulk re-download
+         * @description Re-queues every downloaded chapter the filter matches, applying the
+         *     per-chapter re-download semantics set-wise. The matching set is RE-COMPUTED
+         *     from the filter rather than trusting ids the preview handed out.
+         *
+         *     Nothing is deleted: every CBZ stays on disk until its replacement lands, so a
+         *     failed re-download leaves the old file readable.
+         *
+         *     Throughput is unchanged — the re-queued chapters drain at the engine's normal
+         *     per-source batch, which is the anti-ban throttle. A large sweep is meant to
+         *     take many cycles; see the GET preview for the estimate.
+         *
+         *     On success this also triggers an immediate download cycle.
+         */
+        post: operations["redownloadFiltered"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chapters/{id}/progress": {
         parameters: {
             query?: never;
@@ -3196,6 +3275,18 @@ export interface components {
         RetryAllResult: {
             /** @description Number of chapters reset back to wanted by the bulk retry. */
             retried: number;
+        };
+        RedownloadPreview: {
+            /** @description How many downloaded chapters the filter selects. */
+            matched: number;
+            /** @description How many of ONE source's chapters a download cycle dispatches (the engine's real per-source batch). 0 when the server cannot resolve it. */
+            perCycle: number;
+            /** @description `matched` spread over `perCycle`, rounded up. A FLOOR, not a promise — the per-source batch is shared with the convergence-upgrade pass, and a cooled-down source dispatches nothing at all. 0 when `perCycle` is 0. */
+            estimatedCycles: number;
+        };
+        RedownloadResult: {
+            /** @description Number of downloaded chapters re-queued by the bulk re-download. No CBZ and no database row was deleted to produce it. */
+            requeued: number;
         };
         DedupeFilesResult: {
             /** @description Number of duplicates resolved by the owner-triggered dedupe-files sweep: superseded/orphan duplicate CBZ files removed from disk PLUS engine-switch duplicate chapter rows merged (a negative-numeric legacy row folded into its name-keyed canonical twin). Winning files and canonical rows are never removed. */
@@ -5111,7 +5202,23 @@ export interface components {
         };
     };
     responses: never;
-    parameters: never;
+    parameters: {
+        /**
+         * @description The canonical source name — the same key the engine source strip and the circuit breaker use. Blank is rejected: the filter fails closed rather than sweeping the whole library.
+         * @example Comix
+         */
+        RedownloadSource: string;
+        /**
+         * @description Narrow to ONE (source, scanlator) provider. PRESENCE-BASED: present (even empty) matches that exact scanlator, so `?scanlator=` addresses the source's all-scanlators provider specifically; omit the parameter entirely to match every scanlator of the source.
+         * @example Valir Scans
+         */
+        RedownloadScanlator: string;
+        /**
+         * @description Match chapters whose CBZ was written at or after this instant, compared against the chapter's `download_date` (which a rewrite updates). Never the first-download timestamp, which records only the first arrival.
+         * @example 2026-07-25T08:39:52Z
+         */
+        RedownloadSince: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -7950,6 +8057,171 @@ export interface operations {
             };
             /** @description Chapter is not in a retryable state (only failed/permanently_failed may be retried). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    redownloadChapter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Chapter UUID. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chapter re-queued; its CBZ is untouched. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Malformed chapter id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No chapter with that id. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Chapter is not downloaded, so there is no stored file to replace. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    previewRedownload: {
+        parameters: {
+            query: {
+                /**
+                 * @description The canonical source name — the same key the engine source strip and the circuit breaker use. Blank is rejected: the filter fails closed rather than sweeping the whole library.
+                 * @example Comix
+                 */
+                source: components["parameters"]["RedownloadSource"];
+                /**
+                 * @description Narrow to ONE (source, scanlator) provider. PRESENCE-BASED: present (even empty) matches that exact scanlator, so `?scanlator=` addresses the source's all-scanlators provider specifically; omit the parameter entirely to match every scanlator of the source.
+                 * @example Valir Scans
+                 */
+                scanlator?: components["parameters"]["RedownloadScanlator"];
+                /**
+                 * @description Match chapters whose CBZ was written at or after this instant, compared against the chapter's `download_date` (which a rewrite updates). Never the first-download timestamp, which records only the first arrival.
+                 * @example 2026-07-25T08:39:52Z
+                 */
+                since: components["parameters"]["RedownloadSince"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description What the filter would re-queue, and what it would cost. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedownloadPreview"];
+                };
+            };
+            /** @description A missing/blank source, or a missing/unparseable since. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    redownloadFiltered: {
+        parameters: {
+            query: {
+                /**
+                 * @description The canonical source name — the same key the engine source strip and the circuit breaker use. Blank is rejected: the filter fails closed rather than sweeping the whole library.
+                 * @example Comix
+                 */
+                source: components["parameters"]["RedownloadSource"];
+                /**
+                 * @description Narrow to ONE (source, scanlator) provider. PRESENCE-BASED: present (even empty) matches that exact scanlator, so `?scanlator=` addresses the source's all-scanlators provider specifically; omit the parameter entirely to match every scanlator of the source.
+                 * @example Valir Scans
+                 */
+                scanlator?: components["parameters"]["RedownloadScanlator"];
+                /**
+                 * @description Match chapters whose CBZ was written at or after this instant, compared against the chapter's `download_date` (which a rewrite updates). Never the first-download timestamp, which records only the first arrival.
+                 * @example 2026-07-25T08:39:52Z
+                 */
+                since: components["parameters"]["RedownloadSince"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number of chapters re-queued. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedownloadResult"];
+                };
+            };
+            /** @description A missing/blank source, or a missing/unparseable since. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

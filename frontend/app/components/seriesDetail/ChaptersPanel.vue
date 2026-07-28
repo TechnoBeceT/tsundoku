@@ -10,8 +10,13 @@ import type { Chapter } from '../screens/seriesDetail.types'
  * asc/desc direction toggle + the total-count pill over a scrolling list of
  * `ChapterRow`s. The chapter list arrives ALREADY sorted latest-first
  * (descending) from the screen (`SeriesDetail.sortedChapters`); the panel
- * forwards each row's `read` (open in the reader) and `set-current` (QCAT-242
- * "Set as current progress", carries the chapter NUMBER) up to the screen.
+ * forwards each row's `read` (open in the reader), `set-current` (QCAT-242
+ * "Set as current progress", carries the chapter NUMBER) and `redownload`
+ * (QCAT-343, carries the chapter UUID) up to the screen.
+ *
+ * `redownloadingId` is the §16 in-flight marker for the re-download: the panel
+ * matches it against each row's id so exactly the row being re-downloaded shows
+ * its busy state, and every other row stays interactive.
  *
  * The direction toggle is Komikku-parity, local UI-only state (not persisted):
  * it defaults to DESCENDING (latest on top — the incoming order) and flipping
@@ -27,18 +32,24 @@ import type { Chapter } from '../screens/seriesDetail.types'
  * asymmetric-pair case the owner ratified (§2.6.2, "chapters and sources
  * require inner scrolling").
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The chapters to list, sorted latest-first (descending) upstream. */
   chapters: Chapter[]
   /** Total chapter count shown in the header pill. */
   total: number
-}>()
+  /** The chapter UUID whose re-download is in flight, or null when none is. */
+  redownloadingId?: string | null
+}>(), {
+  redownloadingId: null,
+})
 
 const emit = defineEmits<{
   /** A chapter row's "Read" was clicked (carries the chapter UUID). */
   read: [chapterId: string]
   /** A chapter row's "Set as current progress" was clicked (carries the chapter NUMBER). */
   'set-current': [chapterNumber: number]
+  /** A chapter row's re-download was clicked (carries the chapter UUID). */
+  redownload: [chapterId: string]
 }>()
 
 // Local display direction — defaults to DESCENDING (the incoming order,
@@ -67,8 +78,10 @@ function toggleDir(): void {
       v-for="ch in displayedChapters"
       :key="ch.chapterKey"
       :chapter="ch"
+      :redownloading="redownloadingId === ch.id"
       @read="emit('read', $event)"
       @set-current="emit('set-current', $event)"
+      @redownload="emit('redownload', $event)"
     />
   </PanelCard>
 </template>

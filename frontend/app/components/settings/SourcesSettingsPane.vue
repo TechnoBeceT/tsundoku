@@ -5,8 +5,10 @@ import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import TextField from '../ui/TextField.vue'
 import LibraryDedupDialog from './LibraryDedupDialog.vue'
+import RedownloadDialog from './RedownloadDialog.vue'
 import SettingRow from './SettingRow.vue'
 import type { SaveState, SourcesSettings } from '../screens/settings.types'
+import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
 
 /**
  * SourcesSettingsPane — the anti-IP-block runtime knobs (source-politeness
@@ -34,7 +36,16 @@ import type { SaveState, SourcesSettings } from '../screens/settings.types'
  * count of series the finished sweep had to skip because a merge was already
  * running on them — its own actionable line, not part of the summary sentence.
  *
- * Emits `save` with the full edited copy, and `dedupAll` to trigger the sweep.
+ * A third "Re-download from a source" card COMPOSES RedownloadDialog: the
+ * owner-triggered, previewed bulk re-queue of already-downloaded chapters from
+ * one source (`GET`/`POST /api/downloads/redownload`, see useRedownload), also
+ * gated behind the shared ConfirmModal (QCAT-222) because it sweeps the whole
+ * library. Its §16 state is owned by the parent, same as the dedup trio above.
+ * Nothing is deleted by it — every existing CBZ stays on disk until its
+ * replacement lands.
+ *
+ * Emits `save` with the full edited copy, `dedupAll` to trigger the sweep, and
+ * `redownloadPreview` / `redownload` / `redownloadReset` for the re-download.
  */
 const props = withDefaults(defineProps<{
   /** The runtime-editable warm-up/politeness knobs. */
@@ -49,12 +60,30 @@ const props = withDefaults(defineProps<{
   dedupAllError?: string | null
   /** Series the last dedup sweep skipped because a merge was already running. */
   dedupAllSkippedBusy?: number
+  /** The last bulk-re-download preview, or null when none is loaded. */
+  redownloadPreview?: RedownloadPreview | null
+  /** True while the re-download preview request is in flight. */
+  redownloadPreviewBusy?: boolean
+  /** A failed-preview message for the re-download, or null. */
+  redownloadPreviewError?: string | null
+  /** True while the re-download apply request is in flight. */
+  redownloadApplying?: boolean
+  /** Success line from the last re-download apply, or null. */
+  redownloadMessage?: string | null
+  /** Failure line from the last re-download apply, or null. */
+  redownloadError?: string | null
 }>(), {
   save: () => ({ status: 'idle' }),
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
   dedupAllSkippedBusy: 0,
+  redownloadPreview: null,
+  redownloadPreviewBusy: false,
+  redownloadPreviewError: null,
+  redownloadApplying: false,
+  redownloadMessage: null,
+  redownloadError: null,
 })
 
 const emit = defineEmits<{
@@ -62,6 +91,12 @@ const emit = defineEmits<{
   save: [settings: SourcesSettings]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   dedupAll: []
+  /** Load the bulk-re-download preview for this filter (reads only). */
+  redownloadPreview: [filter: RedownloadFilter]
+  /** Apply the bulk re-download (reachable only via its ConfirmModal). */
+  redownload: [filter: RedownloadFilter]
+  /** The re-download filter changed — discard the loaded preview/outcome. */
+  redownloadReset: []
 }>()
 
 // Deep-clone so the local copy is fully detached from the prop object.
@@ -134,6 +169,23 @@ function onSave() {
       :error="dedupAllError"
       :skipped-busy="dedupAllSkippedBusy"
       @confirm="emit('dedupAll')"
+    />
+  </SurfaceCard>
+
+  <SurfaceCard
+    title="Re-download from a source"
+    sub="Fetch already-downloaded chapters again from one source — for when its stored files turn out to be wrong. Nothing is deleted: each file stays on disk until its replacement lands."
+  >
+    <RedownloadDialog
+      :preview="redownloadPreview"
+      :preview-busy="redownloadPreviewBusy"
+      :preview-error="redownloadPreviewError"
+      :applying="redownloadApplying"
+      :apply-message="redownloadMessage"
+      :apply-error="redownloadError"
+      @preview="emit('redownloadPreview', $event)"
+      @confirm="emit('redownload', $event)"
+      @reset="emit('redownloadReset')"
     />
   </SurfaceCard>
 </template>

@@ -23,6 +23,7 @@
  *   useExtensions()       → extensions + repos + mutations (no longer the source of
  *                           extCheckInterval — that moved to useSettings)
  *   useLibraryMaintenance() → dedupAllBusy/Message/Error/SkippedBusy + dedupAllProviders
+ *   useRedownload()       → the previewed bulk re-download (Sources pane)
  *                           (library-wide duplicate-source dedup sweep)
  *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
  *                           + connect/loginCredentials/logout (Trackers pane)
@@ -65,6 +66,7 @@
  *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
  *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
  *   :dedup-all-skipped-busy — dedupAllSkippedBusy from useLibraryMaintenance
+ *   :redownload-*         — the useRedownload §16 state (preview + apply)
  *   :trackers             — trackers from useTrackers
  *   :tracker-action       — { busyId: actionBusyId, error: actionError } from useTrackers
  *   :misconfigured-tracker-ids — [...misconfigured] from useTrackers
@@ -98,6 +100,9 @@
  *   @update:ext-check-interval   → saveExtensionCheckInterval
  *   @save-sources-settings       → saveSourcesSettings
  *   @dedup-all                   → dedupAllProviders
+ *   @redownload-preview          → loadRedownloadPreview (reads only)
+ *   @redownload                  → applyRedownload
+ *   @redownload-reset            → resetRedownload
  *   @connect-tracker             → onConnectTracker (authUrl() → full-tab redirect;
  *                                   stashes the tracker id first — see trackerCallback.ts)
  *   @login-tracker-credentials   → onLoginTrackerCredentials
@@ -191,6 +196,21 @@ const {
   dedupAllSkippedBusy,
   dedupAllProviders,
 } = useLibraryMaintenance()
+
+// The previewed bulk re-download (Sources pane). Kept in its own composable
+// because it is a two-step read-then-write, unlike the fire-and-forget dedup
+// sweep beside it.
+const {
+  preview: redownloadPreview,
+  previewBusy: redownloadPreviewBusy,
+  previewError: redownloadPreviewError,
+  applying: redownloadApplying,
+  applyMessage: redownloadMessage,
+  applyError: redownloadError,
+  loadPreview: loadRedownloadPreview,
+  apply: applyRedownload,
+  reset: resetRedownload,
+} = useRedownload()
 
 const {
   trackers,
@@ -358,6 +378,12 @@ const loading = computed(
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
       :dedup-all-skipped-busy="dedupAllSkippedBusy"
+      :redownload-preview="redownloadPreview"
+      :redownload-preview-busy="redownloadPreviewBusy"
+      :redownload-preview-error="redownloadPreviewError"
+      :redownload-applying="redownloadApplying"
+      :redownload-message="redownloadMessage"
+      :redownload-error="redownloadError"
       :trackers="trackers"
       :tracker-action="trackerAction"
       :misconfigured-tracker-ids="misconfiguredTrackerIds"
@@ -404,6 +430,9 @@ const loading = computed(
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
       @dedup-all="dedupAllProviders"
+      @redownload-preview="loadRedownloadPreview"
+      @redownload="applyRedownload"
+      @redownload-reset="resetRedownload"
       @connect-tracker="onConnectTracker"
       @login-tracker-credentials="onLoginTrackerCredentials"
       @logout-tracker="logoutTracker"

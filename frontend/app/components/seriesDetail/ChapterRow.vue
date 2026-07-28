@@ -3,13 +3,15 @@ import StatusBadge from '../ui/StatusBadge.vue'
 import AppButton from '../ui/AppButton.vue'
 import IconButton from '../ui/IconButton.vue'
 import type { Chapter } from '../screens/seriesDetail.types'
-import { isReadableState } from '~/utils/readableStates'
+import { isReadableChapter } from '~/utils/readableChapters'
 import { relativeTime, absoluteTime } from '~/utils/timeFormat'
 
 /**
  * ChapterRow — one row in the Series-Detail chapter table: the (display) number,
  * the resolved chapter name with its CBZ filename beneath, an optional page-count,
- * a "Read" button for on-disk chapters, a "Set as current progress" action
+ * a "Read" button for chapters with a CBZ on disk (`isReadableChapter` — the file,
+ * never the state, so a chapter awaiting or failing a re-download stays readable
+ * exactly as the backend serves it), a "Set as current progress" action
  * (QCAT-242), and a `StatusBadge` for the download state. The chapter arrives
  * via the `chapter` prop; the row emits `read` (the chapter UUID) when the
  * owner opens it in the reader, and `set-current` (the chapter's NUMBER) when
@@ -34,18 +36,40 @@ import { relativeTime, absoluteTime } from '~/utils/timeFormat'
  * jumps every bound tracker), so the row only EMITS the request; the actual
  * confirm + mutation live upstream (the page owns `SetChapterProgressDialog`,
  * mirroring the Remove-source confirm dialog's page-owned pattern).
+ *
+ * Re-download (QCAT-343) sits to the RIGHT of the "On disk" badge and renders
+ * ONLY for a `downloaded` chapter — the one state the backend accepts, since a
+ * re-download replaces a file that exists. It is deliberately NOT a retry: retry
+ * is for chapters with no file, and this row never offers it.
+ * `redownloading` is the §16 in-flight flag (the page owns the request), which
+ * disables the button and swaps its icon for a spinner glyph so a double-click
+ * cannot queue the fetch twice.
+ *
+ * GOTCHA: the existing CBZ is NOT deleted when this fires — the chapter goes back
+ * to "Queued" while its old file stays readable until the replacement lands. Do
+ * not label this control as destructive; it removes nothing.
  */
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** The chapter to render (identity is `chapterKey`, not the number). */
   chapter: Chapter
-}>()
+  /** True while THIS chapter's re-download request is in flight (§16). */
+  redownloading?: boolean
+}>(), {
+  redownloading: false,
+})
 
 const emit = defineEmits<{
   /** Open this chapter in the reader (carries the chapter UUID). */
   read: [chapterId: string]
   /** "Set as current progress" was picked — carries the chapter's display NUMBER. */
   'set-current': [chapterNumber: number]
+  /** Re-download this chapter over its existing CBZ (carries the chapter UUID). */
+  redownload: [chapterId: string]
 }>()
+
+// Only a downloaded chapter has a stored CBZ to replace; every other state is a
+// 409 at the API, so the control is not offered.
+const canRedownload = (): boolean => props.chapter.state === 'downloaded'
 
 // Guards the emit: the button itself is v-if'd on a known number, but the
 // handler re-checks so a null number can never slip a NaN target upstream.
@@ -100,7 +124,7 @@ const releasedTitle = (): string => absoluteTime(props.chapter.releaseDate)
       <span v-if="released()" class="chapter__released" :title="releasedTitle()">{{ released() }}</span>
       <span v-if="pages()" class="chapter__pages">{{ pages() }}</span>
       <AppButton
-        v-if="isReadableState(chapter.state)"
+        v-if="isReadableChapter(chapter)"
         variant="mini"
         size="sm"
         @click="emit('read', chapter.id)"
@@ -118,6 +142,17 @@ const releasedTitle = (): string => absoluteTime(props.chapter.releaseDate)
       </IconButton>
       <!-- eslint-enable vue/attribute-hyphenation -->
       <StatusBadge :state="chapter.state" />
+      <!-- eslint-disable vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
+      <IconButton
+        v-if="canRedownload()"
+        size="sm"
+        :disabled="redownloading"
+        :ariaLabel="`Re-download chapter ${number()}`"
+        @click="emit('redownload', chapter.id)"
+      >
+        <Icon :name="redownloading ? 'lucide:loader-circle' : 'lucide:refresh-cw'" width="14" height="14" :class="{ 'chapter__spin': redownloading }" />
+      </IconButton>
+      <!-- eslint-enable vue/attribute-hyphenation -->
     </div>
   </div>
 </template>
@@ -203,6 +238,24 @@ const releasedTitle = (): string => absoluteTime(props.chapter.releaseDate)
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--faint);
+}
+
+/* The re-download button's in-flight glyph. Honours the reduced-motion
+   preference — the disabled state already communicates "busy" without it. */
+.chapter__spin {
+  animation: chapter-spin 1s linear infinite;
+}
+
+@keyframes chapter-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chapter__spin {
+    animation: none;
+  }
 }
 
 /* Release date — a subtle "3d ago" marker (absolute date on hover). Muted so it

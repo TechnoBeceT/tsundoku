@@ -35,6 +35,7 @@ import type {
   TrackerStatus,
   UpgradeStep,
 } from './settings.types'
+import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
 
 /**
  * Settings — the single-owner control panel. A thin container: a sticky sidebar
@@ -126,6 +127,18 @@ withDefaults(defineProps<{
   dedupAllError?: string | null
   /** Series the last dedup sweep skipped because a merge was already running. */
   dedupAllSkippedBusy?: number
+  /** The last bulk-re-download preview (Sources pane), or null when none is loaded. */
+  redownloadPreview?: RedownloadPreview | null
+  /** True while the re-download preview request is in flight. */
+  redownloadPreviewBusy?: boolean
+  /** A failed-preview message for the re-download, or null. */
+  redownloadPreviewError?: string | null
+  /** True while the re-download apply request is in flight. */
+  redownloadApplying?: boolean
+  /** Success line from the last re-download apply, or null. */
+  redownloadMessage?: string | null
+  /** Failure line from the last re-download apply, or null. */
+  redownloadError?: string | null
   /** Every registered tracker's connect status (2g, Trackers pane). */
   trackers?: TrackerStatus[]
   /** §16 state of the one in-flight tracker connect/login/logout action. */
@@ -193,6 +206,12 @@ withDefaults(defineProps<{
   dedupAllMessage: null,
   dedupAllError: null,
   dedupAllSkippedBusy: 0,
+  redownloadPreview: null,
+  redownloadPreviewBusy: false,
+  redownloadPreviewError: null,
+  redownloadApplying: false,
+  redownloadMessage: null,
+  redownloadError: null,
   trackers: () => [],
   trackerAction: () => ({ busyId: null }),
   misconfiguredTrackerIds: () => [],
@@ -262,6 +281,12 @@ const emit = defineEmits<{
   'save-sources-settings': [settings: SourcesSettings]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
+  /** Load the bulk-re-download preview for this filter (reads only). */
+  'redownload-preview': [filter: RedownloadFilter]
+  /** Apply the bulk re-download (reachable only via its ConfirmModal). */
+  'redownload': [filter: RedownloadFilter]
+  /** The re-download filter changed — discard the loaded preview/outcome. */
+  'redownload-reset': []
   /** The OAuth "Connect" button was pressed for a tracker id. */
   'connect-tracker': [trackerId: number]
   /** A credential sign-in form was submitted — carries the tracker id + pair. */
@@ -373,8 +398,17 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :dedup-all-message="dedupAllMessage"
             :dedup-all-error="dedupAllError"
             :dedup-all-skipped-busy="dedupAllSkippedBusy"
+            :redownload-preview="redownloadPreview"
+            :redownload-preview-busy="redownloadPreviewBusy"
+            :redownload-preview-error="redownloadPreviewError"
+            :redownload-applying="redownloadApplying"
+            :redownload-message="redownloadMessage"
+            :redownload-error="redownloadError"
             @save="emit('save-sources-settings', $event)"
             @dedup-all="emit('dedup-all')"
+            @redownload-preview="emit('redownload-preview', $event)"
+            @redownload="emit('redownload', $event)"
+            @redownload-reset="emit('redownload-reset')"
           />
         </div>
 

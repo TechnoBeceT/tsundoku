@@ -25,9 +25,13 @@ const base: Chapter = {
   releaseDate: null,
 }
 
-function render(over: Partial<Chapter> = {}) {
-  return mount(ChapterRow, { props: { chapter: { ...base, ...over } } })
+function render(over: Partial<Chapter> = {}, extra: { redownloading?: boolean } = {}) {
+  return mount(ChapterRow, { props: { chapter: { ...base, ...over }, ...extra } })
 }
+
+/** The re-download action, found by its accessible name. */
+const redownloadButton = (w: ReturnType<typeof render>) =>
+  w.findAll('button').find((b) => b.attributes('aria-label')?.startsWith('Re-download chapter'))
 
 describe('ChapterRow — read state', () => {
   it('dims a read chapter and shows no unread dot', () => {
@@ -61,9 +65,11 @@ describe('ChapterRow — read state', () => {
 })
 
 /**
- * The "Read" button gates on the reader's READABLE_STATES (a CBZ is on disk),
- * NOT `downloaded` alone: `upgrade_available`/`upgrading` keep their old CBZ on
- * disk while a better source is pending, so the owner can still read them.
+ * The "Read" button gates on `isReadableChapter` — the presence of a CBZ, NOT the
+ * state. `upgrade_available`/`upgrading` keep their old CBZ while a better source
+ * is pending, and a re-download (QCAT-343) parks the chapter back at `wanted`
+ * while deliberately KEEPING the file, so all of them stay readable; a chapter
+ * with no filename never was.
  */
 describe('ChapterRow — read button visibility', () => {
   const readButton = (over: Partial<Chapter>) =>
@@ -81,6 +87,14 @@ describe('ChapterRow — read button visibility', () => {
     expect(readButton({ state: 'upgrading' })?.exists()).toBe(true)
   })
 
+  it('keeps the read button while a re-download is pending (wanted, but the CBZ was kept)', () => {
+    expect(readButton({ state: 'wanted', filename: 'kept.cbz' })?.exists()).toBe(true)
+  })
+
+  it('keeps the read button when a re-download failed for good (the old CBZ is still there)', () => {
+    expect(readButton({ state: 'permanently_failed', filename: 'kept.cbz' })?.exists()).toBe(true)
+  })
+
   it('emits `read` with the chapter id when the button is clicked', async () => {
     const w = render({ state: 'upgrade_available' })
     await w.findAll('button').find((b) => b.text() === 'Read')!.trigger('click')
@@ -88,12 +102,16 @@ describe('ChapterRow — read button visibility', () => {
     expect(w.emitted('read')?.[0]).toEqual(['chapter-1'])
   })
 
-  it('hides the read button for a non-readable state (wanted)', () => {
-    expect(readButton({ state: 'wanted' })).toBeUndefined()
+  it('hides the read button for a chapter that was never downloaded (wanted, no file)', () => {
+    expect(readButton({ state: 'wanted', filename: '' })).toBeUndefined()
   })
 
-  it('hides the read button for a non-readable state (failed)', () => {
-    expect(readButton({ state: 'failed' })).toBeUndefined()
+  it('hides the read button for a failed chapter with no file', () => {
+    expect(readButton({ state: 'failed', filename: '' })).toBeUndefined()
+  })
+
+  it('hides the read button once split-part suppression cleared the filename', () => {
+    expect(readButton({ state: 'superseded', filename: '' })).toBeUndefined()
   })
 })
 
@@ -111,4 +129,54 @@ describe('ChapterRow — release date (QCAT-297)', () => {
 
     expect(w.find('.chapter__released').exists()).toBe(false)
   })
+})
+
+/**
+ * Re-download (QCAT-343) — the row's newest control, to the RIGHT of the state
+ * badge.
+ *
+ * It is offered ONLY for `downloaded`: the API answers 409 for anything else,
+ * because a re-download replaces a file that exists. Deliberately NARROWER than
+ * the "Read" button, which also covers `upgrade_available`/`upgrading` — those
+ * keep an old CBZ on disk but are mid-convergence, and the engine owns them.
+ *
+ * The row only EMITS; the page runs the mutation. There is no confirm gate and
+ * none is wanted — the re-download deletes nothing.
+ */
+describe('ChapterRow — re-download', () => {
+  it('offers the action on a downloaded chapter, to the right of the state badge', () => {
+    const w = render({ state: 'downloaded' })
+    const btn = redownloadButton(w)
+
+    expect(btn).toBeTruthy()
+    // Order within the controls cluster is part of the contract: badge, then action.
+    const controls = w.find('.chapter__controls').element
+    const nodes = Array.from(controls.children)
+    const badgeIndex = nodes.findIndex((n) => n.classList.contains('badge'))
+    const buttonIndex = nodes.findIndex((n) => n === btn!.element || n.contains(btn!.element))
+    // Both must actually be found — a -1 on either side would make the
+    // comparison below pass for the wrong reason.
+    expect(badgeIndex).toBeGreaterThanOrEqual(0)
+    expect(buttonIndex).toBeGreaterThan(badgeIndex)
+  })
+
+  it('emits `redownload` with the chapter id', async () => {
+    const w = render({ state: 'downloaded' })
+    await redownloadButton(w)!.trigger('click')
+
+    expect(w.emitted('redownload')?.[0]).toEqual(['chapter-1'])
+  })
+
+  it('disables the action while that chapter\'s re-download is in flight (§16)', () => {
+    const w = render({ state: 'downloaded' }, { redownloading: true })
+
+    expect(redownloadButton(w)!.attributes('disabled')).toBeDefined()
+  })
+
+  it.each(['wanted', 'failed', 'permanently_failed', 'upgrade_available', 'upgrading'] as const)(
+    'hides the action for %s — only a downloaded chapter has a stored file to replace',
+    (state) => {
+      expect(redownloadButton(render({ state }))).toBeUndefined()
+    },
+  )
 })

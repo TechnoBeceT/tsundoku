@@ -68,3 +68,31 @@ describe('ChaptersPanel — direction toggle', () => {
     expect(w.emitted('set-current')).toBeUndefined()
   })
 })
+
+/**
+ * Re-download relay (QCAT-343). The panel owns no mutation: it forwards the
+ * row's request up and marks exactly the row named by `redownloadingId` as busy,
+ * so one chapter's in-flight fetch never freezes the rest of the table.
+ */
+describe('ChaptersPanel — re-download relay', () => {
+  it('forwards a row\'s `redownload` up with the chapter id', async () => {
+    const w = mount(ChaptersPanel, { props: { chapters, total: 3 } })
+    w.findAllComponents(ChapterRow)[1]!.vm.$emit('redownload', 'c2')
+    await w.vm.$nextTick()
+
+    expect(w.emitted('redownload')?.[0]).toEqual(['c2'])
+  })
+
+  it('marks ONLY the in-flight chapter as re-downloading', () => {
+    const w = mount(ChaptersPanel, { props: { chapters, total: 3, redownloadingId: 'c2' } })
+    const busy = w.findAllComponents(ChapterRow).map((r) => r.props('redownloading'))
+
+    expect(busy).toEqual([false, true, false])
+  })
+
+  it('marks no chapter when nothing is in flight', () => {
+    const w = mount(ChaptersPanel, { props: { chapters, total: 3, redownloadingId: null } })
+
+    expect(w.findAllComponents(ChapterRow).every((r) => r.props('redownloading') === false)).toBe(true)
+  })
+})

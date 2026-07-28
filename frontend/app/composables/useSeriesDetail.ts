@@ -163,6 +163,11 @@ export function useSeriesDetail(id: string) {
   const dedupMessage = ref<string | null>(null)
   const settingProgress = ref(false)
   const progressError = ref<string | null>(null)
+  // The chapter whose re-download is in flight, and the reason the last one
+  // failed — per-CHAPTER rather than a shared boolean so only the clicked row
+  // shows a busy state while the rest of the table stays interactive (§16).
+  const redownloadingId = ref<string | null>(null)
+  const redownloadError = ref<string | null>(null)
 
   async function refresh(): Promise<void> {
     pending.value = true
@@ -615,6 +620,42 @@ export function useSeriesDetail(id: string) {
     }
   }
 
+  /**
+   * Re-downloads ONE already-downloaded chapter (QCAT-343, `POST
+   * /api/chapters/{id}/redownload`) — the remedy when a stored CBZ's bytes are
+   * wrong but every state field says the chapter is fine.
+   *
+   * It is NOT a retry: a retry is for a chapter with no file, and the backend
+   * answers 409 for anything that is not `downloaded`. It deletes nothing —
+   * the existing CBZ stays on disk until the replacement lands, so a failed
+   * re-download leaves the old file readable rather than nothing.
+   *
+   * On success the series is refetched so the row reflects its new queued state
+   * straight away. Resolves true/false; a failure sets `redownloadError` to the
+   * backend's own message (never swallowed, never generic). Uses its OWN
+   * busy/error refs rather than the shared `mutate` wrapper so a re-download can
+   * never fight an unrelated inline save for the same flag.
+   */
+  const redownloadChapter = async (chapterId: string): Promise<boolean> => {
+    redownloadingId.value = chapterId
+    redownloadError.value = null
+    try {
+      const res = await apiClient.POST('/api/chapters/{id}/redownload', {
+        params: { path: { id: chapterId } },
+      })
+      if (res.error) throw new Error(res.error.message ?? 'Failed to re-download the chapter')
+      await refresh()
+      return true
+    }
+    catch (err) {
+      redownloadError.value = err instanceof Error ? err.message : 'Failed to re-download the chapter'
+      return false
+    }
+    finally {
+      redownloadingId.value = null
+    }
+  }
+
   const dismissError = (): void => { error.value = null }
 
   /**
@@ -664,6 +705,9 @@ export function useSeriesDetail(id: string) {
     fetchFractionalCleanup,
     removeFractionalChapters,
     setReadingProgress,
+    redownloadingId,
+    redownloadError,
+    redownloadChapter,
     dismissError,
     refresh,
     reseed,

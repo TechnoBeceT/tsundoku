@@ -2,9 +2,9 @@
  * useReader — the reader's data + windowing layer.
  *
  * Pins:
- *   1. The chapter list is READABLE-only (downloaded / upgrade_available /
- *      upgrading — all keep a valid on-disk CBZ), number-ascending (null numbers
- *      last).
+ *   1. The chapter list is READABLE-only — every chapter that has a CBZ on disk,
+ *      whatever its state (see `isReadableChapter`) — number-ascending (null
+ *      numbers last).
  *   2. The mounted window opens at `startChapterId` (a single chapter), and falls
  *      back to the first chapter when the start id is absent.
  *   3. `onNearTail` appends the next chapter and unmounts far-above chapters so
@@ -48,12 +48,13 @@ const detail = {
   ],
 }
 
-// A series whose chapters cover EVERY chapter state, to pin the readable-state
-// filter: a chapter mid/pending upgrade keeps a valid on-disk CBZ (the old
-// source's file survives until the new one lands), so `upgrade_available` and
-// `upgrading` must be listed alongside `downloaded`; every other state (wanted,
-// downloading, failed, permanently_failed, superseded, ignored) is excluded.
-const readableStatesDetail = {
+// A series whose chapters cover EVERY chapter state, to pin the readable filter:
+// readability follows the FILE, not the state. A chapter mid/pending upgrade keeps
+// a valid on-disk CBZ (the old source's file survives until the new one lands),
+// and a re-download (QCAT-343) parks a chapter back at `wanted` — or leaves it at
+// `permanently_failed` — while deliberately KEEPING its CBZ. All of those stay
+// listed; the same states with no filename are excluded.
+const readableDetail = {
   id: 'series-1',
   chapters: [
     { id: 'ch-dl', chapterKey: 'r1', number: 1, name: 'Downloaded', state: 'downloaded', filename: 'r1.cbz', pageCount: 10, read: false, lastReadPage: 0, pageVersion: 'rv1' },
@@ -65,6 +66,8 @@ const readableStatesDetail = {
     { id: 'ch-permafailed', chapterKey: 'r7', number: 7, name: 'Perma-failed', state: 'permanently_failed', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
     { id: 'ch-superseded', chapterKey: 'r8', number: 8, name: 'Superseded', state: 'superseded', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
     { id: 'ch-ignored', chapterKey: 'r9', number: 9, name: 'Ignored', state: 'ignored', filename: '', pageCount: null, read: false, lastReadPage: 0, pageVersion: '' },
+    { id: 'ch-redl-pending', chapterKey: 'r10', number: 10, name: 'Re-download pending', state: 'wanted', filename: 'r10.cbz', pageCount: 16, read: false, lastReadPage: 0, pageVersion: 'rv10' },
+    { id: 'ch-redl-failed', chapterKey: 'r11', number: 11, name: 'Re-download failed', state: 'permanently_failed', filename: 'r11.cbz', pageCount: 18, read: false, lastReadPage: 0, pageVersion: 'rv11' },
   ],
 }
 
@@ -74,7 +77,7 @@ vi.mock('~/utils/api/client', () => ({
       if (path === '/api/series/{id}') {
         if (!nextOk) return Promise.resolve({ data: null, error: { message: 'boom' }, response: new Response(null, { status: 500 }) })
         if (nextEmpty) return Promise.resolve({ data: emptyDetail, error: null, response: new Response() })
-        if (nextReadable) return Promise.resolve({ data: readableStatesDetail, error: null, response: new Response() })
+        if (nextReadable) return Promise.resolve({ data: readableDetail, error: null, response: new Response() })
         return Promise.resolve({ data: detail, error: null, response: new Response() })
       }
       return Promise.resolve({ data: null, error: null, response: new Response() })
@@ -103,14 +106,30 @@ describe('useReader — chapter list', () => {
     expect(one).toMatchObject({ pageCount: 10, read: true, lastReadPage: 9, name: 'One' })
   })
 
-  it('also lists upgrade_available and upgrading chapters (their old CBZ is still on disk), excluding every non-readable state', async () => {
+  it('lists every chapter that still has a CBZ, whatever its state, and nothing else', async () => {
     nextReadable = true
     try {
       const { chapters, refresh } = useReader('series-1', 'ch-dl')
       await refresh()
-      // downloaded + upgrade_available + upgrading are readable; wanted /
-      // downloading / failed / permanently_failed / superseded / ignored are not.
-      expect(chapters.value.map((c) => c.id)).toEqual(['ch-dl', 'ch-up-avail', 'ch-upgrading'])
+      // Readable = a filename is present: downloaded, upgrade_available and
+      // upgrading, PLUS the two re-download rows that kept their file. The same
+      // states without a file (wanted / downloading / failed / permanently_failed /
+      // superseded / ignored) are excluded.
+      expect(chapters.value.map((c) => c.id)).toEqual([
+        'ch-dl', 'ch-up-avail', 'ch-upgrading', 'ch-redl-pending', 'ch-redl-failed',
+      ])
+    }
+    finally {
+      nextReadable = false
+    }
+  })
+
+  it('keeps a chapter whose re-download is pending in the list (its CBZ was deliberately kept)', async () => {
+    nextReadable = true
+    try {
+      const { mountedChapters, refresh } = useReader('series-1', 'ch-redl-pending')
+      await refresh()
+      expect(mountedChapters.value.map((c) => c.id)).toEqual(['ch-redl-pending'])
     }
     finally {
       nextReadable = false

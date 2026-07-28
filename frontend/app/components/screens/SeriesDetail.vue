@@ -54,6 +54,13 @@ import { findDriftedProviderIds } from '~/utils/providerDedup'
  *     page-owned-dialog reasoning as `RemoveSourceDialog`) since only it
  *     learns whether the reset succeeded.
  *
+ * Chapter re-download (QCAT-343): a downloaded chapter row's refresh action
+ * emits `redownload` (the chapter UUID), bubbled here as `redownloadChapter`.
+ * The page runs the mutation and feeds `redownloadingId` back down so exactly
+ * that row shows its in-flight state (§16). There is NO confirm dialog and none
+ * is wanted: a re-download deletes nothing — the existing CBZ stays on disk
+ * until its replacement lands — so it is a re-queue, not a destructive action.
+ *
  * Presentation only: ALL data arrives via props and every action is emitted —
  * the screen never fetches, routes, or mutates the backend. It honours §16 by
  * surfacing loading (busy spinners / disabled controls) and error (a dismissible
@@ -91,6 +98,8 @@ const props = withDefaults(defineProps<{
   dedupMessage?: string | null
   /** "Start"/"Continue" — renders the floating resume button; null/"" hides it (nothing downloaded). */
   resumeLabel?: string | null
+  /** The chapter UUID whose re-download is in flight, or null when none is (§16). */
+  redownloadingId?: string | null
   /** This series' current tracker bindings (TrackersSection). */
   trackBindings?: TrackBinding[]
   /** Every registered tracker's connect status (TrackersSection). */
@@ -142,6 +151,7 @@ const props = withDefaults(defineProps<{
   fractionalCleanupCount: 0,
   dedupMessage: null,
   resumeLabel: null,
+  redownloadingId: null,
   trackBindings: () => [],
   trackers: () => [],
   trackBindingsPending: false,
@@ -220,6 +230,8 @@ const emit = defineEmits<{
   resetProgress: [chapter: number]
   /** A chapter row's "Set as current progress" was clicked — carries the chapter NUMBER (→ opens the page's confirm dialog). */
   requestSetChapterProgress: [chapterNumber: number]
+  /** A chapter row's re-download was clicked — carries the chapter UUID (QCAT-343). */
+  redownloadChapter: [chapterId: string]
 }>()
 
 // ---- Derived data ----------------------------------------------------------
@@ -326,8 +338,10 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
       <ChaptersPanel
         :chapters="sortedChapters"
         :total="series.chapterCounts.total"
+        :redownloading-id="redownloadingId"
         @read="emit('read', $event)"
         @set-current="emit('requestSetChapterProgress', $event)"
+        @redownload="emit('redownloadChapter', $event)"
       />
       <SourcesPanel
         :providers="sortedProviders"
