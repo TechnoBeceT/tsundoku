@@ -12,17 +12,29 @@ one upstream request with a Chrome fingerprint (via [`curl_cffi`](https://github
 and hands back the raw bytes, so the engine-host can route the fetches a
 fingerprint-blocking source rejects through here and keep okhttp for everything else.
 
-It is **off by default** and **general** — no source is special-cased. When enabled,
-the engine-host tries the gateway first for image bytes and transparently falls back
-to its normal client on any gateway failure.
+It is **off by default** and **opt-in per source**. For a source you have selected, the
+engine-host tries the gateway first for image bytes and transparently falls back to its
+normal client on any gateway failure. Every source you have not selected goes straight
+to the normal client, exactly as if this service did not exist.
+
+> ⚠️ **The two paths are not equivalent — only select a source that genuinely needs it.**
+> The fallback is safe for *reachability* and silently lossy for *content*. The gateway
+> returns raw upstream bytes without running the source's own image post-processing, and
+> some sources deliver deliberately scrambled images that only that post-processing puts
+> back in order. Routing such a source through the gateway therefore saves unreadable
+> pages — and nothing detects it automatically: the chapter is marked downloaded, the CBZ
+> is a valid archive, and the images are valid images. Only a person looking at a page can
+> tell. This is exactly why the selection is per-source and empty by default.
 
 ## Configuration
 
-The gateway URL is set in **Tsundoku → Settings → Server config → Chrome-fingerprint
-image proxy** — it is **not** an environment variable. Enable the toggle and enter the
-gateway's URL (e.g. `http://impersonate-gateway:8788` on the compose network). A blank
-URL disables it regardless of the toggle. Any per-source SOCKS/VPN egress configured
-in Tsundoku is passed through to the gateway, so a routed source keeps its own egress.
+The gateway is configured in **Tsundoku → Settings → Server config → Chrome-fingerprint
+image proxy** — it is **not** an environment variable. Enable the toggle, enter the
+gateway's URL (e.g. `http://impersonate-gateway:8788` on the compose network), then tick
+the specific sources that should use it. A blank URL disables it regardless of the
+toggle, and with no source ticked nothing uses the gateway. Any per-source SOCKS/VPN
+egress configured in Tsundoku is passed through to the gateway, so a routed source keeps
+its own egress.
 
 The service itself needs no configuration beyond its listen port (`8788`, or `PORT`
 for a local run).
