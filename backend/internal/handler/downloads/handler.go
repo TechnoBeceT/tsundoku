@@ -139,13 +139,22 @@ func (h *Handler) Run(c echo.Context) error {
 
 // mapServiceError translates a downloads.Service sentinel error into the matching
 // HTTP status, leaving any unexpected error to fall through to the central
-// middleware as a 500. ErrChapterNotFound → 404; ErrNotRetryable → 409.
+// middleware as a 500. ErrChapterNotFound → 404; ErrNotRetryable and
+// ErrNotRedownloadable → 409 (they stay SEPARATE sentinels because a retry and a
+// re-download admit disjoint sets of chapters, and the message must say which);
+// ErrInvalidRedownloadFilter → 400 (the service validates its own contract too, so
+// an under-specified filter fails closed even if a caller skips the handler's
+// validator).
 func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, downloadssvc.ErrChapterNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "chapter not found")
 	case errors.Is(err, downloadssvc.ErrNotRetryable):
 		return echo.NewHTTPError(http.StatusConflict, "chapter is not in a retryable state")
+	case errors.Is(err, downloadssvc.ErrNotRedownloadable):
+		return echo.NewHTTPError(http.StatusConflict, "chapter has no downloaded file to replace")
+	case errors.Is(err, downloadssvc.ErrInvalidRedownloadFilter):
+		return echo.NewHTTPError(http.StatusBadRequest, "re-download filter needs a source and a cutoff")
 	default:
 		return err
 	}

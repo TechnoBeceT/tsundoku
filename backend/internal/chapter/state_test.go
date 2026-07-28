@@ -29,9 +29,13 @@ func TestCanTransition(t *testing.T) {
 		{"upgrading→downloaded", entchapter.StateUpgrading, entchapter.StateDownloaded, true},
 		{"failed→downloading", entchapter.StateFailed, entchapter.StateDownloading, true},
 		{"failed→permanently_failed", entchapter.StateFailed, entchapter.StatePermanentlyFailed, true},
-		// Owner-retry edges (Downloads milestone) — the only edges targeting wanted.
+		// Owner-retry edges (Downloads milestone) — among the edges targeting wanted.
 		{"failed→wanted (owner retry)", entchapter.StateFailed, entchapter.StateWanted, true},
 		{"permanently_failed→wanted (owner reset)", entchapter.StatePermanentlyFailed, entchapter.StateWanted, true},
+		// Owner re-download edge (QCAT-343): a DOWNLOADED chapter goes back to
+		// wanted so the engine re-fetches it over the existing CBZ. Distinct in
+		// kind from retry — retry gives a chapter with NO file another go.
+		{"downloaded→wanted (owner re-download)", entchapter.StateDownloaded, entchapter.StateWanted, true},
 		// Terminal-exhaustion edges (multi-source engine) — permanent failure can be
 		// observed mid-cycle (from downloading, last live source just exhausted) or
 		// on entry (from wanted, all sources already exhausted).
@@ -47,9 +51,8 @@ func TestCanTransition(t *testing.T) {
 		{"wanted→downloaded (skip)", entchapter.StateWanted, entchapter.StateDownloaded, false},
 		// Self-loop.
 		{"downloading→downloading (self-loop)", entchapter.StateDownloading, entchapter.StateDownloading, false},
-		// Backward edge — downloaded must NOT reach wanted (only failed /
-		// permanently_failed may, via the owner-retry edges).
-		{"downloaded→wanted (still illegal)", entchapter.StateDownloaded, entchapter.StateWanted, false},
+		// Backward edge — an IN-FLIGHT chapter must still not reach wanted; only the
+		// three owner-initiated edges (failed / permanently_failed / downloaded) may.
 		{"downloading→wanted (still illegal)", entchapter.StateDownloading, entchapter.StateWanted, false},
 	}
 

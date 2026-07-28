@@ -18,6 +18,46 @@ components:
       scheme: bearer
       description: JWT Bearer token issued by /api/owner/claim or /api/owner/login.
 
+  parameters:
+    # The bulk re-download filter, shared by its preview (GET) and its apply (POST)
+    # so the two can never describe different selections.
+    RedownloadSource:
+      name: source
+      in: query
+      required: true
+      description: >-
+        The canonical source name — the same key the engine source strip and the
+        circuit breaker use. Blank is rejected: the filter fails closed rather than
+        sweeping the whole library.
+      schema:
+        type: string
+        minLength: 1
+      example: Comix
+    RedownloadScanlator:
+      name: scanlator
+      in: query
+      required: false
+      description: >-
+        Narrow to ONE (source, scanlator) provider. PRESENCE-BASED: present (even
+        empty) matches that exact scanlator, so `?scanlator=` addresses the source's
+        all-scanlators provider specifically; omit the parameter entirely to match
+        every scanlator of the source.
+      schema:
+        type: string
+      example: Valir Scans
+    RedownloadSince:
+      name: since
+      in: query
+      required: true
+      description: >-
+        Match chapters whose CBZ was written at or after this instant, compared
+        against the chapter's `download_date` (which a rewrite updates). Never the
+        first-download timestamp, which records only the first arrival.
+      schema:
+        type: string
+        format: date-time
+      example: "2026-07-25T08:39:52Z"
+
   schemas:
     HealthResponse:
       type: object
@@ -1003,6 +1043,39 @@ components:
         retried:
           type: integer
           description: Number of chapters reset back to wanted by the bulk retry.
+
+    RedownloadPreview:
+      type: object
+      required:
+        - matched
+        - perCycle
+        - estimatedCycles
+      properties:
+        matched:
+          type: integer
+          description: How many downloaded chapters the filter selects.
+        perCycle:
+          type: integer
+          description: >-
+            How many of ONE source's chapters a download cycle dispatches (the engine's
+            real per-source batch). 0 when the server cannot resolve it.
+        estimatedCycles:
+          type: integer
+          description: >-
+            `matched` spread over `perCycle`, rounded up. A FLOOR, not a promise — the
+            per-source batch is shared with the convergence-upgrade pass, and a
+            cooled-down source dispatches nothing at all. 0 when `perCycle` is 0.
+
+    RedownloadResult:
+      type: object
+      required:
+        - requeued
+      properties:
+        requeued:
+          type: integer
+          description: >-
+            Number of downloaded chapters re-queued by the bulk re-download. No CBZ and
+            no database row was deleted to produce it.
 
     DedupeFilesResult:
       type: object
@@ -7039,6 +7112,153 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: Chapter is not in a retryable state (only failed/permanently_failed may be retried).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/chapters/{id}/redownload:
+    post:
+      operationId: redownloadChapter
+      summary: Re-download one already-downloaded chapter
+      description: |
+        Re-queues a single DOWNLOADED chapter so the engine fetches it again — the
+        remedy when the stored CBZ's bytes are wrong but every state field says the
+        chapter is fine.
+
+        This is NOT a retry and it does not widen the retry rules: a retry gives a
+        chapter with NO file another go, so only failed/permanently_failed chapters are
+        retryable. Returns 409 for a chapter that is not downloaded.
+
+        The existing CBZ is KEPT. The chapter's filename is left in place and no file
+        is removed: the same source rendering the same chapter produces the same
+        filename, so the fresh download overwrites it. A FAILED re-download therefore
+        leaves the old file intact rather than nothing, and no orphan is created.
+
+        On success this also triggers an immediate download cycle (the same coalescing
+        trigger as POST /api/downloads/run).
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Chapter UUID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Chapter re-queued; its CBZ is untouched.
+        "400":
+          description: Malformed chapter id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No chapter with that id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Chapter is not downloaded, so there is no stored file to replace.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/downloads/redownload:
+    get:
+      operationId: previewRedownload
+      summary: Preview a filtered bulk re-download
+      description: |
+        Reports how many downloaded chapters the filter would re-queue, and the honest
+        throughput cost of doing it, WITHOUT mutating anything.
+
+        The filter is deliberately blind: it does not attempt to detect which files are
+        damaged. Image scrambling is a permutation of tiles, so it preserves every
+        pixel, the histogram, the dimensions and the edge count — every cheap image
+        statistic is permutation-invariant and cannot see it even in principle.
+
+        Selection keys on the chapter's `download_date` (the last time the CBZ was
+        WRITTEN, which a convergence upgrade updates), never on its first-download
+        timestamp. A downloaded chapter carrying no download_date is not matched.
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RedownloadSource"
+        - $ref: "#/components/parameters/RedownloadScanlator"
+        - $ref: "#/components/parameters/RedownloadSince"
+      responses:
+        "200":
+          description: What the filter would re-queue, and what it would cost.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedownloadPreview"
+        "400":
+          description: A missing/blank source, or a missing/unparseable since.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: redownloadFiltered
+      summary: Apply a filtered bulk re-download
+      description: |
+        Re-queues every downloaded chapter the filter matches, applying the
+        per-chapter re-download semantics set-wise. The matching set is RE-COMPUTED
+        from the filter rather than trusting ids the preview handed out.
+
+        Nothing is deleted: every CBZ stays on disk until its replacement lands, so a
+        failed re-download leaves the old file readable.
+
+        Throughput is unchanged — the re-queued chapters drain at the engine's normal
+        per-source batch, which is the anti-ban throttle. A large sweep is meant to
+        take many cycles; see the GET preview for the estimate.
+
+        On success this also triggers an immediate download cycle.
+      tags:
+        - downloads
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RedownloadSource"
+        - $ref: "#/components/parameters/RedownloadScanlator"
+        - $ref: "#/components/parameters/RedownloadSince"
+      responses:
+        "200":
+          description: The number of chapters re-queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RedownloadResult"
+        "400":
+          description: A missing/blank source, or a missing/unparseable since.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:

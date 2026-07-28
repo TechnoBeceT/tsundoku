@@ -21,6 +21,7 @@ import (
 //	downloading        → downloaded
 //	downloading        → failed
 //	downloading        → permanently_failed  (last live source exhausted this cycle — see below)
+//	downloaded         → wanted              (owner re-download-only — see below)
 //	downloaded         → upgrade_available
 //	upgrade_available  → upgrading
 //	upgrade_available  → downloaded      (boot orphan-recovery only — see below)
@@ -40,14 +41,35 @@ import (
 // failed→permanently_failed pre-existed.
 //
 // Owner-retry edges (Downloads milestone): failed→wanted and
-// permanently_failed→wanted are the only edges that target wanted, and they are
-// reachable ONLY through the owner-initiated retry action (downloads.RetryChapter
-// / RetryAll, which also resets the per-source ProviderChapter retry state). The
-// automatic download dispatcher NEVER targets wanted, so the auto-pipeline's
-// terminal semantics are unchanged: in normal operation a chapter only reaches
-// wanted on first discovery (ingest). permanently_failed is no longer strictly
-// terminal — it has exactly one sanctioned owner escape hatch, mirroring the
-// never-auto-delete model (a state reset is an owner action, never automatic).
+// permanently_failed→wanted are reachable ONLY through the owner-initiated retry
+// action (downloads.RetryChapter / RetryAll, which also resets the per-source
+// ProviderChapter retry state). The automatic download dispatcher NEVER targets
+// wanted, so the auto-pipeline's terminal semantics are unchanged: in normal
+// operation a chapter only reaches wanted on first discovery (ingest).
+// permanently_failed is no longer strictly terminal — it has exactly one
+// sanctioned owner escape hatch, mirroring the never-auto-delete model (a state
+// reset is an owner action, never automatic).
+//
+// Owner re-download edge (downloaded→wanted, QCAT-343): the third and last edge
+// targeting wanted, and the only one that starts from a chapter WITH a file. It
+// differs in kind from a retry — a retry gives a chapter that has NO CBZ another
+// go, whereas a re-download deliberately replaces a CBZ that already exists (the
+// remedy when the stored bytes are wrong but every state field says "fine"). It is
+// reachable ONLY through downloads.RedownloadChapter / RedownloadAll, and it is
+// NOT in the retryable set: downloads.retryableStates stays {failed,
+// permanently_failed}, so the ordinary retry path still refuses a downloaded
+// chapter.
+//
+// 🔴 The re-download NEVER deletes the existing CBZ (owner-ratified, QCAT-343):
+// Chapter.filename is deliberately left set, so the old file stays on disk and
+// readable while the re-fetch runs, and a FAILED re-download leaves it intact
+// rather than leaving nothing. That is why this edge adds NO new Rule 2 deletion
+// path. When the SAME source wins the re-fetch — the common case — the fresh
+// render carries the same filename and overwrites in place; when a DIFFERENT
+// source wins (the re-download resets every source's budget, so candidacy is
+// genuinely re-opened) the new CBZ is a second file and the old one is KEPT, to be
+// cleared by the owner's "Remove duplicate files" action. Either way nothing here
+// deletes.
 //
 // Ignored edges (fractional suppression): wanted→ignored and failed→ignored park
 // an UNDOWNLOADED fractional chapter whose EVERY carrier is a source the owner
@@ -84,6 +106,7 @@ var legalTransitions = map[entchapter.State]map[entchapter.State]struct{}{
 	entchapter.StateDownloaded: {
 		entchapter.StateUpgradeAvailable: {},
 		entchapter.StateSuperseded:       {}, // an already-downloaded part superseded by its whole
+		entchapter.StateWanted:           {}, // owner re-download — the CBZ is KEPT (see below)
 	},
 	entchapter.StateUpgradeAvailable: {
 		entchapter.StateUpgrading:  {},

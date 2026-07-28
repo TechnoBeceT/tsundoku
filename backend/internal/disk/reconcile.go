@@ -706,6 +706,21 @@ func seedFirstDownloadedAtFromMtime(ctx context.Context, client *ent.Client, cha
 }
 
 // updateChapter updates an existing Chapter row with the latest provenance from disk.
+//
+// KNOWN-MINOR (QCAT-343): the state is set to downloaded UNCONDITIONALLY, because
+// the CBZ being on disk is the whole evidence base here — reconcile has no view of
+// why a row might legitimately sit in another state. That silently reverts a
+// PENDING RE-DOWNLOAD: `downloads.RedownloadChapter` deliberately leaves the old
+// file in place while parking the chapter at wanted, which is exactly the shape
+// this branch reads as "downloaded, nothing to do". The owner gets no error and no
+// event; the re-download is simply forgotten and must be re-triggered.
+//
+// Left as-is on purpose. It is reachable only from the owner-triggered library
+// import (`library.Service.Import` / `ImportBatch` → `ReconcileOne`) and the
+// on-demand `job.Runner.Reconcile` wrapper — never from a background sweep — so it
+// takes two deliberate owner actions racing each other, and the compensation is one
+// click. Guarding on state here would need reconcile to model the whole chapter
+// state machine, which is the download engine's job, not the scanner's.
 func updateChapter(
 	ctx context.Context,
 	client *ent.Client,

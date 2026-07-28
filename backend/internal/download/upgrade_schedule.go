@@ -36,7 +36,7 @@ const unresolvedTargetKey = ""
 // how many of each physical source's chapters the DOWNLOAD drain already fetched
 // this cycle (canonicalSourceKey → count, produced by job.Runner.drainDownloads);
 // each upgrade-target source is then allowed at most
-// max(0, batchPerSource(concurrency) - downloadsConsumed[key]) upgrades THIS cycle.
+// max(0, BatchPerSource(concurrency) - downloadsConsumed[key]) upgrades THIS cycle.
 // The rest stay upgrade_available (already flagged) and are picked up next cycle, so
 // the flagged count converges by at most the budget per cycle instead of the engine
 // firing every eligible upgrade at once. Without this a library where hundreds of
@@ -111,7 +111,7 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	now := time.Now()
 
 	groups := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now)
-	capUpgradeGroups(groups, batchPerSource(concurrency), downloadsConsumed)
+	capUpgradeGroups(groups, BatchPerSource(concurrency), downloadsConsumed)
 	limiter := newProviderLimiter(concurrency)
 
 	// Shared across every per-source goroutine — incremented once per upgrade that

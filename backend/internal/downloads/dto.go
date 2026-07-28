@@ -196,6 +196,28 @@ type RetryAllResultDTO struct {
 	Retried int `json:"retried"`
 }
 
+// RedownloadPreviewDTO is the GET /api/downloads/redownload response: what the
+// filter WOULD re-queue, and the honest throughput cost of doing it.
+//
+// PerCycle and EstimatedCycles are 0 when the service has no throughput accessor
+// attached — "unknown", never a guess. The estimate is a floor, not a promise: the
+// per-source batch is shared with the convergence-upgrade pass and a cooled-down
+// source dispatches nothing at all, so a real sweep can take longer.
+type RedownloadPreviewDTO struct {
+	// Matched is how many downloaded chapters the filter selects.
+	Matched int `json:"matched"`
+	// PerCycle is how many of ONE source's chapters a download cycle dispatches.
+	PerCycle int `json:"perCycle"`
+	// EstimatedCycles is Matched spread over PerCycle, rounded up.
+	EstimatedCycles int `json:"estimatedCycles"`
+}
+
+// RedownloadResultDTO is the POST /api/downloads/redownload response: the number of
+// chapters the sweep re-queued. No file and no row was deleted to produce it.
+type RedownloadResultDTO struct {
+	Requeued int `json:"requeued"`
+}
+
 // seriesResolution holds the once-per-series derived values reused across all of
 // that series' chapters on a page: the chapter_key→name map, the resolved display
 // name + cover proxy path, and the chapter_key→carriers feed index (ordered as the

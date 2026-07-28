@@ -56,17 +56,29 @@ type RetrySettings interface {
 	MaxRetries(ctx context.Context) int
 }
 
-// Service exposes the cross-library chapter-activity views and the owner retry
-// actions. It owns the Ent client — all enrichment reuses the exported
+// ThroughputSettings supplies the current PER-SOURCE download concurrency, from
+// which download.BatchPerSource derives how many of one source's chapters a cycle
+// dispatches. The bulk re-download preview uses it to quote an honest cost ("N
+// chapters ≈ N/batch cycles against this source") rather than hardcoding a copy of
+// the engine's batching rule. *settings.Service and settings.Static both satisfy it.
+// Attached via WithThroughput; nil makes the preview report the cost as unknown.
+type ThroughputSettings interface {
+	DownloadConcurrency(ctx context.Context) int
+}
+
+// Service exposes the cross-library chapter-activity views and the owner retry +
+// re-download actions. It owns the Ent client — all enrichment reuses the exported
 // internal/series resolvers, so no importance/display logic is duplicated here —
-// plus two OPTIONAL, nil-guarded read ports: the circuit-breaker snapshot (for the
-// cooling_down waiting reason) and the retry settings (for the N/max badge). Both are
-// attached via the With* builders so the ~20 existing NewService(client) call sites
-// (and unit tests that need neither) are untouched.
+// plus three OPTIONAL, nil-guarded read ports: the circuit-breaker snapshot (for the
+// cooling_down waiting reason), the retry settings (for the N/max badge), and the
+// throughput settings (for the re-download cost quote). All are attached via the
+// With* builders so the ~20 existing NewService(client) call sites (and unit tests
+// that need none of them) are untouched.
 type Service struct {
-	client   *ent.Client
-	breakers BreakerSnapshotter
-	retry    RetrySettings
+	client     *ent.Client
+	breakers   BreakerSnapshotter
+	retry      RetrySettings
+	throughput ThroughputSettings
 }
 
 // NewService builds the downloads activity service over the given Ent client. The
@@ -91,6 +103,15 @@ func (s *Service) WithBreakers(b BreakerSnapshotter) *Service {
 // the receiver for chaining. Nil reports MaxRetries as 0.
 func (s *Service) WithRetrySettings(r RetrySettings) *Service {
 	s.retry = r
+	return s
+}
+
+// WithThroughput attaches the download-concurrency accessor so the bulk
+// re-download preview can quote the real per-cycle batch and the resulting cycle
+// count. Returns the receiver for chaining. Nil reports the cost as unknown (0/0)
+// instead of inventing an estimate.
+func (s *Service) WithThroughput(t ThroughputSettings) *Service {
+	s.throughput = t
 	return s
 }
 
@@ -632,26 +653,35 @@ func groupKeysBySeries(chapters []*ent.Chapter) map[uuid.UUID][]string {
 
 // resetProviderChapters clears the per-source retry state (attempts→0,
 // last_error→"", next_attempt_at→null) on every ProviderChapter that offers one
-// of the given chapter_keys within its series, so a manual retry hands every
-// source a fresh budget. It matches per (series, key) precisely — one bulk update
-// per series — so a shared chapter_key across series never resets an unrelated
-// series' sources.
+// of the given chapter_keys within its series, so an owner retry or re-download
+// hands every source a fresh budget. It matches per (series, key) precisely — the
+// series scope is ANDed onto each series' key set — so a shared chapter_key across
+// series never resets an unrelated series' sources.
+//
+// It issues ONE update however many series are involved (the per-series clauses are
+// OR'd into a single predicate), which is what keeps the bulk re-download's
+// statement count constant instead of growing with the number of series it spans.
 func resetProviderChapters(ctx context.Context, tx *ent.Tx, bySeries map[uuid.UUID][]string) error {
+	scopes := make([]predicate.ProviderChapter, 0, len(bySeries))
 	for seriesID, keys := range bySeries {
 		if len(keys) == 0 {
 			continue
 		}
-		if _, err := tx.ProviderChapter.Update().
-			Where(
-				entproviderchapter.ChapterKeyIn(keys...),
-				entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(seriesID)),
-			).
-			SetAttempts(0).
-			SetLastError("").
-			ClearNextAttemptAt().
-			Save(ctx); err != nil {
-			return fmt.Errorf("reset provider chapters for series %s: %w", seriesID, err)
-		}
+		scopes = append(scopes, entproviderchapter.And(
+			entproviderchapter.ChapterKeyIn(keys...),
+			entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(seriesID)),
+		))
+	}
+	if len(scopes) == 0 {
+		return nil
+	}
+	if _, err := tx.ProviderChapter.Update().
+		Where(entproviderchapter.Or(scopes...)).
+		SetAttempts(0).
+		SetLastError("").
+		ClearNextAttemptAt().
+		Save(ctx); err != nil {
+		return fmt.Errorf("reset provider chapters for %d series: %w", len(scopes), err)
 	}
 	return nil
 }

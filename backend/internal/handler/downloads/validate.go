@@ -9,6 +9,7 @@ package downloads
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -101,6 +102,61 @@ func parseOptionalID(raw, subject string) (*uuid.UUID, error) {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid "+subject)
 	}
 	return &id, nil
+}
+
+// parseRedownloadFilter parses the bulk re-download filter shared by the preview
+// (GET) and the apply (POST), so the two can never disagree about what they select.
+//
+//   - ?source   REQUIRED — the canonical source name. Blank yields a 400; the
+//     filter fails CLOSED rather than sweeping the whole library.
+//   - ?since    REQUIRED — an RFC 3339 timestamp, matched against the chapter's
+//     download_date. Missing or unparseable yields a 400.
+//   - ?scanlator OPTIONAL and PRESENCE-BASED: present (even empty) narrows to that
+//     exact scanlator, absent means every scanlator of the source. Presence rather
+//     than emptiness is what distinguishes "the source's all-scanlators provider"
+//     (?scanlator=) from "all of the source's providers" (no param at all) — a
+//     provider is a (source, scanlator) pair, so the two are different sets.
+func parseRedownloadFilter(c echo.Context) (downloadssvc.RedownloadFilter, error) {
+	source := strings.TrimSpace(c.QueryParam("source"))
+	if source == "" {
+		return downloadssvc.RedownloadFilter{}, echo.NewHTTPError(http.StatusBadRequest, "source is required")
+	}
+	since, err := parseRequiredTime(c.QueryParam("since"), "since")
+	if err != nil {
+		return downloadssvc.RedownloadFilter{}, err
+	}
+	return downloadssvc.RedownloadFilter{
+		Source:    source,
+		Scanlator: optionalQueryParam(c, "scanlator"),
+		Since:     since,
+	}, nil
+}
+
+// parseRequiredTime parses a REQUIRED RFC 3339 query param. subject names the param
+// so a missing or malformed value yields a precise 400.
+func parseRequiredTime(raw, subject string) (time.Time, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return time.Time{}, echo.NewHTTPError(http.StatusBadRequest, subject+" is required")
+	}
+	parsed, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, echo.NewHTTPError(http.StatusBadRequest, "invalid "+subject+" (expected an RFC 3339 timestamp)")
+	}
+	return parsed, nil
+}
+
+// optionalQueryParam returns a pointer to the named query param's value when the
+// param is PRESENT (even with an empty value), and nil when it is absent — the
+// distinction echo.Context.QueryParam alone cannot express, since it collapses both
+// cases to "".
+func optionalQueryParam(c echo.Context, name string) *string {
+	values := c.QueryParams()
+	if !values.Has(name) {
+		return nil
+	}
+	v := values.Get(name)
+	return &v
 }
 
 // parseOptionalBool parses an OPTIONAL boolean query param. An empty value yields

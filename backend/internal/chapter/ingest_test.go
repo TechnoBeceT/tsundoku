@@ -158,8 +158,13 @@ func TestIngestKeyNormalizationDedup(t *testing.T) {
 }
 
 // TestSetStateIllegalTransitionRejected verifies that SetState rejects an illegal
-// transition (downloaded → wanted is not in the state graph) with an error and
-// leaves the chapter state unchanged.
+// transition with an error and leaves the chapter state unchanged.
+//
+// downloading → wanted is the case used here: an IN-FLIGHT chapter can never be
+// pulled back to the queue mid-fetch. It replaced downloaded → wanted, which
+// became LEGAL with the owner re-download edge (QCAT-343) — the one edge into
+// wanted that starts from a chapter WITH a file. Only the three owner-initiated
+// sources (failed, permanently_failed, downloaded) may reach wanted.
 func TestSetStateIllegalTransitionRejected(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -168,17 +173,17 @@ func TestSetStateIllegalTransitionRejected(t *testing.T) {
 	ch := client.Chapter.Create().
 		SetSeries(s).
 		SetChapterKey("1").
-		SetState(entchapter.StateDownloaded).
+		SetState(entchapter.StateDownloading).
 		SaveX(ctx)
 
 	err := chapter.SetState(ctx, client, ch.ID, entchapter.StateWanted)
 	if err == nil {
-		t.Fatal("expected error for illegal transition downloaded→wanted, got nil")
+		t.Fatal("expected error for illegal transition downloading→wanted, got nil")
 	}
 
 	// State must be unchanged.
 	refreshed := client.Chapter.GetX(ctx, ch.ID)
-	if refreshed.State != entchapter.StateDownloaded {
+	if refreshed.State != entchapter.StateDownloading {
 		t.Errorf("state changed unexpectedly: got %s", refreshed.State)
 	}
 }

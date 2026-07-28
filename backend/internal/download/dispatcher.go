@@ -425,7 +425,7 @@ func (d *Dispatcher) MaxConcurrentDownloads(ctx context.Context) int {
 // (job.Runner.RunDownloadCycle) simply calls RunOnce again for the rest.
 const wantedScanLimit = 1000
 
-// batchPerSource returns the maximum number of a single source's chapters that
+// BatchPerSource returns the maximum number of a single source's chapters that
 // ONE RunOnce pass will dispatch (transition to downloading), given the current
 // per-source download concurrency. It is deliberately larger than concurrency
 // (2x) so a pass keeps a source's slots continuously fed — as soon as one
@@ -435,7 +435,13 @@ const wantedScanLimit = 1000
 // multiplier raises per-pass throughput but delays how soon a NEWLY wanted
 // chapter (e.g. from a mid-cycle adopt) gets scanned into a future pass, since
 // the current pass must finish its whole batch first. 2x balances the two.
-func batchPerSource(concurrency int) int {
+//
+// Exported so a caller that must QUOTE the throughput — the bulk re-download
+// preview, which tells the owner how many cycles a re-queue of N chapters will
+// take against one source — reads the real per-cycle budget instead of hardcoding
+// its own copy of the multiplier (§2 DRY). It is a pure function of the
+// concurrency setting and reads nothing itself.
+func BatchPerSource(concurrency int) int {
 	return 2 * concurrency
 }
 
@@ -443,7 +449,7 @@ func batchPerSource(concurrency int) int {
 // failed): it loads up to wantedScanLimit of them, groups them by primary
 // source with a round-robin-across-series order (see groupBySource /
 // roundRobinBySeries), then dispatches — per source, in parallel — only the
-// first batchPerSource(concurrency) chapters of each source's queue via the
+// first BatchPerSource(concurrency) chapters of each source's queue via the
 // existing ordered scheduler (runSourceQueue), up to DownloadConcurrency
 // in-flight at a time. It waits for that bounded batch to finish before
 // returning `dispatched` = the number of chapters that made FORWARD PROGRESS
@@ -484,7 +490,7 @@ func batchPerSource(concurrency int) int {
 // schedule.go).
 //
 // A single RunOnce call is one cycle in itself: it allocates a FRESH per-source
-// budget, so a source may dispatch up to batchPerSource(concurrency) of its
+// budget, so a source may dispatch up to BatchPerSource(concurrency) of its
 // chapters in this one pass (the standalone entry point used by tests and the
 // Process path). The cross-pass per-CYCLE cap is applied by the drain loop, which
 // calls RunOnceAt with a shared budget map — see RunOnceAt.
@@ -503,9 +509,9 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
 // consumed maps a canonicalSourceKey to how many of that physical source's
 // chapters have ALREADY been dispatched earlier in THIS cycle (across prior
 // passes of the same drain loop). A source's batch this pass is capped to the
-// REMAINDER of its per-cycle budget batchPerSource(concurrency) — so however many
+// REMAINDER of its per-cycle budget BatchPerSource(concurrency) — so however many
 // passes the drain loop runs, one physical source is fetched at most
-// batchPerSource(concurrency) times per cycle, and this same budget is shared with
+// BatchPerSource(concurrency) times per cycle, and this same budget is shared with
 // the upgrade pass (see UpgradeAll). Without this the drain loop, which re-calls
 // RunOnceAt until a pass dispatches 0, would let one source's large backlog be
 // dispatched far beyond the per-pass batch and re-ban an anti-bot source. RunOnceAt
@@ -543,7 +549,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// provider's fetch cap holds even for fall-through candidates.
 	groups := d.groupBySource(ctx, chapters, maxRetries, now)
 	limiter := newProviderLimiter(concurrency)
-	budget := batchPerSource(concurrency)
+	budget := BatchPerSource(concurrency)
 
 	// Cap each source to the REMAINDER of its per-cycle budget (batchPerSource
 	// already consumed earlier this cycle), and record what this pass selects so

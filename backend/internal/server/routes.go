@@ -149,6 +149,9 @@ import (
 //   - /api/downloads/retry-all (POST)              — bulk-reset failed chapters to wanted (RequireOwner).
 //   - /api/chapters/:id/retry (POST)               — reset one failed chapter to wanted (RequireOwner).
 //   - /api/downloads/run (POST)                    — trigger an immediate download cycle ("Download now") (RequireOwner).
+//   - /api/chapters/:id/redownload (POST)          — re-queue ONE downloaded chapter over its existing CBZ (RequireOwner).
+//   - /api/downloads/redownload (GET)              — preview the filtered bulk re-download (RequireOwner).
+//   - /api/downloads/redownload (POST)             — apply the filtered bulk re-download (RequireOwner).
 //   - /api/library/scan (POST)                     — scan on-disk storage, stage found series (RequireOwner).
 //   - /api/library/imports (GET)                   — list staged imports (?status=) (RequireOwner).
 //   - /api/library/imports/match (GET)             — search sources for a staged entry's title (?path=) (RequireOwner).
@@ -477,16 +480,22 @@ func registerRoutes(
 	// WithBreakers joins the source-politeness circuit-breaker snapshot so a queued
 	// row can explain a source-wide anti-ban cooldown (waitingReason "cooling_down"),
 	// and WithRetrySettings surfaces the live per-source retry budget for the "N/max"
-	// badge — both read-at-use, both nil-safe.
+	// badge — both read-at-use, both nil-safe. WithThroughput lets the bulk
+	// re-download preview quote the engine's REAL per-source cycle batch rather than
+	// a hardcoded copy of it.
 	downloadsSvc := downloads.NewService(client).
 		WithBreakers(gate).
-		WithRetrySettings(settingsSvc)
+		WithRetrySettings(settingsSvc).
+		WithThroughput(settingsSvc)
 	downloadsH := downloadsh.NewHandler(downloadsSvc, trigger)
 	authed.GET("/downloads", downloadsH.List)
 	authed.GET("/downloads/summary", downloadsH.Summary)
 	authed.POST("/downloads/retry-all", downloadsH.RetryAll)
 	authed.POST("/chapters/:id/retry", downloadsH.RetryChapter)
 	authed.POST("/downloads/run", downloadsH.Run)
+	authed.POST("/chapters/:id/redownload", downloadsH.RedownloadChapter)
+	authed.GET("/downloads/redownload", downloadsH.RedownloadPreview)
+	authed.POST("/downloads/redownload", downloadsH.RedownloadAll)
 
 	// Imports (discovery + adoption) API. The ingest is built here so it shares
 	// the same Ent client as the rest of the application. P2 Suwayomi-removal

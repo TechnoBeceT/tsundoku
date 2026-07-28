@@ -67,6 +67,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.POST("/downloads/retry-all", h.RetryAll)
 	authed.POST("/chapters/:id/retry", h.RetryChapter)
 	authed.POST("/downloads/run", h.Run)
+	authed.POST("/chapters/:id/redownload", h.RedownloadChapter)
+	authed.GET("/downloads/redownload", h.RedownloadPreview)
+	authed.POST("/downloads/redownload", h.RedownloadAll)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
