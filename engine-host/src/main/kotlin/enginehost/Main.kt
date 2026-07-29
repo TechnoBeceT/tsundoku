@@ -27,6 +27,8 @@ import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.createAppModule
 import eu.kanade.tachiyomi.network.NetworkHelper
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.cef.network.CefCookieManager
 import org.koin.core.context.startKoin
@@ -228,6 +230,13 @@ fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
 
     AndroidCompatInitializer().init()
     AndroidCompat().startApp(app)
+
+    // Suwayomi ServerSetup.kt:345-350: AndroidCompatInitializer.init() above pins `http.agent` to a
+    // Chrome/91 (2021) Windows UA, and Suwayomi overwrites it here with NetworkHelper's configured
+    // one. Engine-host ported the initializer call but not this binding, leaving the WebView
+    // announcing Chrome/91 while being Chromium 144 on Linux — see bindWebViewUserAgent (GAP-137).
+    @OptIn(DelicateCoroutinesApi::class)
+    bindWebViewUserAgent(Injekt.get<NetworkHelper>().userAgentFlow, GlobalScope)
 
     logger.info { "AndroidCompat ready (dataRoot=${dataRoot.absolutePath})" }
     return applicationDirs
