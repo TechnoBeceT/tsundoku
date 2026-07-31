@@ -77,6 +77,42 @@ func TestComputeCoverageRecordsFailure(t *testing.T) {
 	}
 }
 
+// TestComputeCoverageAnnouncesWhenMarkPendingFails proves the FIRST exit path
+// — markCoveragePending's own upsert failing, before the chapter walk ever
+// runs — still emits imports.coverage.done. Neither test above drives this:
+// both seed a store that accepts the initial pending write. Without this, a
+// transient DB hiccup on that very first write would leave a detached caller
+// (the entire reason this computation is backgrounded) with ZERO signal —
+// watching a panel that never resolves.
+//
+// The failure is induced by closing the underlying *sql.DB testdb.NewWithSQL
+// hands back, so every subsequent ent query (starting with
+// markCoveragePending's own) fails with "sql: database is closed". This is
+// the harness-provided seam the review asked for — no production-only
+// scaffolding was added to make the store injectable.
+func TestComputeCoverageAnnouncesWhenMarkPendingFails(t *testing.T) {
+	client, db := testdb.NewWithSQL(t)
+	ctx := context.Background()
+	hub := sse.NewHub()
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+
+	svc := newServiceWithChapters(t, client, hub, 10)
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close underlying db: %v", err)
+	}
+
+	err := svc.ComputeCoverage(ctx, testCoverageSourceID, testCoverageMangaURL, "Apotheosis")
+	if err == nil {
+		t.Fatal("ComputeCoverage returned nil with the store unreachable")
+	}
+
+	if ev := awaitEvent(t, events, "imports.coverage.done"); ev == nil {
+		t.Error("a markCoveragePending failure must still announce, or a detached caller waits forever")
+	}
+}
+
 // newServiceWithChapters builds a Service whose engine client returns `count`
 // synthetic chapters split across two scanlators, wired to hub so the
 // terminal event is observable. Mirrors cache_test.go's construction — note

@@ -16,8 +16,11 @@ type CoverageDoneEvent struct {
 	SourceID string `json:"sourceId"`
 	MangaURL string `json:"mangaUrl"`
 	Status   string `json:"status"`
-	Total    int    `json:"total,omitempty"`
-	Error    string `json:"error,omitempty"`
+	// Total is a genuine chapter count on success, 0 on failure — NOT
+	// omitempty, so a wire-absent field never has to be told apart from a
+	// real "0 chapters" result (Tasks 4/6 consume this DTO).
+	Total int    `json:"total"`
+	Error string `json:"error,omitempty"`
 }
 
 // broadcastCoverageDone emits imports.coverage.done. A nil hub (the many

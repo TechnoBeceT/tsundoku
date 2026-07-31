@@ -17,22 +17,38 @@ import (
 // a discarded 20-minute walk puts the owner back where they started.
 //
 // Every exit path both PERSISTS and ANNOUNCES, so a client that stopped
-// waiting still learns the outcome from imports.coverage.done.
+// waiting still learns the outcome from imports.coverage.done — INCLUDING the
+// very first write (markCoveragePending) failing outright: a detached caller
+// still needs the terminal event even though nothing about this
+// computation ever reached "pending", let alone "ready".
 func (s *Service) ComputeCoverage(ctx context.Context, sourceID, url, mangaTitle string) error {
 	if err := s.markCoveragePending(ctx, sourceID, url); err != nil {
-		return err
-	}
-
-	dto, err := s.SourceBreakdown(ctx, sourceID, url, mangaTitle)
-	if err != nil {
-		if saveErr := s.failCoverage(ctx, sourceID, url, err); saveErr != nil {
-			slog.WarnContext(ctx, "imports.ComputeCoverage: could not persist the failure",
-				"source_id", sourceID, "manga_url", url, "err", saveErr)
+		// The very first store write already failed. failCoverage is
+		// best-effort here: it can fail for the SAME reason
+		// markCoveragePending just did (e.g. the store is unreachable), so a
+		// failed persist must never suppress the announcement — the event is
+		// the only channel a detached caller has, and a best-effort persist
+		// that also fails is still better than total silence.
+		if failErr := s.failCoverage(ctx, sourceID, url, err); failErr != nil {
+			slog.WarnContext(ctx, "imports.ComputeCoverage: could not persist the mark-pending failure",
+				"source_id", sourceID, "manga_url", url, "err", failErr)
 		}
 		s.broadcastCoverageDone(ctx, CoverageDoneEvent{
 			SourceID: sourceID, MangaURL: url, Status: coverageStatusFailed, Error: err.Error(),
 		})
-		return fmt.Errorf("imports.ComputeCoverage: %s %s: %w", sourceID, url, err)
+		return fmt.Errorf("imports.ComputeCoverage: mark pending %s %s: %w", sourceID, url, err)
+	}
+
+	dto, err := s.SourceBreakdown(ctx, sourceID, url, mangaTitle)
+	if err != nil {
+		if failErr := s.failCoverage(ctx, sourceID, url, err); failErr != nil {
+			slog.WarnContext(ctx, "imports.ComputeCoverage: could not persist the failure",
+				"source_id", sourceID, "manga_url", url, "err", failErr)
+		}
+		s.broadcastCoverageDone(ctx, CoverageDoneEvent{
+			SourceID: sourceID, MangaURL: url, Status: coverageStatusFailed, Error: err.Error(),
+		})
+		return fmt.Errorf("imports.ComputeCoverage: fetch %s %s: %w", sourceID, url, err)
 	}
 
 	if err := s.saveCoverage(ctx, sourceID, url, dto); err != nil {
@@ -41,9 +57,6 @@ func (s *Service) ComputeCoverage(ctx context.Context, sourceID, url, mangaTitle
 		// caller's point of view: nothing readable was persisted, so a
 		// silent return here would leave the row stuck at "pending" forever
 		// with NO event to tell a waiting client anything happened.
-		// failCoverage is itself best-effort here (it can fail on the very
-		// same broken connection); either way the client still gets the
-		// announcement.
 		if failErr := s.failCoverage(ctx, sourceID, url, err); failErr != nil {
 			slog.WarnContext(ctx, "imports.ComputeCoverage: could not persist the save failure",
 				"source_id", sourceID, "manga_url", url, "err", failErr)
@@ -51,8 +64,9 @@ func (s *Service) ComputeCoverage(ctx context.Context, sourceID, url, mangaTitle
 		s.broadcastCoverageDone(ctx, CoverageDoneEvent{
 			SourceID: sourceID, MangaURL: url, Status: coverageStatusFailed, Error: err.Error(),
 		})
-		return err
+		return fmt.Errorf("imports.ComputeCoverage: save %s %s: %w", sourceID, url, err)
 	}
+
 	s.broadcastCoverageDone(ctx, CoverageDoneEvent{
 		SourceID: sourceID, MangaURL: url, Status: coverageStatusReady, Total: dto.Total,
 	})
