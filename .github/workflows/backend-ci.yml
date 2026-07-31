@@ -1,0 +1,144 @@
+# Backend quality gate — compile, vet, formatting, lint, and the full test suite.
+# Runs on every push to main/v2 and every pull request that touches the backend.
+#
+# Before this workflow existed the ONLY backend check in CI was the Dockerfile's
+# `go build`, i.e. "it compiles". Nothing ran vet, gofmt, golangci-lint, or a
+# single test, so a lint regression or a broken package could land unnoticed.
+#
+# Mirrors the local gate documented in the repo architecture notes, in order:
+#   go build ./...              -> compiles
+#   go vet ./...                -> vet passes
+#   gofmt -l .                  -> no file needs reformatting (must print nothing)
+#   golangci-lint run ./...     -> 0 issues (project .golangci.yml, schema-verified)
+#   go generate ./internal/ent  -> generated Ent code matches schema/ (drift gate)
+#   go test ./... -count=1 -p 1 -> the full suite, serial (see the step comment)
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+      # v2 is the long-lived V2 integration branch — V2 work lands there, never
+      # directly on main. Without this entry the whole V2 line would be
+      # completely ungated, which is exactly the hole this workflow closes.
+      - v2
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+# Only one run per ref at a time: a newer push cancels the older in-progress run.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the checks only need to read the repository.
+permissions:
+  contents: read
+
+# Every Go command runs from the backend module.
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    # Job-level ceiling only, so a hung run cannot burn the 6-hour default. This
+    # is NOT the `go test -timeout` flag (that one is deliberately absent — see
+    # the test step below). The suite takes ~4 minutes locally, so 30 leaves a
+    # wide margin for a slower runner; raise it rather than reaching for
+    # -timeout if the suite ever legitimately grows past it.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to the version declared in backend/go.mod. An unpinned toolchain
+      # would change the compiler under the gate without a commit.
+      # cache-dependency-path is required because the module lives in backend/,
+      # not at the repository root, and setup-go resolves it from there.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: backend/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # gofmt has no "check" mode: it reports the files it WOULD rewrite and
+      # still exits 0, so an unformatted file would sail past a bare `gofmt -l`.
+      # Any output at all therefore has to be turned into a failure by hand.
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would reformat the following files — run 'gofmt -w' on them:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "gofmt: all files formatted"
+
+      # The linter version is pinned deliberately: an unpinned release adds new
+      # rules and turns the gate red on code nobody touched. Bump it as its own
+      # commit, with the fixes it demands.
+      #
+      # verify: true runs `golangci-lint config verify` before the lint itself.
+      # That check is load-bearing here: a settings block under a key the running
+      # version does not recognise is SILENTLY IGNORED by `golangci-lint run`,
+      # which then reports 0 issues while enforcing its own defaults instead of
+      # the thresholds the config declares. The schema check is the only thing
+      # that catches it, so it stays on.
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          working-directory: backend
+          args: ./...
+          verify: true
+
+      # Ent drift — the backend counterpart of the frontend's check:api-drift.
+      # Everything under internal/ent/ except schema/ is generated, and the repo
+      # rule is "regenerate after any schema edit". Nothing enforced that, so a
+      # schema change committed without its regenerated client would compile
+      # locally against the stale code and only surface later. Regenerating and
+      # requiring a clean diff makes the omission a red build instead.
+      #
+      # `git diff --exit-code` exits 1 on any tracked change; --stat keeps the
+      # failure readable. Untracked NEW generated files would not show up in a
+      # plain diff, so the entity list is checked with `git status --porcelain`.
+      - name: Ent drift
+        run: |
+          go generate ./internal/ent
+          if ! git diff --exit-code --stat -- internal/ent/; then
+            echo "::error::internal/ent/ is stale — run 'go generate ./internal/ent' and commit the result"
+            exit 1
+          fi
+          untracked="$(git status --porcelain -- internal/ent/)"
+          if [ -n "$untracked" ]; then
+            echo "::error::regeneration produced new files under internal/ent/ — commit them:"
+            echo "$untracked"
+            exit 1
+          fi
+          echo "ent: generated code is in sync with schema/"
+
+      # -p 1 is MANDATORY — do NOT "optimise" this to -p 4 or drop the flag.
+      # Parallel packages race several ephemeral-Postgres containers for host
+      # ports and produce SUB-SECOND false failures (0.5-0.9s, before a container
+      # has even started). A real assertion cannot fail that fast.
+      #
+      # There is deliberately NO -timeout flag. Go's 10-minute per-binary default
+      # is ample (the slowest package is ~14s) and the old `-timeout 25m` is dead.
+      #
+      # The suite is Docker-backed (internal/database/testdb starts one ephemeral
+      # Postgres container per test binary); the ubuntu-latest image ships a
+      # running Docker daemon, so no service container or extra setup is needed.
+      - name: Test
+        run: go test ./... -count=1 -p 1
