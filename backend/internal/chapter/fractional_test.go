@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -50,6 +52,35 @@ func addFractionalSource(
 	return sp
 }
 
+// assertSoleLiveCandidate runs a full candidacy pass and asserts EXACTLY ONE
+// live candidate survives, offered by wantProvider.
+//
+// Every positive test of the ignore-fractional gate makes this same claim — the
+// chapter is still downloadable, and from the source we named — and only the
+// seed differs, so the claim lives in one place. `because` is the calling test's
+// own rule, so a failure reads as the contract that broke rather than a bare
+// count mismatch. The provider check is what keeps these tests non-vacuous: a
+// gate that returned SOME candidate would otherwise pass.
+func assertSoleLiveCandidate(
+	ctx context.Context,
+	t *testing.T,
+	client *ent.Client,
+	chapterID uuid.UUID,
+	wantProvider, because string,
+) {
+	t.Helper()
+	cands, err := chapter.RankedLiveCandidates(ctx, client, chapterID, 3, time.Now())
+	if err != nil {
+		t.Fatalf("RankedLiveCandidates: %v", err)
+	}
+	if len(cands) != 1 {
+		t.Fatalf("want 1 live candidate — %s, got %d", because, len(cands))
+	}
+	if cands[0].SeriesProvider.Provider != wantProvider {
+		t.Errorf("want the candidate from %q (%s), got %q", wantProvider, because, cands[0].SeriesProvider.Provider)
+	}
+}
+
 // TestRankedLiveCandidates_OmakeOnNonIgnoredSourceIsUntouched is THE regression
 // guard for this whole feature. `.5` side-chapters (omakes) are the MOST COMMON
 // fractional in a real library — 825 of them across 44 series in the owner's prod
@@ -66,16 +97,8 @@ func TestRankedLiveCandidates_OmakeOnNonIgnoredSourceIsUntouched(t *testing.T) {
 	client, s, ch := seedNumberedChapter(ctx, t, "omake-untouched", "5.5", 5.5)
 	addFractionalSource(ctx, t, client, s, "omake-source", "5.5", 10, false)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
-	if err != nil {
-		t.Fatalf("RankedLiveCandidates: %v", err)
-	}
-	if len(cands) != 1 {
-		t.Fatalf("want 1 live candidate — a .5 omake on a NON-ignored source must stay downloadable, got %d", len(cands))
-	}
-	if cands[0].SeriesProvider.Provider != "omake-source" {
-		t.Errorf("want the omake's source, got %q", cands[0].SeriesProvider.Provider)
-	}
+	assertSoleLiveCandidate(ctx, t, client, ch.ID, "omake-source",
+		"a .5 omake on a NON-ignored source must stay downloadable")
 }
 
 // TestRankedLiveCandidates_IgnoredSourceOffersNoFractional verifies the gate: a
@@ -103,16 +126,8 @@ func TestRankedLiveCandidates_IgnoredSourceStillOffersWholes(t *testing.T) {
 	client, s, ch := seedNumberedChapter(ctx, t, "ignored-whole", "6", 6)
 	addFractionalSource(ctx, t, client, s, "comic-asura", "6", 40, true)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
-	if err != nil {
-		t.Fatalf("RankedLiveCandidates: %v", err)
-	}
-	if len(cands) != 1 {
-		t.Fatalf("want 1 live candidate — a flagged source still offers WHOLE chapters, got %d", len(cands))
-	}
-	if cands[0].SeriesProvider.Provider != "comic-asura" {
-		t.Errorf("want the flagged source (whole chapter), got %q", cands[0].SeriesProvider.Provider)
-	}
+	assertSoleLiveCandidate(ctx, t, client, ch.ID, "comic-asura",
+		"a flagged source still offers WHOLE chapters")
 }
 
 // TestRankedLiveCandidates_FractionalFallsThroughToNonIgnoredSource verifies that
@@ -126,16 +141,8 @@ func TestRankedLiveCandidates_FractionalFallsThroughToNonIgnoredSource(t *testin
 	addFractionalSource(ctx, t, client, s, "comic-asura", "5.5", 60, true)
 	addFractionalSource(ctx, t, client, s, "clean-source", "5.5", 20, false)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
-	if err != nil {
-		t.Fatalf("RankedLiveCandidates: %v", err)
-	}
-	if len(cands) != 1 {
-		t.Fatalf("want 1 live candidate (the non-flagged source), got %d", len(cands))
-	}
-	if cands[0].SeriesProvider.Provider != "clean-source" {
-		t.Errorf("want the non-flagged source, got %q", cands[0].SeriesProvider.Provider)
-	}
+	assertSoleLiveCandidate(ctx, t, client, ch.ID, "clean-source",
+		"excluding the flagged re-uploader must leave the non-flagged source carrying the fractional")
 }
 
 // TestAllProvidersExhausted_IgnoredSourceIsSourcelessNotExhausted pins a
@@ -247,11 +254,6 @@ func TestRankedLiveCandidates_NumberlessChapterIsUnaffected(t *testing.T) {
 	ch := client.Chapter.Create().SetSeries(s).SetChapterKey("extra").SaveX(ctx)
 	addFractionalSource(ctx, t, client, s, "comic-asura", "extra", 40, true)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
-	if err != nil {
-		t.Fatalf("RankedLiveCandidates: %v", err)
-	}
-	if len(cands) != 1 {
-		t.Fatalf("want 1 live candidate — a number-less chapter is not fractional, so the gate must not fire, got %d", len(cands))
-	}
+	assertSoleLiveCandidate(ctx, t, client, ch.ID, "comic-asura",
+		"a number-less chapter is not fractional, so the gate must not fire")
 }

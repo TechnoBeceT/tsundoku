@@ -360,35 +360,23 @@ func TestClient_DeleteEntry_SendsDELETE(t *testing.T) {
 // is the exact signature that triggered kitsu.app's Cloudflare 403.
 func TestClient_UserAgent_SetOnEveryRequest(t *testing.T) {
 	t.Run("token endpoint (LoginCredentials)", func(t *testing.T) {
-		var gotUA string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotUA = r.Header.Get("User-Agent")
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"access_token":"a","refresh_token":"r","expires_in":3600}`))
-		}))
-		defer srv.Close()
-
-		c := kitsu.New(newTestClient(t, srv))
-		if _, err := c.LoginCredentials(context.Background(), "owner@example.test", "hunter2"); err != nil {
-			t.Fatalf("LoginCredentials: %v", err)
-		}
-		assertBrowserUserAgent(t, gotUA)
+		assertCallCarriesBrowserUA(t, "application/json", `{"access_token":"a","refresh_token":"r","expires_in":3600}`,
+			func(t *testing.T, c *kitsu.Client) {
+				t.Helper()
+				if _, err := c.LoginCredentials(context.Background(), "owner@example.test", "hunter2"); err != nil {
+					t.Fatalf("LoginCredentials: %v", err)
+				}
+			})
 	})
 
 	t.Run("JSON:API GET (Search)", func(t *testing.T) {
-		var gotUA string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			gotUA = r.Header.Get("User-Agent")
-			w.Header().Set("Content-Type", "application/vnd.api+json")
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		}))
-		defer srv.Close()
-
-		c := kitsu.New(newTestClient(t, srv))
-		if _, err := c.Search(context.Background(), "", "solo leveling"); err != nil {
-			t.Fatalf("Search: %v", err)
-		}
-		assertBrowserUserAgent(t, gotUA)
+		assertCallCarriesBrowserUA(t, "application/vnd.api+json", `{"data":[]}`,
+			func(t *testing.T, c *kitsu.Client) {
+				t.Helper()
+				if _, err := c.Search(context.Background(), "", "solo leveling"); err != nil {
+					t.Fatalf("Search: %v", err)
+				}
+			})
 	})
 
 	t.Run("JSON:API mutation (SaveEntry)", func(t *testing.T) {
@@ -406,6 +394,28 @@ func TestClient_UserAgent_SetOnEveryRequest(t *testing.T) {
 		}
 		assertBrowserUserAgent(t, gotUA)
 	})
+}
+
+// assertCallCarriesBrowserUA points a Client at a single-handler fake Kitsu
+// server that records the inbound User-Agent and replies with contentType +
+// body, runs call against it, and asserts the request carried the browser UA.
+//
+// It covers the surfaces reachable through one plain endpoint (the token POST
+// and any JSON:API GET); the SaveEntry case above keeps its own body because it
+// needs kitsuAPIServer's multiplexing (a mutation first resolves the caller's
+// own user id, so one handler is not enough).
+func assertCallCarriesBrowserUA(t *testing.T, contentType, body string, call func(*testing.T, *kitsu.Client)) {
+	t.Helper()
+	var gotUA string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	call(t, kitsu.New(newTestClient(t, srv)))
+	assertBrowserUserAgent(t, gotUA)
 }
 
 // assertBrowserUserAgent fails the test unless gotUA is the real browser

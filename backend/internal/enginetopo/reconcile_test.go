@@ -69,31 +69,41 @@ func (c *reconcileClient) SetPreferences(ctx context.Context, sourceID int64, ch
 	if err, ok := c.setPrefsErr[sourceID]; ok {
 		return nil, err
 	}
-	if bad := c.rejectKeys[sourceID]; len(bad) > 0 {
-		accepted := make(map[string]any, len(changes))
-		var rejected []string
-		for k, v := range changes {
-			if bad[k] {
-				rejected = append(rejected, k)
-				continue
-			}
-			accepted[k] = v
-		}
-		if len(rejected) > 0 {
-			if len(accepted) > 0 {
-				// Partial apply: push the accepted keys straight through to
-				// the embedded fake before surfacing the batch-level error
-				// for the rejected one(s) — modelling an engine that
-				// validates independently rather than atomically discarding
-				// the whole call.
-				if _, err := c.Client.SetPreferences(ctx, sourceID, accepted); err != nil {
-					return nil, err
-				}
-			}
-			return nil, fmt.Errorf("source %d rejected key(s) %v", sourceID, rejected)
+	accepted, rejected := c.partitionRejectedKeys(sourceID, changes)
+	if len(rejected) == 0 {
+		return c.Client.SetPreferences(ctx, sourceID, changes)
+	}
+	if len(accepted) > 0 {
+		// Partial apply: push the accepted keys straight through to the
+		// embedded fake before surfacing the batch-level error for the
+		// rejected one(s) — modelling an engine that validates independently
+		// rather than atomically discarding the whole call.
+		if _, err := c.Client.SetPreferences(ctx, sourceID, accepted); err != nil {
+			return nil, err
 		}
 	}
-	return c.Client.SetPreferences(ctx, sourceID, changes)
+	return nil, fmt.Errorf("source %d rejected key(s) %v", sourceID, rejected)
+}
+
+// partitionRejectedKeys splits a SetPreferences batch into the keys this fake's
+// engine accepts and the ones it rejects for sourceID. An empty rejected slice
+// means the source has no rejection rule at all (or none of its rules matched),
+// which is the ordinary pass-the-whole-batch-through case.
+func (c *reconcileClient) partitionRejectedKeys(sourceID int64, changes map[string]any) (map[string]any, []string) {
+	bad := c.rejectKeys[sourceID]
+	if len(bad) == 0 {
+		return nil, nil
+	}
+	accepted := make(map[string]any, len(changes))
+	var rejected []string
+	for k, v := range changes {
+		if bad[k] {
+			rejected = append(rejected, k)
+			continue
+		}
+		accepted[k] = v
+	}
+	return accepted, rejected
 }
 
 // recordBatchKeys stores the sorted key set of a SetPreferences call for

@@ -326,15 +326,31 @@ func loadSeriesForCleanup(ctx context.Context, client *ent.Client, id uuid.UUID)
 // ErrChapterNotRemovable (all-or-nothing — a mixed list deletes nothing); duplicate
 // ids are collapsed so a repeated id cannot inflate the removed count.
 func selectRemovable(row *ent.Series, chapterIDs []uuid.UUID) ([]*ent.Chapter, error) {
-	removable := make(map[uuid.UUID]*ent.Chapter, len(row.Edges.Chapters))
-	for _, ch := range removableFractionals(row) {
-		removable[ch.ID] = ch
+	return selectAgainstRemovable(row, chapterIDs, removableFractionals)
+}
+
+// selectAgainstRemovable is the shared resolve step behind both owner-triggered
+// chapter cleanups (fractional and sourceless). The two differ ONLY in which
+// rule decides a chapter is removable, so that rule arrives as `removable` and
+// everything downstream — the all-or-nothing rejection and the duplicate
+// collapse — stays in one place and cannot drift between the two callers.
+//
+// The recompute is the security property: the caller's ids are checked against
+// a set the SERVER derives from the loaded series, never trusted as given.
+func selectAgainstRemovable(
+	row *ent.Series,
+	chapterIDs []uuid.UUID,
+	removable func(*ent.Series) []*ent.Chapter,
+) ([]*ent.Chapter, error) {
+	allowed := make(map[uuid.UUID]*ent.Chapter, len(row.Edges.Chapters))
+	for _, ch := range removable(row) {
+		allowed[ch.ID] = ch
 	}
 
 	targets := make([]*ent.Chapter, 0, len(chapterIDs))
 	seen := make(map[uuid.UUID]struct{}, len(chapterIDs))
 	for _, cid := range chapterIDs {
-		ch, ok := removable[cid]
+		ch, ok := allowed[cid]
 		if !ok {
 			return nil, fmt.Errorf("series: chapter %s: %w", cid, ErrChapterNotRemovable)
 		}

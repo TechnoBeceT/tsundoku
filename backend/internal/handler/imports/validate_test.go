@@ -41,25 +41,43 @@ func TestParseCoverURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := parseCoverURL(tt.raw)
 			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("parseCoverURL(%q) = %q, nil; want a 400 error", tt.raw, got)
-				}
-				he, ok := err.(*echo.HTTPError)
-				if !ok {
-					t.Fatalf("parseCoverURL(%q) error = %T, want *echo.HTTPError", tt.raw, err)
-				}
-				if he.Code != http.StatusBadRequest {
-					t.Errorf("parseCoverURL(%q) status = %d, want %d", tt.raw, he.Code, http.StatusBadRequest)
-				}
+				assertCoverURLRejected(t, tt.raw, got, err)
 				return
 			}
-			if err != nil {
-				t.Fatalf("parseCoverURL(%q) unexpected error: %v", tt.raw, err)
-			}
-			if got != tt.raw {
-				t.Errorf("parseCoverURL(%q) = %q, want the URL returned unchanged (query+fragment preserved)", tt.raw, got)
-			}
+			assertCoverURLAccepted(t, tt.raw, got, err)
 		})
+	}
+}
+
+// assertCoverURLRejected pins the SHAPE of a rejection, not merely the fact of
+// one: the guard must fail with an *echo.HTTPError carrying 400, because that is
+// what the central error middleware turns into a client-visible 400. A plain
+// error would surface as a 500 and read as a server fault rather than as the
+// SSRF guard refusing an unsafe URL.
+func assertCoverURLRejected(t *testing.T, raw, got string, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("parseCoverURL(%q) = %q, nil; want a 400 error", raw, got)
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok {
+		t.Fatalf("parseCoverURL(%q) error = %T, want *echo.HTTPError", raw, err)
+	}
+	if he.Code != http.StatusBadRequest {
+		t.Errorf("parseCoverURL(%q) status = %d, want %d", raw, he.Code, http.StatusBadRequest)
+	}
+}
+
+// assertCoverURLAccepted pins the accept path: an allowed URL is returned
+// BYTE-FOR-BYTE, so query and fragment survive. The validator must not
+// re-serialise the URL — a source cover often depends on its ?v= cache-buster.
+func assertCoverURLAccepted(t *testing.T, raw, got string, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("parseCoverURL(%q) unexpected error: %v", raw, err)
+	}
+	if got != raw {
+		t.Errorf("parseCoverURL(%q) = %q, want the URL returned unchanged (query+fragment preserved)", raw, got)
 	}
 }
 

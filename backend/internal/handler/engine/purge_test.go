@@ -95,6 +95,17 @@ func seedSource(t *testing.T, client *ent.Client, sourceID, sourceName string) {
 	client.SourceCircuitState.Create().SetSourceKey(sourceName).SaveX(ctx)
 }
 
+// assertProviderRows asserts how many SeriesProvider rows survive. It is the one
+// observation that separates the mutating endpoints from their dry-run twins —
+// a purge must leave 0, a preview must leave the seeded rows untouched — so it
+// is worth a name rather than an inline count in each test.
+func assertProviderRows(t *testing.T, env *purgeEnv, want int) {
+	t.Helper()
+	if n := env.client.SeriesProvider.Query().CountX(context.Background()); n != want {
+		t.Errorf("SeriesProvider rows = %d, want %d", n, want)
+	}
+}
+
 // TestPurgeSource_OK proves POST runs the cascade and returns the summary, and
 // that the source's footprint is actually gone.
 func TestPurgeSource_OK(t *testing.T) {
@@ -106,9 +117,7 @@ func TestPurgeSource_OK(t *testing.T) {
 	if got.ProvidersRemoved != 1 || got.MetricsDeleted != 1 || got.BreakerCleared != 1 || got.SeriesAffected != 1 {
 		t.Fatalf("summary = %+v, want providers=1 metrics=1 breaker=1 series=1", got)
 	}
-	if n := env.client.SeriesProvider.Query().CountX(context.Background()); n != 0 {
-		t.Errorf("providers after purge = %d, want 0", n)
-	}
+	assertProviderRows(t, env, 0)
 }
 
 // TestPurgeSource_BadRequest proves a missing sourceName is a 400.
@@ -143,9 +152,8 @@ func TestPreviewSource_OK(t *testing.T) {
 	if got.Providers != 1 || got.ProviderChapters != 1 || got.Metrics != 1 || got.Breaker != 1 {
 		t.Fatalf("preview = %+v, want providers=1 feed=1 metrics=1 breaker=1", got)
 	}
-	if n := env.client.SeriesProvider.Query().CountX(context.Background()); n != 1 {
-		t.Errorf("providers after preview = %d, want 1 (dry run must not delete)", n)
-	}
+	// The dry run must not delete: the seeded provider is still there.
+	assertProviderRows(t, env, 1)
 }
 
 // TestPreviewSource_Unauthorized proves the preview route is behind RequireOwner.
@@ -173,9 +181,7 @@ func TestPurgeExtension_OK(t *testing.T) {
 	if got.ProvidersRemoved != 2 || len(got.Sources) != 2 {
 		t.Fatalf("summary = %+v, want providers=2 across 2 sources", got)
 	}
-	if n := env.client.SeriesProvider.Query().CountX(context.Background()); n != 0 {
-		t.Errorf("providers after extension purge = %d, want 0", n)
-	}
+	assertProviderRows(t, env, 0)
 }
 
 // TestPurgeExtension_Unauthorized proves the extension route is behind RequireOwner.

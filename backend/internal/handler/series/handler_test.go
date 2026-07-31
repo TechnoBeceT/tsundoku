@@ -57,6 +57,52 @@ func catID(ctx context.Context, db *ent.Client, name string) uuid.UUID {
 	return id
 }
 
+// downloadedChapterSeeder returns the "write a real CBZ, then insert the
+// downloaded Chapter row whose filename points at it" seeder that both cleanup
+// suites (fractional_cleanup_test.go, sourceless_cleanup_test.go) build their
+// fixtures from. It lives here, with the rest of this package's shared test
+// scaffolding, because those suites assert ON-DISK effects — the file is gone
+// after a successful removal, and still there after a rejected one — so the
+// bytes really have to exist at the path Chapter.filename names. Keeping ONE
+// copy of that row↔file pairing stops the two suites from drifting into testing
+// subtly different fixtures. Callers supply the series dir they already created.
+func downloadedChapterSeeder(
+	ctx context.Context, t *testing.T, env *testEnv, dir string, seriesID uuid.UUID,
+) func(key string, n float64, pages int, sp *ent.SeriesProvider) *ent.Chapter {
+	t.Helper()
+	return func(key string, n float64, pages int, sp *ent.SeriesProvider) *ent.Chapter {
+		filename := key + ".cbz"
+		if err := os.WriteFile(filepath.Join(dir, filename), []byte("cbz"), 0o600); err != nil {
+			t.Fatalf("write cbz: %v", err)
+		}
+		return env.client.Chapter.Create().
+			SetSeriesID(seriesID).SetChapterKey(key).SetNumber(n).SetPageCount(pages).
+			SetState("downloaded").SetFilename(filename).
+			SetSatisfiedByProviderID(sp.ID).SaveX(ctx)
+	}
+}
+
+// assertCBZOnDisk / assertCBZGone are the two on-disk outcomes the cleanup
+// endpoints are judged on. They are named (rather than inlined as an os.Stat
+// with an os.IsNotExist dance) because getting the polarity of that check wrong
+// silently turns a "the file survived a rejected removal" proof into a test that
+// asserts nothing — and these endpoints delete real files, so that is the exact
+// assertion that must not rot. seriesDir is the series folder under env.storage,
+// e.g. "Cleanup Saga" for <storage>/Manga/Cleanup Saga.
+func assertCBZOnDisk(t *testing.T, env *testEnv, seriesDir, filename string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(env.storage, "Manga", seriesDir, filename)); err != nil {
+		t.Errorf("%s is missing, want it kept on disk: %v", filename, err)
+	}
+}
+
+func assertCBZGone(t *testing.T, env *testEnv, seriesDir, filename string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(env.storage, "Manga", seriesDir, filename)); !os.IsNotExist(err) {
+		t.Errorf("%s still on disk, want it deleted (stat err = %v)", filename, err)
+	}
+}
+
 const testSecret = "series-handler-test-secret"
 
 // testEnv bundles the wired Echo app, a valid owner token, and the seeded ids.
@@ -587,27 +633,37 @@ func TestSetMonitored_NotFound(t *testing.T) {
 	}
 }
 
+// assertBoolPatchRejectsBadBody pins the body-validation contract shared by the
+// two single-boolean PATCH routes (…/monitored and …/completed): an absent body
+// and a non-boolean value are each a 400, never a silent no-op that would report
+// success while changing nothing. field is the JSON key of the route under test,
+// so the malformed case is built for that route rather than hard-coded.
+func assertBoolPatchRejectsBadBody(t *testing.T, env *testEnv, target, field string) {
+	t.Helper()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty body", ""},
+		{"non-bool value", `{"` + field + `":"yes"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.do(http.MethodPatch, target, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("PATCH %s bad body (%s): want 400, got %d (%s)", target, tc.name, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestSetMonitored_BadBody checks that a missing or malformed body yields 400.
 func TestSetMonitored_BadBody(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
 	env.seed(ctx, t)
 
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"empty body", ""},
-		{"non-bool value", `{"monitored":"yes"}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/monitored", tc.body)
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("SetMonitored bad body (%s): want 400, got %d (%s)", tc.name, rec.Code, rec.Body.String())
-			}
-		})
-	}
+	assertBoolPatchRejectsBadBody(t, env, "/api/series/"+env.mangaID.String()+"/monitored", "monitored")
 }
 
 // firstProviderID fetches the series detail and returns the first SeriesProvider ID.
@@ -904,21 +960,7 @@ func TestSetCompleted_BadBody(t *testing.T) {
 	ctx := context.Background()
 	env.seed(ctx, t)
 
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"empty body", ""},
-		{"non-bool value", `{"completed":"yes"}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := env.do(http.MethodPatch, "/api/series/"+env.mangaID.String()+"/completed", tc.body)
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("SetCompleted bad body (%s): want 400, got %d (%s)", tc.name, rec.Code, rec.Body.String())
-			}
-		})
-	}
+	assertBoolPatchRejectsBadBody(t, env, "/api/series/"+env.mangaID.String()+"/completed", "completed")
 }
 
 // TestSetCompleted_BadID proves a malformed id yields 400 "invalid series id".

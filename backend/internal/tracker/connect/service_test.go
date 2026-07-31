@@ -244,36 +244,49 @@ func TestCompleteOAuth_ImplicitFlow_CreatesConnectionWithAccountInfo(t *testing.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			client := testdb.New(t)
-			svc, _, _ := newTestService(t, client, "https://tsundoku.example")
-
-			if _, err := svc.AuthURL(fakeImplicitID); err != nil {
-				t.Fatalf("AuthURL: %v", err)
-			}
-
-			if err := svc.CompleteOAuth(ctx, fakeImplicitID, tt.callback); err != nil {
-				t.Fatalf("CompleteOAuth: %v", err)
-			}
-
-			row, err := client.TrackerConnection.Query().
-				Where(entrackerconnection.TrackerID(fakeImplicitID)).
-				Only(ctx)
-			if err != nil {
-				t.Fatalf("query TrackerConnection: %v", err)
-			}
-			if row.AccessToken != "frag-token-xyz" {
-				t.Fatalf("row.AccessToken = %q, want frag-token-xyz", row.AccessToken)
-			}
-			if row.Username != "owner" || row.ScoreFormat != "POINT_100" {
-				t.Fatalf("row username/score_format = %q/%q, want owner/POINT_100", row.Username, row.ScoreFormat)
-			}
-			// An OAuth login never stores a password (recovery is a refresh
-			// grant / fresh redirect, never a stored credential).
-			if row.Password != "" {
-				t.Fatalf("row.Password = %q, want empty for an OAuth login", row.Password)
-			}
+			assertImplicitLoginStoresAccountInfo(t, tt.callback)
 		})
+	}
+}
+
+// assertImplicitLoginStoresAccountInfo drives ONE implicit-grant round-trip —
+// AuthURL to stash a pending login, then CompleteOAuth with the given callback
+// URL — and asserts the resulting TrackerConnection row.
+//
+// It is a helper rather than an inline table body so each callback shape's
+// reason to exist stays readable in the table above while the assertions (which
+// are identical for every shape: the extracted token, the captured account info,
+// and no stored password) live in one place.
+func assertImplicitLoginStoresAccountInfo(t *testing.T, callback string) {
+	t.Helper()
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc, _, _ := newTestService(t, client, "https://tsundoku.example")
+
+	if _, err := svc.AuthURL(fakeImplicitID); err != nil {
+		t.Fatalf("AuthURL: %v", err)
+	}
+
+	if err := svc.CompleteOAuth(ctx, fakeImplicitID, callback); err != nil {
+		t.Fatalf("CompleteOAuth: %v", err)
+	}
+
+	row, err := client.TrackerConnection.Query().
+		Where(entrackerconnection.TrackerID(fakeImplicitID)).
+		Only(ctx)
+	if err != nil {
+		t.Fatalf("query TrackerConnection: %v", err)
+	}
+	if row.AccessToken != "frag-token-xyz" {
+		t.Fatalf("row.AccessToken = %q, want frag-token-xyz", row.AccessToken)
+	}
+	if row.Username != "owner" || row.ScoreFormat != "POINT_100" {
+		t.Fatalf("row username/score_format = %q/%q, want owner/POINT_100", row.Username, row.ScoreFormat)
+	}
+	// An OAuth login never stores a password (recovery is a refresh
+	// grant / fresh redirect, never a stored credential).
+	if row.Password != "" {
+		t.Fatalf("row.Password = %q, want empty for an OAuth login", row.Password)
 	}
 }
 

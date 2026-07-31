@@ -51,16 +51,7 @@ func seedCleanup(ctx context.Context, t *testing.T, env *testEnv) (seriesID uuid
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	downloaded := func(key string, n float64, pages int, sp *ent.SeriesProvider) *ent.Chapter {
-		filename := key + ".cbz"
-		if err := os.WriteFile(filepath.Join(dir, filename), []byte("cbz"), 0o600); err != nil {
-			t.Fatalf("write cbz: %v", err)
-		}
-		return client.Chapter.Create().
-			SetSeriesID(s.ID).SetChapterKey(key).SetNumber(n).SetPageCount(pages).
-			SetState("downloaded").SetFilename(filename).
-			SetSatisfiedByProviderID(sp.ID).SaveX(ctx)
-	}
+	downloaded := downloadedChapterSeeder(ctx, t, env, dir, s.ID)
 	downloaded("5", 5, 90, live)
 	removable = downloaded("5.1", 5.1, 2, ignored)
 	protected = downloaded("6.1", 6.1, 3, ignored)
@@ -149,9 +140,7 @@ func TestRemoveFractionalChapters_OK(t *testing.T) {
 	if got.Removed != 1 {
 		t.Errorf("removed = %d, want 1", got.Removed)
 	}
-	if _, err := os.Stat(filepath.Join(env.storage, "Manga", "Cleanup Saga", "5.1.cbz")); !os.IsNotExist(err) {
-		t.Errorf("5.1.cbz still on disk (stat err = %v)", err)
-	}
+	assertCBZGone(t, env, "Cleanup Saga", "5.1.cbz")
 	if env.client.Chapter.Query().CountX(ctx) != 2 {
 		t.Errorf("chapter rows = %d, want 2 (5 and 6.1 survive)", env.client.Chapter.Query().CountX(ctx))
 	}
@@ -169,6 +158,17 @@ type handlerResult struct {
 // consider removable (here 6.1 — a live source still carries it) is a 400 and
 // deletes nothing, even though the client asked for it. The client's list is a
 // selection, never an authorisation.
+//
+// This reads as a near-copy of TestRemoveSourcelessChapters_RejectsNonRemovable
+// on purpose: it is the same invariant asserted against a DIFFERENT endpoint,
+// with a different fixture and a different reason for non-removability (here:
+// another live source still carries the key, i.e. the resurrection guard; there:
+// the chapter's own source still carries it). A shared parameterised helper
+// would have to take the seed, the endpoint, the protected chapter, the
+// surviving-row count and the filename, and would hide precisely the fixture
+// detail that says which rule each test pins — so they stay side by side.
+//
+//nolint:dupl // Intentional per-endpoint twin; see the note above.
 func TestRemoveFractionalChapters_RejectsNonRemovable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
@@ -182,9 +182,7 @@ func TestRemoveFractionalChapters_RejectsNonRemovable(t *testing.T) {
 	if env.client.Chapter.Query().CountX(ctx) != 3 {
 		t.Error("a chapter row was deleted despite the 400")
 	}
-	if _, err := os.Stat(filepath.Join(env.storage, "Manga", "Cleanup Saga", "6.1.cbz")); err != nil {
-		t.Errorf("6.1.cbz was deleted despite the 400: %v", err)
-	}
+	assertCBZOnDisk(t, env, "Cleanup Saga", "6.1.cbz")
 }
 
 // TestRemoveFractionalChapters_BadBody: an empty or malformed chapterIds list is a

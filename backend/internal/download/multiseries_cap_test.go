@@ -21,9 +21,7 @@ import (
 // (source,scanlator) providers within a series.
 func seedSourceChaptersScanlator(ctx context.Context, t *testing.T, client *ent.Client, slug, provider, scanlator string, importance, n int) []uuid.UUID {
 	t.Helper()
-	s := client.Series.Create().SetTitle(slug).SetSlug(slug).SaveX(ctx)
-	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(provider).SetScanlator(scanlator).SetImportance(importance).SaveX(ctx)
-	return seedProviderChapters(ctx, t, client, s, sp, slug, provider, n)
+	return seedProviderRowChapters(ctx, t, client, slug, provider, scanlator, "", importance, n)
 }
 
 // seedNamedSourceChapters is like seedSourceChapters but also stores a
@@ -36,8 +34,32 @@ func seedSourceChaptersScanlator(ctx context.Context, t *testing.T, client *ent.
 // source key (name-else-id) collapses onto.
 func seedNamedSourceChapters(ctx context.Context, t *testing.T, client *ent.Client, slug, provider, providerName string, importance, n int) []uuid.UUID {
 	t.Helper()
+	return seedProviderRowChapters(ctx, t, client, slug, provider, "", providerName, importance, n)
+}
+
+// seedProviderRowChapters is the shared body of the two seeders above: one
+// series, ONE SeriesProvider row for it, and n wanted chapters under that row.
+// The two seeders differ only in WHICH provider-identity dimension their case is
+// about (a scanlator vs. a resolved display name), and both dimensions default
+// to "" in the schema, so passing "" here is identical to leaving the field
+// unset — which is what lets the two keep their intent-revealing names without a
+// second copy of the create sequence.
+func seedProviderRowChapters(
+	ctx context.Context,
+	t *testing.T,
+	client *ent.Client,
+	slug, provider, scanlator, providerName string,
+	importance, n int,
+) []uuid.UUID {
+	t.Helper()
 	s := client.Series.Create().SetTitle(slug).SetSlug(slug).SaveX(ctx)
-	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(provider).SetProviderName(providerName).SetImportance(importance).SaveX(ctx)
+	sp := client.SeriesProvider.Create().
+		SetSeries(s).
+		SetProvider(provider).
+		SetScanlator(scanlator).
+		SetProviderName(providerName).
+		SetImportance(importance).
+		SaveX(ctx)
 	return seedProviderChapters(ctx, t, client, s, sp, slug, provider, n)
 }
 

@@ -92,10 +92,10 @@ func collectCycleEvents(events <-chan sse.Event, timeout time.Duration) (sawStar
 			if !ok {
 				return
 			}
-			if ev.Type == "cycle.start" {
+			switch ev.Type {
+			case "cycle.start":
 				sawStart = true
-			}
-			if ev.Type == "cycle.done" {
+			case "cycle.done":
 				sawDone = true
 			}
 			if sawStart && sawDone {
@@ -518,43 +518,56 @@ func TestRunner_Start_TicksAndStopsCleanly(t *testing.T) {
 	r.Start(ctx)
 
 	// Wait for at least one tick (cycle.start event) within a reasonable deadline.
-	tickSeen := false
-	timeout := time.After(2 * time.Second)
-loop:
-	for {
-		select {
-		case ev, ok := <-events:
-			if !ok {
-				break loop
-			}
-			if ev.Type == "cycle.start" {
-				tickSeen = true
-				break loop
-			}
-		case <-timeout:
-			break loop
-		}
-	}
-
-	if !tickSeen {
+	if !waitForEventType(events, "cycle.start", 2*time.Second) {
 		t.Error("expected at least one cycle.start event before cancel")
 	}
 
 	// Cancel the context — the ticker goroutine must exit.
 	cancel()
 
-	// Poll until runtime.NumGoroutine() drops back to <= base+1 (allow +1 slack
-	// for transient runtime goroutines) or until the deadline. Failing to reach
-	// baseline within 2s means the ticker goroutine leaked / did not exit.
-	deadline := time.Now().Add(2 * time.Second)
+	// Allow +1 slack over the baseline for transient runtime goroutines.
+	if now, drained := waitForGoroutineDrain(base+1, 2*time.Second); !drained {
+		t.Errorf("Start goroutine did not exit within 2s after context cancel: goroutines now=%d, base=%d",
+			now, base)
+	}
+}
+
+// waitForEventType drains events until one of type want arrives, reporting
+// whether it did before the timeout (or before the hub closed the stream).
+// Deliberately separate from collectCycleEvents: a caller that only needs the
+// FIRST cycle boundary must not sit out the full timeout waiting for a second
+// event it does not care about.
+func waitForEventType(events <-chan sse.Event, want string, timeout time.Duration) bool {
+	timer := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return false
+			}
+			if ev.Type == want {
+				return true
+			}
+		case <-timer:
+			return false
+		}
+	}
+}
+
+// waitForGoroutineDrain polls runtime.NumGoroutine() until it falls back to
+// limit or below, returning the last count seen and whether it drained in time.
+// Polling (rather than a single sample) is what makes the leak assertion honest:
+// a goroutine that is on its way out is not a leak, one still there after the
+// deadline is.
+func waitForGoroutineDrain(limit int, within time.Duration) (int, bool) {
+	deadline := time.Now().Add(within)
 	for time.Now().Before(deadline) {
-		if runtime.NumGoroutine() <= base+1 {
-			return
+		if n := runtime.NumGoroutine(); n <= limit {
+			return n, true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Errorf("Start goroutine did not exit within 2s after context cancel: goroutines now=%d, base=%d",
-		runtime.NumGoroutine(), base)
+	return runtime.NumGoroutine(), false
 }
 
 // countingIntervals is a goroutine-safe job.Intervals double that records how

@@ -185,27 +185,62 @@ var challengeMarkers = [][]byte{
 	[]byte("captcha"),
 }
 
+// magicSegment is a run of bytes a signature requires at one fixed offset. Most
+// formats declare themselves in a single run at offset 0; a container format needs
+// two (see imageSignatures), which is why the offset is carried per segment rather
+// than assumed.
+type magicSegment struct {
+	offset int
+	magic  []byte
+}
+
+// imageSignature is one raster format's magic-number fingerprint. It holds when
+// EVERY segment matches data at its own offset, so a body shorter than a segment's
+// end simply does not carry that signature.
+type imageSignature []magicSegment
+
+// matches reports whether data carries this signature: every segment present, at its
+// offset, in full. The length test is per segment, so the longest segment end is the
+// effective minimum body length — a body cut short of it fails here rather than
+// panicking on a slice out of range.
+func (s imageSignature) matches(data []byte) bool {
+	for _, seg := range s {
+		end := seg.offset + len(seg.magic)
+		if len(data) < end || !bytes.Equal(data[seg.offset:end], seg.magic) {
+			return false
+		}
+	}
+	return true
+}
+
+// imageSignatures are the raster magic numbers hasImageSignature recognises, kept
+// beside it as the single list. RIFF/WEBP is the reason a signature is a LIST of
+// segments: RIFF is a generic container (WAVE and AVI share the tag), so the payload
+// tag four bytes later is what makes it an image — the four bytes between the two
+// are the container's byte-length field and are deliberately not constrained.
+var imageSignatures = []imageSignature{
+	{{offset: 0, magic: []byte{0xFF, 0xD8, 0xFF}}},       // JPEG (SOI + marker)
+	{{offset: 0, magic: []byte{0x89, 0x50, 0x4E, 0x47}}}, // PNG
+	{{offset: 0, magic: []byte("GIF")}},                  // GIF
+	{ // RIFF container carrying a WEBP payload
+		{offset: 0, magic: []byte("RIFF")},
+		{offset: 8, magic: []byte("WEBP")},
+	},
+	{{offset: 0, magic: []byte("BM")}}, // BMP
+}
+
 // hasImageSignature reports whether data begins with a known raster-image magic
 // number (JPEG, PNG, GIF, RIFF/WEBP, or BMP). A body with a valid signature that
 // still fails image.Decode is a TRUNCATED image — the header arrived but the pixel
 // stream was cut — which is the "incomplete image" delivery failure, distinct from a
 // body that is not an image at all.
 func hasImageSignature(data []byte) bool {
-	switch {
-	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
-		return true // JPEG (SOI + marker)
-	case len(data) >= 4 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47:
-		return true // PNG
-	case len(data) >= 3 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46:
-		return true // GIF ("GIF")
-	case len(data) >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
-		data[8] == 0x57 && data[9] == 0x45 && data[10] == 0x42 && data[11] == 0x50:
-		return true // RIFF container carrying WEBP ("RIFF"..."WEBP")
-	case len(data) >= 2 && data[0] == 0x42 && data[1] == 0x4D:
-		return true // BMP ("BM")
-	default:
-		return false
+	for _, sig := range imageSignatures {
+		if sig.matches(data) {
+			return true
+		}
 	}
+	return false
 }
 
 // isAcceptedUndecodable reports whether data is a real panel Go's registered decoders

@@ -1,10 +1,12 @@
 package series
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/category"
@@ -136,55 +138,57 @@ func (h *Handler) SetCategory(c echo.Context) error {
 // (§16 full round-trip). A missing series yields 404; a missing/invalid body
 // yields 400.
 func (h *Handler) SetMonitored(c echo.Context) error {
-	id, err := validateID(c.Param("id"), "series id")
-	if err != nil {
-		return err
-	}
-
-	var req SetMonitoredRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
-	}
-	if err := validateSetMonitored(req); err != nil {
-		return err
-	}
-
-	ctx := c.Request().Context()
-	if err := h.svc.SetMonitored(ctx, id, *req.Monitored); err != nil {
-		return mapServiceError(err)
-	}
-
-	// Return the updated summary so the response confirms the new monitored state.
-	updated, err := h.svc.GetSeries(ctx, id)
-	if err != nil {
-		return mapServiceError(err)
-	}
-	return c.JSON(http.StatusOK, detailToSummary(updated))
+	return setSeriesFlag(c, h, validateSetMonitored,
+		func(req SetMonitoredRequest) bool { return *req.Monitored },
+		h.svc.SetMonitored)
 }
 
 // SetCompleted handles PATCH /api/series/:id/completed. It marks the series
 // finished (or re-opens it) and returns the updated summary so the response
 // confirms the new completed state.
 func (h *Handler) SetCompleted(c echo.Context) error {
+	return setSeriesFlag(c, h, validateSetCompleted,
+		func(req SetCompletedRequest) bool { return *req.Completed },
+		h.svc.SetCompleted)
+}
+
+// setSeriesFlag is the shared body of the boolean-flag PATCH endpoints
+// (monitored, completed). Both do exactly the same five things — parse :id,
+// bind a one-field body whose *bool distinguishes "absent" from "false",
+// validate it, apply the flag through the service, then RE-READ the series so
+// the response confirms the new state without a refetch (§16 full round-trip).
+// Only the body shape, its validator and the service setter differ, so those
+// arrive as parameters.
+//
+// It is a free function rather than a method because Go methods cannot carry
+// type parameters, and the body type has to be generic for c.Bind to populate
+// the right JSON field name ("monitored" vs "completed") and for each
+// validator to keep its own 400 message.
+func setSeriesFlag[T any](
+	c echo.Context,
+	h *Handler,
+	validate func(T) error,
+	flag func(T) bool,
+	apply func(context.Context, uuid.UUID, bool) error,
+) error {
 	id, err := validateID(c.Param("id"), "series id")
 	if err != nil {
 		return err
 	}
 
-	var req SetCompletedRequest
+	var req T
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	if err := validateSetCompleted(req); err != nil {
+	if err := validate(req); err != nil {
 		return err
 	}
 
 	ctx := c.Request().Context()
-	if err := h.svc.SetCompleted(ctx, id, *req.Completed); err != nil {
+	if err := apply(ctx, id, flag(req)); err != nil {
 		return mapServiceError(err)
 	}
 
-	// Return the updated summary so the response confirms the new completed state.
 	updated, err := h.svc.GetSeries(ctx, id)
 	if err != nil {
 		return mapServiceError(err)

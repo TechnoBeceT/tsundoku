@@ -174,33 +174,62 @@ func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concu
 			continue
 		}
 		sources.Go(func() error {
-			queue, qctx := errgroup.WithContext(sctx)
-			queue.SetLimit(concurrency) // the per-source cap: ordered, blocking hand-out of start slots
-			for _, it := range items {
-				if qctx.Err() != nil {
-					break
-				}
-				queue.Go(func() error {
-					// The Go call above blocks on the semaphore, so this closure may have
-					// been queued before the cancel landed — re-check before doing work.
-					if qctx.Err() != nil {
-						return nil
-					}
-					// Global cap: hold one all-sources slot for the WHOLE run. Acquire is
-					// ctx-aware, so a cancellation returns nil (a skip) rather than blocking.
-					if globalSem != nil {
-						if err := globalSem.Acquire(qctx, 1); err != nil {
-							return nil
-						}
-						defer globalSem.Release(1)
-					}
-					return run(qctx, it)
-				})
-			}
-			return queue.Wait()
+			return drainSourceQueue(sctx, items, concurrency, run, globalSem)
 		})
 	}
 	return sources.Wait()
+}
+
+// drainSourceQueue runs ONE source's ordered item list, handing out at most
+// `concurrency` start slots at a time. The slots are handed out in list order and
+// blocking, which is what makes a source's queue ordered rather than a free-for-all.
+// It stops enqueuing as soon as the group context is cancelled (a sibling source
+// failed, or the parent went away) and returns the queue's first error.
+func drainSourceQueue[T any](
+	ctx context.Context,
+	items []T,
+	concurrency int,
+	run func(context.Context, T) error,
+	globalSem *semaphore.Weighted,
+) error {
+	queue, qctx := errgroup.WithContext(ctx)
+	queue.SetLimit(concurrency) // the per-source cap: ordered, blocking hand-out of start slots
+	for _, it := range items {
+		if qctx.Err() != nil {
+			break
+		}
+		queue.Go(func() error {
+			return runQueuedItem(qctx, it, run, globalSem)
+		})
+	}
+	return queue.Wait()
+}
+
+// runQueuedItem executes a single already-slotted item under the optional GLOBAL
+// concurrency cap. Split out of drainSourceQueue's queue.Go closure so the
+// scheduler's three nesting levels each read on their own; the semantics are
+// unchanged — in particular the global slot is still held for the WHOLE run and
+// released by defer on every exit path.
+func runQueuedItem[T any](
+	ctx context.Context,
+	it T,
+	run func(context.Context, T) error,
+	globalSem *semaphore.Weighted,
+) error {
+	// The queue.Go call blocks on the per-source semaphore, so this may have been
+	// queued before the cancel landed — re-check before doing work.
+	if ctx.Err() != nil {
+		return nil
+	}
+	// Global cap: hold one all-sources slot for the WHOLE run. Acquire is
+	// ctx-aware, so a cancellation returns nil (a skip) rather than blocking.
+	if globalSem != nil {
+		if err := globalSem.Acquire(ctx, 1); err != nil {
+			return nil
+		}
+		defer globalSem.Release(1)
+	}
+	return run(ctx, it)
 }
 
 // runDownloadQueues dispatches the whole pass's grouped chapters through the

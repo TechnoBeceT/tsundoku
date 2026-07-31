@@ -81,6 +81,79 @@ func assertIntTunable(t *testing.T, key string, get func(*settings.Service, cont
 	}
 }
 
+// assertBoolTunable exercises one bool-typed tunable end-to-end: its injected
+// default, the OPPOSITE value round-tripping through Set (proving the accessor
+// reads at use rather than caching the default), and fail-closed rejection of a
+// value that is not a bool at all. Shared by the bool-tunable tests because all
+// of them pin that one three-part contract and differ only in key + accessor
+// (§2 DRY — extracting it also removes the dupl the copies would otherwise be).
+// get selects the accessor under test so the SAME body covers any bool key.
+func assertBoolTunable(t *testing.T, key string, get func(*settings.Service, context.Context) bool, def bool) {
+	t.Helper()
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := get(svc, ctx); got != def {
+		t.Fatalf("%s default = %t, want %t", key, got, def)
+	}
+	if err := svc.Set(ctx, key, strconv.FormatBool(!def)); err != nil {
+		t.Fatalf("Set(%t): %v", !def, err)
+	}
+	if got := get(svc, ctx); got == def {
+		t.Fatalf("after Set(%t), %s = %t, want %t (read-at-use hot reload)", !def, key, got, !def)
+	}
+	if err := svc.Set(ctx, key, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set non-bool: err = %v, want ErrInvalidSetting", err)
+	}
+}
+
+// assertMinOrZeroDurationTunable exercises one duration tunable registered with
+// durationTunableMinOrZero — the "off, or at least the floor" shape. It pins all
+// four parts of that contract: the injected default, 0 accepted as DISABLED (the
+// owner's live off switch, which a plain min-bounded duration would reject), a
+// positive value below the floor rejected fail-closed, and a valid override
+// hot-reloading through the typed accessor. Mirrors assertIntTunable so the
+// registry's shared validator has exactly one shared test body.
+// get selects the accessor under test so the SAME body covers any such key.
+// belowFloor is a RAW string, not a Duration, because each key's floor sits in a
+// different unit and the rejected value is what an owner would actually type.
+func assertMinOrZeroDurationTunable(
+	t *testing.T,
+	key string,
+	get func(*settings.Service, context.Context) time.Duration,
+	def time.Duration,
+	belowFloor string,
+	override time.Duration,
+) {
+	t.Helper()
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := get(svc, ctx); got != def {
+		t.Errorf("%s default = %v, want %v", key, got, def)
+	}
+	// 0 = disabled is accepted.
+	if err := svc.Set(ctx, key, "0"); err != nil {
+		t.Fatalf("Set 0: %v", err)
+	}
+	if got := get(svc, ctx); got != 0 {
+		t.Errorf("%s after Set 0 = %v, want 0 (disabled)", key, got)
+	}
+	// A positive value below the floor is rejected.
+	if err := svc.Set(ctx, key, belowFloor); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set %s (below the floor): want ErrInvalidSetting, got %v", belowFloor, err)
+	}
+	// A valid override round-trips.
+	if err := svc.Set(ctx, key, override.String()); err != nil {
+		t.Fatalf("Set %v: %v", override, err)
+	}
+	if got := get(svc, ctx); got != override {
+		t.Errorf("%s after Set %v = %v, want %v (read-at-use hot reload)", key, override, got, override)
+	}
+}
+
 // TestRetainedVersions proves the extensions.retained_versions accessor returns
 // the injected default, hot-reloads a valid override, and fail-closes out of
 // bounds (1..20).
@@ -498,194 +571,80 @@ func TestExtensionCheckIntervalDefaultAccessor(t *testing.T) {
 // TestWarmupInterval proves the warm-up interval accessor returns the default
 // (15m) when unset, accepts 0 (disabled) and >= 1m, and rejects sub-1m values.
 func TestWarmupInterval(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.WarmupInterval(ctx); got != 15*time.Minute {
-		t.Errorf("WarmupInterval default = %v, want 15m", got)
-	}
-	if err := svc.Set(ctx, settings.KeyWarmupInterval, "0"); err != nil {
-		t.Fatalf("Set 0: %v", err)
-	}
-	if got := svc.WarmupInterval(ctx); got != 0 {
-		t.Errorf("WarmupInterval after Set 0 = %v, want 0 (disabled)", got)
-	}
-	if err := svc.Set(ctx, settings.KeyWarmupInterval, "30s"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 30s: want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyWarmupInterval, "5m"); err != nil {
-		t.Fatalf("Set 5m: %v", err)
-	}
-	if got := svc.WarmupInterval(ctx); got != 5*time.Minute {
-		t.Errorf("WarmupInterval after Set 5m = %v, want 5m", got)
-	}
+	assertMinOrZeroDurationTunable(t, settings.KeyWarmupInterval,
+		func(s *settings.Service, ctx context.Context) time.Duration { return s.WarmupInterval(ctx) },
+		15*time.Minute, "30s", 5*time.Minute)
 }
 
 // TestEngineSuperviseInterval proves the supervisor-interval accessor returns the
 // default (30s) when unset, accepts 0 (disabled) and >= 5s, and rejects sub-5s
 // values (GAP-114).
 func TestEngineSuperviseInterval(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.EngineSuperviseInterval(ctx); got != 30*time.Second {
-		t.Errorf("EngineSuperviseInterval default = %v, want 30s", got)
-	}
-	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "0"); err != nil {
-		t.Fatalf("Set 0: %v", err)
-	}
-	if got := svc.EngineSuperviseInterval(ctx); got != 0 {
-		t.Errorf("EngineSuperviseInterval after Set 0 = %v, want 0 (disabled)", got)
-	}
-	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "1s"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 1s: want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyEngineSuperviseInterval, "1m"); err != nil {
-		t.Fatalf("Set 1m: %v", err)
-	}
-	if got := svc.EngineSuperviseInterval(ctx); got != time.Minute {
-		t.Errorf("EngineSuperviseInterval after Set 1m = %v, want 1m", got)
-	}
+	assertMinOrZeroDurationTunable(t, settings.KeyEngineSuperviseInterval,
+		func(s *settings.Service, ctx context.Context) time.Duration { return s.EngineSuperviseInterval(ctx) },
+		30*time.Second, "1s", time.Minute)
 }
 
 // TestWarmupSlowThresholdMs proves the slow-threshold accessor returns the
 // default (5000) when unset, accepts an in-bounds value, and rejects out-of-bounds.
 func TestWarmupSlowThresholdMs(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.WarmupSlowThresholdMs(ctx); got != 5000 {
-		t.Errorf("WarmupSlowThresholdMs default = %d, want 5000", got)
-	}
-	if err := svc.Set(ctx, settings.KeyWarmupSlowThresholdMs, "50"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 50 (below 100): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyWarmupSlowThresholdMs, "8000"); err != nil {
-		t.Fatalf("Set 8000: %v", err)
-	}
-	if got := svc.WarmupSlowThresholdMs(ctx); got != 8000 {
-		t.Errorf("WarmupSlowThresholdMs after Set = %d, want 8000", got)
-	}
+	assertIntTunable(t, settings.KeyWarmupSlowThresholdMs,
+		func(s *settings.Service, ctx context.Context) int { return s.WarmupSlowThresholdMs(ctx) },
+		5000, 8000, 50, 600001)
 }
 
 // TestCacheTTLs proves the two interactive-cache TTL accessors return the default
 // (1h) when unset, accept 0 (caching disabled) and >= 1s, reject sub-1s values,
 // and reflect a valid override (the hot-reload contract the caches rely on).
 func TestCacheTTLs(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
 	cases := []struct {
 		name string
 		key  string
-		get  func(context.Context) time.Duration
+		get  func(*settings.Service, context.Context) time.Duration
 	}{
-		{"search", settings.KeySearchCacheTTL, svc.SearchCacheTTL},
-		{"chapter", settings.KeyChapterCacheTTL, svc.ChapterCacheTTL},
+		{"search", settings.KeySearchCacheTTL,
+			func(s *settings.Service, ctx context.Context) time.Duration { return s.SearchCacheTTL(ctx) }},
+		{"chapter", settings.KeyChapterCacheTTL,
+			func(s *settings.Service, ctx context.Context) time.Duration { return s.ChapterCacheTTL(ctx) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := c.get(ctx); got != time.Hour {
-				t.Errorf("%s default = %v, want 1h", c.name, got)
-			}
-			// 0 = disabled is accepted.
-			if err := svc.Set(ctx, c.key, "0"); err != nil {
-				t.Fatalf("Set 0: %v", err)
-			}
-			if got := c.get(ctx); got != 0 {
-				t.Errorf("%s after Set 0 = %v, want 0 (disabled)", c.name, got)
-			}
-			// A positive value below the 1s floor is rejected.
-			if err := svc.Set(ctx, c.key, "500ms"); !errors.Is(err, settings.ErrInvalidSetting) {
-				t.Fatalf("Set 500ms: want ErrInvalidSetting, got %v", err)
-			}
-			// A valid override round-trips.
-			if err := svc.Set(ctx, c.key, "2h"); err != nil {
-				t.Fatalf("Set 2h: %v", err)
-			}
-			if got := c.get(ctx); got != 2*time.Hour {
-				t.Errorf("%s after Set 2h = %v, want 2h", c.name, got)
-			}
+			assertMinOrZeroDurationTunable(t, c.key, c.get, time.Hour, "500ms", 2*time.Hour)
 		})
 	}
 }
 
-// TestDownloadConcurrency proves the per-source download-concurrency accessor
+// TestDownloadConcurrency proves the PER-SOURCE download-concurrency accessor
 // returns the default (5) when unset, rejects out-of-bounds values (below 1 /
 // above 32), and reflects a valid override (the hot-reload contract the dispatcher
-// relies on).
+// relies on). The 32 ceiling bounds how hard ONE source is hit at once — the
+// anti-ban throttle, which is why it is far tighter than the global cap below.
 func TestDownloadConcurrency(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.DownloadConcurrency(ctx); got != 5 {
-		t.Errorf("DownloadConcurrency default = %d, want 5", got)
-	}
-	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "33"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 33 (above 32): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyDownloadConcurrency, "8"); err != nil {
-		t.Fatalf("Set 8: %v", err)
-	}
-	if got := svc.DownloadConcurrency(ctx); got != 8 {
-		t.Errorf("DownloadConcurrency after Set = %d, want 8", got)
-	}
+	assertIntTunable(t, settings.KeyDownloadConcurrency,
+		func(s *settings.Service, ctx context.Context) int { return s.DownloadConcurrency(ctx) },
+		5, 8, 0, 33)
 }
 
 // TestMaxConcurrentDownloads proves the GLOBAL download-concurrency accessor
 // returns the default (6) when unset, rejects out-of-bounds values (below 1 /
 // above 64), and reflects a valid override (the hot-reload contract the download
-// cycle relies on to size its shared semaphore).
+// cycle relies on to size its shared semaphore). The 64 ceiling bounds total
+// in-flight fetches across EVERY source — it protects this host's own resources,
+// not any single source, hence the wider bound.
 func TestMaxConcurrentDownloads(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.MaxConcurrentDownloads(ctx); got != 6 {
-		t.Errorf("MaxConcurrentDownloads default = %d, want 6", got)
-	}
-	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "65"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 65 (above 64): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeyMaxConcurrentDownloads, "10"); err != nil {
-		t.Fatalf("Set 10: %v", err)
-	}
-	if got := svc.MaxConcurrentDownloads(ctx); got != 10 {
-		t.Errorf("MaxConcurrentDownloads after Set = %d, want 10", got)
-	}
+	assertIntTunable(t, settings.KeyMaxConcurrentDownloads,
+		func(s *settings.Service, ctx context.Context) int { return s.MaxConcurrentDownloads(ctx) },
+		6, 10, 0, 65)
 }
 
 // TestSourcesFailureThreshold proves the circuit-breaker trip-threshold accessor
-// returns the default (5) when unset, rejects a value below 1, and reflects a
-// valid override (source-politeness Task 2).
+// returns the default (5) when unset, rejects out-of-bounds values (below 1 /
+// above the 100 sanity ceiling), and reflects a valid override (source-
+// politeness Task 2).
 func TestSourcesFailureThreshold(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if got := svc.SourcesFailureThreshold(ctx); got != 5 {
-		t.Errorf("SourcesFailureThreshold default = %d, want 5", got)
-	}
-	if err := svc.Set(ctx, settings.KeySourcesFailureThreshold, "0"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set 0 (below 1): want ErrInvalidSetting, got %v", err)
-	}
-	if err := svc.Set(ctx, settings.KeySourcesFailureThreshold, "3"); err != nil {
-		t.Fatalf("Set 3: %v", err)
-	}
-	if got := svc.SourcesFailureThreshold(ctx); got != 3 {
-		t.Errorf("SourcesFailureThreshold after Set = %d, want 3", got)
-	}
+	assertIntTunable(t, settings.KeySourcesFailureThreshold,
+		func(s *settings.Service, ctx context.Context) int { return s.SourcesFailureThreshold(ctx) },
+		5, 3, 0, 101)
 }
 
 // TestSourcesCooldown proves the circuit-breaker cooldown accessor returns the
@@ -763,66 +722,27 @@ func TestSourcesMinRequestDelay_SetValidation(t *testing.T) {
 // suppression flag defaults to the injected value, round-trips through Set,
 // and rejects a non-boolean value (fail-closed).
 func TestSuppressSplitParts_DefaultAndOverride(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if !svc.SuppressSplitParts(ctx) {
-		t.Fatal("default SuppressSplitParts = false, want true")
-	}
-	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "false"); err != nil {
-		t.Fatalf("Set false: %v", err)
-	}
-	if svc.SuppressSplitParts(ctx) {
-		t.Fatal("after Set false, SuppressSplitParts = true, want false")
-	}
-	if err := svc.Set(ctx, settings.KeySuppressSplitParts, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
-	}
+	assertBoolTunable(t, settings.KeySuppressSplitParts,
+		func(s *settings.Service, ctx context.Context) bool { return s.SuppressSplitParts(ctx) },
+		true)
 }
 
 // TestNotificationsEnabled_DefaultAndOverride proves the notifications.enabled
 // tunable defaults to true, round-trips a false override, and rejects a
 // non-boolean value (fail-closed) — mirroring the other bool tunables.
 func TestNotificationsEnabled_DefaultAndOverride(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if !svc.NotificationsEnabled(ctx) {
-		t.Fatal("default NotificationsEnabled = false, want true")
-	}
-	if err := svc.Set(ctx, settings.KeyNotificationsEnabled, "false"); err != nil {
-		t.Fatalf("Set false: %v", err)
-	}
-	if svc.NotificationsEnabled(ctx) {
-		t.Fatal("after Set false, NotificationsEnabled = true, want false")
-	}
-	if err := svc.Set(ctx, settings.KeyNotificationsEnabled, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
-	}
+	assertBoolTunable(t, settings.KeyNotificationsEnabled,
+		func(s *settings.Service, ctx context.Context) bool { return s.NotificationsEnabled(ctx) },
+		true)
 }
 
 // TestMetadataAutoIdentify_DefaultAndOverride proves the metadata.auto_identify
 // tunable defaults to true and round-trips a Set override, mirroring
 // TestSuppressSplitParts_DefaultAndOverride for the other bool tunable.
 func TestMetadataAutoIdentify_DefaultAndOverride(t *testing.T) {
-	db := testdb.New(t)
-	svc := settings.NewService(db, testDefaults())
-	ctx := context.Background()
-
-	if !svc.MetadataAutoIdentify(ctx) {
-		t.Fatal("default MetadataAutoIdentify = false, want true")
-	}
-	if err := svc.Set(ctx, settings.KeyMetadataAutoIdentify, "false"); err != nil {
-		t.Fatalf("Set false: %v", err)
-	}
-	if svc.MetadataAutoIdentify(ctx) {
-		t.Fatal("after Set false, MetadataAutoIdentify = true, want false")
-	}
-	if err := svc.Set(ctx, settings.KeyMetadataAutoIdentify, "notabool"); !errors.Is(err, settings.ErrInvalidSetting) {
-		t.Fatalf("Set invalid bool: want ErrInvalidSetting, got %v", err)
-	}
+	assertBoolTunable(t, settings.KeyMetadataAutoIdentify,
+		func(s *settings.Service, ctx context.Context) bool { return s.MetadataAutoIdentify(ctx) },
+		true)
 }
 
 // TestFlareSolverrDefaults proves every FlareSolverr accessor returns its

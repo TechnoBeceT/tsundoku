@@ -84,28 +84,25 @@ func TestValidateImagePage_RejectsBrokenContent(t *testing.T) {
 	}
 }
 
-// TestValidateImagePage_ClassifiesRejectReason verifies the reject MESSAGE names the
-// actual sub-cause (not a raw decoder error that reads like a format bug). Each case
-// still wraps ErrBrokenPage — the DECISION is unchanged; only the wording is. The
-// exact phrases are load-bearing: errorclass keys off them ("challenge" → captcha;
-// "incomplete image"/"empty response"/"unrecognized image data" → broken_image).
-func TestValidateImagePage_ClassifiesRejectReason(t *testing.T) {
-	t.Parallel()
+// rejectPhraseCase is one "this body must be rejected, and the message must name
+// THIS sub-cause" expectation.
+type rejectPhraseCase struct {
+	name   string
+	data   []byte
+	phrase string
+}
 
-	cases := []struct {
-		name   string
-		data   []byte
-		phrase string
-	}{
-		// A valid JPEG signature (FF D8 FF) with the pixel stream cut → truncation.
-		{"truncated jpeg", truncatedJPEG(t), "incomplete image"},
-		// An HTML challenge/interstitial served as 200 → an anti-bot page.
-		{"html challenge", htmlPage(), "challenge"},
-		// A 0-byte body → the source returned nothing.
-		{"empty body", []byte{}, "empty response"},
-		// Bytes with no known image signature and not markup → unrecognized.
-		{"random non-image", []byte{0xAA, 0xBB, 0xCC, 0xDD}, "unrecognized image data"},
-	}
+// runRejectPhraseCases asserts, for every case, all three things a reject-wording
+// contract needs: the body is rejected at all, the error wraps ErrBrokenPage (so
+// the accept/reject DECISION is unchanged), and the message carries the phrase
+// errorclass keys off.
+//
+// Only the assertion body is shared — each caller keeps its own table, because
+// WHICH bodies map to WHICH wording is the contract that test exists to pin, and
+// merging the tables would hide that. Sharing the loop is what stops two tables
+// that pin the same three properties from drifting in how strictly they check.
+func runRejectPhraseCases(t *testing.T, cases []rejectPhraseCase) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -121,6 +118,26 @@ func TestValidateImagePage_ClassifiesRejectReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateImagePage_ClassifiesRejectReason verifies the reject MESSAGE names the
+// actual sub-cause (not a raw decoder error that reads like a format bug). Each case
+// still wraps ErrBrokenPage — the DECISION is unchanged; only the wording is. The
+// exact phrases are load-bearing: errorclass keys off them ("challenge" → captcha;
+// "incomplete image"/"empty response"/"unrecognized image data" → broken_image).
+func TestValidateImagePage_ClassifiesRejectReason(t *testing.T) {
+	t.Parallel()
+
+	runRejectPhraseCases(t, []rejectPhraseCase{
+		// A valid JPEG signature (FF D8 FF) with the pixel stream cut → truncation.
+		{"truncated jpeg", truncatedJPEG(t), "incomplete image"},
+		// An HTML challenge/interstitial served as 200 → an anti-bot page.
+		{"html challenge", htmlPage(), "challenge"},
+		// A 0-byte body → the source returned nothing.
+		{"empty body", []byte{}, "empty response"},
+		// Bytes with no known image signature and not markup → unrecognized.
+		{"random non-image", []byte{0xAA, 0xBB, 0xCC, 0xDD}, "unrecognized image data"},
+	})
 }
 
 // TestValidateImagePage_AcceptsUnsupportedSubsamplingJPEG verifies a complete JPEG
@@ -158,4 +175,43 @@ func TestValidateImagePage_RejectsIncompleteUnsupportedJPEG(t *testing.T) {
 			t.Errorf("%s: err %v does not wrap ErrBrokenPage", name, err)
 		}
 	}
+}
+
+// TestValidateImagePage_SignatureBoundaries pins the magic-number recognition that
+// decides WHICH reject wording an undecodable body gets: a known raster signature
+// means the header arrived and the pixel stream was cut ("incomplete image",
+// transient and worth retrying), while no signature means the body was never an
+// image at all ("unrecognized image data"). Both wrap ErrBrokenPage, so the accept/
+// reject decision is identical either way — what this pins is the errorclass-facing
+// sub-cause, which drives what the Source Health Console tells the owner.
+//
+// Every case is a SHORTEST-possible body, so each one exercises exactly one
+// signature and its length/offset boundary rather than a whole decodable image. The
+// near-misses are the load-bearing half: a two-byte SOI (one short of JPEG's
+// three-byte test), a JPEG SOI whose third byte is not a marker, a RIFF container
+// whose payload tag at offset 8 is WAVE rather than WEBP, and a bare "RIFF" too
+// short to carry that tag — each must fall through to "unrecognized", proving the
+// checks are anchored to both a minimum length and a fixed offset.
+func TestValidateImagePage_SignatureBoundaries(t *testing.T) {
+	t.Parallel()
+
+	const (
+		truncated    = "incomplete image"
+		unrecognized = "unrecognized image data"
+	)
+
+	runRejectPhraseCases(t, []rejectPhraseCase{
+		// Recognised signatures, pixel stream absent → a truncated image.
+		{"png magic only", []byte{0x89, 0x50, 0x4E, 0x47}, truncated},
+		{"gif magic only", []byte("GIF"), truncated},
+		{"bmp magic only", []byte("BM"), truncated},
+		{"riff webp header only", []byte("RIFF\x00\x00\x00\x00WEBP"), truncated},
+
+		// Near-misses: no signature holds, so the body is not an image at all.
+		{"jpeg soi one byte short", []byte{0xFF, 0xD8}, unrecognized},
+		{"jpeg soi without marker byte", []byte{0xFF, 0xD8, 0x00}, unrecognized},
+		{"riff carrying wave not webp", []byte("RIFF\x00\x00\x00\x00WAVE"), unrecognized},
+		{"riff tag alone", []byte("RIFF"), unrecognized},
+		{"bmp magic one byte short", []byte("B"), unrecognized},
+	})
 }

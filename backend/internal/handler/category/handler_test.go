@@ -67,6 +67,23 @@ func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// decodeCategory asserts the recorded response carries wantCode and decodes its
+// body into a CategoryDTO. Every category route that succeeds answers with that
+// one shape, so sharing the status check + decode keeps each test's own body down
+// to the single field assertion that names the contract it pins — which is the
+// part a reader needs to see, and the only part that differs between them.
+func decodeCategory(t *testing.T, rec *httptest.ResponseRecorder, wantCode int) categorysvc.CategoryDTO {
+	t.Helper()
+	if rec.Code != wantCode {
+		t.Fatalf("want %d, got %d (%s)", wantCode, rec.Code, rec.Body.String())
+	}
+	var got categorysvc.CategoryDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return got
+}
+
 func (env *testEnv) catID(ctx context.Context, t *testing.T, name string) uuid.UUID {
 	t.Helper()
 	id, err := categorysvc.IDByName(ctx, env.client, name)
@@ -98,13 +115,7 @@ func TestCreate_OK(t *testing.T) {
 	env := newTestEnv(t)
 
 	rec := env.do(http.MethodPost, "/api/categories", `{"name":"Indie","sortOrder":9}`)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("Create: want 201, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := decodeCategory(t, rec, http.StatusCreated)
 	if got.Name != "Indie" || got.SortOrder != 9 || got.Count != 0 {
 		t.Fatalf("Create dto: %+v", got)
 	}
@@ -135,13 +146,7 @@ func TestUpdate_Rename(t *testing.T) {
 	id := env.catID(ctx, t, "Comic")
 
 	rec := env.do(http.MethodPatch, "/api/categories/"+id.String(), `{"name":"Western Comics"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Update rename: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := decodeCategory(t, rec, http.StatusOK)
 	if got.Name != "Western Comics" {
 		t.Fatalf("Update rename: name = %q, want Western Comics", got.Name)
 	}
@@ -154,13 +159,7 @@ func TestUpdate_Reorder(t *testing.T) {
 	id := env.catID(ctx, t, "Manhua")
 
 	rec := env.do(http.MethodPatch, "/api/categories/"+id.String(), `{"sortOrder":42}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Update reorder: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := decodeCategory(t, rec, http.StatusOK)
 	if got.SortOrder != 42 {
 		t.Fatalf("Update reorder: sortOrder = %d, want 42", got.SortOrder)
 	}
@@ -184,13 +183,7 @@ func TestUpdate_RenameDefault(t *testing.T) {
 	ctx := context.Background()
 	id := env.catID(ctx, t, "Other")
 	rec := env.do(http.MethodPatch, "/api/categories/"+id.String(), `{"name":"Misc"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Update rename default: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := decodeCategory(t, rec, http.StatusOK)
 	if got.Name != "Misc" || !got.IsDefault {
 		t.Fatalf("Update rename default: got %+v, want name Misc + isDefault true", got)
 	}
@@ -210,10 +203,7 @@ func TestDelete_OK(t *testing.T) {
 	env := newTestEnv(t)
 	// Create then delete.
 	rec := env.do(http.MethodPost, "/api/categories", `{"name":"Temp"}`)
-	var created categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	created := decodeCategory(t, rec, http.StatusCreated)
 	rec = env.do(http.MethodDelete, "/api/categories/"+created.ID, "")
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("Delete: want 204, got %d (%s)", rec.Code, rec.Body.String())
@@ -251,13 +241,7 @@ func TestSetDefault_OK(t *testing.T) {
 	id := env.catID(ctx, t, "Manga")
 
 	rec := env.do(http.MethodPatch, "/api/categories/"+id.String()+"/default", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("SetDefault: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	var got categorysvc.CategoryDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	got := decodeCategory(t, rec, http.StatusOK)
 	if !got.IsDefault || got.Name != "Manga" {
 		t.Fatalf("SetDefault DTO = %+v, want Manga isDefault=true", got)
 	}

@@ -158,15 +158,7 @@ func TestRunner_ScheduleSnapshot_ConcurrentReadsDuringCycles(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for time.Now().Before(deadline) {
-				snap := r.ScheduleSnapshot()
-				// A published next-run instant is never before the epoch-ish past:
-				// a torn read would surface a garbage time here.
-				if !snap.Download.NextRunAt.IsZero() && snap.Download.NextRunAt.Year() < 2000 {
-					t.Errorf("torn download snapshot: %+v", snap.Download)
-					return
-				}
-				if !snap.Refresh.NextRunAt.IsZero() && snap.Refresh.NextRunAt.Year() < 2000 {
-					t.Errorf("torn refresh snapshot: %+v", snap.Refresh)
+				if !snapshotIsIntact(t, r.ScheduleSnapshot()) {
 					return
 				}
 			}
@@ -182,6 +174,25 @@ func TestRunner_ScheduleSnapshot_ConcurrentReadsDuringCycles(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+// snapshotIsIntact reports whether both published next-run instants are
+// plausible wall-clock times. A published instant is never before the epoch-ish
+// past, so a garbage year is the signature of a TORN read — the sanity check
+// that catches unsynchronized access even without the race detector. It uses
+// t.Errorf (never t.Fatal) because it runs on the reader goroutines, and
+// returns false so the caller stops reading once it has reported.
+func snapshotIsIntact(t *testing.T, snap job.Schedule) bool {
+	t.Helper()
+	if !snap.Download.NextRunAt.IsZero() && snap.Download.NextRunAt.Year() < 2000 {
+		t.Errorf("torn download snapshot: %+v", snap.Download)
+		return false
+	}
+	if !snap.Refresh.NextRunAt.IsZero() && snap.Refresh.NextRunAt.Year() < 2000 {
+		t.Errorf("torn refresh snapshot: %+v", snap.Refresh)
+		return false
+	}
+	return true
 }
 
 // waitForSchedule polls the runner's schedule snapshot until cond holds (or fails

@@ -2,7 +2,6 @@ package library_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -317,25 +316,7 @@ func snapshotSeries(t *testing.T, client *ent.Client, ctx context.Context, stora
 // response is a bare 202 — so its absence is a failure, not a timing quirk.
 func awaitDedupSweep(t *testing.T, events <-chan sse.Event) library.DedupSweepEvent {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case ev := <-events:
-			if ev.Type != "library.dedup.done" {
-				continue
-			}
-			raw, ok := ev.Data.(json.RawMessage)
-			if !ok {
-				t.Fatalf("library.dedup.done payload is %T, want json.RawMessage", ev.Data)
-			}
-			var payload library.DedupSweepEvent
-			if err := json.Unmarshal(raw, &payload); err != nil {
-				t.Fatalf("unmarshal library.dedup.done: %v", err)
-			}
-			return payload
-		case <-deadline:
-			t.Fatal("no library.dedup.done event — the detached sweep must push its summary or the owner never learns the outcome")
-			return library.DedupSweepEvent{}
-		}
-	}
+	return awaitEvent[library.DedupSweepEvent](t, events, "library.dedup.done", 5*time.Second,
+		"no library.dedup.done event — the detached sweep must push its summary or the owner never learns the outcome",
+		nil)
 }

@@ -724,38 +724,48 @@ func TestCoverBytes_MetadataCoverServesWithoutProvider(t *testing.T) {
 		{"disk-origin provider, blank cover_url (meta!=nil)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			db := testdb.New(t)
-			storage := t.TempDir()
-			fetcher := &countingFetcher{data: []byte("SHOULD-NEVER-BE-CALLED"), ext: "png"}
-			svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
-			id, version := seedMetadataCoverSeries(ctx, t, db, storage, tc.withDiskProvider)
-
-			// (a) SURFACE: the detail DTO must carry a versioned proxy coverUrl.
-			detail, err := svc.GetSeries(ctx, id)
-			if err != nil {
-				t.Fatalf("GetSeries: %v", err)
-			}
-			wantURL := "/api/series/" + id.String() + "/cover?v=" + version
-			if detail.CoverURL != wantURL {
-				t.Errorf("coverUrl = %q, want %q", detail.CoverURL, wantURL)
-			}
-
-			// (b) SERVE: the cached bytes, with ZERO source calls.
-			cover, err := svc.CoverBytes(ctx, id)
-			if err != nil {
-				t.Fatalf("CoverBytes: %v", err)
-			}
-			if string(cover.Data) != "ANILIST-COVER-BYTES" || cover.Ext != "png" {
-				t.Errorf("CoverBytes = %q/%q, want ANILIST-COVER-BYTES/png", cover.Data, cover.Ext)
-			}
-			if cover.Version != version {
-				t.Errorf("cover.Version = %q, want %q", cover.Version, version)
-			}
-			if got := fetcher.calls.Load(); got != 0 {
-				t.Fatalf("metadata cover serve made %d Suwayomi call(s), want 0", got)
-			}
+			assertMetadataCoverSurfacesAndServes(t, tc.withDiskProvider)
 		})
+	}
+}
+
+// assertMetadataCoverSurfacesAndServes is the body of the C3 fix proof, run once
+// per seeded shape. Both halves matter and neither implies the other: (a) the
+// detail DTO must SURFACE a versioned proxy coverUrl at all, and (b) that URL
+// must actually SERVE the cached bytes — with zero provider calls, since a
+// metadata cover is already on disk and must never reach for a source.
+func assertMetadataCoverSurfacesAndServes(t *testing.T, withDiskProvider bool) {
+	t.Helper()
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	fetcher := &countingFetcher{data: []byte("SHOULD-NEVER-BE-CALLED"), ext: "png"}
+	svc := series.NewService(db, storage, 14).WithCoverFetcher(fetcher)
+	id, version := seedMetadataCoverSeries(ctx, t, db, storage, withDiskProvider)
+
+	// (a) SURFACE: the detail DTO must carry a versioned proxy coverUrl.
+	detail, err := svc.GetSeries(ctx, id)
+	if err != nil {
+		t.Fatalf("GetSeries: %v", err)
+	}
+	wantURL := "/api/series/" + id.String() + "/cover?v=" + version
+	if detail.CoverURL != wantURL {
+		t.Errorf("coverUrl = %q, want %q", detail.CoverURL, wantURL)
+	}
+
+	// (b) SERVE: the cached bytes, with ZERO source calls.
+	cover, err := svc.CoverBytes(ctx, id)
+	if err != nil {
+		t.Fatalf("CoverBytes: %v", err)
+	}
+	if string(cover.Data) != "ANILIST-COVER-BYTES" || cover.Ext != "png" {
+		t.Errorf("CoverBytes = %q/%q, want ANILIST-COVER-BYTES/png", cover.Data, cover.Ext)
+	}
+	if cover.Version != version {
+		t.Errorf("cover.Version = %q, want %q", cover.Version, version)
+	}
+	if got := fetcher.calls.Load(); got != 0 {
+		t.Fatalf("metadata cover serve made %d Suwayomi call(s), want 0", got)
 	}
 }
 

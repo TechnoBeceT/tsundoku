@@ -36,23 +36,40 @@ func wantExtensions() []sourceengine.Extension {
 	}
 }
 
-// TestExtensions_Success proves GET /extensions decodes the plain array.
-func TestExtensions_Success(t *testing.T) {
+// assertExtensionListCall drives one body-less extension endpoint end to end: it
+// stands up a server pinning the METHOD and PATH the client must hit, then proves
+// the plain-array response decodes into wantExtensions().
+//
+// Four of the five extension endpoints differ ONLY in verb, path and which client
+// method is called — everything else (the canned body, the decode, the compare) is
+// identical. Sharing the scaffolding keeps those three distinguishing facts on one
+// visible line per test and stops the four copies drifting in how strictly they
+// check. Install is deliberately NOT routed through here: it asserts on the
+// REQUEST BODY the client sent, which is its whole point.
+func assertExtensionListCall(t *testing.T, wantMethod, wantPath string, call func(sourceengine.Client) ([]sourceengine.Extension, error)) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/extensions" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		if r.Method != wantMethod || r.URL.Path != wantPath {
+			t.Errorf("unexpected request: %s %s, want %s %s", r.Method, r.URL.Path, wantMethod, wantPath)
 		}
 		writeJSON(t, w, http.StatusOK, extensionsResponseBody())
 	}))
 	defer srv.Close()
 
-	got, err := newTestClient(t, srv).Extensions(context.Background())
+	got, err := call(newTestClient(t, srv))
 	if err != nil {
-		t.Fatalf("Extensions: %v", err)
+		t.Fatalf("%s %s: %v", wantMethod, wantPath, err)
 	}
 	if !reflect.DeepEqual(got, wantExtensions()) {
-		t.Errorf("Extensions = %+v, want %+v", got, wantExtensions())
+		t.Errorf("%s %s = %+v, want %+v", wantMethod, wantPath, got, wantExtensions())
 	}
+}
+
+// TestExtensions_Success proves GET /extensions decodes the plain array.
+func TestExtensions_Success(t *testing.T) {
+	assertExtensionListCall(t, http.MethodGet, "/extensions", func(c sourceengine.Client) ([]sourceengine.Extension, error) {
+		return c.Extensions(context.Background())
+	})
 }
 
 // TestInstallExtension_Success proves POST /extensions/install sends only the
@@ -108,63 +125,27 @@ func TestInstallExtension_ByApkURL(t *testing.T) {
 // TestRefreshExtensions_Success proves POST /extensions/refresh returns the
 // refreshed list.
 func TestRefreshExtensions_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/extensions/refresh" {
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		writeJSON(t, w, http.StatusOK, extensionsResponseBody())
-	}))
-	defer srv.Close()
-
-	got, err := newTestClient(t, srv).RefreshExtensions(context.Background())
-	if err != nil {
-		t.Fatalf("RefreshExtensions: %v", err)
-	}
-	if !reflect.DeepEqual(got, wantExtensions()) {
-		t.Errorf("RefreshExtensions = %+v, want %+v", got, wantExtensions())
-	}
+	assertExtensionListCall(t, http.MethodPost, "/extensions/refresh", func(c sourceengine.Client) ([]sourceengine.Extension, error) {
+		return c.RefreshExtensions(context.Background())
+	})
 }
 
 // TestUpdateExtension_Success proves POST /extensions/{pkg}/update targets
 // the correct path and returns the refreshed list.
 func TestUpdateExtension_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/extensions/eu.kanade.tachiyomi.extension.en.mangadex/update"
-		if r.Method != http.MethodPost || r.URL.Path != wantPath {
-			t.Errorf("unexpected request: %s %s, want POST %s", r.Method, r.URL.Path, wantPath)
-		}
-		writeJSON(t, w, http.StatusOK, extensionsResponseBody())
-	}))
-	defer srv.Close()
-
-	got, err := newTestClient(t, srv).UpdateExtension(context.Background(), "eu.kanade.tachiyomi.extension.en.mangadex")
-	if err != nil {
-		t.Fatalf("UpdateExtension: %v", err)
-	}
-	if !reflect.DeepEqual(got, wantExtensions()) {
-		t.Errorf("UpdateExtension = %+v, want %+v", got, wantExtensions())
-	}
+	const pkg = "eu.kanade.tachiyomi.extension.en.mangadex"
+	assertExtensionListCall(t, http.MethodPost, "/extensions/"+pkg+"/update", func(c sourceengine.Client) ([]sourceengine.Extension, error) {
+		return c.UpdateExtension(context.Background(), pkg)
+	})
 }
 
 // TestUninstallExtension_Success proves DELETE /extensions/{pkg} targets the
 // correct path and returns the refreshed list.
 func TestUninstallExtension_Success(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		wantPath := "/extensions/eu.kanade.tachiyomi.extension.en.mangadex"
-		if r.Method != http.MethodDelete || r.URL.Path != wantPath {
-			t.Errorf("unexpected request: %s %s, want DELETE %s", r.Method, r.URL.Path, wantPath)
-		}
-		writeJSON(t, w, http.StatusOK, extensionsResponseBody())
-	}))
-	defer srv.Close()
-
-	got, err := newTestClient(t, srv).UninstallExtension(context.Background(), "eu.kanade.tachiyomi.extension.en.mangadex")
-	if err != nil {
-		t.Fatalf("UninstallExtension: %v", err)
-	}
-	if !reflect.DeepEqual(got, wantExtensions()) {
-		t.Errorf("UninstallExtension = %+v, want %+v", got, wantExtensions())
-	}
+	const pkg = "eu.kanade.tachiyomi.extension.en.mangadex"
+	assertExtensionListCall(t, http.MethodDelete, "/extensions/"+pkg, func(c sourceengine.Client) ([]sourceengine.Extension, error) {
+		return c.UninstallExtension(context.Background(), pkg)
+	})
 }
 
 // TestExtensions_BadRequest proves a 400 maps to *BadRequestError.

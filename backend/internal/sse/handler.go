@@ -2,6 +2,7 @@
 package sse
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -58,19 +59,7 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 			return echo.NewHTTPError(http.StatusInternalServerError, "streaming unsupported")
 		}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		// Tells nginx/Cloudflare-style reverse proxies not to buffer this
-		// response — a buffering proxy would hold every SSE frame until its
-		// own buffer fills (or the connection closes), defeating real-time
-		// delivery and starving the heartbeat's job of keeping the stream
-		// alive through the edge. Standard nginx `proxy_buffering off`
-		// convention; harmless (ignored) on a proxy that doesn't recognize it.
-		w.Header().Set("X-Accel-Buffering", "no")
-		// Disable buffering at the response writer level so frames are sent
-		// immediately. WriteHeader flushes headers to the client.
-		w.WriteHeader(http.StatusOK)
+		writeStreamHeaders(w)
 
 		ch, unsubscribe := hub.Subscribe()
 		defer unsubscribe()
@@ -78,32 +67,66 @@ func ProgressHandler(hub *Hub) echo.HandlerFunc {
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 
-		ctx := c.Request().Context()
-		for {
-			select {
-			case <-ctx.Done():
-				// Client disconnected — cleanup is handled by defer unsubscribe.
+		return streamEvents(c.Request().Context(), w, flusher, ch, ticker.C)
+	}
+}
+
+// writeStreamHeaders commits the SSE response headers and the 200 status. It is
+// called only after the flusher check above, because WriteHeader locks the status
+// code and would make the "streaming unsupported" 500 unreachable.
+func writeStreamHeaders(w *echo.Response) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	// Tells nginx/Cloudflare-style reverse proxies not to buffer this
+	// response — a buffering proxy would hold every SSE frame until its
+	// own buffer fills (or the connection closes), defeating real-time
+	// delivery and starving the heartbeat's job of keeping the stream
+	// alive through the edge. Standard nginx `proxy_buffering off`
+	// convention; harmless (ignored) on a proxy that doesn't recognize it.
+	w.Header().Set("X-Accel-Buffering", "no")
+	// Disable buffering at the response writer level so frames are sent
+	// immediately. WriteHeader flushes headers to the client.
+	w.WriteHeader(http.StatusOK)
+}
+
+// streamEvents is the stream's pump: it forwards each hub event as an SSE frame
+// and writes an idle keepalive on every heartbeat tick, flushing after both, and
+// returns nil the moment the client goes away.
+//
+// EVERY exit is a nil error on purpose. The response is already committed with a
+// 200, so there is no status left to change — a write failure here means the
+// client disconnected, which is the normal end of an SSE stream, not a fault to
+// hand the error middleware.
+func streamEvents(
+	ctx context.Context,
+	w *echo.Response,
+	flusher http.Flusher,
+	ch <-chan Event,
+	heartbeat <-chan time.Time,
+) error {
+	for {
+		select {
+		case <-ctx.Done():
+			// Client disconnected — cleanup is handled by the caller's defer unsubscribe.
+			return nil
+		case event, ok := <-ch:
+			if !ok {
+				// Channel closed (hub shutting down) — end the stream.
 				return nil
-			case event, ok := <-ch:
-				if !ok {
-					// Channel closed (hub shutting down) — end the stream.
-					return nil
-				}
-				if err := writeSSEFrame(w, event); err != nil {
-					// Write failure usually means the client disconnected.
-					return nil //nolint:nilerr // intentional: stream end is not an error
-				}
-				flusher.Flush()
-			case <-ticker.C:
-				// Idle heartbeat: a leading colon is an SSE comment per spec,
-				// so EventSource ignores it entirely — this is transport-only
-				// keepalive, invisible to the frontend.
-				if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-					// Write failure usually means the client disconnected.
-					return nil //nolint:nilerr // intentional: stream end is not an error
-				}
-				flusher.Flush()
 			}
+			if err := writeSSEFrame(w, event); err != nil {
+				return nil //nolint:nilerr // intentional: stream end is not an error
+			}
+			flusher.Flush()
+		case <-heartbeat:
+			// Idle heartbeat: a leading colon is an SSE comment per spec,
+			// so EventSource ignores it entirely — this is transport-only
+			// keepalive, invisible to the frontend.
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return nil //nolint:nilerr // intentional: stream end is not an error
+			}
+			flusher.Flush()
 		}
 	}
 }

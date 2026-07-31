@@ -3,7 +3,6 @@ package library_test
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"sort"
 	"sync/atomic"
 	"testing"
@@ -338,27 +337,9 @@ func TestHealDriftedProviders_SilentWhenNothingMerged(t *testing.T) {
 // and returns its decoded payload, failing the test if none does.
 func awaitProviderMerged(t *testing.T, events <-chan sse.Event) library.MergeEvent {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case ev := <-events:
-			if ev.Type != "provider.merged" {
-				continue
-			}
-			raw, ok := ev.Data.(json.RawMessage)
-			if !ok {
-				t.Fatalf("provider.merged payload is %T, want json.RawMessage", ev.Data)
-			}
-			var payload library.MergeEvent
-			if err := json.Unmarshal(raw, &payload); err != nil {
-				t.Fatalf("unmarshal provider.merged: %v", err)
-			}
-			return payload
-		case <-deadline:
-			t.Fatal("no provider.merged event — an unattended merge must push its state change")
-			return library.MergeEvent{}
-		}
-	}
+	return awaitEvent[library.MergeEvent](t, events, "provider.merged", 5*time.Second,
+		"no provider.merged event — an unattended merge must push its state change",
+		nil)
 }
 
 // TestHealDriftedProviders_EmptyLiveFeedIsSkipped is the ORPHAN GUARD: the

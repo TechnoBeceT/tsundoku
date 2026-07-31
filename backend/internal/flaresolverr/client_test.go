@@ -97,59 +97,67 @@ func assertSolveRequestBody(t *testing.T, gotBody map[string]any) {
 	}
 }
 
-// TestSolve_NonOKStatus proves a FlareSolverr "error" status (a challenge it
-// could not solve) surfaces as an error naming the message.
-func TestSolve_NonOKStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"error","message":"Unable to evaluate the Cloudflare challenge","solution":{"url":"","status":0,"cookies":[],"userAgent":""}}`))
-	}))
+// assertSolveFails drives Solve against a fake FlareSolverr running handler and
+// asserts the call FAILS with an error mentioning wantInErr.
+//
+// Solve can fail three genuinely different ways — a well-formed FlareSolverr
+// "error" payload, a raw HTTP error from the FlareSolverr process itself, and an
+// "ok" payload carrying nothing replayable — but each case's contract is
+// entirely captured by (what the fake replies, what the error must name). The
+// plumbing around that is identical, so it lives here once; `because` names the
+// failure mode the calling test pins so a nil error reads as the rule that broke.
+func assertSolveFails(t *testing.T, handler http.HandlerFunc, wantInErr, because string) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
 	_, err := flaresolverr.Solve(context.Background(), srv.Client(), srv.URL, "https://kitsu.app/", "", 30*time.Second)
 	if err == nil {
-		t.Fatal("Solve: want an error for a non-ok FlareSolverr status, got nil")
+		t.Fatalf("Solve: want an error %s, got nil", because)
 	}
-	if !strings.Contains(err.Error(), "Unable to evaluate") {
-		t.Errorf("error = %v, want it to carry the FlareSolverr message", err)
+	if !strings.Contains(err.Error(), wantInErr) {
+		t.Errorf("error = %v, want it to mention %q (%s)", err, wantInErr, because)
 	}
+}
+
+// jsonReply is a fake-FlareSolverr handler that answers every request with the
+// given JSON body — the shape of a FlareSolverr reply the client must parse.
+func jsonReply(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}
+}
+
+// TestSolve_NonOKStatus proves a FlareSolverr "error" status (a challenge it
+// could not solve) surfaces as an error naming the message.
+func TestSolve_NonOKStatus(t *testing.T) {
+	assertSolveFails(t,
+		jsonReply(`{"status":"error","message":"Unable to evaluate the Cloudflare challenge","solution":{"url":"","status":0,"cookies":[],"userAgent":""}}`),
+		"Unable to evaluate",
+		"for a non-ok FlareSolverr status (the error must carry FlareSolverr's own message)")
 }
 
 // TestSolve_HTTPError proves a non-200 HTTP response from FlareSolverr itself
 // (not a well-formed FlareSolverr error payload) is surfaced as an error.
 func TestSolve_HTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte("internal server error"))
-	}))
-	defer srv.Close()
-
-	_, err := flaresolverr.Solve(context.Background(), srv.Client(), srv.URL, "https://kitsu.app/", "", 30*time.Second)
-	if err == nil {
-		t.Fatal("Solve: want an error for HTTP 500, got nil")
-	}
-	if !strings.Contains(err.Error(), "500") {
-		t.Errorf("error = %v, want it to mention the HTTP 500 status", err)
-	}
+	assertSolveFails(t,
+		func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("internal server error"))
+		},
+		"500",
+		"for HTTP 500 (the error must mention the status)")
 }
 
 // TestSolve_NoClearanceCookie proves an "ok" response that carries no
 // cf_clearance cookie is still treated as a failure — the caller has nothing
 // usable to replay.
 func TestSolve_NoClearanceCookie(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok","message":"","solution":{"url":"","status":200,"cookies":[{"name":"other","value":"x","domain":"kitsu.app","path":"/"}],"userAgent":"UA"}}`))
-	}))
-	defer srv.Close()
-
-	_, err := flaresolverr.Solve(context.Background(), srv.Client(), srv.URL, "https://kitsu.app/", "", 30*time.Second)
-	if err == nil {
-		t.Fatal("Solve: want an error when no cf_clearance cookie is present, got nil")
-	}
-	if !strings.Contains(err.Error(), "cf_clearance") {
-		t.Errorf("error = %v, want it to mention cf_clearance", err)
-	}
+	assertSolveFails(t,
+		jsonReply(`{"status":"ok","message":"","solution":{"url":"","status":200,"cookies":[{"name":"other","value":"x","domain":"kitsu.app","path":"/"}],"userAgent":"UA"}}`),
+		"cf_clearance",
+		"when no cf_clearance cookie is present")
 }
 
 // TestSolve_EndpointTrailingSlashAndV1 proves the /v1 suffix is appended

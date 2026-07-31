@@ -77,47 +77,77 @@ func SeedSourcePreferences(ctx context.Context, client sourceengine.Client, db *
 			// nothing to seed from, and not a failure.
 			continue
 		}
-		name := nameByProvider[provider]
-
-		prefs, err := client.Preferences(ctx, sourceID)
-		if err != nil {
-			slog.WarnContext(ctx, "enginetopo: Preferences failed, skipping source",
-				"source_id", sourceID, "err", err)
+		seeded, read := seedOneSource(ctx, client, db, sourceID, nameByProvider[provider])
+		if !read {
 			result.SkippedSources++
-			// Record the READ FAILURE so the topology status can positively report
-			// this source's preferences could not be read (a real gap), distinct
-			// from a source that was reached but had nothing to capture.
-			recordSeedState(ctx, db, sourceID, name, false, err.Error())
 			continue
 		}
-
-		for _, p := range prefs {
-			if p.Key == "" {
-				// A preference with no key cannot be addressed uniquely by
-				// (source_id, key) — skip rather than risk merging distinct
-				// preferences into one row.
-				continue
-			}
-			value, valueType, ok := encodePreferenceValue(p)
-			if !ok {
-				// Unset current value (nil) — nothing to seed.
-				continue
-			}
-			if err := upsertSourcePreference(ctx, db, sourceID, p.Key, value, valueType); err != nil {
-				slog.WarnContext(ctx, "enginetopo: failed to persist source preference",
-					"source_id", sourceID, "key", p.Key, "err", err)
-				continue
-			}
-			result.Seeded++
-		}
-
-		// The READ succeeded (independent of how many prefs existed or whether any
-		// individual pref-row write above failed) — record ok=true and clear any
-		// prior read error, so a previously-failed source self-heals on re-run.
-		recordSeedState(ctx, db, sourceID, name, true, "")
+		result.Seeded += seeded
 	}
 
 	return result, nil
+}
+
+// seedOneSource captures ONE source's preferences into the durable mirror and
+// records that source's seed state. It returns how many preference rows were
+// written and read=false when the ENGINE READ itself failed — the caller counts
+// that source as skipped.
+//
+// A per-preference write failure is logged and skipped rather than aborting: one
+// unwritable row must not cost the source its other preferences, nor its
+// positive seed state.
+func seedOneSource(
+	ctx context.Context,
+	client sourceengine.Client,
+	db *ent.Client,
+	sourceID int64,
+	name string,
+) (seeded int, read bool) {
+	prefs, err := client.Preferences(ctx, sourceID)
+	if err != nil {
+		slog.WarnContext(ctx, "enginetopo: Preferences failed, skipping source",
+			"source_id", sourceID, "err", err)
+		// Record the READ FAILURE so the topology status can positively report
+		// this source's preferences could not be read (a real gap), distinct
+		// from a source that was reached but had nothing to capture.
+		recordSeedState(ctx, db, sourceID, name, false, err.Error())
+		return 0, false
+	}
+
+	for _, p := range prefs {
+		if seedOnePreference(ctx, db, sourceID, p) {
+			seeded++
+		}
+	}
+
+	// The READ succeeded (independent of how many prefs existed or whether any
+	// individual pref-row write above failed) — record ok=true and clear any
+	// prior read error, so a previously-failed source self-heals on re-run.
+	recordSeedState(ctx, db, sourceID, name, true, "")
+	return seeded, true
+}
+
+// seedOnePreference upserts a single preference, reporting whether a row was
+// actually written. The three false cases — an unaddressable empty key, an unset
+// value, and a write failure — are all "skip, do not fail the source".
+func seedOnePreference(ctx context.Context, db *ent.Client, sourceID int64, p sourceengine.Preference) bool {
+	if p.Key == "" {
+		// A preference with no key cannot be addressed uniquely by
+		// (source_id, key) — skip rather than risk merging distinct
+		// preferences into one row.
+		return false
+	}
+	value, valueType, ok := encodePreferenceValue(p)
+	if !ok {
+		// Unset current value (nil) — nothing to seed.
+		return false
+	}
+	if err := upsertSourcePreference(ctx, db, sourceID, p.Key, value, valueType); err != nil {
+		slog.WarnContext(ctx, "enginetopo: failed to persist source preference",
+			"source_id", sourceID, "key", p.Key, "err", err)
+		return false
+	}
+	return true
 }
 
 // distinctProvidersWithNames loads provider + provider_name distinct in ONE

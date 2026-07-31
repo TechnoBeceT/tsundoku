@@ -37,6 +37,36 @@ func remainingCBZs(t *testing.T, seriesDir string) []string {
 	return got
 }
 
+// assertSweepDeletesNothing seeds a fresh series directory with files, runs ONE
+// RemoveOtherChapterFiles sweep against it, and asserts the sweep deleted
+// nothing and left every file on disk.
+//
+// "This sweep is a no-op" is the load-bearing claim of several tests here — a
+// false delete costs the owner a CBZ — so it is asserted in exactly one place
+// and each caller supplies `because`, the specific reason ITS case must not
+// match anything. The setup differs (which files, which target); the claim does
+// not.
+func assertSweepDeletesNothing(t *testing.T, title, targetNumber, keepFilename, because string, files []string) {
+	t.Helper()
+	storage := t.TempDir()
+	const category = "Manga"
+	seriesDir := disk.SeriesDir(storage, category, title)
+	for _, name := range files {
+		writeStubCBZ(t, seriesDir, name)
+	}
+
+	removed, err := disk.RemoveOtherChapterFiles(storage, category, title, targetNumber, keepFilename)
+	if err != nil {
+		t.Fatalf("RemoveOtherChapterFiles: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0 (%s)", removed, because)
+	}
+	if got := remainingCBZs(t, seriesDir); len(got) != len(files) {
+		t.Errorf("remaining CBZs = %v, want all %d files intact (%s)", got, len(files), because)
+	}
+}
+
 // TestRemoveOtherChapterFiles_RemovesDuplicatesKeepsWinner proves the core
 // convergence-cleanup behaviour: every OTHER .cbz whose parsed chapter number
 // matches the target is removed, the kept file survives, and a different
@@ -69,23 +99,9 @@ func TestRemoveOtherChapterFiles_RemovesDuplicatesKeepsWinner(t *testing.T) {
 // keepFilename is the ONLY file for that chapter number, nothing is removed —
 // the winning/only file is never deleted.
 func TestRemoveOtherChapterFiles_KeepOnlyFileRemovesNothing(t *testing.T) {
-	storage := t.TempDir()
-	const category, title = "Manga", "Solo Series"
-	seriesDir := disk.SeriesDir(storage, category, title)
-
-	writeStubCBZ(t, seriesDir, "[B-x] 010.cbz")
-	writeStubCBZ(t, seriesDir, "[C] 011.cbz")
-
-	removed, err := disk.RemoveOtherChapterFiles(storage, category, title, "010", "[B-x] 010.cbz")
-	if err != nil {
-		t.Fatalf("RemoveOtherChapterFiles: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0 (only file for the chapter is the keeper)", removed)
-	}
-	if got := remainingCBZs(t, seriesDir); len(got) != 2 {
-		t.Errorf("remaining CBZs = %v, want both files intact", got)
-	}
+	assertSweepDeletesNothing(t, "Solo Series", "010", "[B-x] 010.cbz",
+		"the only file for the chapter is the keeper",
+		[]string{"[B-x] 010.cbz", "[C] 011.cbz"})
 }
 
 // TestRemoveOtherChapterFiles_MissingDir is a no-op with no error: a series
@@ -142,22 +158,9 @@ func TestRemoveOtherChapterFiles_IgnoresJunkTokenFilenames(t *testing.T) {
 // TestRemoveOtherChapterFiles_JunkTargetDeletesNothing proves that a non-clean
 // target number (defensive) sweeps nothing rather than risk an ambiguous match.
 func TestRemoveOtherChapterFiles_JunkTargetDeletesNothing(t *testing.T) {
-	storage := t.TempDir()
-	const category, title = "Manga", "Junk Target"
-	seriesDir := disk.SeriesDir(storage, category, title)
-	writeStubCBZ(t, seriesDir, "[A] 010.cbz")
-	writeStubCBZ(t, seriesDir, "[B] 010.cbz")
-
-	removed, err := disk.RemoveOtherChapterFiles(storage, category, title, "10th", "[A] 010.cbz")
-	if err != nil {
-		t.Fatalf("RemoveOtherChapterFiles: %v", err)
-	}
-	if removed != 0 {
-		t.Errorf("removed = %d, want 0 (junk target must match nothing)", removed)
-	}
-	if got := remainingCBZs(t, seriesDir); len(got) != 2 {
-		t.Errorf("remaining = %v, want both files intact", got)
-	}
+	assertSweepDeletesNothing(t, "Junk Target", "10th", "[A] 010.cbz",
+		"a junk target number must match nothing",
+		[]string{"[A] 010.cbz", "[B] 010.cbz"})
 }
 
 // TestRemoveOtherChapterFiles_NumericEquivalence proves the match is by PARSED

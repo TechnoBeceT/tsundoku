@@ -106,24 +106,7 @@ func (s *Service) RemoveSourcelessChapters(ctx context.Context, id uuid.UUID, ch
 // removable-sourceless set. Any id outside it fails the WHOLE call with
 // ErrChapterNotRemovable (all-or-nothing); duplicate ids are collapsed.
 func selectSourceless(row *ent.Series, chapterIDs []uuid.UUID) ([]*ent.Chapter, error) {
-	removable := make(map[uuid.UUID]*ent.Chapter, len(row.Edges.Chapters))
-	for _, ch := range removableSourceless(row) {
-		removable[ch.ID] = ch
-	}
-	targets := make([]*ent.Chapter, 0, len(chapterIDs))
-	seen := make(map[uuid.UUID]struct{}, len(chapterIDs))
-	for _, cid := range chapterIDs {
-		ch, ok := removable[cid]
-		if !ok {
-			return nil, fmt.Errorf("series: chapter %s: %w", cid, ErrChapterNotRemovable)
-		}
-		if _, dup := seen[cid]; dup {
-			continue
-		}
-		seen[cid] = struct{}{}
-		targets = append(targets, ch)
-	}
-	return targets, nil
+	return selectAgainstRemovable(row, chapterIDs, removableSourceless)
 }
 
 // removableSourceless applies the removable rule to one loaded series: a chapter with

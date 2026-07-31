@@ -41,16 +41,7 @@ func seedSourcelessCleanup(ctx context.Context, t *testing.T, env *testEnv) (ser
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	downloaded := func(key string, n float64, pages int, sp *ent.SeriesProvider) *ent.Chapter {
-		filename := key + ".cbz"
-		if err := os.WriteFile(filepath.Join(dir, filename), []byte("cbz"), 0o600); err != nil {
-			t.Fatalf("write cbz: %v", err)
-		}
-		return client.Chapter.Create().
-			SetSeriesID(s.ID).SetChapterKey(key).SetNumber(n).SetPageCount(pages).
-			SetState("downloaded").SetFilename(filename).
-			SetSatisfiedByProviderID(sp.ID).SaveX(ctx)
-	}
+	downloaded := downloadedChapterSeeder(ctx, t, env, dir, s.ID)
 	protected = downloaded("5", 5, 90, live)
 	removable = downloaded("7", 7, 5, live)
 	return s.ID, removable, protected
@@ -132,9 +123,7 @@ func TestRemoveSourcelessChapters_OK(t *testing.T) {
 	if got.Removed != 1 {
 		t.Errorf("removed = %d, want 1", got.Removed)
 	}
-	if _, err := os.Stat(filepath.Join(env.storage, "Manga", "Sourceless Saga", "7.cbz")); !os.IsNotExist(err) {
-		t.Errorf("7.cbz still on disk (stat err = %v)", err)
-	}
+	assertCBZGone(t, env, "Sourceless Saga", "7.cbz")
 	if env.client.Chapter.Query().CountX(ctx) != 1 {
 		t.Errorf("chapter rows = %d, want 1 (5 survives)", env.client.Chapter.Query().CountX(ctx))
 	}
@@ -143,6 +132,13 @@ func TestRemoveSourcelessChapters_OK(t *testing.T) {
 // TestRemoveSourcelessChapters_RejectsNonRemovable: an id the SERVER does not
 // consider removable (here 5 — comix still carries it) is a 400 and deletes
 // nothing, even though the client asked for it.
+//
+// The fractional twin (TestRemoveFractionalChapters_RejectsNonRemovable) reads
+// almost identically on purpose — same invariant, different endpoint, different
+// fixture and a different reason a chapter is protected. That comment carries
+// the full rationale for keeping the two apart.
+//
+//nolint:dupl // Intentional per-endpoint twin; see the note above.
 func TestRemoveSourcelessChapters_RejectsNonRemovable(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := context.Background()
@@ -156,9 +152,7 @@ func TestRemoveSourcelessChapters_RejectsNonRemovable(t *testing.T) {
 	if env.client.Chapter.Query().CountX(ctx) != 2 {
 		t.Error("a chapter row was deleted despite the 400")
 	}
-	if _, err := os.Stat(filepath.Join(env.storage, "Manga", "Sourceless Saga", "5.cbz")); err != nil {
-		t.Errorf("5.cbz was deleted despite the 400: %v", err)
-	}
+	assertCBZOnDisk(t, env, "Sourceless Saga", "5.cbz")
 }
 
 // TestRemoveSourcelessChapters_BadBody: an empty or malformed chapterIds list is

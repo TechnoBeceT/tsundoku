@@ -2,7 +2,6 @@ package library_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -517,31 +516,14 @@ func TestStartMatchDiskProvider_DetachedCompletesAfterRequestCancel(t *testing.T
 // testdb tears the client down.
 func waitForMergeEvent(t *testing.T, events <-chan sse.Event, wantSeriesID string) {
 	t.Helper()
-	deadline := time.After(15 * time.Second)
-	for {
-		select {
-		case ev := <-events:
-			if ev.Type != "provider.merged" {
-				continue
-			}
-			raw, ok := ev.Data.(json.RawMessage)
-			if !ok {
-				t.Fatalf("provider.merged Data = %T, want json.RawMessage", ev.Data)
-			}
-			var me library.MergeEvent
-			if err := json.Unmarshal(raw, &me); err != nil {
-				t.Fatalf("decode merge event: %v", err)
-			}
-			if me.SeriesID != wantSeriesID {
-				continue
-			}
-			if me.Error != "" {
-				t.Fatalf("provider.merged reported error: %s", me.Error)
-			}
-			return
-		case <-deadline:
-			t.Fatal("timed out waiting for provider.merged SSE event")
-		}
+	// Events for OTHER series are skipped, not failed on: a test may have more
+	// than one merge in flight and only this series' completion means the
+	// goroutine under test is done.
+	me := awaitEvent[library.MergeEvent](t, events, "provider.merged", 15*time.Second,
+		"timed out waiting for provider.merged SSE event",
+		func(me library.MergeEvent) bool { return me.SeriesID == wantSeriesID })
+	if me.Error != "" {
+		t.Fatalf("provider.merged reported error: %s", me.Error)
 	}
 }
 

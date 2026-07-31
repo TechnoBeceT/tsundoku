@@ -674,6 +674,9 @@ const minAuthSecretLen = 16
 //     would block every download slot and stall the whole cycle.
 //   - Jobs.WarmupSlowThresholdMs must be at least 1 — a non-positive slow
 //     threshold would flag every source slow on every warm pass.
+//   - Extensions.RetainedVersions must be in [1, 20] — at least one retained
+//     version so a rollback has something to roll back to, and a sane ceiling so
+//     an operator typo cannot hoard extension APKs on disk.
 //   - Sources.FailureThreshold must be at least 1 — a source must always get
 //     at least one try before its circuit-breaker can trip.
 //   - Sources.Cooldown must be at least 1 minute — an effectively-zero cooldown
@@ -712,30 +715,8 @@ func (c *Config) validate() error {
 		))
 	}
 
-	if c.Jobs.DownloadConcurrency < 1 {
-		errs = append(errs, fmt.Sprintf(
-			"TSUNDOKU_JOBS_DOWNLOADCONCURRENCY must be at least 1 (got %d)", c.Jobs.DownloadConcurrency,
-		))
-	}
-
-	if c.Jobs.MaxConcurrentDownloads < 1 {
-		errs = append(errs, fmt.Sprintf(
-			"TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS must be at least 1 (got %d)", c.Jobs.MaxConcurrentDownloads,
-		))
-	}
-
-	if c.Jobs.WarmupSlowThresholdMs < 1 {
-		errs = append(errs, fmt.Sprintf(
-			"TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS must be at least 1 (got %d)", c.Jobs.WarmupSlowThresholdMs,
-		))
-	}
-
-	if c.Extensions.RetainedVersions < 1 || c.Extensions.RetainedVersions > 20 {
-		errs = append(errs, fmt.Sprintf(
-			"TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS must be in [1, 20] (got %d)", c.Extensions.RetainedVersions,
-		))
-	}
-
+	errs = append(errs, validateJobsConfig(c.Jobs)...)
+	errs = append(errs, validateExtensionsConfig(c.Extensions)...)
 	errs = append(errs, validateSourcesConfig(c.Sources)...)
 	errs = append(errs, validateTrackerConfig(c.Tracker)...)
 	errs = append(errs, validateEngineConfig(c.Engine)...)
@@ -744,6 +725,54 @@ func (c *Config) validate() error {
 		return errors.New("config: invalid configuration: " + strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// validateJobsConfig fails closed on background-runner settings that would stall
+// or corrupt a download cycle: both concurrency limits must admit at least one
+// download (a non-positive per-provider limit stalls the dispatcher, a
+// non-positive global cap blocks every slot and stalls the whole cycle), and the
+// warm-up slow threshold must be positive or every source is flagged slow on
+// every warm pass. Extracted from validate() (mirrors validateSourcesConfig) to
+// keep its cyclomatic complexity low.
+func validateJobsConfig(j JobsConfig) []string {
+	var errs []string
+	if j.DownloadConcurrency < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_DOWNLOADCONCURRENCY must be at least 1 (got %d)", j.DownloadConcurrency,
+		))
+	}
+	if j.MaxConcurrentDownloads < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_MAXCONCURRENTDOWNLOADS must be at least 1 (got %d)", j.MaxConcurrentDownloads,
+		))
+	}
+	if j.WarmupSlowThresholdMs < 1 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_JOBS_WARMUPSLOWTHRESHOLDMS must be at least 1 (got %d)", j.WarmupSlowThresholdMs,
+		))
+	}
+	return errs
+}
+
+// Bounds for ExtensionsConfig.RetainedVersions. At least one version must be kept
+// or a rollback has nothing to roll back to; the upper bound stops an operator
+// typo from hoarding unbounded extension APKs on disk.
+const (
+	minRetainedVersions = 1
+	maxRetainedVersions = 20
+)
+
+// validateExtensionsConfig fails closed on an out-of-range extension retention
+// count (see minRetainedVersions / maxRetainedVersions). Extracted from validate()
+// (mirrors validateSourcesConfig) to keep its cyclomatic complexity low.
+func validateExtensionsConfig(e ExtensionsConfig) []string {
+	if e.RetainedVersions >= minRetainedVersions && e.RetainedVersions <= maxRetainedVersions {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"TSUNDOKU_EXTENSIONS_RETAINEDVERSIONS must be in [%d, %d] (got %d)",
+		minRetainedVersions, maxRetainedVersions, e.RetainedVersions,
+	)}
 }
 
 // validateSourcesConfig fails closed on an invalid source-politeness

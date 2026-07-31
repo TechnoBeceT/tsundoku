@@ -27,14 +27,19 @@ func newHandlerWithClient(t *testing.T) (*owner.Handler, *echo.Echo, *entpkg.Cli
 	return h, e, client
 }
 
-func callClaim(t *testing.T, e *echo.Echo, h *owner.Handler, username, password string) int {
+// postCredentials invokes one owner handler directly (no router, so no
+// RequireOwner and no central error middleware) with a JSON username/password
+// body, and reports the status the client would have seen. The middleware is
+// what normally turns a returned error into a response, so an *echo.HTTPError
+// has to be unwrapped to its Code here; anything else is a genuine 500.
+func postCredentials(t *testing.T, e *echo.Echo, path string, handle func(echo.Context) error, username, password string) int {
 	t.Helper()
 	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
-	req := httptest.NewRequest(http.MethodPost, "/api/owner/claim", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	if err := h.Claim(c); err != nil {
+	if err := handle(c); err != nil {
 		he, ok := err.(*echo.HTTPError)
 		if ok {
 			return he.Code
@@ -44,21 +49,14 @@ func callClaim(t *testing.T, e *echo.Echo, h *owner.Handler, username, password 
 	return rec.Code
 }
 
+func callClaim(t *testing.T, e *echo.Echo, h *owner.Handler, username, password string) int {
+	t.Helper()
+	return postCredentials(t, e, "/api/owner/claim", h.Claim, username, password)
+}
+
 func callLogin(t *testing.T, e *echo.Echo, h *owner.Handler, username, password string) int {
 	t.Helper()
-	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
-	req := httptest.NewRequest(http.MethodPost, "/api/owner/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
-	if err := h.Login(c); err != nil {
-		he, ok := err.(*echo.HTTPError)
-		if ok {
-			return he.Code
-		}
-		return http.StatusInternalServerError
-	}
-	return rec.Code
+	return postCredentials(t, e, "/api/owner/login", h.Login, username, password)
 }
 
 func ownerCount(t *testing.T, client *entpkg.Client) int {
