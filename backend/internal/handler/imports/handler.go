@@ -230,8 +230,23 @@ type breakdownResponse struct {
 }
 
 // newBreakdownResponse renders a CoverageSnapshot as the wire shape above.
+//
+// The ONE normalization point for imports.SourceBreakdownDTO's own invariant
+// ("Scanlators is always non-nil (JSON []), never null" — dto.go) once this
+// handler started embedding a CoverageSnapshot instead of a freshly-computed
+// DTO: the pending fast-path timeout and a failed snapshot both persist/return
+// a zero-value Payload (Coverage's timeout branch, loadCoverage's empty-payload
+// branch), whose Scanlators is a nil Go slice. Left unguarded that marshals to
+// JSON `null` (no omitempty on the field), calcifying a defect into the public
+// contract — every caller (a script, a mobile client, a future composable)
+// would need its own null-check before it dared call .map() on the field.
+// Every response renders through this one function, so the fix belongs here,
+// not scattered across the two zero-value construction sites.
 func newBreakdownResponse(snap imports.CoverageSnapshot) breakdownResponse {
 	resp := breakdownResponse{SourceBreakdownDTO: snap.Payload, Status: snap.Status, Error: snap.LastError}
+	if resp.Scanlators == nil {
+		resp.Scanlators = []imports.ScanlatorCoverageDTO{}
+	}
 	if snap.ComputedAt != nil {
 		resp.ComputedAt = snap.ComputedAt.UTC().Format(time.RFC3339)
 	}

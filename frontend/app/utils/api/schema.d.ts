@@ -3547,8 +3547,8 @@ export interface components {
         SourceBreakdown: {
             /** @description Total chapter count across all scanlators. 0 while status is not `ready` (no computed payload yet). */
             total: number;
-            /** @description Per-scanlator breakdown, sorted by count descending (ties by name ascending). null while status is `pending` or `failed` (no computed payload yet); a fully-populated, non-null array once `ready`. */
-            scanlators: components["schemas"]["ScanlatorCoverage"][] | null;
+            /** @description Per-scanlator breakdown, sorted by count descending (ties by name ascending). Always a non-null array — empty (`[]`) while status is `pending` or `failed` (no computed payload yet), fully populated once `ready`. */
+            scanlators: components["schemas"]["ScanlatorCoverage"][];
             /**
              * @description Lifecycle of this snapshot. `ready` means `total`/`scanlators` hold a completed breakdown. `pending` means the computation is running in the background — `total`/`scanlators` are not yet meaningful; re-request this endpoint, or listen for `imports.coverage.done` over SSE for the eventual outcome. `failed` means the last attempt errored (see `error`) and `total`/`scanlators` carry no payload. An upstream/engine failure surfaces this way — as an ordinary 200 with status `failed` — and never as a 502.
              * @enum {string}

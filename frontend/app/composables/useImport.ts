@@ -207,10 +207,7 @@ export function useImport() {
         })
         breakdowns.value = {
           ...breakdowns.value,
-          // GAP-140: scanlators is null while the coverage snapshot is pending/failed
-          // (not yet computed) — treated the same as a fetch error here, since this
-          // flow has no pending/failed UI state of its own.
-          [key]: res.error || !res.data?.scanlators ? null : res.data.scanlators.map(mapScanlatorCoverage),
+          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
         }
       }
       catch {

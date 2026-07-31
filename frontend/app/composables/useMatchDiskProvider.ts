@@ -127,10 +127,7 @@ export function useMatchDiskProvider() {
           query: { url },
         },
       })
-      // GAP-140: scanlators is null while the coverage snapshot is pending/failed
-      // (not yet computed) — treated the same as a fetch error here, since this
-      // flow has no pending/failed UI state of its own.
-      breakdown.value = res.error || !res.data?.scanlators ? null : res.data.scanlators.map(mapScanlatorCoverage)
+      breakdown.value = res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage)
     }
     catch {
       breakdown.value = null

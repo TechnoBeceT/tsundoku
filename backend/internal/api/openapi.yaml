@@ -1579,12 +1579,11 @@ components:
             `ready` (no computed payload yet).
         scanlators:
           type: array
-          nullable: true
           description: >-
             Per-scanlator breakdown, sorted by count descending (ties by name
-            ascending). null while status is `pending` or `failed` (no
-            computed payload yet); a fully-populated, non-null array once
-            `ready`.
+            ascending). Always a non-null array — empty (`[]`) while status is
+            `pending` or `failed` (no computed payload yet), fully populated
+            once `ready`.
           items:
             $ref: "#/components/schemas/ScanlatorCoverage"
         status:

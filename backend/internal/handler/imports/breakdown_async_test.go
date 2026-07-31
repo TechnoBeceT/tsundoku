@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,32 @@ func TestBreakdownReturnsPendingRatherThanHanging(t *testing.T) {
 	}
 	if body.Status != "pending" {
 		t.Errorf("status = %q, want pending (the slow walk must not block the response)", body.Status)
+	}
+}
+
+// TestBreakdownPendingScanlatorsIsEmptyArrayNotNull pins the wire-level
+// invariant imports.SourceBreakdownDTO's own doc comment declares ("Always
+// non-nil (JSON []), never null"): the pending fast-path-timeout branch
+// carries a zero-value payload whose Scanlators is a nil Go slice, and
+// without normalization that marshals to JSON `null` (no `omitempty` on the
+// field) — calcifying a defect into the public contract that every caller
+// (a script, a mobile client, a future composable) would need its own
+// null-check to survive before calling .map() on the field.
+//
+// This asserts on the RAW JSON BODY rather than decoding into the DTO and
+// checking len(...) == 0: a JSON `null` decodes to a nil Go slice whose len
+// IS 0, so a decode-then-len assertion passes whether the bug is present or
+// not — exactly the vacuous shape that let this class of defect through
+// once already. Only a raw-body substring check can tell `null` from `[]`.
+func TestBreakdownPendingScanlatorsIsEmptyArrayNotNull(t *testing.T) {
+	rec := doBreakdownRequest(t, blockingEngine(t), "42", "/qly0d-apotheosis")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with a pending body", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"scanlators":[]`) {
+		t.Errorf("body = %s, want a literal \"scanlators\":[] — not null — while status is pending", body)
 	}
 }
 
