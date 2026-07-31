@@ -55,9 +55,9 @@ func ExportMarkCoveragePending(s *Service, ctx context.Context, sourceID, mangaU
 // ExportCoverageNeedsCompute exposes the unexported coverageNeedsCompute
 // admission rule. It takes `now` as an argument precisely so a test can drive
 // the 15- and 30-minute bounds without waiting for them or faking a clock in
-// production code.
-func ExportCoverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time) bool {
-	return coverageNeedsCompute(snap, ok, now)
+// production code. force mirrors the caller's `?refresh=true`.
+func ExportCoverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time, force bool) bool {
+	return coverageNeedsCompute(snap, ok, now, force)
 }
 
 // ExportCoverageAfterCompute exposes the unexported coverageAfterCompute,

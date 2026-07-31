@@ -63,23 +63,42 @@ const coverageFailedCooldown = 15 * time.Minute
 const coverageMissingAfterCompute = "the coverage snapshot could not be stored"
 
 // coverageNeedsCompute is the ADMISSION RULE: may this request start a
-// chapter walk for a pair whose stored snapshot is (snap, ok)?
+// chapter walk for a pair whose stored snapshot is (snap, ok)? force is the
+// owner's explicit `?refresh=true` (the GAP-140 follow-up this function's
+// history carries): before it existed, a `ready` snapshot could NEVER be
+// recomputed by anyone — no UI action, no query param — so its counts froze
+// at the first success forever, with only `computedAt` betraying the age.
 //
 // Pure, and deliberately separated from Coverage's I/O, because the two
 // timeouts it weighs are far too long to drive through a real walk in a test
 // — a table test can hand it a synthetic `now` instead.
 //
-//   - never computed (ok == false) → YES. Nothing exists to serve.
+//   - never computed (ok == false) → YES, regardless of force. Nothing exists
+//     to serve.
+//   - a LIVE `pending` row (younger than coveragePendingStale) → NO, EVEN WHEN
+//     force is set — this is the ONE guard force cannot bypass, checked
+//     BEFORE the force branch below for exactly that reason. A pending row
+//     means a walk is already running, and a refresh arriving mid-walk must
+//     JOIN that walk (served as `pending`) rather than start a second
+//     ~20-minute WebView walk against the source this feature exists to
+//     protect. force answers "may I force a NEW computation", not "may I
+//     have two running at once" — those are different questions, and only
+//     the first is what `?refresh=true` asks.
+//   - force == true (and the row above did not already say no) → YES. The
+//     explicit owner override: it bypasses the `ready` short-circuit and the
+//     `failed` cooldown alike, because the owner asked for a fresh
+//     computation right now, not "whenever policy would otherwise allow it".
 //   - ready → NO. Serving the persisted snapshot with its as-of is the entire
-//     point of GAP-140; one completed walk makes every later view free.
-//   - pending → NO while the row is younger than coveragePendingStale. A
-//     pending row means a walk is already running, and starting a second one
-//     is not a cache miss being filled twice — it is two ~20-minute WebView
-//     walks against one source. Two tabs, a reload and the SSE re-fetch each
-//     used to launch their own. Older than the bound, the claim is treated as
-//     a lie left by a dead process and the walk is restarted.
+//     point of GAP-140; one completed walk makes every later view free unless
+//     the owner explicitly asks for a fresh one (see force above).
+//   - pending → NO while the row is younger than coveragePendingStale — the
+//     SAME guard as the live-pending bullet above (reaching this switch arm at
+//     all already means the row is stale). Older than the bound, the claim is
+//     treated as a lie left by a dead process and the walk is restarted,
+//     force or not.
 //   - failed → NO while the row is younger than coverageFailedCooldown, which
-//     is what breaks the fail → announce → re-fetch → fail loop above.
+//     is what breaks the fail → announce → re-fetch → fail loop above, unless
+//     force overrides it.
 //   - anything else (a status a future migration introduces, say) → YES, the
 //     fail-safe direction: recomputing is wasteful, serving an uninterpretable
 //     row as authoritative is wrong.
@@ -93,16 +112,27 @@ const coverageMissingAfterCompute = "the coverage snapshot could not be stored"
 // manga_url) index means the second walk overwrites the first's row with an
 // equivalent one. Closing it properly needs a conditional write (or the
 // per-series latch pattern internal/library uses), which is not worth the
-// mechanism at this width.
-func coverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time) bool {
+// mechanism at this width. force does not widen this window: it is still one
+// read (this function) then one write (markCoveragePending), same as before.
+func coverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time, force bool) bool {
 	if !ok {
+		return true
+	}
+	// A live pending walk is never duplicated — not even by an explicit
+	// refresh. Checked before the force branch so force has no path around it.
+	if snap.Status == coverageStatusPending && now.Sub(snap.UpdatedAt) < coveragePendingStale {
+		return false
+	}
+	if force {
 		return true
 	}
 	switch snap.Status {
 	case coverageStatusReady:
 		return false
 	case coverageStatusPending:
-		return now.Sub(snap.UpdatedAt) >= coveragePendingStale
+		// Reaching here means the row already failed the live-pending check
+		// above, i.e. it is stale — always restarted.
+		return true
 	case coverageStatusFailed:
 		return now.Sub(snap.UpdatedAt) >= coverageFailedCooldown
 	default:
@@ -152,6 +182,12 @@ func coverageAfterCompute(snap CoverageSnapshot, ok bool) CoverageSnapshot {
 // walk only for a pair that was never computed, a `pending` row old enough to
 // be a dead process's leftover, or a failure past its cooldown.
 //
+// refresh is the caller's `?refresh=true` — an explicit request to force a
+// recomputation. It bypasses the `ready` short-circuit and the `failed`
+// cooldown, but NEVER a live `pending` walk: coverageNeedsCompute treats a
+// walk already in flight as un-duplicable regardless of refresh, so a refresh
+// arriving mid-walk is served the same `pending` body a plain GET would get.
+//
 // When a walk IS started it runs on a DETACHED context (context.WithoutCancel
 // — the walk must NOT die the instant this request's own context is torn
 // down, which is exactly why a slow computation used to be unrecoverable) and
@@ -169,7 +205,7 @@ func coverageAfterCompute(snap CoverageSnapshot, ok bool) CoverageSnapshot {
 // error. The error this function DOES return (besides ErrSourceNotFound) is
 // reserved for a genuine store failure — loadCoverage itself unable to read
 // the store.
-func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string) (CoverageSnapshot, error) {
+func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string, refresh bool) (CoverageSnapshot, error) {
 	if _, err := s.resolveSource(ctx, sourceID); err != nil {
 		return CoverageSnapshot{}, err
 	}
@@ -178,7 +214,7 @@ func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string
 	if err != nil {
 		return CoverageSnapshot{}, err
 	}
-	if !coverageNeedsCompute(snap, ok, time.Now().UTC()) {
+	if !coverageNeedsCompute(snap, ok, time.Now().UTC(), refresh) {
 		return snap, nil
 	}
 

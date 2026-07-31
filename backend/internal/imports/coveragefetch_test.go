@@ -22,11 +22,12 @@ func TestCoverageNeedsComputeAdmissionRule(t *testing.T) {
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
 
 	cases := []struct {
-		name string
-		snap imports.CoverageSnapshot
-		ok   bool
-		want bool
-		why  string
+		name  string
+		snap  imports.CoverageSnapshot
+		ok    bool
+		force bool
+		want  bool
+		why   string
 	}{
 		{
 			name: "never computed",
@@ -90,11 +91,43 @@ func TestCoverageNeedsComputeAdmissionRule(t *testing.T) {
 			want: true,
 			why:  "fail-safe: recomputing is merely wasteful, serving an uninterpretable row as authoritative is wrong",
 		},
+		{
+			name:  "ready, but the owner asked for a refresh",
+			snap:  imports.CoverageSnapshot{Status: "ready", UpdatedAt: ago(1 * time.Hour)},
+			ok:    true,
+			force: true,
+			want:  true,
+			why:   "a `ready` snapshot must stay recomputable forever when the owner explicitly asks — it must not freeze counts permanently",
+		},
+		{
+			name:  "failed and fresh, but the owner asked for a refresh",
+			snap:  imports.CoverageSnapshot{Status: "failed", UpdatedAt: ago(1 * time.Second)},
+			ok:    true,
+			force: true,
+			want:  true,
+			why:   "an explicit refresh must bypass the failed-cooldown too — the owner asked for a recomputation right now, not later",
+		},
+		{
+			name:  "pending and LIVE, refresh must NOT duplicate the walk",
+			snap:  imports.CoverageSnapshot{Status: "pending", UpdatedAt: ago(5 * time.Minute)},
+			ok:    true,
+			force: true,
+			want:  false,
+			why:   "a refresh arriving while a walk is genuinely in flight must join that walk, not start a second ~20-minute WebView walk against the same source — this is the ONE guard force cannot bypass",
+		},
+		{
+			name:  "pending and stale, refresh restarts it (same as without force)",
+			snap:  imports.CoverageSnapshot{Status: "pending", UpdatedAt: ago(31 * time.Minute)},
+			ok:    true,
+			force: true,
+			want:  true,
+			why:   "a dead process's stale claim is restarted whether or not the owner asked explicitly",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := imports.ExportCoverageNeedsCompute(tc.snap, tc.ok, now)
+			got := imports.ExportCoverageNeedsCompute(tc.snap, tc.ok, now, tc.force)
 			if got != tc.want {
 				t.Errorf("coverageNeedsCompute = %v, want %v — %s", got, tc.want, tc.why)
 			}

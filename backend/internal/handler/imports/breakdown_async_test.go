@@ -425,3 +425,135 @@ func TestBreakdownDoesNotStartASecondWalkWhileOneIsPending(t *testing.T) {
 		t.Errorf("first request status = %d, want 200", rec.Code)
 	}
 }
+
+// TestBreakdownRefreshOnReadyStartsANewWalk pins the GAP-140 follow-up fix: a
+// `ready` snapshot used to be permanently unrecomputable — no `?refresh`, no
+// UI action, nothing. `?refresh=true` must bypass the ready short-circuit and
+// start a genuine new walk against the source.
+func TestBreakdownRefreshOnReadyStartsANewWalk(t *testing.T) {
+	const sourceID, url = "42", "/x"
+	numericID, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	fc := &fakeEngineClient{
+		sources:       []sourceengine.Source{{ID: numericID, Name: "Test Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{url: makeChapters(url, 5)},
+	}
+	env := newTestEnv(t, fc)
+	target := breakdownTarget(sourceID, url)
+
+	seed := decodeBreakdown(t, env.do(http.MethodGet, target, ""))
+	if seed.Status != "ready" {
+		t.Fatalf("seed status = %q, want ready", seed.Status)
+	}
+	callsAfterSeed := fc.chaptersCalls.Load()
+
+	decodeBreakdown(t, env.do(http.MethodGet, target+"&refresh=true", ""))
+
+	if got := fc.chaptersCalls.Load(); got <= callsAfterSeed {
+		t.Errorf("Chapters called %d times after refresh (was %d after the seed) — ?refresh=true on a ready row must start a new walk",
+			got, callsAfterSeed)
+	}
+}
+
+// TestBreakdownRefreshOnReadyServesUsableData proves the refreshed request
+// still answers with something the owner can read. The fake engine resolves
+// with no blocking channel, so the recompute finishes well inside
+// coverageFastPath — the rule this pins is "ready with the fresh count", not
+// merely "not an error".
+func TestBreakdownRefreshOnReadyServesUsableData(t *testing.T) {
+	const sourceID, url = "42", "/x"
+	numericID, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	fc := &fakeEngineClient{
+		sources:       []sourceengine.Source{{ID: numericID, Name: "Test Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{url: makeChapters(url, 5)},
+	}
+	env := newTestEnv(t, fc)
+	target := breakdownTarget(sourceID, url)
+
+	seed := decodeBreakdown(t, env.do(http.MethodGet, target, ""))
+	if seed.Status != "ready" || seed.Total != 5 {
+		t.Fatalf("seed body = %+v, want ready 5", seed)
+	}
+
+	// Grow the feed so the refreshed walk's count is DISTINGUISHABLE from the
+	// stale one — a test that reasserted the same total would pass even if
+	// refresh quietly served the old snapshot back.
+	fc.chaptersByURL[url] = makeChapters(url, 9)
+
+	refreshed := decodeBreakdown(t, env.do(http.MethodGet, target+"&refresh=true", ""))
+	if refreshed.Status != "ready" {
+		t.Fatalf("refreshed status = %q, want ready (the fake engine resolves near-instantly, well inside the fast path)", refreshed.Status)
+	}
+	if refreshed.Total != 9 {
+		t.Errorf("refreshed Total = %d, want 9 — the refresh must serve the NEWLY computed snapshot, not the stale one", refreshed.Total)
+	}
+}
+
+// TestBreakdownRefreshDoesNotDuplicateALivePendingWalk pins the one guard
+// ?refresh=true must never bypass: a refresh arriving while a walk is
+// genuinely in flight (a live `pending` row) must join that walk rather than
+// start a second ~20-minute WebView walk against the source this feature
+// exists to protect.
+func TestBreakdownRefreshDoesNotDuplicateALivePendingWalk(t *testing.T) {
+	const sourceID, url = "42", "/qly0d-apotheosis"
+	numericID, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	fc := &fakeEngineClient{
+		sources:       []sourceengine.Source{{ID: numericID, Name: "Test Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{url: makeChapters(url, 1301)},
+		blockCh:       release,
+	}
+	env := newTestEnv(t, fc)
+	target := breakdownTarget(sourceID, url)
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstDone <- env.do(http.MethodGet, target, "") }()
+	awaitPendingRow(t, env, sourceID, url)
+
+	second := decodeBreakdown(t, env.do(http.MethodGet, target+"&refresh=true", ""))
+	if second.Status != "pending" {
+		t.Errorf("second (refreshed) status = %q, want pending — a walk already in flight must not be duplicated", second.Status)
+	}
+	if calls := fc.chaptersCalls.Load(); calls != 1 {
+		t.Errorf("Chapters called %d times, want exactly 1 — ?refresh=true must not start a second walk while one is live", calls)
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	if rec := <-firstDone; rec.Code != http.StatusOK {
+		t.Errorf("first request status = %d, want 200", rec.Code)
+	}
+}
+
+// TestBreakdownWithoutRefreshStillShortCircuitsAReadySnapshot is the
+// regression guard for the existing no-recompute guarantee: introducing
+// ?refresh must not accidentally make an ordinary (unrefreshed) GET
+// recompute a ready snapshot too.
+func TestBreakdownWithoutRefreshStillShortCircuitsAReadySnapshot(t *testing.T) {
+	rec := doBreakdownRequestAfterCompute(t, "42", "/y", 42)
+	body := decodeBreakdown(t, rec)
+	if body.Status != "ready" || body.Total != 42 {
+		t.Fatalf("body = %+v, want ready 42 — a plain GET on a ready row must still short-circuit with no ?refresh", body)
+	}
+}
+
+// TestBreakdown_BadRefresh_400 asserts an unparseable ?refresh value is a 400,
+// not a silent default — mirrors the shared boolean-query-param convention
+// (internal/handler/downloads' parseOptionalBool).
+func TestBreakdown_BadRefresh_400(t *testing.T) {
+	env := newTestEnv(t, &fakeEngineClient{sources: []sourceengine.Source{{ID: 42, Name: "Test Source", Lang: "en"}}})
+	rec := env.do(http.MethodGet, breakdownTarget("42", "/x")+"&refresh=maybe", "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("Breakdown bad refresh: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}

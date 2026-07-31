@@ -200,6 +200,29 @@ func parseChapterURL(raw string) (string, error) {
 	return u, nil
 }
 
+// parseRefresh parses the OPTIONAL ?refresh boolean query param on Breakdown
+// (GAP-140 follow-up): an explicit request to force a recomputation past the
+// `ready`/`failed`-cooldown admission guards (see imports.Coverage's `refresh`
+// parameter and coverageNeedsCompute's doc comment for exactly what it does
+// and does not bypass — it never duplicates a LIVE `pending` walk). Mirrors
+// the shared boolean-query-param convention (internal/handler/downloads'
+// parseOptionalBool): absent is false, "true"/"false" (case-insensitive) are
+// the only accepted values, and anything else is a 400 rather than a silent
+// default — an owner who mistypes ?refresh=yes should see a clear rejection,
+// not a plain GET they didn't ask for.
+func parseRefresh(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return false, nil
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, echo.NewHTTPError(http.StatusBadRequest, "invalid refresh")
+	}
+}
+
 // parseOptionalTitle trims the OPTIONAL ?title= query param used by
 // InspectChapters/Breakdown to feed the engine host's chapter-number
 // recognition and the shared discovery chapter cache (see

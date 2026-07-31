@@ -280,6 +280,13 @@ func newBreakdownResponse(snap imports.CoverageSnapshot) breakdownResponse {
 // REQUIRED query param (see InspectChapters's doc comment for the
 // transition); ?title= is OPTIONAL — same free-text/cache-sharing contract
 // as InspectChapters's.
+//
+// ?refresh (OPTIONAL boolean, GAP-140 follow-up) forces a recomputation past
+// the `ready`/`failed`-cooldown admission guards — see parseRefresh and
+// imports.Coverage's `refresh` parameter for exactly what it bypasses. It
+// NEVER duplicates a walk already in flight: a refresh arriving while a
+// `pending` row is live is served that same `pending` body, same as a plain
+// GET. An unparseable value is a 400, not a silent default.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
 	url, err := parseChapterURL(c.QueryParam("url"))
@@ -287,8 +294,12 @@ func (h *Handler) Breakdown(c echo.Context) error {
 		return err
 	}
 	title := parseOptionalTitle(c.QueryParam("title"))
+	refresh, err := parseRefresh(c.QueryParam("refresh"))
+	if err != nil {
+		return err
+	}
 
-	snap, err := h.svc.Coverage(c.Request().Context(), sourceID, url, title)
+	snap, err := h.svc.Coverage(c.Request().Context(), sourceID, url, title, refresh)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")

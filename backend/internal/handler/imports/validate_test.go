@@ -81,6 +81,64 @@ func assertCoverURLAccepted(t *testing.T, raw, got string, err error) {
 	}
 }
 
+// TestParseRefresh pins the ?refresh boolean-query-param convention shared
+// with internal/handler/downloads' parseOptionalBool: absent is false,
+// "true"/"false" are accepted case-insensitively, and anything else — a typo
+// like "yes" or "1" — is a 400 rather than silently defaulting to false (the
+// owner would otherwise think a refresh fired when it never did).
+func TestParseRefresh(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{name: "absent defaults to false", raw: "", want: false},
+		{name: "true", raw: "true", want: true},
+		{name: "false", raw: "false", want: false},
+		{name: "mixed case TRUE", raw: "TRUE", want: true},
+		{name: "surrounding whitespace", raw: "  true  ", want: true},
+		{name: "unparseable value is rejected", raw: "yes", wantErr: true},
+		{name: "numeric 1 is rejected", raw: "1", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseRefresh(tt.raw)
+			if tt.wantErr {
+				assertRefreshRejected(t, tt.raw, got, err)
+				return
+			}
+			assertRefreshAccepted(t, tt.raw, got, err, tt.want)
+		})
+	}
+}
+
+// assertRefreshRejected pins the SHAPE of a rejection: parseRefresh must fail
+// with a 400 *echo.HTTPError (what the central error middleware renders as a
+// client-visible 400), not a plain error that would surface as a 500.
+func assertRefreshRejected(t *testing.T, raw string, got bool, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("parseRefresh(%q) = %v, nil; want a 400 error", raw, got)
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusBadRequest {
+		t.Fatalf("parseRefresh(%q) error = %v, want a 400 *echo.HTTPError", raw, err)
+	}
+}
+
+// assertRefreshAccepted pins the accept path: no error, and the parsed value
+// matches want.
+func assertRefreshAccepted(t *testing.T, raw string, got bool, err error, want bool) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("parseRefresh(%q) unexpected error: %v", raw, err)
+	}
+	if got != want {
+		t.Errorf("parseRefresh(%q) = %v, want %v", raw, got, want)
+	}
+}
+
 // TestIsPublicHTTPHost exercises the extracted SSRF host-literal guard
 // directly (already-parsed Hostname() values, incl. IPv6-bracket-stripped
 // and CGNAT — a range parseCoverURL's table above does not separately probe

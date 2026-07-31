@@ -1061,6 +1061,12 @@ export interface paths {
          *     `computedAt` / `error` fields this endpoint adds on top of the
          *     breakdown payload itself.
          *
+         *     `?refresh=true` forces a recomputation of a `ready` or cooling-down
+         *     `failed` snapshot, which otherwise stays stuck at its first result
+         *     forever — see the `refresh` parameter's own description for exactly
+         *     what it bypasses and what it never does (duplicate a walk already in
+         *     flight).
+         *
          *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
          *     `url` query parameter (the source-relative manga URL); mangaId in the
          *     path is kept for route-shape compatibility but is IGNORED. A request
@@ -7602,6 +7608,8 @@ export interface operations {
                 url?: string;
                 /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
                 title?: string;
+                /** @description Force a recomputation, bypassing the `ready`/`failed`-cooldown admission guards that otherwise serve a stored snapshot as-is. Omit (or "false") for the ordinary "serve what is stored" GET — this is what a `ready` snapshot used to be stuck at forever, with no way for the owner to ask for a fresh count. It NEVER duplicates a walk already in flight: while a `pending` snapshot is genuinely live (i.e. it has not exceeded the internal "dead process" bound), `?refresh=true` is served that same `pending` body a plain GET would get, rather than starting a second walk against the source. Only "true"/"false" (case-insensitive) are accepted; any other value is a 400. */
+                refresh?: boolean;
             };
             header?: never;
             path: {
