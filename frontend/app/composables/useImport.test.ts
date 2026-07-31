@@ -157,12 +157,13 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
               { scanlator: 'ZScans', count: 90, ranges: '1-90' },
               { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
             ],
+            status: 'ready',
           },
           error: null,
         })
       }
       return Promise.resolve({
-        data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }] },
+        data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }], status: 'ready' },
         error: null,
       })
     })
@@ -195,7 +196,7 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
 
   it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
     const breakdownGet = vi.fn(() => Promise.resolve({
-      data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }] },
+      data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }], status: 'ready' },
       error: null,
     }))
     vi.mocked(apiClient.GET).mockImplementation((path: string) => {
@@ -230,5 +231,48 @@ describe('useImport — loadBreakdowns (per-scanlator auto-split fetch)', () => 
 
     await loadBreakdowns([candidate])
     expect(breakdownGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('GAP-140: a pending snapshot caches as null, not []  — the row must still read "Coverage unavailable", never a silent blank line', async () => {
+    // The backend now answers 200 with an empty scanlators array while a
+    // large series' walk is still running (never a 502). This composable
+    // does not track snapshot status at all — a naive cache-what-you-get
+    // would store `[]`, which `useSourceConfigure`'s fallback branch renders
+    // as "no coverage line" (chapterCount stays undefined AND
+    // coverageUnavailable stays false), silently hiding a walk that hasn't
+    // finished. Caching `null` instead keeps the existing failure fallback.
+    const breakdownGet = vi.fn(() => Promise.resolve({
+      data: { total: 0, scanlators: [], status: 'pending' },
+      error: null,
+    }))
+    vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { breakdowns, loadBreakdowns } = useImport()
+    const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' }
+    await loadBreakdowns([candidate])
+
+    expect(breakdowns.value['src-1:1']).toBeNull()
+  })
+
+  it('GAP-140: a failed snapshot caches as null too — the failed case must not collapse into the same blank line as pending', async () => {
+    const breakdownGet = vi.fn(() => Promise.resolve({
+      data: { total: 0, scanlators: [], status: 'failed', error: 'upstream timed out' },
+      error: null,
+    }))
+    vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+      calls.push({ method: 'GET', path })
+      if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+      return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+    })
+
+    const { breakdowns, loadBreakdowns } = useImport()
+    const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' }
+    await loadBreakdowns([candidate])
+
+    expect(breakdowns.value['src-1:1']).toBeNull()
   })
 })

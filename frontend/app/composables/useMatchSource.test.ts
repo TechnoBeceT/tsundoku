@@ -221,12 +221,13 @@ describe('useMatchSource', () => {
                 { scanlator: 'ZScans', count: 90, ranges: '1-90' },
                 { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
               ],
+              status: 'ready',
             },
             error: null,
           })
         }
         return Promise.resolve({
-          data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }] },
+          data: { total: 12, scanlators: [{ scanlator: 'src-2', count: 12, ranges: '1-12' }], status: 'ready' },
           error: null,
         })
       })
@@ -259,7 +260,7 @@ describe('useMatchSource', () => {
 
     it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
       const breakdownGet = vi.fn(() => Promise.resolve({
-        data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }] },
+        data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }], status: 'ready' },
         error: null,
       }))
       vi.mocked(apiClient.GET).mockImplementation((path: string) => {
@@ -294,6 +295,42 @@ describe('useMatchSource', () => {
 
       await loadBreakdowns([candidate])
       expect(breakdownGet).toHaveBeenCalledTimes(1)
+    })
+
+    it('GAP-140: a pending snapshot caches as null, not [] — must read "Coverage unavailable", never a silent blank line', async () => {
+      const breakdownGet = vi.fn(() => Promise.resolve({
+        data: { total: 0, scanlators: [], status: 'pending' },
+        error: null,
+      }))
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+        return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+      })
+
+      const { breakdowns, loadBreakdowns } = useMatchSource('series-1')
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+
+      expect(breakdowns.value['src-1:1']).toBeNull()
+    })
+
+    it('GAP-140: a failed snapshot caches as null too — the failed case must not collapse into the same blank line as pending', async () => {
+      const breakdownGet = vi.fn(() => Promise.resolve({
+        data: { total: 0, scanlators: [], status: 'failed', error: 'upstream timed out' },
+        error: null,
+      }))
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') return breakdownGet()
+        return Promise.resolve({ data: null, error: null, response: new Response(null, { status: 200 }) })
+      })
+
+      const { breakdowns, loadBreakdowns } = useMatchSource('series-1')
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+
+      expect(breakdowns.value['src-1:1']).toBeNull()
     })
   })
 

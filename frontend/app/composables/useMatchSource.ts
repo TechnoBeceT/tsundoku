@@ -22,6 +22,14 @@
  * pair, caching by `source:mangaId` — an absent key = not yet fetched, `null`
  * = the fetch failed (the composable falls back to a single unsplit row).
  *
+ * GAP-140: `null` also covers a `pending` OR `failed` snapshot response — the
+ * breakdown endpoint now answers 200 with an empty `scanlators` array for
+ * both (never a 502), and this composable doesn't track that status. Caching
+ * anything other than a `ready` response as resolved data would silently
+ * render NO coverage line at all (not even "Coverage unavailable") for the
+ * rest of this dialog's lifetime, since `breakdowns` is a permanent cache.
+ * See `useImport.loadBreakdowns`'s matching note for the full rationale.
+ *
  * batchAddProviders is `POST /api/series/{id}/providers/batch` (Slice P) — it
  * attaches every given `ProviderRef`, best-first, at an importance the
  * backend assigns strictly below the series' existing providers, and returns
@@ -158,7 +166,10 @@ export function useMatchSource(seriesId: string) {
         })
         breakdowns.value = {
           ...breakdowns.value,
-          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
+          // A pending/failed snapshot is an ordinary 200 with `scanlators: []`
+          // (GAP-140) — only a `ready` snapshot is a resolved result; anything
+          // else caches as null so it renders the same as a request failure.
+          [key]: res.error || res.data?.status !== 'ready' ? null : res.data.scanlators.map(mapScanlatorCoverage),
         }
       }
       catch {

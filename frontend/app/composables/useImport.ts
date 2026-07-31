@@ -37,6 +37,21 @@
  * re-fetched); a per-candidate in-flight guard stops an overlapping call to
  * `loadBreakdowns` for the same candidate from firing a duplicate request. A
  * per-source failure is non-fatal: it never rejects and never touches `error`.
+ *
+ * GAP-140: the breakdown endpoint is now a persisted, asynchronously-computed
+ * snapshot — a `pending` OR `failed` response is an ordinary 200 with an
+ * EMPTY `scanlators` array (never a 502). This composable does not track that
+ * snapshot's status at all (unlike `useScanLibrary.ts`), so a response is only
+ * cached as resolved data when `status === 'ready'`; anything else (including
+ * `pending`) caches as `null`, exactly like a request-level failure. Without
+ * this, a still-running or failed walk would cache as `[]`, which renders as
+ * NO coverage line at all (neither the count nor "Coverage unavailable") —
+ * because `breakdowns` here is a PERMANENT cache, that silence would never
+ * self-heal for the rest of the wizard session. The tradeoff: a `pending` walk
+ * reads identically to a genuine failure on this surface (no "Computing…"
+ * distinction) — see `useScanLibrary.ts`/`SourceConfigurePanel.vue` for the
+ * surface that does carry the distinction; wiring the same status/SSE
+ * plumbing here is deliberately out of scope for this fix.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -207,7 +222,10 @@ export function useImport() {
         })
         breakdowns.value = {
           ...breakdowns.value,
-          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
+          // A pending/failed snapshot is an ordinary 200 with `scanlators: []`
+          // (GAP-140) — only a `ready` snapshot is a resolved result; anything
+          // else caches as null so it renders the same as a request failure.
+          [key]: res.error || res.data?.status !== 'ready' ? null : res.data.scanlators.map(mapScanlatorCoverage),
         }
       }
       catch {
