@@ -180,3 +180,28 @@ describe('ChapterRow — re-download', () => {
     },
   )
 })
+
+// GAP-141: a chapter a source is WITHHOLDING behind coins rests in `failed` because
+// the fetch produced no file — but nothing is broken and no owner action helps, so
+// the red "Failed" pill is replaced by a calm early-access badge naming the return
+// date. Every other chapter keeps its state badge unchanged.
+describe('ChapterRow — early access', () => {
+  it('replaces the state badge with an early-access badge on a withheld chapter', () => {
+    const w = render({
+      state: 'failed',
+      locked: true,
+      lockedUntil: new Date(Date.now() + 2 * 24 * 3_600_000).toISOString(),
+    })
+
+    expect(w.find('.early').text()).toContain('Early access')
+    expect(w.find('.early').text()).toContain('free ~2d')
+    expect(w.find('.badge').exists()).toBe(false)
+  })
+
+  it('keeps the state badge on an ordinary failure', () => {
+    const w = render({ state: 'failed' })
+
+    expect(w.find('.early').exists()).toBe(false)
+    expect(w.find('.badge').text()).toContain('Failed')
+  })
+})

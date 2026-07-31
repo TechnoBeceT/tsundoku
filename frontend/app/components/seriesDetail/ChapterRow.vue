@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EarlyAccessBadge from '../ui/EarlyAccessBadge.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
 import AppButton from '../ui/AppButton.vue'
 import IconButton from '../ui/IconButton.vue'
@@ -19,6 +20,9 @@ import { relativeTime, absoluteTime } from '~/utils/timeFormat'
  *
  * The state badge reads the unified `--state-*` palette (via `StatusBadge`), so
  * every chapter-state hue across the app comes from one source and both themes work.
+ * The one exception is an EARLY-ACCESS chapter (GAP-141): a source withholding it
+ * behind coins leaves it in `failed` while nothing is actually broken, so the row
+ * renders `EarlyAccessBadge` — with the date it goes free — in the badge's place.
  *
  * In-app reader progress renders as exactly ONE of three mutually-exclusive
  * states (Task 7 — the data already arrived on `Chapter.read`/`.lastReadPage`,
@@ -141,7 +145,12 @@ const releasedTitle = (): string => absoluteTime(props.chapter.releaseDate)
         <Icon name="lucide:target" width="14" height="14" />
       </IconButton>
       <!-- eslint-enable vue/attribute-hyphenation -->
-      <StatusBadge :state="chapter.state" />
+      <!-- A WITHHELD chapter (GAP-141) is not broken: the source is healthy and
+           releases it on its own, so the early-access pill REPLACES the state badge.
+           Its `state` is still `failed` (the fetch produced no file) and a red
+           "Failed" pill would send the owner hunting a fault that does not exist. -->
+      <EarlyAccessBadge v-if="chapter.locked" :until="chapter.lockedUntil" />
+      <StatusBadge v-else :state="chapter.state" />
       <!-- eslint-disable vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
       <IconButton
         v-if="canRedownload()"

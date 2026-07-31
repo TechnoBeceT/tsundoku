@@ -551,6 +551,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 		RefreshConcurrency:      cfg.Jobs.RefreshConcurrency,
 		MaxRetries:              cfg.Jobs.MaxRetries,
 		RetryBackoff:            cfg.Jobs.RetryBackoff,
+		LockedRetryInterval:     cfg.Jobs.LockedRetryInterval,
 		StaleGraceDays:          cfg.Health.StaleGraceDays,
 		StalledThresholdDays:    cfg.Health.StalledThresholdDays,
 		ExtensionCheckInterval:  cfg.Jobs.ExtensionCheckInterval,

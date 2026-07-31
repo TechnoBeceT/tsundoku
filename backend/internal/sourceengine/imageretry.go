@@ -21,7 +21,7 @@ const imageRetryBackoff = 500 * time.Millisecond
 
 // ErrImageFetch marks a per-image byte-fetch failure that survived the transient
 // retries in stagePages. It exists so the download dispatcher classifies such a
-// failure as CHAPTER-SPECIFIC (download.isChapterSpecificFailure errors.Is-es it):
+// failure as CHAPTER-SPECIFIC (download.classifyFetchFailure errors.Is-es it):
 // reaching the image-fetch stage PROVES the source session is alive — the
 // chapter-list refresh and page-resolution (Client.Pages) already succeeded this
 // attempt — so a persistent single-image failure is about THIS page/chapter, not

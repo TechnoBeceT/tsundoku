@@ -98,3 +98,27 @@ export const WithDeterminateProgress: Story = {
   }),
   args: { item: withCover },
 }
+
+/**
+ * EARLY ACCESS (GAP-141): the source is deliberately withholding this chapter
+ * behind coins for a few days. Its `state` is still `failed` — the fetch produced
+ * no file — but nothing is broken, so the row swaps the red "Failed" pill for a calm
+ * "Early access · free ~3d" badge and drops the attempt badge (a paywall never
+ * spends the budget, so "0/5" would only prompt "why did it fail with zero tries?").
+ */
+export const EarlyAccess: Story = {
+  args: {
+    item: {
+      ...withCover,
+      state: 'failed',
+      providerName: 'Hive Scans',
+      isUpgrade: false,
+      upgradeTarget: undefined,
+      attempts: 0,
+      maxRetries: 5,
+      locked: true,
+      lockedUntil: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
+      lastError: 'upstream error: Chapter locked, coins required',
+    },
+  },
+}

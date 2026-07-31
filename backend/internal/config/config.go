@@ -163,6 +163,13 @@ type JobsConfig struct {
 	// settings overlay. Set via TSUNDOKU_JOBS_RETRYBACKOFF.
 	RetryBackoff time.Duration
 
+	// LockedRetryInterval is how long a chapter the source deliberately WITHHOLDS
+	// (paywall / early access) waits before being re-checked. Separate from
+	// RetryBackoff because the wait is on a publishing schedule measured in DAYS,
+	// not a transient fault measured in minutes. Default 72h. Env default behind
+	// the runtime settings overlay. Set via TSUNDOKU_JOBS_LOCKEDRETRYINTERVAL.
+	LockedRetryInterval time.Duration
+
 	// ExtensionCheckInterval is the tick period for the extension auto-check job,
 	// which calls FetchExtensions and broadcasts the count of available updates via
 	// an extensions.checked SSE event. Default 24h. Set to 0 to disable the job
@@ -492,6 +499,7 @@ func defaults() map[string]any {
 		"jobs.refreshconcurrency":      4,
 		"jobs.maxretries":              5,
 		"jobs.retrybackoff":            "30m",
+		"jobs.lockedretryinterval":     "72h",
 		"jobs.extensioncheckinterval":  "24h",
 		"jobs.warmupinterval":          "15m",
 		"jobs.warmupslowthresholdms":   5000,

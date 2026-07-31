@@ -22,6 +22,7 @@ export type ErrorCategoryKey =
   | 'parse'
   | 'no_pages'
   | 'broken_image'
+  | 'locked'
   | 'unknown'
 
 /**
@@ -50,6 +51,10 @@ export const ERROR_CATEGORIES: Record<ErrorCategoryKey, CategoryMeta> = {
   parse: { label: 'Parse error', tone: 'danger' },
   no_pages: { label: 'No pages', tone: 'neutral' },
   broken_image: { label: 'Incomplete image', tone: 'warn' },
+  // NOT a fault (GAP-141): the source is healthy and deliberately withholding the
+  // chapter behind a paywall / early-access window until it goes free on its own.
+  // Benign tone on purpose — a danger badge would send the owner hunting a fault.
+  locked: { label: 'Early access', tone: 'neutral' },
   unknown: { label: 'Unknown', tone: 'neutral' },
 }
 

@@ -150,3 +150,21 @@ export const RedownloadPendingStillReadable: Story = {
     await canvas.findByRole('button', { name: 'Read' })
   },
 }
+
+/**
+ * EARLY ACCESS (GAP-141): the source publishes this chapter behind coins for a few
+ * days first. It rests in `failed` because the fetch produced no file, but no owner
+ * action helps — it arrives on its own — so the row shows when it goes free instead
+ * of a red "Failed" pill.
+ */
+export const EarlyAccess: Story = {
+  args: {
+    chapter: {
+      ...richSeries.chapters[0]!,
+      state: 'failed',
+      filename: '',
+      locked: true,
+      lockedUntil: new Date(Date.now() + 2 * 24 * 3_600_000).toISOString(),
+    },
+  },
+}

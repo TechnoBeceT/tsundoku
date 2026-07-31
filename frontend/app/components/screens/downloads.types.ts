@@ -162,4 +162,19 @@ export interface DownloadItem {
    * Terminal sub-tab.
    */
   terminal?: boolean
+
+  // ---- Early access (GAP-141) -----------------------------------------------
+  /**
+   * True when a source is deliberately WITHHOLDING this chapter behind a paywall /
+   * early-access window rather than failing to serve it. The row still rests in
+   * `failed` — the fetch produced no file — but nothing is broken and no owner
+   * action helps, so the row renders `EarlyAccessBadge` INSTEAD of its red
+   * `StatusBadge`.
+   */
+  locked?: boolean
+  /**
+   * When the source is expected to release the chapter (raw ISO 8601, so the badge
+   * counts down live). Set exactly when `locked` is true; undefined otherwise.
+   */
+  lockedUntil?: string
 }

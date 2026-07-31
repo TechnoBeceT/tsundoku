@@ -150,6 +150,43 @@ describe('ChapterDownloadRow', () => {
     expect(wrapper.find('.attempts__count').text()).toBe('3/5')
   })
 
+  // GAP-141: a chapter the source is WITHHOLDING behind coins rests in `failed`, but
+  // it is not broken — a red "Failed" pill would send the owner hunting a fault that
+  // is not there, and a "0/5" attempt badge would invite the same question (the
+  // paywall deliberately never spends the budget). The row swaps BOTH out.
+  it('replaces the state badge with an early-access badge on a withheld chapter', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: {
+        item: item({
+          state: 'failed',
+          providerName: 'Hive Scans',
+          maxRetries: 5,
+          attempts: 0,
+          locked: true,
+          lockedUntil: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
+        }),
+      },
+      // Real StatusBadge + AttemptBadge so their ABSENCE is a real assertion.
+      global: { stubs: { CoverImage: true, Chip: true } },
+    })
+
+    expect(wrapper.find('.early').exists()).toBe(true)
+    expect(wrapper.find('.early').text()).toContain('free ~3d')
+    expect(wrapper.find('.badge').exists()).toBe(false)
+    expect(wrapper.find('.attempts').exists()).toBe(false)
+  })
+
+  it('keeps the state badge on an ordinary failure', () => {
+    const wrapper = mount(ChapterDownloadRow, {
+      props: { item: item({ state: 'failed', maxRetries: 5, attempts: 3 }) },
+      global: { stubs: { CoverImage: true, Chip: true } },
+    })
+
+    expect(wrapper.find('.early').exists()).toBe(false)
+    expect(wrapper.find('.badge').text()).toContain('Failed')
+    expect(wrapper.find('.attempts').exists()).toBe(true)
+  })
+
   // The backend reports an EMPTY providerName when no source's feed carries the
   // chapter — nothing is fetching it. The row must say so with an em-dash, not
   // leave a dangling "· " separator.

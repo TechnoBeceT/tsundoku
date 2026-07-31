@@ -183,6 +183,33 @@ func failingCarrier(ch *ent.Chapter, idx upgradeTargetIndex) (feedCarrier, bool)
 	return feedCarrier{}, false
 }
 
+// earlyAccessUntil answers "is a source WITHHOLDING this chapter behind a paywall /
+// early-access window, and until when" for the activity read model (GAP-141).
+//
+// It is the counterpart of failingCarrier over the same in-memory index (ZERO
+// queries) and deliberately spans EVERY carrier rather than the ranked-first one:
+// the chapter becomes fetchable as soon as the FIRST of its sources releases it, so
+// the earliest re-check is the honest ETA. The per-carrier rule itself is NOT
+// re-derived here — it is series.EarlyAccessUntil, the one definition the
+// series-detail read model uses too (§2 DRY).
+//
+// It returns nil for a chapter no source is withholding, which is the common case.
+func earlyAccessUntil(ch *ent.Chapter, idx upgradeTargetIndex, now time.Time) *time.Time {
+	var soonest *time.Time
+	for _, c := range idx[ch.ChapterKey] {
+		until := series.EarlyAccessUntil(c.pc, now)
+		if until != nil && (soonest == nil || until.Before(*soonest)) {
+			soonest = until
+		}
+	}
+	// A chapter the library has SETTLED is never "waiting": one already on disk is
+	// readable now (an upgrade whose better source is withheld leaves a file
+	// behind), and a superseded/ignored one will never be fetched at all. Same
+	// predicate the series-detail read model applies, so the two cannot drift
+	// (GAP-141).
+	return series.EarlyAccessUnlessSettled(ch.State, ch.Filename, soonest)
+}
+
 // isSatisfier reports whether sp is the chapter's current satisfying source.
 func isSatisfier(ch *ent.Chapter, sp *ent.SeriesProvider) bool {
 	return ch.SatisfiedByProviderID != nil && sp != nil && sp.ID == *ch.SatisfiedByProviderID

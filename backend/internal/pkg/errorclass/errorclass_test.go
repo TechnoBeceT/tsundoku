@@ -108,3 +108,118 @@ func TestClassify_FallsBackToMessage(t *testing.T) {
 		t.Fatalf("Classify(429 err) = %q, want rate_limit", got)
 	}
 }
+
+// TestClassifyMessage_Locked pins the paywall/early-access category (GAP-135,
+// GAP-141). A "locked" chapter is NOT a failure of the source: the source is
+// healthy and serving every other chapter, and the chapter itself becomes free
+// once its early-access window closes. It therefore must never be classified as
+// server_error (which the download path treats as SOURCE-WIDE and trips the
+// breaker on) nor as captcha.
+func TestClassifyMessage_Locked(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+	}{
+		{"hive coins", "Exception: Chapter locked (coins required)"},
+		{"locked chapter", "this is a locked chapter"},
+		{"premium", "premium chapter — not available"},
+		{"paywall", "content is behind a paywall"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorclass.ClassifyMessage(tc.msg); got != errorclass.CategoryLocked {
+				t.Fatalf("ClassifyMessage(%q) = %q, want %q", tc.msg, got, errorclass.CategoryLocked)
+			}
+		})
+	}
+}
+
+// TestClassifyMessage_LockedOutranksTransportWording is the ORDERING guarantee
+// and is the whole reason locked sits first in the taxonomy. Both wordings below
+// really occur: engine-host wraps every extension exception in an
+// "upstream error (status 502)" envelope (which contains "502", a server_error
+// token), and a paywalled fetch can come back as a 403 (a captcha token). Either
+// rule winning would send a healthy source's breaker down over one paid chapter.
+func TestClassifyMessage_LockedOutranksTransportWording(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+	}{
+		{"inside the 502 envelope", "sourceengine: upstream error (status 502): Exception: Chapter locked (coins required)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorclass.ClassifyMessage(tc.msg); got != errorclass.CategoryLocked {
+				t.Fatalf("ClassifyMessage(%q) = %q, want %q", tc.msg, got, errorclass.CategoryLocked)
+			}
+		})
+	}
+}
+
+// TestClassifyMessage_LockedDoesNotOverreach guards the false-positive risk the
+// narrow token list exists to avoid: bare "locked" is a common word in unrelated
+// infrastructure errors, and misreading one of those as a paywall would suppress
+// a breaker trip that SHOULD happen.
+func TestClassifyMessage_LockedDoesNotOverreach(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{"db lock is not a paywall", "database is locked", errorclass.CategoryUnknown},
+		{"account lock is not a paywall", "account locked after too many attempts", errorclass.CategoryUnknown},
+		// Dropped deliberately: these are LOGIN-STATE wordings as often as paywall
+		// ones. Reading a lapsed session as a paywall would park every chapter for
+		// 72h with no breaker trip and no health signal — the dangerous direction.
+		{"subscription wording is not a paywall", "subscription required", errorclass.CategoryUnknown},
+		{"purchase wording is not a paywall", "purchase required to read this chapter", errorclass.CategoryUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorclass.ClassifyMessage(tc.msg); got != tc.want {
+				t.Fatalf("ClassifyMessage(%q) = %q, want %q", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestClassifyMessage_BanOutranksLockedWording pins the ordering that keeps the
+// locked category SAFE. Locked sits after the ban rules and before server_error,
+// and both halves of that placement are load-bearing:
+//
+//   - AFTER captcha / rate_limit / not_found — a block, challenge or 403 that
+//     merely MENTIONS premium or paywall wording (an interstitial linking to a
+//     "Premium Chapters" page, a sign-in wall) must stay source-wide. Reading it
+//     as a paywall would park every chapter for 72h with no breaker trip and no
+//     health signal, which is the dangerous direction.
+//   - BEFORE server_error — engine-host wraps a real paywall in a 502 envelope
+//     whose own "502" would otherwise win.
+func TestClassifyMessage_BanOutranksLockedWording(t *testing.T) {
+	bans := []struct {
+		name string
+		msg  string
+	}{
+		{"challenge page linking to premium", "just a moment... checking your browser — premium chapter"},
+		{"sign-in wall served as 403", "403 forbidden: premium chapter — sign in to continue"},
+		{"paywall wording inside a challenge", "cloudflare challenge served: this content is behind a paywall"},
+	}
+	for _, tc := range bans {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := errorclass.ClassifyMessage(tc.msg); got != errorclass.CategoryCaptcha {
+				t.Fatalf("ClassifyMessage(%q) = %q, want %q — a block must stay source-wide so the breaker still trips",
+					tc.msg, got, errorclass.CategoryCaptcha)
+			}
+		})
+	}
+
+	// The production string carries no ban token, so it still classifies as locked
+	// both bare and inside the 502 envelope it actually arrives in.
+	for _, msg := range []string{
+		"Exception: Chapter locked (coins required)",
+		"sourceengine: upstream error (status 502): Exception: Chapter locked (coins required)",
+	} {
+		if got := errorclass.ClassifyMessage(msg); got != errorclass.CategoryLocked {
+			t.Fatalf("ClassifyMessage(%q) = %q, want %q", msg, got, errorclass.CategoryLocked)
+		}
+	}
+}

@@ -657,12 +657,16 @@ func (s *Service) GetSeries(ctx context.Context, id uuid.UUID) (SeriesDetailDTO,
 
 	titles := ChapterTitles(row.Edges.Providers)
 	releaseDates := chapterReleaseDates(row) // QCAT-297 per-chapter effective release date
+	// GAP-141: which chapters a source is WITHHOLDING behind an early-access
+	// window, over the same eager-loaded feeds — no extra query, no source call.
+	earlyAccess := chapterEarlyAccess(row.Edges.Providers, time.Now().UTC())
 
 	chapters := make([]ChapterDTO, len(row.Edges.Chapters))
 	counts := ChapterCounts{}
 	var lastDownloaded *time.Time // MAX(first_downloaded_at) over non-superseded chapters
 	for i, ch := range row.Edges.Chapters {
-		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey], releaseDates[ch.ID])
+		chapters[i] = newChapterDTO(ch, titles[ch.ChapterKey], releaseDates[ch.ID],
+			EarlyAccessUnlessSettled(ch.State, ch.Filename, lockedUntilFor(earlyAccess, ch.ChapterKey)))
 		if ch.State == entchapter.StateSuperseded || ch.State == entchapter.StateIgnored {
 			// superseded parts are merged into their whole; ignored fractionals are
 			// suppressed re-uploads — neither is counted (mirrors chapterRollups) and

@@ -59,6 +59,19 @@ export interface Chapter {
    * for a chapter no source dated that was never downloaded. Shown under the row.
    */
   releaseDate: string | null
+  /**
+   * True when a source is deliberately WITHHOLDING this chapter behind a paywall /
+   * early-access window rather than failing to serve it (GAP-141). The chapter still
+   * rests in `failed` — the fetch produced no file — but nothing is broken and no
+   * owner action helps, so the row renders `EarlyAccessBadge` INSTEAD of its red
+   * `StatusBadge`. Optional so fixtures and stories predating the field stay valid.
+   */
+  locked?: boolean
+  /**
+   * When the source is expected to release the chapter (raw ISO 8601, so the badge
+   * counts down live). Set exactly when `locked` is true; absent otherwise.
+   */
+  lockedUntil?: string
 }
 
 /**

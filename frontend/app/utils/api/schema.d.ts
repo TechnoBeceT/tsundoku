@@ -2953,6 +2953,17 @@ export interface components {
              * @description This chapter's effective release date (Komikku-style, QCAT-297): the satisfying/best provider's provider_upload_date for the chapter's key, else the chapter's download_date. Null only for a chapter no source dated that was never downloaded.
              */
             releaseDate: string | null;
+            /**
+             * @description True when a source is deliberately WITHHOLDING this chapter behind a paywall / early-access window rather than failing to serve it, AND the chapter is still waiting on it. Nothing is broken and no owner action helps: the source releases it on its own and the engine re-checks at lockedUntil. Typically the chapter is in `failed` (the fetch produced no file), but `state` is NOT what decides this — a queued or upgrading chapter can be withheld too.
+             *     NEVER true for a chapter the library has already settled, whatever its feed rows say: one that carries a `filename` is readable NOW (an upgrade whose better source is withheld leaves the working copy on disk), and a `superseded` or `ignored` one will never be fetched at all, so the promise implied by lockedUntil would be false. Because the UI renders this INSTEAD of the state badge, not alongside it, marking either would hide the row's real status.
+             *     Derived on read by classifying the stored per-source last_error — there is no column and no chapter state for it, so `state` is unchanged.
+             */
+            locked: boolean;
+            /**
+             * Format: date-time
+             * @description When the engine next re-checks a withheld chapter (the earliest expiry across the sources withholding it). Non-null exactly when `locked` is true, and always in the future at the time of the response.
+             */
+            lockedUntil: string | null;
         };
         ChapterProgress: {
             /** @description Chapter UUID. */
@@ -3224,6 +3235,17 @@ export interface components {
             retryable: boolean;
             /** @description True when a failing source has spent its whole budget (failingAttempts >= maxRetries) — it has given up on this chapter until an owner retry resets it. False when there is no failing source, or it is still retryable. */
             terminal: boolean;
+            /**
+             * @description True when a source is deliberately WITHHOLDING this chapter behind a paywall / early-access window rather than failing to serve it, AND the chapter is still waiting on it. Nothing is broken: the source is healthy, its per-source budget is deliberately UNSPENT (so `terminal` stays false) and the chapter goes free on its own, which is why the engine only parks it until lockedUntil. The row is typically in `failed` (the fetch produced no file), but `state` is NOT what decides this — a queued or upgrading row can be withheld too.
+             *     NEVER true for a chapter the library has already settled, whatever its feed rows say: one that carries a `filename` is readable NOW (an upgrade whose better source is withheld leaves the working copy on disk), and a `superseded` or `ignored` one will never be fetched at all, so the promise implied by lockedUntil would be false. Because the UI renders this INSTEAD of the state badge, not alongside it, marking either would hide the row's real status.
+             *     Derived on read by classifying the stored per-source last_error, sharing one definition with the series-detail read model — there is no column and no chapter state for it, so `state` is unchanged.
+             */
+            locked: boolean;
+            /**
+             * Format: date-time
+             * @description When the engine next re-checks a withheld chapter (the earliest expiry across the sources withholding it). Non-null exactly when `locked` is true, and always in the future at the time of the response.
+             */
+            lockedUntil: string | null;
             /**
              * @description Why a QUEUED chapter is not moving, classifying the cooldown on the source the engine is waiting on (the upgrade TARGET for an upgrade_available/upgrading chapter, else the PRIMARY candidate for a wanted one). "backoff": that source has a persisted per-source next_attempt_at in the future (a failed fetch's per-chapter backoff). "cooling_down": that source's circuit-breaker is tripped — the WHOLE source is in anti-ban cooldown (a batch-joined read of SourceCircuitState, a different table from next_attempt_at). "": the source is ready to try next cycle (never mislabelled as waiting).
              * @enum {string}

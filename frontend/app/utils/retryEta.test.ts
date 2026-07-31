@@ -1,9 +1,9 @@
 /**
  * formatRetryEta — the client-side "time until retry" label for a deferred source.
  *
- * Pins the four branches (elapsed / seconds / minutes / hours) and the "~" estimate
- * marker, all against a FIXED now so the assertions are deterministic (the real UI
- * passes the live ticking clock).
+ * Pins the five branches (elapsed / seconds / minutes / hours / days) and the "~"
+ * estimate marker, all against a FIXED now so the assertions are deterministic (the
+ * real UI passes the live ticking clock).
  */
 import { describe, it, expect } from 'vitest'
 import { formatRetryEta } from './retryEta'
@@ -25,7 +25,15 @@ describe('formatRetryEta', () => {
     expect(formatRetryEta(at(12 * 60_000), NOW)).toBe('~12m')
   })
 
-  it('reads hours at an hour or more', () => {
+  it('reads hours at an hour or more, up to a day', () => {
     expect(formatRetryEta(at(2 * 3_600_000), NOW)).toBe('~2h')
+    expect(formatRetryEta(at(23 * 3_600_000), NOW)).toBe('~23h')
+  })
+
+  // An early-access window (GAP-141) is a DAY-scale wait — "~72h" is arithmetic the
+  // reader has to do, so a day or more reads in days.
+  it('reads days at a day or more', () => {
+    expect(formatRetryEta(at(24 * 3_600_000), NOW)).toBe('~1d')
+    expect(formatRetryEta(at(72 * 3_600_000), NOW)).toBe('~3d')
   })
 })

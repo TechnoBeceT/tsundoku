@@ -88,6 +88,40 @@ describe('FailedDownloadCard – honest failing source', () => {
     expect(wrapper.emitted('retry')?.[0]).toEqual(['c-1'])
   })
 
+  // GAP-141: a withheld chapter lands in the Failed tab (its state IS `failed`) but is
+  // not a failure. The card must drop the failure chrome — no attempt badge (a paywall
+  // spends none), no danger-toned error pill — and say WHY in calm wording instead.
+  it('reads a withheld chapter as an early-access wait, not a failure', () => {
+    const wrapper = mount(FailedDownloadCard, {
+      props: {
+        item: upgradeFailure({
+          state: 'failed',
+          isUpgrade: false,
+          upgradeTarget: undefined,
+          failingProvider: undefined,
+          failingProviderName: undefined,
+          failingAttempts: 0,
+          failingLastError: undefined,
+          failingErrorCategory: undefined,
+          attempts: 0,
+          retryable: false,
+          lastError: 'upstream error: Chapter locked, coins required',
+          locked: true,
+          lockedUntil: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
+        }),
+        expanded: true,
+      },
+      global: { stubs },
+    })
+
+    expect(wrapper.find('.early').text()).toContain('Early access')
+    expect(wrapper.find('.attempts').exists()).toBe(false)
+    // The verbatim upstream wording is still available, labelled benignly.
+    expect(wrapper.find('.err-toggle__label').text()).toBe('Early access')
+    expect(wrapper.find('.err-toggle__label').classes()).toContain('err-toggle__label--benign')
+    expect(wrapper.text()).toContain('upstream error: Chapter locked, coins required')
+  })
+
   it('falls back to the satisfier + chapter error for a plain state-failed row', () => {
     const wrapper = mount(FailedDownloadCard, {
       props: {

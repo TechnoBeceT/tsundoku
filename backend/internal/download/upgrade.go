@@ -464,11 +464,14 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 // renders the new CBZ atomically. It returns an upgradeResult on success, or an
 // error to route to handleUpgradeFailure. On a FETCH failure the returned result
 // carries the attempted source's pc so the caller can CHARGE it with the same
-// classified rule as the download path — a chapter-specific upgrade failure BUMPS
-// attempts (so the target exhausts and DetectUpgrades stops re-flagging it), a
-// source-wide one only COOLS IT DOWN (so a preferred source temporarily down
-// recovers as the swap target). A render failure returns no pc (not the source's
-// fault, so no charge).
+// classified rule as the download path (classifyFetchFailure, all three of its
+// kinds) — a chapter-specific upgrade failure BUMPS attempts (so the target
+// exhausts and DetectUpgrades stops re-flagging it), a source-wide one only COOLS
+// IT DOWN (so a preferred source temporarily down recovers as the swap target),
+// and a DEFERRED one parks the target on a day-scale horizon with attempts
+// UNCHANGED and no breaker (a better source withholding the chapter behind a
+// paywall is not a fault, and the working copy on disk is untouched meanwhile —
+// GAP-141). A render failure returns no pc (not the source's fault, so no charge).
 func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter) (upgradeResult, error) {
 	now := time.Now()
 	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now)
@@ -523,8 +526,9 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	if err != nil {
 		// Circuit-breaker: recorded ONLY for a SOURCE-WIDE/ban-class upgrade fetch
 		// failure (same rule as the download path — shouldRecordGateFailure gates on
-		// !isChapterSpecificFailure), so a broken-chapter upgrade failure never pauses
-		// the whole source. Skipped on a shutdown-induced cancellation (parent ctx done).
+		// classifyFetchFailure == failureSourceWide), so neither a broken-chapter
+		// upgrade failure nor a withheld (locked) one ever pauses the whole source.
+		// Skipped on a shutdown-induced cancellation (parent ctx done).
 		if shouldRecordGateFailure(ctx, err) {
 			d.gateRecordFailure(ctx, sourceKey, err, time.Now())
 		}

@@ -20,6 +20,7 @@ type Static struct {
 	Concurrency     int
 	Retries         int
 	Backoff         time.Duration
+	LockedRetry     time.Duration
 	StaleGrace      int
 	StalledDays     int
 	ExtCheck        time.Duration
@@ -92,6 +93,9 @@ func (s Static) MaxRetries(context.Context) int { return s.Retries }
 
 // RetryBackoff returns the fixed base retry backoff delay.
 func (s Static) RetryBackoff(context.Context) time.Duration { return s.Backoff }
+
+// LockedRetryInterval returns the fixed locked-chapter re-check horizon.
+func (s Static) LockedRetryInterval(context.Context) time.Duration { return s.LockedRetry }
 
 // StaleGraceDays returns the fixed source-health stale threshold.
 func (s Static) StaleGraceDays(context.Context) int { return s.StaleGrace }

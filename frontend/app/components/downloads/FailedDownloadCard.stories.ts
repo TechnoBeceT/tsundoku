@@ -60,3 +60,34 @@ export const Retrying: Story = {
 export const Expanded: Story = {
   args: { item: retryable, expanded: true },
 }
+
+/**
+ * EARLY ACCESS (GAP-141): a chapter the source is withholding behind coins reaches
+ * this tab because its state IS `failed`, yet nothing is broken. The whole card
+ * stands down — no attempt badge, an accent-toned "Early access" pill instead of the
+ * danger-toned one, and the state badge replaced by the countdown to the free date.
+ * The verbatim upstream message is still there on expand.
+ */
+export const EarlyAccess: Story = {
+  args: {
+    item: {
+      ...retryable,
+      state: 'failed',
+      isUpgrade: false,
+      upgradeTarget: undefined,
+      failingProvider: undefined,
+      failingProviderName: undefined,
+      failingAttempts: 0,
+      failingLastError: undefined,
+      failingErrorCategory: undefined,
+      attempts: 0,
+      retryable: false,
+      terminal: false,
+      nextAttempt: undefined,
+      lastError: 'upstream error: Chapter locked, coins required',
+      locked: true,
+      lockedUntil: new Date(Date.now() + 3 * 24 * 3_600_000).toISOString(),
+    },
+    expanded: true,
+  },
+}

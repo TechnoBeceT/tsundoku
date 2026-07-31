@@ -398,6 +398,27 @@ func TestJobsRetryDefaults(t *testing.T) {
 	}
 }
 
+// TestJobsLockedRetryIntervalDefault confirms Load() applies the 72h default for
+// the locked-chapter re-check horizon (GAP-141) when its env var is unset.
+//
+// It is pinned HERE because config is the sole env boundary (Rule 4) and this
+// default is what seeds the settings overlay — the >= 1h validator only guards an
+// owner-set OVERRIDE, so a wrong default reaches the dispatcher unchecked. The
+// cost is asymmetric: a deferral spends no attempts and trips no breaker, so a
+// short horizon re-hits the source's paywall every cycle with nothing to stop it.
+func TestJobsLockedRetryIntervalDefault(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "0123456789abcdef0123456789abcdef")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Jobs.LockedRetryInterval != 72*time.Hour {
+		t.Errorf("Jobs.LockedRetryInterval default = %v, want 72h", cfg.Jobs.LockedRetryInterval)
+	}
+}
+
 // TestEngineHTTPTimeoutDefault confirms that Load() applies the 3m default for
 // the engine-host API-client timeout (raised from the old hardcoded 60s so
 // that the slow page-image fetch does not time out under concurrency).

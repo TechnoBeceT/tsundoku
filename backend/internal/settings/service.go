@@ -66,6 +66,12 @@ func (s *Service) RetryBackoff(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeyRetryBackoff)
 }
 
+// LockedRetryInterval is how long a deliberately-withheld (paywalled / early
+// access) chapter waits before a re-check (DB override else default).
+func (s *Service) LockedRetryInterval(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeyLockedRetryInterval)
+}
+
 // StaleGraceDays tunes the source-health stale threshold (DB override else default).
 func (s *Service) StaleGraceDays(ctx context.Context) int {
 	return s.resolveInt(ctx, KeyStaleGraceDays)

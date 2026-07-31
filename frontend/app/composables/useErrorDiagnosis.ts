@@ -124,6 +124,16 @@ const DIAGNOSES: Record<ErrorCategoryKey, DiagnosisText> = {
       'A source whose image CDN sits behind Cloudflare may need a working FlareSolverr',
     ],
   },
+  locked: {
+    title: 'Held behind early access',
+    explanation:
+      'The source is deliberately withholding this chapter behind coins, a subscription, or an early-access window. Nothing is broken — the source is healthy and serving everything else — and the chapter is normally released free a few days after publication, at which point the engine picks it up on its own.',
+    suggestions: [
+      'No action needed — the engine re-checks on the locked-chapter interval',
+      'Shorten jobs.locked_retry_interval in Settings if this source frees chapters sooner',
+      'Rank a source that publishes it free higher, if one carries the chapter',
+    ],
+  },
   unknown: {
     title: 'Unclassified error',
     explanation:

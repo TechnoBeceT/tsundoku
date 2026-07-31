@@ -10,14 +10,21 @@
  *   "now"  — already elapsed (≤ 0 ms away): the source is due this cycle
  *   "~Ns"  — under a minute away
  *   "~Nm"  — under an hour away
- *   "~Nh"  — an hour or more away
+ *   "~Nh"  — under a day away
+ *   "~Nd"  — a day or more away
  * The leading "~" marks it an estimate — the engine retries on its own cadence, so
  * this is a guide, not a promise.
+ *
+ * The day branch exists for the early-access wait (GAP-141), whose horizon is
+ * measured in days rather than minutes: "~72h" is arithmetic the reader should not
+ * have to do. It is shared, not special-cased — a source cooling down for that long
+ * reads the same way.
  */
 export function formatRetryEta(iso: string, nowMs: number = Date.now()): string {
   const diffMs = new Date(iso).getTime() - nowMs
   if (diffMs <= 0) return 'now'
   if (diffMs < 60_000) return `~${Math.round(diffMs / 1_000)}s`
   if (diffMs < 3_600_000) return `~${Math.round(diffMs / 60_000)}m`
-  return `~${Math.round(diffMs / 3_600_000)}h`
+  if (diffMs < 86_400_000) return `~${Math.round(diffMs / 3_600_000)}h`
+  return `~${Math.round(diffMs / 86_400_000)}d`
 }

@@ -131,6 +131,19 @@ type DownloadChapterDTO struct {
 	Retryable bool `json:"retryable"`
 	Terminal  bool `json:"terminal"`
 
+	// Locked / LockedUntil mark a chapter a source is deliberately WITHHOLDING
+	// behind a paywall / early-access window rather than failing to serve
+	// (GAP-141). The row typically rests in `failed` — the fetch produced no file —
+	// but nothing is broken: the source is healthy, the per-source budget is
+	// deliberately UNSPENT (so Terminal stays false), and the chapter goes free on
+	// its own, which is why the engine only parks it until LockedUntil. Both are
+	// derived on read from the per-source last_error + deferral
+	// (series.EarlyAccessUntil), shared with the series-detail read model so the
+	// two can never disagree; no column and no chapter state exists for this.
+	// LockedUntil is non-null exactly when Locked is true.
+	Locked      bool       `json:"locked"`
+	LockedUntil *time.Time `json:"lockedUntil"`
+
 	WaitingReason string     `json:"waitingReason"`
 	DeferredUntil *time.Time `json:"deferredUntil"`
 	DeferReason   string     `json:"deferReason"`
@@ -176,6 +189,8 @@ type rowContext struct {
 	failingErrorCategory string
 	retryable            bool
 	terminal             bool
+
+	lockedUntil *time.Time
 
 	waitingReason string
 	retryAt       *time.Time
@@ -268,6 +283,9 @@ func newDownloadChapterDTO(ch *ent.Chapter, category string, res seriesResolutio
 		FailingErrorCategory: rc.failingErrorCategory,
 		Retryable:            rc.retryable,
 		Terminal:             rc.terminal,
+
+		Locked:      rc.lockedUntil != nil,
+		LockedUntil: rc.lockedUntil,
 
 		WaitingReason: rc.waitingReason,
 		DeferredUntil: rc.retryAt,

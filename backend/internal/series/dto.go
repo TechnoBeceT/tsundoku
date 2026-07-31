@@ -346,6 +346,17 @@ type ChapterDTO struct {
 	// chapter's key, else the chapter's download_date. Null only for a chapter no
 	// source dated that was never downloaded. Rendered under each chapter row.
 	ReleaseDate *time.Time `json:"releaseDate"`
+	// Locked / LockedUntil mark a chapter a source is deliberately WITHHOLDING
+	// behind a paywall / early-access window rather than failing to serve
+	// (GAP-141). Such a chapter rests in `failed` — the fetch produced no file —
+	// but nothing is broken and no owner action helps: the source releases it on
+	// its own, and the engine re-checks at LockedUntil. Both are derived on read
+	// from the per-source last_error + deferral (series.EarlyAccessUntil); NO
+	// column and NO chapter state was added for them, so State is untouched and
+	// the UI must render the pair INSTEAD of the state badge, not alongside it.
+	// LockedUntil is non-null exactly when Locked is true.
+	Locked      bool       `json:"locked"`
+	LockedUntil *time.Time `json:"lockedUntil"`
 }
 
 // ProviderDTO is one SeriesProvider in a series-detail response. ID is the
@@ -518,7 +529,11 @@ func formatRFC3339Ptr(t *time.Time) *string {
 // number — a frozen 0-provider series (all sources removed via M6) keeps its CBZs
 // and Chapter rows but loses the title source, so the number is the only display
 // name left. If even the number is absent (a rare corner) the name stays blank.
-func newChapterDTO(c *ent.Chapter, name string, releaseDate *time.Time) ChapterDTO {
+//
+// lockedUntil is likewise resolved once per series by the caller (chapterEarlyAccess
+// over the already-eager-loaded feeds) and simply projected here: non-nil means a
+// source is withholding this chapter behind an early-access window until then.
+func newChapterDTO(c *ent.Chapter, name string, releaseDate, lockedUntil *time.Time) ChapterDTO {
 	return ChapterDTO{
 		ID:           c.ID.String(),
 		ChapterKey:   c.ChapterKey,
@@ -532,6 +547,8 @@ func newChapterDTO(c *ent.Chapter, name string, releaseDate *time.Time) ChapterD
 		ReadAt:       c.ReadAt,
 		PageVersion:  PageVersion(c.Filename, c.DownloadDate),
 		ReleaseDate:  releaseDate,
+		Locked:       lockedUntil != nil,
+		LockedUntil:  lockedUntil,
 	}
 }
 

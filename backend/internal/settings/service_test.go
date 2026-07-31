@@ -23,6 +23,7 @@ func testDefaults() settings.Defaults {
 		RefreshConcurrency:      4,
 		MaxRetries:              3,
 		RetryBackoff:            time.Minute,
+		LockedRetryInterval:     72 * time.Hour,
 		StaleGraceDays:          14,
 		StalledThresholdDays:    30,
 		ExtensionCheckInterval:  24 * time.Hour,
@@ -148,6 +149,52 @@ func TestSetThenResolveTrackRetryInterval(t *testing.T) {
 	}
 	if err := svc.Set(ctx, settings.KeyTrackRetryInterval, "10s"); !errors.Is(err, settings.ErrInvalidSetting) {
 		t.Errorf("Set(10s) below the 30s floor: err = %v, want ErrInvalidSetting", err)
+	}
+}
+
+// TestLockedRetryInterval pins the whole jobs.locked_retry_interval path
+// (GAP-141): the injected 72h default, fail-closed rejection of a value below the
+// 1h floor, and a valid override hot-reloading through the typed accessor —
+// mirroring the coverage its sibling jobs.retry_backoff already has.
+//
+// The accessor's KEY is asserted in BOTH directions on purpose. Resolving
+// jobs.retry_backoff here is the silent, expensive regression: every withheld
+// chapter would re-check on the 30-minute retry backoff instead of the 72-hour
+// paywall horizon — roughly 144x more paywall hits per week, aimed at exactly the
+// anti-bot-sensitive sources this interval exists to spare, with no error and no
+// health signal to show for it.
+//
+// The floor matters for the same reason: a deferral burns no attempts and trips
+// no breaker, so a too-short interval has nothing else to stop it.
+func TestLockedRetryInterval(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.LockedRetryInterval(ctx); got != 72*time.Hour {
+		t.Errorf("LockedRetryInterval default = %v, want 72h", got)
+	}
+	if err := svc.Set(ctx, settings.KeyLockedRetryInterval, "30m"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Errorf("Set(30m) below the 1h floor: err = %v, want ErrInvalidSetting", err)
+	}
+	if err := svc.Set(ctx, settings.KeyLockedRetryInterval, "48h"); err != nil {
+		t.Fatalf("Set(48h): %v", err)
+	}
+	if got := svc.LockedRetryInterval(ctx); got != 48*time.Hour {
+		t.Errorf("after Set, LockedRetryInterval = %v, want 48h (read-at-use hot reload)", got)
+	}
+
+	// Overriding the SIBLING key must move only the sibling: neither accessor may
+	// resolve the other's value.
+	if err := svc.Set(ctx, settings.KeyRetryBackoff, "2m"); err != nil {
+		t.Fatalf("Set(%s, 2m): %v", settings.KeyRetryBackoff, err)
+	}
+	if got := svc.LockedRetryInterval(ctx); got != 48*time.Hour {
+		t.Errorf("LockedRetryInterval = %v after overriding %s, want 48h — the accessor resolves the wrong key",
+			got, settings.KeyRetryBackoff)
+	}
+	if got := svc.RetryBackoff(ctx); got != 2*time.Minute {
+		t.Errorf("RetryBackoff = %v, want 2m — the locked-interval override leaked into the retry backoff", got)
 	}
 }
 
@@ -298,8 +345,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 38 {
-		t.Fatalf("List len = %d, want 38", len(list))
+	if len(list) != 39 {
+		t.Fatalf("List len = %d, want 39", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -355,7 +402,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 	ctx := context.Background()
 	s := settings.Static{
 		Download: time.Second, DownloadConc: 6, Refresh: 2 * time.Second, Concurrency: 2,
-		Retries: 5, Backoff: 3 * time.Second, StaleGrace: 7,
+		Retries: 5, Backoff: 3 * time.Second, LockedRetry: 96 * time.Hour, StaleGrace: 7,
 		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
 		SourcesFailureThresh: 8, SourcesCooldownIv: 45 * time.Minute, SourcesMinDelay: 750 * time.Millisecond,
 		MetadataAutoIdentifyFlag: true,
@@ -371,6 +418,10 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		{"RefreshConcurrency", s.RefreshConcurrency(ctx), 2},
 		{"MaxRetries", s.MaxRetries(ctx), 5},
 		{"RetryBackoff", s.RetryBackoff(ctx), 3 * time.Second},
+		// Deliberately far from Backoff: Static is what the dispatcher tests wire in,
+		// so a LockedRetryInterval that silently returned the ordinary backoff would
+		// make the deferral horizon indistinguishable from a cooldown.
+		{"LockedRetryInterval", s.LockedRetryInterval(ctx), 96 * time.Hour},
 		{"StaleGraceDays", s.StaleGraceDays(ctx), 7},
 		{"ExtensionCheckInterval", s.ExtensionCheckInterval(ctx), 12 * time.Hour},
 		{"WarmupInterval", s.WarmupInterval(ctx), 15 * time.Minute},

@@ -291,6 +291,12 @@ func resolveRow(ch *ent.Chapter, res seriesResolution, provByID map[uuid.UUID]*e
 		}
 	}
 
+	// GAP-141: a chapter a source is WITHHOLDING (paywall / early access) is not a
+	// failure — resolved over the same in-memory index, so it costs no query and it
+	// applies in EVERY state (a withheld chapter rests in `failed`, having produced
+	// no file, but a queued or upgrading one can be withheld too).
+	rc.lockedUntil = earlyAccessUntil(ch, res.upgradeTargets, now)
+
 	// The waited-on source (upgrade target for an upgrade, primary candidate for a
 	// wanted) carries BOTH cooldown signals: its persisted per-source backoff and its
 	// source-wide circuit-breaker (joined from the snapshot by canonical name).
@@ -468,39 +474,60 @@ func (s *Service) RetryChapter(ctx context.Context, id uuid.UUID) error {
 		return fmt.Errorf("downloads.RetryChapter: load chapter %s: %w", id, err)
 	}
 
-	retryableState := IsRetryableState(ch.State)
-	if !retryableState {
-		hasFailing, err := chapterHasFailingSource(ctx, s.client, ch)
-		if err != nil {
-			return fmt.Errorf("downloads.RetryChapter: %w", err)
-		}
-		if !hasFailing {
-			return ErrNotRetryable
-		}
+	retryableState, err := admitRetry(ctx, s.client, ch)
+	if err != nil {
+		return err
 	}
 
 	err = withTx(ctx, s.client, func(tx *ent.Tx) error {
-		if retryableState {
-			// failed/permanently_failed → wanted (the owner-retry edges); the field clears
-			// accompany the transition in one update.
-			if _, err := applyChapterRetryReset(tx.Chapter.Update().Where(entchapter.IDEQ(id))).Save(ctx); err != nil {
-				return fmt.Errorf("reset chapter %s: %w", id, err)
-			}
-		} else {
-			// A downloaded (etc.) chapter with a failing upgrade source: keep the state,
-			// just clear the chapter's failure message so the retried source's fresh budget
-			// takes over.
-			if _, err := tx.Chapter.Update().Where(entchapter.IDEQ(id)).
-				SetLastError("").SetErrorCategory("").Save(ctx); err != nil {
-				return fmt.Errorf("clear chapter error %s: %w", id, err)
-			}
-		}
-		return resetProviderChapters(ctx, tx, map[uuid.UUID][]string{ch.SeriesID: {ch.ChapterKey}})
+		return resetChapterForRetry(ctx, tx, ch, retryableState)
 	})
 	if err != nil {
 		return fmt.Errorf("downloads.RetryChapter: %w", err)
 	}
 	return nil
+}
+
+// admitRetry decides whether a chapter may be retried at all and, when it may,
+// WHICH of the two reset shapes applies. retryableState=true means the chapter is
+// in a retryable state (failed/permanently_failed) and gets the full
+// state-resetting edge; false-with-nil-error means it is admitted only because a
+// source is failing chapter-specifically, so its state (and CBZ) must be left
+// alone. It returns ErrNotRetryable (→409) when neither holds.
+func admitRetry(ctx context.Context, client *ent.Client, ch *ent.Chapter) (bool, error) {
+	if IsRetryableState(ch.State) {
+		return true, nil
+	}
+	hasFailing, err := chapterHasFailingSource(ctx, client, ch)
+	if err != nil {
+		return false, fmt.Errorf("downloads.RetryChapter: %w", err)
+	}
+	if !hasFailing {
+		return false, ErrNotRetryable
+	}
+	return false, nil
+}
+
+// resetChapterForRetry is the transactional body of RetryChapter: the
+// state-dependent chapter update followed by the per-source budget reset that
+// BOTH shapes need. Kept in one function so the two can never half-apply.
+func resetChapterForRetry(ctx context.Context, tx *ent.Tx, ch *ent.Chapter, retryableState bool) error {
+	if retryableState {
+		// failed/permanently_failed → wanted (the owner-retry edges); the field clears
+		// accompany the transition in one update.
+		if _, err := applyChapterRetryReset(tx.Chapter.Update().Where(entchapter.IDEQ(ch.ID))).Save(ctx); err != nil {
+			return fmt.Errorf("reset chapter %s: %w", ch.ID, err)
+		}
+	} else {
+		// A downloaded (etc.) chapter with a failing upgrade source: keep the state,
+		// just clear the chapter's failure message so the retried source's fresh budget
+		// takes over.
+		if _, err := tx.Chapter.Update().Where(entchapter.IDEQ(ch.ID)).
+			SetLastError("").SetErrorCategory("").Save(ctx); err != nil {
+			return fmt.Errorf("clear chapter error %s: %w", ch.ID, err)
+		}
+	}
+	return resetProviderChapters(ctx, tx, map[uuid.UUID][]string{ch.SeriesID: {ch.ChapterKey}})
 }
 
 // chapterHasFailingSource reports whether any source offering ch's (series_id,

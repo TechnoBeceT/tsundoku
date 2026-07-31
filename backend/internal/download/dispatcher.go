@@ -76,6 +76,11 @@ type RetrySettings interface {
 	// gap between a source's successive tries for one chapter is constant = this
 	// value (no per-attempt growth — see backoffCurve). Default 30m.
 	RetryBackoff(ctx context.Context) time.Duration
+	// LockedRetryInterval is the horizon for a chapter the source is deliberately
+	// WITHHOLDING (paywall / early access) — see deferSource. Deliberately separate
+	// from RetryBackoff: the wait is on a publishing schedule measured in DAYS, not
+	// a transient fault measured in minutes. Default 72h.
+	LockedRetryInterval(ctx context.Context) time.Duration
 	// DownloadConcurrency is the PER-SOURCE download concurrency cap: how many of a
 	// source's chapters the dispatcher fetches in parallel (and, equivalently, how
 	// many of that source's queued chapters may be in the downloading state at
@@ -357,14 +362,21 @@ func gateFilterCandidates(ctx context.Context, gate *sourcegate.Service, cands [
 //     is down — mirroring refresh.RefreshAll's ctx-cancel skip. A per-fetch
 //     deadline that fires while the parent context is still alive DOES count: that
 //     slow/blocked latency is exactly the signal the breaker exists to catch.
-//   - The failure is SOURCE-WIDE, not chapter-specific. A broken page / not_found /
-//     no_pages / parse means THIS chapter is broken on this source, NOT that the
-//     source is down — tripping the breaker on it would wrongly pause the whole
-//     source (and every other series it serves). Only ban/source-down class errors
-//     (rate_limit / captcha / timeout / network / server_error / unknown) count
-//     toward the breaker. Shared by the download and upgrade fetch paths.
+//   - classifyFetchFailure returns failureSourceWide — the ONLY one of its three
+//     kinds that reaches the breaker. A CHAPTER-SPECIFIC failure (broken page /
+//     not_found / no_pages / parse) means THIS chapter is broken on this source,
+//     NOT that the source is down, so tripping on it would wrongly pause the whole
+//     source and every other series it serves. A DEFERRED failure (locked — the
+//     source is deliberately withholding the chapter behind a paywall) is excluded
+//     for a different and stronger reason: the source is demonstrably HEALTHY and
+//     serving everything else, so a breaker there takes a working source offline
+//     over a chapter that was never going to be served. That exclusion is the
+//     load-bearing property of GAP-141 — one paid chapter used to pause all of
+//     Hive Scans. Only ban/source-down class errors (rate_limit / captcha /
+//     timeout / network / server_error / unknown) count toward the breaker.
+//     Shared by the download and upgrade fetch paths.
 func shouldRecordGateFailure(ctx context.Context, cause error) bool {
-	return ctx.Err() == nil && !isChapterSpecificFailure(cause)
+	return ctx.Err() == nil && classifyFetchFailure(cause) == failureSourceWide
 }
 
 // downloadConcurrency reads the current per-source download concurrency cap from
@@ -693,7 +705,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //
 // Failure accounting (owner-ratified: error class drives TWO separate things —
 // the per-(chapter,source) counter AND the circuit-breaker — see
-// isChapterSpecificFailure):
+// classifyFetchFailure, whose three failureKinds are exactly these three arms):
 //   - A CHAPTER-SPECIFIC fetch failure (not_found / no_pages / parse / broken page /
 //     no live source) charges the source (chargeFetchFailure → bumpSourceFailure:
 //     attempts++) and does NOT trip the breaker — this chapter is broken on this
@@ -706,6 +718,12 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     (gateRecordFailure). The chapter is fine, so a ban never exhausts it; the
 //     breaker (filterGated) EXCLUDES the tripped source so its chapters stay wanted
 //     and burn NO attempts while it is down — this is the drain-prevention.
+//   - A DEFERRED fetch failure (locked — the source is deliberately withholding the
+//     chapter behind a paywall / early-access window) does NEITHER: chargeFetchFailure
+//     → deferSource pushes next_attempt_at out to a day-scale horizon with attempts
+//     UNCHANGED and the breaker untouched. Nobody is at fault — the source is healthy
+//     and the chapter goes free on its own — so it must neither exhaust the chapter
+//     nor pause the source (GAP-141).
 //   - A render/persist (finishDownload) failure is a LOCAL fault (disk/NFS/DB), NOT
 //     the source's — the source is NOT charged at all and the breaker NOT touched, so
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
@@ -743,9 +761,10 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 		// state above: it tracks whether this source is down ENTIRELY (see
 		// filterGated), not whether it can serve this one chapter. Recorded ONLY
 		// for a SOURCE-WIDE/ban-class failure (shouldRecordGateFailure gates on
-		// !isChapterSpecificFailure) — a broken-chapter failure must not pause the
-		// whole source — and skipped on a shutdown-induced cancellation (parent ctx
-		// done) so a graceful stop never trips the breaker.
+		// classifyFetchFailure == failureSourceWide) — neither a broken-chapter
+		// failure nor a withheld (locked) one may pause the whole source — and
+		// skipped on a shutdown-induced cancellation (parent ctx done) so a
+		// graceful stop never trips the breaker.
 		if shouldRecordGateFailure(ctx, fetchErr) {
 			d.gateRecordFailure(ctx, sourceKey, fetchErr, now)
 		}
@@ -798,9 +817,15 @@ type fetchAttempt struct {
 }
 
 // chargeFetchFailure applies the per-(chapter,source) retry accounting for a FETCH
-// failure, CLASSIFIED (owner-ratified — see isChapterSpecificFailure):
+// failure, CLASSIFIED (owner-ratified — see classifyFetchFailure). One arm per
+// failureKind, and the switch below is the whole of it:
 //   - CHAPTER-SPECIFIC (this chapter is broken on this source) → bumpSourceFailure
 //     (attempts++), so this source is abandoned for THIS chapter at max_retries.
+//   - DEFERRED (the source is WITHHOLDING the chapter behind a paywall / early-access
+//     window) → deferSource (next_attempt_at at a day-scale horizon, attempts
+//     UNCHANGED), the only arm that also leaves the breaker closed at the caller. A
+//     withheld chapter is nobody's fault: it must never exhaust and must never pause
+//     a source that is healthily serving everything else (GAP-141).
 //   - SOURCE-WIDE/ban (the source is down/blocking) → cooldownSource (next_attempt_at
 //     only, attempts UNCHANGED), so a ban never spends the chapter's budget and never
 //     drains the queue — the breaker (recorded separately by the caller) is what
@@ -815,9 +840,25 @@ type fetchAttempt struct {
 // staged pages too, and only clears the links if that wipe succeeded, so the links
 // and the (index-keyed) staged files can never drift apart.
 func (d *Dispatcher) chargeFetchFailure(ctx context.Context, pc *ent.ProviderChapter, attempt fetchAttempt, cause error, now time.Time) {
-	if isChapterSpecificFailure(cause) {
+	switch classifyFetchFailure(cause) {
+	case failureChapterSpecific:
+		// The 502-envelope unwrap carries a RATIFIED RESIDUAL RISK: it can flip a
+		// failure from source-wide to chapter-specific, and chapter-specific SPENDS
+		// the budget without tripping the breaker (GAP-141, see reclassifiedByUnwrap).
+		// A trickle is the expected, harmless case. A sudden VOLUME of these on ONE
+		// source is the signal that the risk has materialised — that source is
+		// serving an interstitial where content was expected, and its whole queue is
+		// draining toward permanently_failed with no breaker and no health signal.
+		if reclassifiedByUnwrap(cause) {
+			slog.WarnContext(ctx, "download.chargeFetchFailure: unwrapping the 502 envelope reclassified a source-wide failure as chapter-specific — spending the attempts budget without tripping the breaker",
+				"provider_chapter_id", pc.ID,
+				"err", cause,
+			)
+		}
 		d.bumpSourceFailure(ctx, pc, cause, now)
-	} else {
+	case failureDeferred:
+		d.deferSource(ctx, pc, cause, now)
+	default:
 		d.cooldownSource(ctx, pc, cause, now)
 	}
 	if !linksWentStale(ctx, attempt, cause) {
@@ -1083,6 +1124,34 @@ func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter
 		Exec(ctx); err != nil {
 		slog.WarnContext(ctx, "download.cooldownSource: could not persist per-source cooldown",
 			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+	}
+}
+
+// deferSource parks a DELIBERATELY WITHHELD chapter (paywall / early access) on
+// this source until the withholding is likely to have lapsed (GAP-141).
+//
+// It is the third failure behaviour and is deliberately neither of the other two:
+//   - attempts are UNCHANGED, like cooldownSource. The chapter is not faulty, so
+//     it must never exhaust its budget — with a 5-attempt budget and a weekly
+//     release cadence it would otherwise reach permanently_failed DAYS before the
+//     chapter actually goes free, after which nothing ever retries it.
+//   - the breaker is NOT tripped, like bumpSourceFailure. The source is healthy and
+//     serving every other chapter; one paid chapter must not pause all of it.
+//
+// The horizon is jobs.locked_retry_interval (default 72h) rather than the
+// exponential retry backoff, because the thing being waited on is a publishing
+// schedule measured in days, not a transient fault measured in minutes.
+func (d *Dispatcher) deferSource(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
+	nextAttempt := now.Add(lockedHorizon(d.retry.LockedRetryInterval(ctx)))
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
+		SetLastError(cause.Error()).
+		SetNextAttemptAt(nextAttempt).
+		Exec(ctx); err != nil {
+		slog.WarnContext(ctx, "download.deferSource: could not persist locked-chapter deferral",
+			"provider_chapter_id", pc.ID,
+			"next_attempt_at", nextAttempt,
 			"err", err,
 		)
 	}

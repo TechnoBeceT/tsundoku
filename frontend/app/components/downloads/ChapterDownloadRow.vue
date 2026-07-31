@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import Chip from '../ui/Chip.vue'
 import CoverImage from '../ui/CoverImage.vue'
+import EarlyAccessBadge from '../ui/EarlyAccessBadge.vue'
 import StatusBadge from '../ui/StatusBadge.vue'
 import AttemptBadge from './AttemptBadge.vue'
 import type { DownloadItem } from '../screens/downloads.types'
@@ -20,6 +21,11 @@ import type { DownloadItem } from '../screens/downloads.types'
  *
  * `bare` drops the row's own card surface so it can nest inside
  * `FailedDownloadCard` (which supplies the card chrome itself).
+ *
+ * EARLY ACCESS (GAP-141): when the row is `locked` — a source is withholding the
+ * chapter behind coins rather than failing to serve it — the state badge is
+ * REPLACED by `EarlyAccessBadge` and the attempt badge is dropped. One swap here
+ * covers all three tabs, because they all render this row.
  *
  * Presentation only: the cover and title both emit `open-series` with the row's
  * series id; the parent owns navigation.
@@ -55,9 +61,20 @@ const metaLine = computed(() => [numberLabel.value, props.item.name].filter(Bool
 // chapter visible instead of falsely crediting the series' top source.
 const providerLabel = computed(() => props.item.providerName || '—')
 
-// Show the per-source attempt/max badge only when a budget is known (max > 0) and
-// the caller hasn't taken over the badge (FailedDownloadCard renders its own).
-const showAttempts = computed(() => !props.hideAttempts && (props.item.maxRetries ?? 0) > 0)
+// Show the per-source attempt/max badge only when a budget is known (max > 0), the
+// caller hasn't taken over the badge (FailedDownloadCard renders its own), and the
+// chapter is not merely WITHHELD — a paywall deliberately spends no attempts
+// (GAP-141), so a "Hive Scans · 0/5" badge next to an early-access row would invite
+// exactly the "why did it fail with zero tries?" question the badge swap removes.
+const showAttempts = computed(() =>
+  !props.hideAttempts && !props.item.locked && (props.item.maxRetries ?? 0) > 0,
+)
+
+// The source's own message ("Chapter locked, coins required") as the early-access
+// tooltip: the FAILING source's error when the honest-failures set named one, else
+// the chapter-level one. Never shown inline — the pill states the situation, the
+// verbatim upstream wording stays available on hover.
+const lockedReason = computed(() => props.item.failingLastError ?? props.item.lastError)
 
 // The source the attempt badge describes. On an upgrade row with a NAMED target that
 // is the TARGET (the source actually being fetched, e.g. "Asura Scans · 2/5"), NOT the
@@ -128,7 +145,13 @@ const upgradeTargetLabel = computed(() => props.item.upgradeTarget ?? 'higher so
         :max="item.maxRetries ?? 0"
       />
       <slot name="before-badge" />
-      <StatusBadge :state="item.state" />
+      <!-- A WITHHELD chapter (GAP-141) is not broken: the source is healthy and
+           releases it on its own, so the early-access pill REPLACES the state badge
+           rather than sitting beside it. Its `state` is still `failed` (the fetch
+           produced no file) and a red "Failed" pill would send the owner hunting a
+           fault that does not exist. -->
+      <EarlyAccessBadge v-if="item.locked" :until="item.lockedUntil" :reason="lockedReason" />
+      <StatusBadge v-else :state="item.state" />
       <slot name="after-badge" />
     </div>
   </div>

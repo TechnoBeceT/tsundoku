@@ -125,6 +125,10 @@ function mapItem(dto: DownloadChapterDTO): DownloadItem {
     failingErrorCategory: dto.failingErrorCategory || undefined,
     retryable: dto.retryable ?? false,
     terminal: dto.terminal ?? false,
+    // Early access (GAP-141): a chapter the source is withholding, not failing to
+    // serve. The expiry stays a RAW ISO string so the badge counts down live.
+    locked: dto.locked ?? false,
+    lockedUntil: dto.lockedUntil ?? undefined,
   }
 }
 

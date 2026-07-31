@@ -25,11 +25,14 @@ import (
 // changed between cycles, so a test can prove the dispatcher reads the cap at
 // use-time (hot reload) rather than capturing it at construction.
 type mutableSettings struct {
-	mu       sync.Mutex
-	conc     int
-	retries  int
-	backoff  time.Duration
-	suppress bool
+	mu      sync.Mutex
+	conc    int
+	retries int
+	backoff time.Duration
+	// lockedRetry is the paywall/early-access re-check horizon (GAP-141). Zero is
+	// fine for the scheduling tests — none of them exercises a locked failure.
+	lockedRetry time.Duration
+	suppress    bool
 }
 
 func (m *mutableSettings) MaxRetries(context.Context) int {
@@ -42,6 +45,12 @@ func (m *mutableSettings) RetryBackoff(context.Context) time.Duration {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.backoff
+}
+
+func (m *mutableSettings) LockedRetryInterval(context.Context) time.Duration {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lockedRetry
 }
 
 func (m *mutableSettings) DownloadConcurrency(context.Context) int {

@@ -435,8 +435,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                      in place of the bare UPGRADE tag / "Wanted" badge. The waited-on
                      name is the one already on the row: the upgrade target, else the
                      primary source. -->
+                <!-- A WITHHELD chapter (GAP-141) also carries a future cooldown, but
+                     "retrying ~3d" misreads a paywall as a fault — the row's
+                     EarlyAccessBadge already states the wait and its ETA, so the
+                     deferral note stands down rather than contradicting it. -->
                 <DeferralNote
-                  v-if="row.deferredUntil"
+                  v-if="row.deferredUntil && !row.locked"
                   :deferred-until="row.deferredUntil"
                   :source="row.upgradeTarget || row.providerName"
                   :reason="row.deferReason"

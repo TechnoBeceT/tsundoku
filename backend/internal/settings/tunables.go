@@ -87,6 +87,13 @@ const (
 	// gap before every retry of a chapter from a source (no per-attempt growth).
 	// Default 30m.
 	KeyRetryBackoff = "jobs.retry_backoff"
+	// KeyLockedRetryInterval is how long a chapter the source is deliberately
+	// WITHHOLDING (paywall / early access) waits before being re-checked
+	// (duration, >= 1h, default 72h). It is separate from KeyRetryBackoff because
+	// the thing being waited on is a publishing schedule measured in DAYS, not a
+	// transient fault measured in minutes. Burns no attempts and trips no breaker
+	// — see download.deferSource (GAP-141).
+	KeyLockedRetryInterval = "jobs.locked_retry_interval"
 	// KeyStaleGraceDays tunes the M7 source-health stale threshold (int, 0..365).
 	KeyStaleGraceDays = "health.stale_grace_days"
 	// KeyStalledThresholdDays tunes the QCAT-297 series-bound stalled threshold —
@@ -323,6 +330,7 @@ type Defaults struct {
 	RefreshConcurrency      int
 	MaxRetries              int
 	RetryBackoff            time.Duration
+	LockedRetryInterval     time.Duration
 	StaleGraceDays          int
 	StalledThresholdDays    int
 	ExtensionCheckInterval  time.Duration
@@ -407,6 +415,7 @@ var tunableOrder = []string{
 	KeyRefreshConcurrency,
 	KeyMaxRetries,
 	KeyRetryBackoff,
+	KeyLockedRetryInterval,
 	KeyStaleGraceDays,
 	KeyStalledThresholdDays,
 	KeyExtensionCheckInterval,
@@ -470,6 +479,10 @@ var tunables = map[string]tunable{
 	KeyRetryBackoff: durationTunable(
 		KeyRetryBackoff, "duration", time.Second,
 		func(d Defaults) time.Duration { return d.RetryBackoff },
+	),
+	KeyLockedRetryInterval: durationTunable(
+		KeyLockedRetryInterval, "duration", time.Hour,
+		func(d Defaults) time.Duration { return d.LockedRetryInterval },
 	),
 	KeyStaleGraceDays: intTunable(
 		KeyStaleGraceDays, "days", 0, 365,

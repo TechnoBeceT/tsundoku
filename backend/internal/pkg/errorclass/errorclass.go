@@ -53,6 +53,12 @@ const (
 	// automatically. A challenge/anti-bot page is deliberately NOT here — it is a
 	// captcha (see the ordered rule list below).
 	CategoryBrokenImage = "broken_image"
+	// CategoryLocked is a chapter the source is deliberately withholding behind a
+	// paywall / early-access window ("coins required", "premium chapter"). It is
+	// NOT a fault: the source is healthy and serving everything else, and the
+	// chapter becomes free once the window closes — so it must never trip a
+	// breaker and must never exhaust a retry budget. See GAP-141.
+	CategoryLocked = "locked"
 	// CategoryUnknown is the fall-through: an error that matched no rule above.
 	CategoryUnknown = "unknown"
 )
@@ -76,6 +82,10 @@ type rule struct {
 //   - no_pages / parse last among the specific rules (they are the least ambiguous
 //     substrings, so ordering them earlier would never change an outcome — kept
 //     late for readability).
+//   - locked AFTER the ban rules but BEFORE server_error: a block that merely
+//     mentions premium/paywall wording must stay source-wide (misreading it parks
+//     every chapter for 72h with no breaker and no health signal), while a real
+//     paywall still outranks the "502" of the engine-host envelope carrying it.
 //   - broken_image LAST among the specific rules, and crucially AFTER captcha: a
 //     transient page-image delivery failure (incomplete/empty/unrecognized) whose
 //     message carries none of the earlier rules' substrings. It sits after captcha
@@ -85,6 +95,7 @@ var categories = []rule{
 	{CategoryCaptcha, []string{"captcha", "cloudflare", "challenge", "attention required", "cf-", "just a moment", "access denied", "forbidden", "403"}},
 	{CategoryRateLimit, []string{"rate limit", "rate-limit", "ratelimit", "too many requests", "429"}},
 	{CategoryNotFound, []string{"not found", "404", "no such", "does not exist"}},
+	{CategoryLocked, []string{"chapter locked", "locked chapter", "coins required", "premium chapter", "paywall"}},
 	{CategoryServerError, []string{"internal server error", "500", "502", "503", "504", "bad gateway", "service unavailable", "gateway timeout"}},
 	{CategoryTimeout, []string{"timeout", "timed out", "deadline exceeded", "context deadline"}},
 	{CategoryNetwork, []string{"connection refused", "connection reset", "no route to host", "network is unreachable", "broken pipe", "eof", "no such host", "dial tcp", "dns", "i/o timeout"}},

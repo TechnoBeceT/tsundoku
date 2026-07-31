@@ -21,6 +21,14 @@ import type { DownloadItem } from '../screens/downloads.types'
  * and reads "Retrying…". Terminal rows label the action "Reset" instead of "Retry".
  * The error panel's expansion is owner-controlled — the parent keeps the
  * single-open `expanded` flag and handles `toggle-expand`.
+ *
+ * EARLY ACCESS (GAP-141): a chapter a source is WITHHOLDING behind coins reaches
+ * this tab because its state IS `failed` — the fetch produced no file — yet nothing
+ * is broken. Such a row drops the failure chrome: no attempt badge (the paywall
+ * deliberately spends no budget, so "0/5" would read as a mystery) and a benign,
+ * "Early access"-labelled error pill instead of the danger-toned one. The verbatim
+ * upstream wording is still there — calmer framing, not less information. The state
+ * badge itself is swapped inside `ChapterDownloadRow`.
  */
 const props = defineProps<{
   /** The failed/terminal chapter-activity item. */
@@ -66,7 +74,9 @@ const badgeAttempts = computed(() =>
   props.item.failingProviderName ? (props.item.failingAttempts ?? 0) : (props.item.attempts ?? 0),
 )
 const badgeMax = computed(() => props.item.maxRetries ?? 0)
-const showBadge = computed(() => badgeMax.value > 0)
+// A withheld chapter never spent an attempt, so its badge would read a confusing
+// "Hive Scans · 0/5" next to a row that explicitly is not failing — suppress it.
+const showBadge = computed(() => !props.item.locked && badgeMax.value > 0)
 
 // Terminal (budget spent) rows "Reset"; retryable rows "Retry". Terminal is the
 // backend flag OR a permanently_failed chapter state.
@@ -77,6 +87,10 @@ const retryLabel = computed(() => (isTerminal.value ? 'Reset' : 'Retry'))
 const displayError = computed(() => props.item.failingLastError ?? props.item.lastError ?? '')
 const displayCategory = computed(() => props.item.failingErrorCategory ?? props.item.errorCategory ?? '')
 const errorLabel = computed(() => {
+  // A withheld chapter is labelled from the situation, not the message: the backend
+  // only classifies the per-source error when a source actually FAILED, and a paywall
+  // never does, so `locked` is the only reliable signal on such a row.
+  if (props.item.locked) return 'Early access'
   const c = displayCategory.value
   if (!c) return 'Error'
   return CATEGORY_LABELS[c] ?? c.replace(/_/g, ' ').replace(/^\w/, (m) => m.toUpperCase())
@@ -101,7 +115,7 @@ const errorLabel = computed(() => {
 
     <div v-if="displayError" class="dl-card__error">
       <button type="button" class="err-toggle" @click="emit('toggle-expand')">
-        <span class="err-toggle__label">{{ errorLabel }}</span>
+        <span class="err-toggle__label" :class="{ 'err-toggle__label--benign': item.locked }">{{ errorLabel }}</span>
         <span class="err-toggle__msg">{{ displayError }}</span>
       </button>
       <div v-if="expanded" class="err-panel">
@@ -156,6 +170,13 @@ const errorLabel = computed(() => {
   border-radius: var(--radius-xs);
   background: var(--dl-error-pill-bg);
   color: var(--dl-failed-text);
+}
+
+/* An early-access wait is not a fault — the same pill, tinted to the accent instead
+   of the failure palette so the whole card stops reading as red (GAP-141). */
+.err-toggle__label--benign {
+  background: var(--accentSoft);
+  color: var(--accentBright);
 }
 
 .err-toggle__msg {
