@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceEventCreate struct {
 	config
 	mutation *SourceEventMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceKey sets the "source_key" field.
@@ -299,6 +302,7 @@ func (_c *SourceEventCreate) createSpec() (*SourceEvent, *sqlgraph.CreateSpec) {
 		_node = &SourceEvent{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourceevent.Table, sqlgraph.NewFieldSpec(sourceevent.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -354,11 +358,514 @@ func (_c *SourceEventCreate) createSpec() (*SourceEvent, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceEvent.Create().
+//		SetSourceKey(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceEventUpsert) {
+//			SetSourceKey(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceEventCreate) OnConflict(opts ...sql.ConflictOption) *SourceEventUpsertOne {
+	_c.conflict = opts
+	return &SourceEventUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceEventCreate) OnConflictColumns(columns ...string) *SourceEventUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceEventUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceEventUpsertOne is the builder for "upsert"-ing
+	//  one SourceEvent node.
+	SourceEventUpsertOne struct {
+		create *SourceEventCreate
+	}
+
+	// SourceEventUpsert is the "OnConflict" setter.
+	SourceEventUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceEventUpsert) SetSourceKey(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldSourceKey, v)
+	return u
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateSourceKey() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldSourceKey)
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceEventUpsert) SetSourceID(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateSourceID() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldSourceID)
+	return u
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceEventUpsert) SetSourceName(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldSourceName, v)
+	return u
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateSourceName() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldSourceName)
+	return u
+}
+
+// SetLanguage sets the "language" field.
+func (u *SourceEventUpsert) SetLanguage(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldLanguage, v)
+	return u
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateLanguage() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldLanguage)
+	return u
+}
+
+// SetEventType sets the "event_type" field.
+func (u *SourceEventUpsert) SetEventType(v sourceevent.EventType) *SourceEventUpsert {
+	u.Set(sourceevent.FieldEventType, v)
+	return u
+}
+
+// UpdateEventType sets the "event_type" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateEventType() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldEventType)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceEventUpsert) SetStatus(v sourceevent.Status) *SourceEventUpsert {
+	u.Set(sourceevent.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateStatus() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldStatus)
+	return u
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (u *SourceEventUpsert) SetDurationMs(v int64) *SourceEventUpsert {
+	u.Set(sourceevent.FieldDurationMs, v)
+	return u
+}
+
+// UpdateDurationMs sets the "duration_ms" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateDurationMs() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldDurationMs)
+	return u
+}
+
+// AddDurationMs adds v to the "duration_ms" field.
+func (u *SourceEventUpsert) AddDurationMs(v int64) *SourceEventUpsert {
+	u.Add(sourceevent.FieldDurationMs, v)
+	return u
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *SourceEventUpsert) SetErrorMessage(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldErrorMessage, v)
+	return u
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateErrorMessage() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldErrorMessage)
+	return u
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *SourceEventUpsert) ClearErrorMessage() *SourceEventUpsert {
+	u.SetNull(sourceevent.FieldErrorMessage)
+	return u
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *SourceEventUpsert) SetErrorCategory(v string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldErrorCategory, v)
+	return u
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateErrorCategory() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldErrorCategory)
+	return u
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (u *SourceEventUpsert) ClearErrorCategory() *SourceEventUpsert {
+	u.SetNull(sourceevent.FieldErrorCategory)
+	return u
+}
+
+// SetItemsCount sets the "items_count" field.
+func (u *SourceEventUpsert) SetItemsCount(v int) *SourceEventUpsert {
+	u.Set(sourceevent.FieldItemsCount, v)
+	return u
+}
+
+// UpdateItemsCount sets the "items_count" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateItemsCount() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldItemsCount)
+	return u
+}
+
+// AddItemsCount adds v to the "items_count" field.
+func (u *SourceEventUpsert) AddItemsCount(v int) *SourceEventUpsert {
+	u.Add(sourceevent.FieldItemsCount, v)
+	return u
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (u *SourceEventUpsert) ClearItemsCount() *SourceEventUpsert {
+	u.SetNull(sourceevent.FieldItemsCount)
+	return u
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SourceEventUpsert) SetMetadata(v map[string]string) *SourceEventUpsert {
+	u.Set(sourceevent.FieldMetadata, v)
+	return u
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateMetadata() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldMetadata)
+	return u
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *SourceEventUpsert) ClearMetadata() *SourceEventUpsert {
+	u.SetNull(sourceevent.FieldMetadata)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourceevent.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceEventUpsertOne) UpdateNewValues() *SourceEventUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourceevent.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(sourceevent.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceEventUpsertOne) Ignore() *SourceEventUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceEventUpsertOne) DoNothing() *SourceEventUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceEventCreate.OnConflict
+// documentation for more info.
+func (u *SourceEventUpsertOne) Update(set func(*SourceEventUpsert)) *SourceEventUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceEventUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceEventUpsertOne) SetSourceKey(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceKey(v)
+	})
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateSourceKey() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceKey()
+	})
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceEventUpsertOne) SetSourceID(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateSourceID() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceEventUpsertOne) SetSourceName(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateSourceName() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetLanguage sets the "language" field.
+func (u *SourceEventUpsertOne) SetLanguage(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetLanguage(v)
+	})
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateLanguage() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateLanguage()
+	})
+}
+
+// SetEventType sets the "event_type" field.
+func (u *SourceEventUpsertOne) SetEventType(v sourceevent.EventType) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetEventType(v)
+	})
+}
+
+// UpdateEventType sets the "event_type" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateEventType() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateEventType()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceEventUpsertOne) SetStatus(v sourceevent.Status) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateStatus() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (u *SourceEventUpsertOne) SetDurationMs(v int64) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetDurationMs(v)
+	})
+}
+
+// AddDurationMs adds v to the "duration_ms" field.
+func (u *SourceEventUpsertOne) AddDurationMs(v int64) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddDurationMs(v)
+	})
+}
+
+// UpdateDurationMs sets the "duration_ms" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateDurationMs() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateDurationMs()
+	})
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *SourceEventUpsertOne) SetErrorMessage(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetErrorMessage(v)
+	})
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateErrorMessage() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateErrorMessage()
+	})
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *SourceEventUpsertOne) ClearErrorMessage() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearErrorMessage()
+	})
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *SourceEventUpsertOne) SetErrorCategory(v string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetErrorCategory(v)
+	})
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateErrorCategory() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateErrorCategory()
+	})
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (u *SourceEventUpsertOne) ClearErrorCategory() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearErrorCategory()
+	})
+}
+
+// SetItemsCount sets the "items_count" field.
+func (u *SourceEventUpsertOne) SetItemsCount(v int) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetItemsCount(v)
+	})
+}
+
+// AddItemsCount adds v to the "items_count" field.
+func (u *SourceEventUpsertOne) AddItemsCount(v int) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddItemsCount(v)
+	})
+}
+
+// UpdateItemsCount sets the "items_count" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateItemsCount() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateItemsCount()
+	})
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (u *SourceEventUpsertOne) ClearItemsCount() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearItemsCount()
+	})
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SourceEventUpsertOne) SetMetadata(v map[string]string) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateMetadata() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *SourceEventUpsertOne) ClearMetadata() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearMetadata()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceEventUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceEventCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceEventUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceEventUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceEventUpsertOne.ID is not supported by MySQL driver. Use SourceEventUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceEventUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceEventCreateBulk is the builder for creating many SourceEvent entities in bulk.
 type SourceEventCreateBulk struct {
 	config
 	err      error
 	builders []*SourceEventCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceEvent entities in the database.
@@ -388,6 +895,7 @@ func (_c *SourceEventCreateBulk) Save(ctx context.Context) ([]*SourceEvent, erro
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -434,6 +942,319 @@ func (_c *SourceEventCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceEventCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceEvent.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceEventUpsert) {
+//			SetSourceKey(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceEventCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceEventUpsertBulk {
+	_c.conflict = opts
+	return &SourceEventUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceEventCreateBulk) OnConflictColumns(columns ...string) *SourceEventUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceEventUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceEventUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceEvent nodes.
+type SourceEventUpsertBulk struct {
+	create *SourceEventCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourceevent.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceEventUpsertBulk) UpdateNewValues() *SourceEventUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourceevent.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(sourceevent.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceEvent.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceEventUpsertBulk) Ignore() *SourceEventUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceEventUpsertBulk) DoNothing() *SourceEventUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceEventCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceEventUpsertBulk) Update(set func(*SourceEventUpsert)) *SourceEventUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceEventUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceEventUpsertBulk) SetSourceKey(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceKey(v)
+	})
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateSourceKey() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceKey()
+	})
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceEventUpsertBulk) SetSourceID(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateSourceID() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceEventUpsertBulk) SetSourceName(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateSourceName() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetLanguage sets the "language" field.
+func (u *SourceEventUpsertBulk) SetLanguage(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetLanguage(v)
+	})
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateLanguage() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateLanguage()
+	})
+}
+
+// SetEventType sets the "event_type" field.
+func (u *SourceEventUpsertBulk) SetEventType(v sourceevent.EventType) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetEventType(v)
+	})
+}
+
+// UpdateEventType sets the "event_type" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateEventType() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateEventType()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceEventUpsertBulk) SetStatus(v sourceevent.Status) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateStatus() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (u *SourceEventUpsertBulk) SetDurationMs(v int64) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetDurationMs(v)
+	})
+}
+
+// AddDurationMs adds v to the "duration_ms" field.
+func (u *SourceEventUpsertBulk) AddDurationMs(v int64) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddDurationMs(v)
+	})
+}
+
+// UpdateDurationMs sets the "duration_ms" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateDurationMs() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateDurationMs()
+	})
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *SourceEventUpsertBulk) SetErrorMessage(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetErrorMessage(v)
+	})
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateErrorMessage() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateErrorMessage()
+	})
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *SourceEventUpsertBulk) ClearErrorMessage() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearErrorMessage()
+	})
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *SourceEventUpsertBulk) SetErrorCategory(v string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetErrorCategory(v)
+	})
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateErrorCategory() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateErrorCategory()
+	})
+}
+
+// ClearErrorCategory clears the value of the "error_category" field.
+func (u *SourceEventUpsertBulk) ClearErrorCategory() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearErrorCategory()
+	})
+}
+
+// SetItemsCount sets the "items_count" field.
+func (u *SourceEventUpsertBulk) SetItemsCount(v int) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetItemsCount(v)
+	})
+}
+
+// AddItemsCount adds v to the "items_count" field.
+func (u *SourceEventUpsertBulk) AddItemsCount(v int) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddItemsCount(v)
+	})
+}
+
+// UpdateItemsCount sets the "items_count" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateItemsCount() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateItemsCount()
+	})
+}
+
+// ClearItemsCount clears the value of the "items_count" field.
+func (u *SourceEventUpsertBulk) ClearItemsCount() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearItemsCount()
+	})
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SourceEventUpsertBulk) SetMetadata(v map[string]string) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateMetadata() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// ClearMetadata clears the value of the "metadata" field.
+func (u *SourceEventUpsertBulk) ClearMetadata() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearMetadata()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceEventUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceEventCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceEventCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceEventUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

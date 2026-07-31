@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type EtagCacheCreate struct {
 	config
 	mutation *EtagCacheMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetURL sets the "url" field.
@@ -181,6 +184,7 @@ func (_c *EtagCacheCreate) createSpec() (*EtagCache, *sqlgraph.CreateSpec) {
 		_node = &EtagCache{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(etagcache.Table, sqlgraph.NewFieldSpec(etagcache.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -204,11 +208,251 @@ func (_c *EtagCacheCreate) createSpec() (*EtagCache, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.EtagCache.Create().
+//		SetURL(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.EtagCacheUpsert) {
+//			SetURL(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *EtagCacheCreate) OnConflict(opts ...sql.ConflictOption) *EtagCacheUpsertOne {
+	_c.conflict = opts
+	return &EtagCacheUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *EtagCacheCreate) OnConflictColumns(columns ...string) *EtagCacheUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &EtagCacheUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// EtagCacheUpsertOne is the builder for "upsert"-ing
+	//  one EtagCache node.
+	EtagCacheUpsertOne struct {
+		create *EtagCacheCreate
+	}
+
+	// EtagCacheUpsert is the "OnConflict" setter.
+	EtagCacheUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetURL sets the "url" field.
+func (u *EtagCacheUpsert) SetURL(v string) *EtagCacheUpsert {
+	u.Set(etagcache.FieldURL, v)
+	return u
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *EtagCacheUpsert) UpdateURL() *EtagCacheUpsert {
+	u.SetExcluded(etagcache.FieldURL)
+	return u
+}
+
+// SetEtag sets the "etag" field.
+func (u *EtagCacheUpsert) SetEtag(v string) *EtagCacheUpsert {
+	u.Set(etagcache.FieldEtag, v)
+	return u
+}
+
+// UpdateEtag sets the "etag" field to the value that was provided on create.
+func (u *EtagCacheUpsert) UpdateEtag() *EtagCacheUpsert {
+	u.SetExcluded(etagcache.FieldEtag)
+	return u
+}
+
+// SetLastModified sets the "last_modified" field.
+func (u *EtagCacheUpsert) SetLastModified(v string) *EtagCacheUpsert {
+	u.Set(etagcache.FieldLastModified, v)
+	return u
+}
+
+// UpdateLastModified sets the "last_modified" field to the value that was provided on create.
+func (u *EtagCacheUpsert) UpdateLastModified() *EtagCacheUpsert {
+	u.SetExcluded(etagcache.FieldLastModified)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *EtagCacheUpsert) SetUpdatedAt(v time.Time) *EtagCacheUpsert {
+	u.Set(etagcache.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *EtagCacheUpsert) UpdateUpdatedAt() *EtagCacheUpsert {
+	u.SetExcluded(etagcache.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(etagcache.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *EtagCacheUpsertOne) UpdateNewValues() *EtagCacheUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(etagcache.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *EtagCacheUpsertOne) Ignore() *EtagCacheUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *EtagCacheUpsertOne) DoNothing() *EtagCacheUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the EtagCacheCreate.OnConflict
+// documentation for more info.
+func (u *EtagCacheUpsertOne) Update(set func(*EtagCacheUpsert)) *EtagCacheUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&EtagCacheUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetURL sets the "url" field.
+func (u *EtagCacheUpsertOne) SetURL(v string) *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *EtagCacheUpsertOne) UpdateURL() *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetEtag sets the "etag" field.
+func (u *EtagCacheUpsertOne) SetEtag(v string) *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetEtag(v)
+	})
+}
+
+// UpdateEtag sets the "etag" field to the value that was provided on create.
+func (u *EtagCacheUpsertOne) UpdateEtag() *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateEtag()
+	})
+}
+
+// SetLastModified sets the "last_modified" field.
+func (u *EtagCacheUpsertOne) SetLastModified(v string) *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetLastModified(v)
+	})
+}
+
+// UpdateLastModified sets the "last_modified" field to the value that was provided on create.
+func (u *EtagCacheUpsertOne) UpdateLastModified() *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateLastModified()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *EtagCacheUpsertOne) SetUpdatedAt(v time.Time) *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *EtagCacheUpsertOne) UpdateUpdatedAt() *EtagCacheUpsertOne {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *EtagCacheUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for EtagCacheCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *EtagCacheUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *EtagCacheUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: EtagCacheUpsertOne.ID is not supported by MySQL driver. Use EtagCacheUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *EtagCacheUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // EtagCacheCreateBulk is the builder for creating many EtagCache entities in bulk.
 type EtagCacheCreateBulk struct {
 	config
 	err      error
 	builders []*EtagCacheCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the EtagCache entities in the database.
@@ -238,6 +482,7 @@ func (_c *EtagCacheCreateBulk) Save(ctx context.Context) ([]*EtagCache, error) {
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -284,6 +529,176 @@ func (_c *EtagCacheCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *EtagCacheCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.EtagCache.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.EtagCacheUpsert) {
+//			SetURL(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *EtagCacheCreateBulk) OnConflict(opts ...sql.ConflictOption) *EtagCacheUpsertBulk {
+	_c.conflict = opts
+	return &EtagCacheUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *EtagCacheCreateBulk) OnConflictColumns(columns ...string) *EtagCacheUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &EtagCacheUpsertBulk{
+		create: _c,
+	}
+}
+
+// EtagCacheUpsertBulk is the builder for "upsert"-ing
+// a bulk of EtagCache nodes.
+type EtagCacheUpsertBulk struct {
+	create *EtagCacheCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(etagcache.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *EtagCacheUpsertBulk) UpdateNewValues() *EtagCacheUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(etagcache.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.EtagCache.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *EtagCacheUpsertBulk) Ignore() *EtagCacheUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *EtagCacheUpsertBulk) DoNothing() *EtagCacheUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the EtagCacheCreateBulk.OnConflict
+// documentation for more info.
+func (u *EtagCacheUpsertBulk) Update(set func(*EtagCacheUpsert)) *EtagCacheUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&EtagCacheUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetURL sets the "url" field.
+func (u *EtagCacheUpsertBulk) SetURL(v string) *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *EtagCacheUpsertBulk) UpdateURL() *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetEtag sets the "etag" field.
+func (u *EtagCacheUpsertBulk) SetEtag(v string) *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetEtag(v)
+	})
+}
+
+// UpdateEtag sets the "etag" field to the value that was provided on create.
+func (u *EtagCacheUpsertBulk) UpdateEtag() *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateEtag()
+	})
+}
+
+// SetLastModified sets the "last_modified" field.
+func (u *EtagCacheUpsertBulk) SetLastModified(v string) *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetLastModified(v)
+	})
+}
+
+// UpdateLastModified sets the "last_modified" field to the value that was provided on create.
+func (u *EtagCacheUpsertBulk) UpdateLastModified() *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateLastModified()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *EtagCacheUpsertBulk) SetUpdatedAt(v time.Time) *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *EtagCacheUpsertBulk) UpdateUpdatedAt() *EtagCacheUpsertBulk {
+	return u.Update(func(s *EtagCacheUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *EtagCacheUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the EtagCacheCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for EtagCacheCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *EtagCacheUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

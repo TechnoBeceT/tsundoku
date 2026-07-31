@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type IgnoreScanlatorSourceCreate struct {
 	config
 	mutation *IgnoreScanlatorSourceMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -139,6 +142,7 @@ func (_c *IgnoreScanlatorSourceCreate) createSpec() (*IgnoreScanlatorSource, *sq
 		_node = &IgnoreScanlatorSource{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(ignorescanlatorsource.Table, sqlgraph.NewFieldSpec(ignorescanlatorsource.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -154,11 +158,189 @@ func (_c *IgnoreScanlatorSourceCreate) createSpec() (*IgnoreScanlatorSource, *sq
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.IgnoreScanlatorSourceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *IgnoreScanlatorSourceCreate) OnConflict(opts ...sql.ConflictOption) *IgnoreScanlatorSourceUpsertOne {
+	_c.conflict = opts
+	return &IgnoreScanlatorSourceUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *IgnoreScanlatorSourceCreate) OnConflictColumns(columns ...string) *IgnoreScanlatorSourceUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &IgnoreScanlatorSourceUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// IgnoreScanlatorSourceUpsertOne is the builder for "upsert"-ing
+	//  one IgnoreScanlatorSource node.
+	IgnoreScanlatorSourceUpsertOne struct {
+		create *IgnoreScanlatorSourceCreate
+	}
+
+	// IgnoreScanlatorSourceUpsert is the "OnConflict" setter.
+	IgnoreScanlatorSourceUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsert) SetSourceID(v int64) *IgnoreScanlatorSourceUpsert {
+	u.Set(ignorescanlatorsource.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *IgnoreScanlatorSourceUpsert) UpdateSourceID() *IgnoreScanlatorSourceUpsert {
+	u.SetExcluded(ignorescanlatorsource.FieldSourceID)
+	return u
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsert) AddSourceID(v int64) *IgnoreScanlatorSourceUpsert {
+	u.Add(ignorescanlatorsource.FieldSourceID, v)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(ignorescanlatorsource.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *IgnoreScanlatorSourceUpsertOne) UpdateNewValues() *IgnoreScanlatorSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(ignorescanlatorsource.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(ignorescanlatorsource.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *IgnoreScanlatorSourceUpsertOne) Ignore() *IgnoreScanlatorSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *IgnoreScanlatorSourceUpsertOne) DoNothing() *IgnoreScanlatorSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the IgnoreScanlatorSourceCreate.OnConflict
+// documentation for more info.
+func (u *IgnoreScanlatorSourceUpsertOne) Update(set func(*IgnoreScanlatorSourceUpsert)) *IgnoreScanlatorSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&IgnoreScanlatorSourceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsertOne) SetSourceID(v int64) *IgnoreScanlatorSourceUpsertOne {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsertOne) AddSourceID(v int64) *IgnoreScanlatorSourceUpsertOne {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *IgnoreScanlatorSourceUpsertOne) UpdateSourceID() *IgnoreScanlatorSourceUpsertOne {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// Exec executes the query.
+func (u *IgnoreScanlatorSourceUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for IgnoreScanlatorSourceCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *IgnoreScanlatorSourceUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *IgnoreScanlatorSourceUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: IgnoreScanlatorSourceUpsertOne.ID is not supported by MySQL driver. Use IgnoreScanlatorSourceUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *IgnoreScanlatorSourceUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // IgnoreScanlatorSourceCreateBulk is the builder for creating many IgnoreScanlatorSource entities in bulk.
 type IgnoreScanlatorSourceCreateBulk struct {
 	config
 	err      error
 	builders []*IgnoreScanlatorSourceCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the IgnoreScanlatorSource entities in the database.
@@ -188,6 +370,7 @@ func (_c *IgnoreScanlatorSourceCreateBulk) Save(ctx context.Context) ([]*IgnoreS
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -234,6 +417,144 @@ func (_c *IgnoreScanlatorSourceCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *IgnoreScanlatorSourceCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.IgnoreScanlatorSource.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.IgnoreScanlatorSourceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *IgnoreScanlatorSourceCreateBulk) OnConflict(opts ...sql.ConflictOption) *IgnoreScanlatorSourceUpsertBulk {
+	_c.conflict = opts
+	return &IgnoreScanlatorSourceUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *IgnoreScanlatorSourceCreateBulk) OnConflictColumns(columns ...string) *IgnoreScanlatorSourceUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &IgnoreScanlatorSourceUpsertBulk{
+		create: _c,
+	}
+}
+
+// IgnoreScanlatorSourceUpsertBulk is the builder for "upsert"-ing
+// a bulk of IgnoreScanlatorSource nodes.
+type IgnoreScanlatorSourceUpsertBulk struct {
+	create *IgnoreScanlatorSourceCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(ignorescanlatorsource.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *IgnoreScanlatorSourceUpsertBulk) UpdateNewValues() *IgnoreScanlatorSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(ignorescanlatorsource.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(ignorescanlatorsource.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.IgnoreScanlatorSource.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *IgnoreScanlatorSourceUpsertBulk) Ignore() *IgnoreScanlatorSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *IgnoreScanlatorSourceUpsertBulk) DoNothing() *IgnoreScanlatorSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the IgnoreScanlatorSourceCreateBulk.OnConflict
+// documentation for more info.
+func (u *IgnoreScanlatorSourceUpsertBulk) Update(set func(*IgnoreScanlatorSourceUpsert)) *IgnoreScanlatorSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&IgnoreScanlatorSourceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsertBulk) SetSourceID(v int64) *IgnoreScanlatorSourceUpsertBulk {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *IgnoreScanlatorSourceUpsertBulk) AddSourceID(v int64) *IgnoreScanlatorSourceUpsertBulk {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *IgnoreScanlatorSourceUpsertBulk) UpdateSourceID() *IgnoreScanlatorSourceUpsertBulk {
+	return u.Update(func(s *IgnoreScanlatorSourceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// Exec executes the query.
+func (u *IgnoreScanlatorSourceUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the IgnoreScanlatorSourceCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for IgnoreScanlatorSourceCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *IgnoreScanlatorSourceUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

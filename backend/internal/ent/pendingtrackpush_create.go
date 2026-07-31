@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type PendingTrackPushCreate struct {
 	config
 	mutation *PendingTrackPushMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetTrackBindingID sets the "track_binding_id" field.
@@ -225,6 +228,7 @@ func (_c *PendingTrackPushCreate) createSpec() (*PendingTrackPush, *sqlgraph.Cre
 		_node = &PendingTrackPush{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(pendingtrackpush.Table, sqlgraph.NewFieldSpec(pendingtrackpush.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -260,11 +264,345 @@ func (_c *PendingTrackPushCreate) createSpec() (*PendingTrackPush, *sqlgraph.Cre
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.PendingTrackPush.Create().
+//		SetTrackBindingID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.PendingTrackPushUpsert) {
+//			SetTrackBindingID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *PendingTrackPushCreate) OnConflict(opts ...sql.ConflictOption) *PendingTrackPushUpsertOne {
+	_c.conflict = opts
+	return &PendingTrackPushUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *PendingTrackPushCreate) OnConflictColumns(columns ...string) *PendingTrackPushUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &PendingTrackPushUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// PendingTrackPushUpsertOne is the builder for "upsert"-ing
+	//  one PendingTrackPush node.
+	PendingTrackPushUpsertOne struct {
+		create *PendingTrackPushCreate
+	}
+
+	// PendingTrackPushUpsert is the "OnConflict" setter.
+	PendingTrackPushUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetTrackBindingID sets the "track_binding_id" field.
+func (u *PendingTrackPushUpsert) SetTrackBindingID(v uuid.UUID) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldTrackBindingID, v)
+	return u
+}
+
+// UpdateTrackBindingID sets the "track_binding_id" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateTrackBindingID() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldTrackBindingID)
+	return u
+}
+
+// SetChapter sets the "chapter" field.
+func (u *PendingTrackPushUpsert) SetChapter(v float64) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldChapter, v)
+	return u
+}
+
+// UpdateChapter sets the "chapter" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateChapter() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldChapter)
+	return u
+}
+
+// AddChapter adds v to the "chapter" field.
+func (u *PendingTrackPushUpsert) AddChapter(v float64) *PendingTrackPushUpsert {
+	u.Add(pendingtrackpush.FieldChapter, v)
+	return u
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *PendingTrackPushUpsert) SetAttempts(v int) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldAttempts, v)
+	return u
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateAttempts() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldAttempts)
+	return u
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *PendingTrackPushUpsert) AddAttempts(v int) *PendingTrackPushUpsert {
+	u.Add(pendingtrackpush.FieldAttempts, v)
+	return u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *PendingTrackPushUpsert) SetNextAttemptAt(v time.Time) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldNextAttemptAt, v)
+	return u
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateNextAttemptAt() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldNextAttemptAt)
+	return u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *PendingTrackPushUpsert) ClearNextAttemptAt() *PendingTrackPushUpsert {
+	u.SetNull(pendingtrackpush.FieldNextAttemptAt)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *PendingTrackPushUpsert) SetLastError(v string) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateLastError() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldLastError)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *PendingTrackPushUpsert) SetUpdatedAt(v time.Time) *PendingTrackPushUpsert {
+	u.Set(pendingtrackpush.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsert) UpdateUpdatedAt() *PendingTrackPushUpsert {
+	u.SetExcluded(pendingtrackpush.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(pendingtrackpush.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *PendingTrackPushUpsertOne) UpdateNewValues() *PendingTrackPushUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(pendingtrackpush.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(pendingtrackpush.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *PendingTrackPushUpsertOne) Ignore() *PendingTrackPushUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *PendingTrackPushUpsertOne) DoNothing() *PendingTrackPushUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the PendingTrackPushCreate.OnConflict
+// documentation for more info.
+func (u *PendingTrackPushUpsertOne) Update(set func(*PendingTrackPushUpsert)) *PendingTrackPushUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&PendingTrackPushUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTrackBindingID sets the "track_binding_id" field.
+func (u *PendingTrackPushUpsertOne) SetTrackBindingID(v uuid.UUID) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetTrackBindingID(v)
+	})
+}
+
+// UpdateTrackBindingID sets the "track_binding_id" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateTrackBindingID() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateTrackBindingID()
+	})
+}
+
+// SetChapter sets the "chapter" field.
+func (u *PendingTrackPushUpsertOne) SetChapter(v float64) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetChapter(v)
+	})
+}
+
+// AddChapter adds v to the "chapter" field.
+func (u *PendingTrackPushUpsertOne) AddChapter(v float64) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.AddChapter(v)
+	})
+}
+
+// UpdateChapter sets the "chapter" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateChapter() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateChapter()
+	})
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *PendingTrackPushUpsertOne) SetAttempts(v int) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetAttempts(v)
+	})
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *PendingTrackPushUpsertOne) AddAttempts(v int) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.AddAttempts(v)
+	})
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateAttempts() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateAttempts()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *PendingTrackPushUpsertOne) SetNextAttemptAt(v time.Time) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateNextAttemptAt() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *PendingTrackPushUpsertOne) ClearNextAttemptAt() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *PendingTrackPushUpsertOne) SetLastError(v string) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateLastError() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *PendingTrackPushUpsertOne) SetUpdatedAt(v time.Time) *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertOne) UpdateUpdatedAt() *PendingTrackPushUpsertOne {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *PendingTrackPushUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for PendingTrackPushCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *PendingTrackPushUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *PendingTrackPushUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: PendingTrackPushUpsertOne.ID is not supported by MySQL driver. Use PendingTrackPushUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *PendingTrackPushUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // PendingTrackPushCreateBulk is the builder for creating many PendingTrackPush entities in bulk.
 type PendingTrackPushCreateBulk struct {
 	config
 	err      error
 	builders []*PendingTrackPushCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the PendingTrackPush entities in the database.
@@ -294,6 +632,7 @@ func (_c *PendingTrackPushCreateBulk) Save(ctx context.Context) ([]*PendingTrack
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -340,6 +679,228 @@ func (_c *PendingTrackPushCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *PendingTrackPushCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.PendingTrackPush.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.PendingTrackPushUpsert) {
+//			SetTrackBindingID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *PendingTrackPushCreateBulk) OnConflict(opts ...sql.ConflictOption) *PendingTrackPushUpsertBulk {
+	_c.conflict = opts
+	return &PendingTrackPushUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *PendingTrackPushCreateBulk) OnConflictColumns(columns ...string) *PendingTrackPushUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &PendingTrackPushUpsertBulk{
+		create: _c,
+	}
+}
+
+// PendingTrackPushUpsertBulk is the builder for "upsert"-ing
+// a bulk of PendingTrackPush nodes.
+type PendingTrackPushUpsertBulk struct {
+	create *PendingTrackPushCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(pendingtrackpush.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *PendingTrackPushUpsertBulk) UpdateNewValues() *PendingTrackPushUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(pendingtrackpush.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(pendingtrackpush.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.PendingTrackPush.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *PendingTrackPushUpsertBulk) Ignore() *PendingTrackPushUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *PendingTrackPushUpsertBulk) DoNothing() *PendingTrackPushUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the PendingTrackPushCreateBulk.OnConflict
+// documentation for more info.
+func (u *PendingTrackPushUpsertBulk) Update(set func(*PendingTrackPushUpsert)) *PendingTrackPushUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&PendingTrackPushUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTrackBindingID sets the "track_binding_id" field.
+func (u *PendingTrackPushUpsertBulk) SetTrackBindingID(v uuid.UUID) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetTrackBindingID(v)
+	})
+}
+
+// UpdateTrackBindingID sets the "track_binding_id" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateTrackBindingID() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateTrackBindingID()
+	})
+}
+
+// SetChapter sets the "chapter" field.
+func (u *PendingTrackPushUpsertBulk) SetChapter(v float64) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetChapter(v)
+	})
+}
+
+// AddChapter adds v to the "chapter" field.
+func (u *PendingTrackPushUpsertBulk) AddChapter(v float64) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.AddChapter(v)
+	})
+}
+
+// UpdateChapter sets the "chapter" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateChapter() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateChapter()
+	})
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *PendingTrackPushUpsertBulk) SetAttempts(v int) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetAttempts(v)
+	})
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *PendingTrackPushUpsertBulk) AddAttempts(v int) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.AddAttempts(v)
+	})
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateAttempts() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateAttempts()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *PendingTrackPushUpsertBulk) SetNextAttemptAt(v time.Time) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateNextAttemptAt() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *PendingTrackPushUpsertBulk) ClearNextAttemptAt() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *PendingTrackPushUpsertBulk) SetLastError(v string) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateLastError() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *PendingTrackPushUpsertBulk) SetUpdatedAt(v time.Time) *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *PendingTrackPushUpsertBulk) UpdateUpdatedAt() *PendingTrackPushUpsertBulk {
+	return u.Update(func(s *PendingTrackPushUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *PendingTrackPushUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the PendingTrackPushCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for PendingTrackPushCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *PendingTrackPushUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

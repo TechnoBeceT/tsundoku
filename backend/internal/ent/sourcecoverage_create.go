@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceCoverageCreate struct {
 	config
 	mutation *SourceCoverageMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -225,6 +228,7 @@ func (_c *SourceCoverageCreate) createSpec() (*SourceCoverage, *sqlgraph.CreateS
 		_node = &SourceCoverage{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourcecoverage.Table, sqlgraph.NewFieldSpec(sourcecoverage.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -260,11 +264,342 @@ func (_c *SourceCoverageCreate) createSpec() (*SourceCoverage, *sqlgraph.CreateS
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceCoverage.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceCoverageUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceCoverageCreate) OnConflict(opts ...sql.ConflictOption) *SourceCoverageUpsertOne {
+	_c.conflict = opts
+	return &SourceCoverageUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceCoverageCreate) OnConflictColumns(columns ...string) *SourceCoverageUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceCoverageUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceCoverageUpsertOne is the builder for "upsert"-ing
+	//  one SourceCoverage node.
+	SourceCoverageUpsertOne struct {
+		create *SourceCoverageCreate
+	}
+
+	// SourceCoverageUpsert is the "OnConflict" setter.
+	SourceCoverageUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceCoverageUpsert) SetSourceID(v string) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateSourceID() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldSourceID)
+	return u
+}
+
+// SetMangaURL sets the "manga_url" field.
+func (u *SourceCoverageUpsert) SetMangaURL(v string) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldMangaURL, v)
+	return u
+}
+
+// UpdateMangaURL sets the "manga_url" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateMangaURL() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldMangaURL)
+	return u
+}
+
+// SetPayload sets the "payload" field.
+func (u *SourceCoverageUpsert) SetPayload(v string) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldPayload, v)
+	return u
+}
+
+// UpdatePayload sets the "payload" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdatePayload() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldPayload)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceCoverageUpsert) SetStatus(v string) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateStatus() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldStatus)
+	return u
+}
+
+// SetComputedAt sets the "computed_at" field.
+func (u *SourceCoverageUpsert) SetComputedAt(v time.Time) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldComputedAt, v)
+	return u
+}
+
+// UpdateComputedAt sets the "computed_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateComputedAt() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldComputedAt)
+	return u
+}
+
+// ClearComputedAt clears the value of the "computed_at" field.
+func (u *SourceCoverageUpsert) ClearComputedAt() *SourceCoverageUpsert {
+	u.SetNull(sourcecoverage.FieldComputedAt)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCoverageUpsert) SetUpdatedAt(v time.Time) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateUpdatedAt() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldUpdatedAt)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCoverageUpsert) SetLastError(v string) *SourceCoverageUpsert {
+	u.Set(sourcecoverage.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCoverageUpsert) UpdateLastError() *SourceCoverageUpsert {
+	u.SetExcluded(sourcecoverage.FieldLastError)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcecoverage.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceCoverageUpsertOne) UpdateNewValues() *SourceCoverageUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourcecoverage.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceCoverageUpsertOne) Ignore() *SourceCoverageUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceCoverageUpsertOne) DoNothing() *SourceCoverageUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceCoverageCreate.OnConflict
+// documentation for more info.
+func (u *SourceCoverageUpsertOne) Update(set func(*SourceCoverageUpsert)) *SourceCoverageUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceCoverageUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceCoverageUpsertOne) SetSourceID(v string) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateSourceID() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetMangaURL sets the "manga_url" field.
+func (u *SourceCoverageUpsertOne) SetMangaURL(v string) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetMangaURL(v)
+	})
+}
+
+// UpdateMangaURL sets the "manga_url" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateMangaURL() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateMangaURL()
+	})
+}
+
+// SetPayload sets the "payload" field.
+func (u *SourceCoverageUpsertOne) SetPayload(v string) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetPayload(v)
+	})
+}
+
+// UpdatePayload sets the "payload" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdatePayload() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdatePayload()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceCoverageUpsertOne) SetStatus(v string) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateStatus() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetComputedAt sets the "computed_at" field.
+func (u *SourceCoverageUpsertOne) SetComputedAt(v time.Time) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetComputedAt(v)
+	})
+}
+
+// UpdateComputedAt sets the "computed_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateComputedAt() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateComputedAt()
+	})
+}
+
+// ClearComputedAt clears the value of the "computed_at" field.
+func (u *SourceCoverageUpsertOne) ClearComputedAt() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.ClearComputedAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCoverageUpsertOne) SetUpdatedAt(v time.Time) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateUpdatedAt() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCoverageUpsertOne) SetLastError(v string) *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCoverageUpsertOne) UpdateLastError() *SourceCoverageUpsertOne {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceCoverageUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceCoverageCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceCoverageUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceCoverageUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceCoverageUpsertOne.ID is not supported by MySQL driver. Use SourceCoverageUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceCoverageUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceCoverageCreateBulk is the builder for creating many SourceCoverage entities in bulk.
 type SourceCoverageCreateBulk struct {
 	config
 	err      error
 	builders []*SourceCoverageCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceCoverage entities in the database.
@@ -294,6 +629,7 @@ func (_c *SourceCoverageCreateBulk) Save(ctx context.Context) ([]*SourceCoverage
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -340,6 +676,225 @@ func (_c *SourceCoverageCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceCoverageCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceCoverage.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceCoverageUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceCoverageCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceCoverageUpsertBulk {
+	_c.conflict = opts
+	return &SourceCoverageUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceCoverageCreateBulk) OnConflictColumns(columns ...string) *SourceCoverageUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceCoverageUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceCoverageUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceCoverage nodes.
+type SourceCoverageUpsertBulk struct {
+	create *SourceCoverageCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcecoverage.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceCoverageUpsertBulk) UpdateNewValues() *SourceCoverageUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourcecoverage.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceCoverage.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceCoverageUpsertBulk) Ignore() *SourceCoverageUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceCoverageUpsertBulk) DoNothing() *SourceCoverageUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceCoverageCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceCoverageUpsertBulk) Update(set func(*SourceCoverageUpsert)) *SourceCoverageUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceCoverageUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceCoverageUpsertBulk) SetSourceID(v string) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateSourceID() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetMangaURL sets the "manga_url" field.
+func (u *SourceCoverageUpsertBulk) SetMangaURL(v string) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetMangaURL(v)
+	})
+}
+
+// UpdateMangaURL sets the "manga_url" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateMangaURL() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateMangaURL()
+	})
+}
+
+// SetPayload sets the "payload" field.
+func (u *SourceCoverageUpsertBulk) SetPayload(v string) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetPayload(v)
+	})
+}
+
+// UpdatePayload sets the "payload" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdatePayload() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdatePayload()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SourceCoverageUpsertBulk) SetStatus(v string) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateStatus() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetComputedAt sets the "computed_at" field.
+func (u *SourceCoverageUpsertBulk) SetComputedAt(v time.Time) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetComputedAt(v)
+	})
+}
+
+// UpdateComputedAt sets the "computed_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateComputedAt() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateComputedAt()
+	})
+}
+
+// ClearComputedAt clears the value of the "computed_at" field.
+func (u *SourceCoverageUpsertBulk) ClearComputedAt() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.ClearComputedAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCoverageUpsertBulk) SetUpdatedAt(v time.Time) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateUpdatedAt() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCoverageUpsertBulk) SetLastError(v string) *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCoverageUpsertBulk) UpdateLastError() *SourceCoverageUpsertBulk {
+	return u.Update(func(s *SourceCoverageUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceCoverageUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceCoverageCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceCoverageCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceCoverageUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

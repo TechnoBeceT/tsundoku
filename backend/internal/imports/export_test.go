@@ -27,3 +27,27 @@ func SetSearchCacheForTest(s *Service, ttl func(context.Context) time.Duration, 
 	sc.now = now
 	s.searchCache = sc
 }
+
+// Test-only accessors for the unexported coverage store (GAP-140). Keeping the
+// store unexported preserves the service's surface while letting the black-box
+// tests drive it directly.
+
+// ExportLoadCoverage exposes the unexported loadCoverage.
+func ExportLoadCoverage(s *Service, ctx context.Context, sourceID, mangaURL string) (CoverageSnapshot, bool, error) {
+	return s.loadCoverage(ctx, sourceID, mangaURL)
+}
+
+// ExportSaveCoverage exposes the unexported saveCoverage.
+func ExportSaveCoverage(s *Service, ctx context.Context, sourceID, mangaURL string, dto SourceBreakdownDTO) error {
+	return s.saveCoverage(ctx, sourceID, mangaURL, dto)
+}
+
+// ExportFailCoverage exposes the unexported failCoverage.
+func ExportFailCoverage(s *Service, ctx context.Context, sourceID, mangaURL string, cause error) error {
+	return s.failCoverage(ctx, sourceID, mangaURL, cause)
+}
+
+// ExportMarkCoveragePending exposes the unexported markCoveragePending.
+func ExportMarkCoveragePending(s *Service, ctx context.Context, sourceID, mangaURL string) error {
+	return s.markCoveragePending(ctx, sourceID, mangaURL)
+}

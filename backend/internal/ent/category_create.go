@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type CategoryCreate struct {
 	config
 	mutation *CategoryMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetName sets the "name" field.
@@ -239,6 +242,7 @@ func (_c *CategoryCreate) createSpec() (*Category, *sqlgraph.CreateSpec) {
 		_node = &Category{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(category.Table, sqlgraph.NewFieldSpec(category.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -286,11 +290,293 @@ func (_c *CategoryCreate) createSpec() (*Category, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Category.Create().
+//		SetName(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.CategoryUpsert) {
+//			SetName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *CategoryCreate) OnConflict(opts ...sql.ConflictOption) *CategoryUpsertOne {
+	_c.conflict = opts
+	return &CategoryUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *CategoryCreate) OnConflictColumns(columns ...string) *CategoryUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &CategoryUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// CategoryUpsertOne is the builder for "upsert"-ing
+	//  one Category node.
+	CategoryUpsertOne struct {
+		create *CategoryCreate
+	}
+
+	// CategoryUpsert is the "OnConflict" setter.
+	CategoryUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetName sets the "name" field.
+func (u *CategoryUpsert) SetName(v string) *CategoryUpsert {
+	u.Set(category.FieldName, v)
+	return u
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *CategoryUpsert) UpdateName() *CategoryUpsert {
+	u.SetExcluded(category.FieldName)
+	return u
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (u *CategoryUpsert) SetSortOrder(v int) *CategoryUpsert {
+	u.Set(category.FieldSortOrder, v)
+	return u
+}
+
+// UpdateSortOrder sets the "sort_order" field to the value that was provided on create.
+func (u *CategoryUpsert) UpdateSortOrder() *CategoryUpsert {
+	u.SetExcluded(category.FieldSortOrder)
+	return u
+}
+
+// AddSortOrder adds v to the "sort_order" field.
+func (u *CategoryUpsert) AddSortOrder(v int) *CategoryUpsert {
+	u.Add(category.FieldSortOrder, v)
+	return u
+}
+
+// SetProtected sets the "protected" field.
+func (u *CategoryUpsert) SetProtected(v bool) *CategoryUpsert {
+	u.Set(category.FieldProtected, v)
+	return u
+}
+
+// UpdateProtected sets the "protected" field to the value that was provided on create.
+func (u *CategoryUpsert) UpdateProtected() *CategoryUpsert {
+	u.SetExcluded(category.FieldProtected)
+	return u
+}
+
+// SetIsDefault sets the "is_default" field.
+func (u *CategoryUpsert) SetIsDefault(v bool) *CategoryUpsert {
+	u.Set(category.FieldIsDefault, v)
+	return u
+}
+
+// UpdateIsDefault sets the "is_default" field to the value that was provided on create.
+func (u *CategoryUpsert) UpdateIsDefault() *CategoryUpsert {
+	u.SetExcluded(category.FieldIsDefault)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *CategoryUpsert) SetUpdatedAt(v time.Time) *CategoryUpsert {
+	u.Set(category.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *CategoryUpsert) UpdateUpdatedAt() *CategoryUpsert {
+	u.SetExcluded(category.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(category.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *CategoryUpsertOne) UpdateNewValues() *CategoryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(category.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(category.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *CategoryUpsertOne) Ignore() *CategoryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *CategoryUpsertOne) DoNothing() *CategoryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the CategoryCreate.OnConflict
+// documentation for more info.
+func (u *CategoryUpsertOne) Update(set func(*CategoryUpsert)) *CategoryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&CategoryUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetName sets the "name" field.
+func (u *CategoryUpsertOne) SetName(v string) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *CategoryUpsertOne) UpdateName() *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (u *CategoryUpsertOne) SetSortOrder(v int) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetSortOrder(v)
+	})
+}
+
+// AddSortOrder adds v to the "sort_order" field.
+func (u *CategoryUpsertOne) AddSortOrder(v int) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.AddSortOrder(v)
+	})
+}
+
+// UpdateSortOrder sets the "sort_order" field to the value that was provided on create.
+func (u *CategoryUpsertOne) UpdateSortOrder() *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateSortOrder()
+	})
+}
+
+// SetProtected sets the "protected" field.
+func (u *CategoryUpsertOne) SetProtected(v bool) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetProtected(v)
+	})
+}
+
+// UpdateProtected sets the "protected" field to the value that was provided on create.
+func (u *CategoryUpsertOne) UpdateProtected() *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateProtected()
+	})
+}
+
+// SetIsDefault sets the "is_default" field.
+func (u *CategoryUpsertOne) SetIsDefault(v bool) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetIsDefault(v)
+	})
+}
+
+// UpdateIsDefault sets the "is_default" field to the value that was provided on create.
+func (u *CategoryUpsertOne) UpdateIsDefault() *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateIsDefault()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *CategoryUpsertOne) SetUpdatedAt(v time.Time) *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *CategoryUpsertOne) UpdateUpdatedAt() *CategoryUpsertOne {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *CategoryUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for CategoryCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *CategoryUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *CategoryUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: CategoryUpsertOne.ID is not supported by MySQL driver. Use CategoryUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *CategoryUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // CategoryCreateBulk is the builder for creating many Category entities in bulk.
 type CategoryCreateBulk struct {
 	config
 	err      error
 	builders []*CategoryCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the Category entities in the database.
@@ -320,6 +606,7 @@ func (_c *CategoryCreateBulk) Save(ctx context.Context) ([]*Category, error) {
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -366,6 +653,200 @@ func (_c *CategoryCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *CategoryCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Category.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.CategoryUpsert) {
+//			SetName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *CategoryCreateBulk) OnConflict(opts ...sql.ConflictOption) *CategoryUpsertBulk {
+	_c.conflict = opts
+	return &CategoryUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *CategoryCreateBulk) OnConflictColumns(columns ...string) *CategoryUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &CategoryUpsertBulk{
+		create: _c,
+	}
+}
+
+// CategoryUpsertBulk is the builder for "upsert"-ing
+// a bulk of Category nodes.
+type CategoryUpsertBulk struct {
+	create *CategoryCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(category.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *CategoryUpsertBulk) UpdateNewValues() *CategoryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(category.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(category.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Category.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *CategoryUpsertBulk) Ignore() *CategoryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *CategoryUpsertBulk) DoNothing() *CategoryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the CategoryCreateBulk.OnConflict
+// documentation for more info.
+func (u *CategoryUpsertBulk) Update(set func(*CategoryUpsert)) *CategoryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&CategoryUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetName sets the "name" field.
+func (u *CategoryUpsertBulk) SetName(v string) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *CategoryUpsertBulk) UpdateName() *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (u *CategoryUpsertBulk) SetSortOrder(v int) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetSortOrder(v)
+	})
+}
+
+// AddSortOrder adds v to the "sort_order" field.
+func (u *CategoryUpsertBulk) AddSortOrder(v int) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.AddSortOrder(v)
+	})
+}
+
+// UpdateSortOrder sets the "sort_order" field to the value that was provided on create.
+func (u *CategoryUpsertBulk) UpdateSortOrder() *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateSortOrder()
+	})
+}
+
+// SetProtected sets the "protected" field.
+func (u *CategoryUpsertBulk) SetProtected(v bool) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetProtected(v)
+	})
+}
+
+// UpdateProtected sets the "protected" field to the value that was provided on create.
+func (u *CategoryUpsertBulk) UpdateProtected() *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateProtected()
+	})
+}
+
+// SetIsDefault sets the "is_default" field.
+func (u *CategoryUpsertBulk) SetIsDefault(v bool) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetIsDefault(v)
+	})
+}
+
+// UpdateIsDefault sets the "is_default" field to the value that was provided on create.
+func (u *CategoryUpsertBulk) UpdateIsDefault() *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateIsDefault()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *CategoryUpsertBulk) SetUpdatedAt(v time.Time) *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *CategoryUpsertBulk) UpdateUpdatedAt() *CategoryUpsertBulk {
+	return u.Update(func(s *CategoryUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *CategoryUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the CategoryCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for CategoryCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *CategoryUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type TrackerConnectionCreate struct {
 	config
 	mutation *TrackerConnectionMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetTrackerID sets the "tracker_id" field.
@@ -312,6 +315,7 @@ func (_c *TrackerConnectionCreate) createSpec() (*TrackerConnection, *sqlgraph.C
 		_node = &TrackerConnection{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(trackerconnection.Table, sqlgraph.NewFieldSpec(trackerconnection.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -363,11 +367,475 @@ func (_c *TrackerConnectionCreate) createSpec() (*TrackerConnection, *sqlgraph.C
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.TrackerConnection.Create().
+//		SetTrackerID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.TrackerConnectionUpsert) {
+//			SetTrackerID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *TrackerConnectionCreate) OnConflict(opts ...sql.ConflictOption) *TrackerConnectionUpsertOne {
+	_c.conflict = opts
+	return &TrackerConnectionUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *TrackerConnectionCreate) OnConflictColumns(columns ...string) *TrackerConnectionUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &TrackerConnectionUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// TrackerConnectionUpsertOne is the builder for "upsert"-ing
+	//  one TrackerConnection node.
+	TrackerConnectionUpsertOne struct {
+		create *TrackerConnectionCreate
+	}
+
+	// TrackerConnectionUpsert is the "OnConflict" setter.
+	TrackerConnectionUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackerConnectionUpsert) SetTrackerID(v int) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldTrackerID, v)
+	return u
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateTrackerID() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldTrackerID)
+	return u
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackerConnectionUpsert) AddTrackerID(v int) *TrackerConnectionUpsert {
+	u.Add(trackerconnection.FieldTrackerID, v)
+	return u
+}
+
+// SetAccessToken sets the "access_token" field.
+func (u *TrackerConnectionUpsert) SetAccessToken(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldAccessToken, v)
+	return u
+}
+
+// UpdateAccessToken sets the "access_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateAccessToken() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldAccessToken)
+	return u
+}
+
+// SetRefreshToken sets the "refresh_token" field.
+func (u *TrackerConnectionUpsert) SetRefreshToken(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldRefreshToken, v)
+	return u
+}
+
+// UpdateRefreshToken sets the "refresh_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateRefreshToken() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldRefreshToken)
+	return u
+}
+
+// ClearRefreshToken clears the value of the "refresh_token" field.
+func (u *TrackerConnectionUpsert) ClearRefreshToken() *TrackerConnectionUpsert {
+	u.SetNull(trackerconnection.FieldRefreshToken)
+	return u
+}
+
+// SetTokenType sets the "token_type" field.
+func (u *TrackerConnectionUpsert) SetTokenType(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldTokenType, v)
+	return u
+}
+
+// UpdateTokenType sets the "token_type" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateTokenType() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldTokenType)
+	return u
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *TrackerConnectionUpsert) SetExpiresAt(v time.Time) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldExpiresAt, v)
+	return u
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateExpiresAt() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldExpiresAt)
+	return u
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *TrackerConnectionUpsert) ClearExpiresAt() *TrackerConnectionUpsert {
+	u.SetNull(trackerconnection.FieldExpiresAt)
+	return u
+}
+
+// SetUsername sets the "username" field.
+func (u *TrackerConnectionUpsert) SetUsername(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldUsername, v)
+	return u
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateUsername() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldUsername)
+	return u
+}
+
+// SetPassword sets the "password" field.
+func (u *TrackerConnectionUpsert) SetPassword(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldPassword, v)
+	return u
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdatePassword() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldPassword)
+	return u
+}
+
+// ClearPassword clears the value of the "password" field.
+func (u *TrackerConnectionUpsert) ClearPassword() *TrackerConnectionUpsert {
+	u.SetNull(trackerconnection.FieldPassword)
+	return u
+}
+
+// SetScoreFormat sets the "score_format" field.
+func (u *TrackerConnectionUpsert) SetScoreFormat(v string) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldScoreFormat, v)
+	return u
+}
+
+// UpdateScoreFormat sets the "score_format" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateScoreFormat() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldScoreFormat)
+	return u
+}
+
+// ClearScoreFormat clears the value of the "score_format" field.
+func (u *TrackerConnectionUpsert) ClearScoreFormat() *TrackerConnectionUpsert {
+	u.SetNull(trackerconnection.FieldScoreFormat)
+	return u
+}
+
+// SetTokenExpired sets the "token_expired" field.
+func (u *TrackerConnectionUpsert) SetTokenExpired(v bool) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldTokenExpired, v)
+	return u
+}
+
+// UpdateTokenExpired sets the "token_expired" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateTokenExpired() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldTokenExpired)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackerConnectionUpsert) SetUpdatedAt(v time.Time) *TrackerConnectionUpsert {
+	u.Set(trackerconnection.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsert) UpdateUpdatedAt() *TrackerConnectionUpsert {
+	u.SetExcluded(trackerconnection.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(trackerconnection.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *TrackerConnectionUpsertOne) UpdateNewValues() *TrackerConnectionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(trackerconnection.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(trackerconnection.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *TrackerConnectionUpsertOne) Ignore() *TrackerConnectionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *TrackerConnectionUpsertOne) DoNothing() *TrackerConnectionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the TrackerConnectionCreate.OnConflict
+// documentation for more info.
+func (u *TrackerConnectionUpsertOne) Update(set func(*TrackerConnectionUpsert)) *TrackerConnectionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&TrackerConnectionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackerConnectionUpsertOne) SetTrackerID(v int) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTrackerID(v)
+	})
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackerConnectionUpsertOne) AddTrackerID(v int) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.AddTrackerID(v)
+	})
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateTrackerID() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTrackerID()
+	})
+}
+
+// SetAccessToken sets the "access_token" field.
+func (u *TrackerConnectionUpsertOne) SetAccessToken(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetAccessToken(v)
+	})
+}
+
+// UpdateAccessToken sets the "access_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateAccessToken() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateAccessToken()
+	})
+}
+
+// SetRefreshToken sets the "refresh_token" field.
+func (u *TrackerConnectionUpsertOne) SetRefreshToken(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetRefreshToken(v)
+	})
+}
+
+// UpdateRefreshToken sets the "refresh_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateRefreshToken() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateRefreshToken()
+	})
+}
+
+// ClearRefreshToken clears the value of the "refresh_token" field.
+func (u *TrackerConnectionUpsertOne) ClearRefreshToken() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearRefreshToken()
+	})
+}
+
+// SetTokenType sets the "token_type" field.
+func (u *TrackerConnectionUpsertOne) SetTokenType(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTokenType(v)
+	})
+}
+
+// UpdateTokenType sets the "token_type" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateTokenType() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTokenType()
+	})
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *TrackerConnectionUpsertOne) SetExpiresAt(v time.Time) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetExpiresAt(v)
+	})
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateExpiresAt() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateExpiresAt()
+	})
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *TrackerConnectionUpsertOne) ClearExpiresAt() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearExpiresAt()
+	})
+}
+
+// SetUsername sets the "username" field.
+func (u *TrackerConnectionUpsertOne) SetUsername(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetUsername(v)
+	})
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateUsername() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateUsername()
+	})
+}
+
+// SetPassword sets the "password" field.
+func (u *TrackerConnectionUpsertOne) SetPassword(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetPassword(v)
+	})
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdatePassword() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdatePassword()
+	})
+}
+
+// ClearPassword clears the value of the "password" field.
+func (u *TrackerConnectionUpsertOne) ClearPassword() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearPassword()
+	})
+}
+
+// SetScoreFormat sets the "score_format" field.
+func (u *TrackerConnectionUpsertOne) SetScoreFormat(v string) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetScoreFormat(v)
+	})
+}
+
+// UpdateScoreFormat sets the "score_format" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateScoreFormat() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateScoreFormat()
+	})
+}
+
+// ClearScoreFormat clears the value of the "score_format" field.
+func (u *TrackerConnectionUpsertOne) ClearScoreFormat() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearScoreFormat()
+	})
+}
+
+// SetTokenExpired sets the "token_expired" field.
+func (u *TrackerConnectionUpsertOne) SetTokenExpired(v bool) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTokenExpired(v)
+	})
+}
+
+// UpdateTokenExpired sets the "token_expired" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateTokenExpired() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTokenExpired()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackerConnectionUpsertOne) SetUpdatedAt(v time.Time) *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertOne) UpdateUpdatedAt() *TrackerConnectionUpsertOne {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *TrackerConnectionUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for TrackerConnectionCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *TrackerConnectionUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *TrackerConnectionUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: TrackerConnectionUpsertOne.ID is not supported by MySQL driver. Use TrackerConnectionUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *TrackerConnectionUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // TrackerConnectionCreateBulk is the builder for creating many TrackerConnection entities in bulk.
 type TrackerConnectionCreateBulk struct {
 	config
 	err      error
 	builders []*TrackerConnectionCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the TrackerConnection entities in the database.
@@ -397,6 +865,7 @@ func (_c *TrackerConnectionCreateBulk) Save(ctx context.Context) ([]*TrackerConn
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -443,6 +912,298 @@ func (_c *TrackerConnectionCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *TrackerConnectionCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.TrackerConnection.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.TrackerConnectionUpsert) {
+//			SetTrackerID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *TrackerConnectionCreateBulk) OnConflict(opts ...sql.ConflictOption) *TrackerConnectionUpsertBulk {
+	_c.conflict = opts
+	return &TrackerConnectionUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *TrackerConnectionCreateBulk) OnConflictColumns(columns ...string) *TrackerConnectionUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &TrackerConnectionUpsertBulk{
+		create: _c,
+	}
+}
+
+// TrackerConnectionUpsertBulk is the builder for "upsert"-ing
+// a bulk of TrackerConnection nodes.
+type TrackerConnectionUpsertBulk struct {
+	create *TrackerConnectionCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(trackerconnection.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *TrackerConnectionUpsertBulk) UpdateNewValues() *TrackerConnectionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(trackerconnection.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(trackerconnection.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.TrackerConnection.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *TrackerConnectionUpsertBulk) Ignore() *TrackerConnectionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *TrackerConnectionUpsertBulk) DoNothing() *TrackerConnectionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the TrackerConnectionCreateBulk.OnConflict
+// documentation for more info.
+func (u *TrackerConnectionUpsertBulk) Update(set func(*TrackerConnectionUpsert)) *TrackerConnectionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&TrackerConnectionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackerConnectionUpsertBulk) SetTrackerID(v int) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTrackerID(v)
+	})
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackerConnectionUpsertBulk) AddTrackerID(v int) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.AddTrackerID(v)
+	})
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateTrackerID() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTrackerID()
+	})
+}
+
+// SetAccessToken sets the "access_token" field.
+func (u *TrackerConnectionUpsertBulk) SetAccessToken(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetAccessToken(v)
+	})
+}
+
+// UpdateAccessToken sets the "access_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateAccessToken() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateAccessToken()
+	})
+}
+
+// SetRefreshToken sets the "refresh_token" field.
+func (u *TrackerConnectionUpsertBulk) SetRefreshToken(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetRefreshToken(v)
+	})
+}
+
+// UpdateRefreshToken sets the "refresh_token" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateRefreshToken() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateRefreshToken()
+	})
+}
+
+// ClearRefreshToken clears the value of the "refresh_token" field.
+func (u *TrackerConnectionUpsertBulk) ClearRefreshToken() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearRefreshToken()
+	})
+}
+
+// SetTokenType sets the "token_type" field.
+func (u *TrackerConnectionUpsertBulk) SetTokenType(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTokenType(v)
+	})
+}
+
+// UpdateTokenType sets the "token_type" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateTokenType() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTokenType()
+	})
+}
+
+// SetExpiresAt sets the "expires_at" field.
+func (u *TrackerConnectionUpsertBulk) SetExpiresAt(v time.Time) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetExpiresAt(v)
+	})
+}
+
+// UpdateExpiresAt sets the "expires_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateExpiresAt() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateExpiresAt()
+	})
+}
+
+// ClearExpiresAt clears the value of the "expires_at" field.
+func (u *TrackerConnectionUpsertBulk) ClearExpiresAt() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearExpiresAt()
+	})
+}
+
+// SetUsername sets the "username" field.
+func (u *TrackerConnectionUpsertBulk) SetUsername(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetUsername(v)
+	})
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateUsername() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateUsername()
+	})
+}
+
+// SetPassword sets the "password" field.
+func (u *TrackerConnectionUpsertBulk) SetPassword(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetPassword(v)
+	})
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdatePassword() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdatePassword()
+	})
+}
+
+// ClearPassword clears the value of the "password" field.
+func (u *TrackerConnectionUpsertBulk) ClearPassword() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearPassword()
+	})
+}
+
+// SetScoreFormat sets the "score_format" field.
+func (u *TrackerConnectionUpsertBulk) SetScoreFormat(v string) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetScoreFormat(v)
+	})
+}
+
+// UpdateScoreFormat sets the "score_format" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateScoreFormat() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateScoreFormat()
+	})
+}
+
+// ClearScoreFormat clears the value of the "score_format" field.
+func (u *TrackerConnectionUpsertBulk) ClearScoreFormat() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.ClearScoreFormat()
+	})
+}
+
+// SetTokenExpired sets the "token_expired" field.
+func (u *TrackerConnectionUpsertBulk) SetTokenExpired(v bool) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetTokenExpired(v)
+	})
+}
+
+// UpdateTokenExpired sets the "token_expired" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateTokenExpired() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateTokenExpired()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackerConnectionUpsertBulk) SetUpdatedAt(v time.Time) *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackerConnectionUpsertBulk) UpdateUpdatedAt() *TrackerConnectionUpsertBulk {
+	return u.Update(func(s *TrackerConnectionUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *TrackerConnectionUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the TrackerConnectionCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for TrackerConnectionCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *TrackerConnectionUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

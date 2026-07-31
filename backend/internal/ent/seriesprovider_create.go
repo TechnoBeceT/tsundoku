@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -23,6 +25,7 @@ type SeriesProviderCreate struct {
 	config
 	mutation *SeriesProviderMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSeriesID sets the "series_id" field.
@@ -493,6 +496,7 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 		_node = &SeriesProvider{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(seriesprovider.Table, sqlgraph.NewFieldSpec(seriesprovider.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -629,11 +633,631 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SeriesProvider.Create().
+//		SetSeriesID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SeriesProviderUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SeriesProviderCreate) OnConflict(opts ...sql.ConflictOption) *SeriesProviderUpsertOne {
+	_c.conflict = opts
+	return &SeriesProviderUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SeriesProviderCreate) OnConflictColumns(columns ...string) *SeriesProviderUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SeriesProviderUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SeriesProviderUpsertOne is the builder for "upsert"-ing
+	//  one SeriesProvider node.
+	SeriesProviderUpsertOne struct {
+		create *SeriesProviderCreate
+	}
+
+	// SeriesProviderUpsert is the "OnConflict" setter.
+	SeriesProviderUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSeriesID sets the "series_id" field.
+func (u *SeriesProviderUpsert) SetSeriesID(v uuid.UUID) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldSeriesID, v)
+	return u
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateSeriesID() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldSeriesID)
+	return u
+}
+
+// SetSuwayomiID sets the "suwayomi_id" field.
+func (u *SeriesProviderUpsert) SetSuwayomiID(v int) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldSuwayomiID, v)
+	return u
+}
+
+// UpdateSuwayomiID sets the "suwayomi_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateSuwayomiID() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldSuwayomiID)
+	return u
+}
+
+// AddSuwayomiID adds v to the "suwayomi_id" field.
+func (u *SeriesProviderUpsert) AddSuwayomiID(v int) *SeriesProviderUpsert {
+	u.Add(seriesprovider.FieldSuwayomiID, v)
+	return u
+}
+
+// ClearSuwayomiID clears the value of the "suwayomi_id" field.
+func (u *SeriesProviderUpsert) ClearSuwayomiID() *SeriesProviderUpsert {
+	u.SetNull(seriesprovider.FieldSuwayomiID)
+	return u
+}
+
+// SetProvider sets the "provider" field.
+func (u *SeriesProviderUpsert) SetProvider(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldProvider, v)
+	return u
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateProvider() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldProvider)
+	return u
+}
+
+// SetProviderName sets the "provider_name" field.
+func (u *SeriesProviderUpsert) SetProviderName(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldProviderName, v)
+	return u
+}
+
+// UpdateProviderName sets the "provider_name" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateProviderName() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldProviderName)
+	return u
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (u *SeriesProviderUpsert) ClearProviderName() *SeriesProviderUpsert {
+	u.SetNull(seriesprovider.FieldProviderName)
+	return u
+}
+
+// SetScanlator sets the "scanlator" field.
+func (u *SeriesProviderUpsert) SetScanlator(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldScanlator, v)
+	return u
+}
+
+// UpdateScanlator sets the "scanlator" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateScanlator() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldScanlator)
+	return u
+}
+
+// SetLanguage sets the "language" field.
+func (u *SeriesProviderUpsert) SetLanguage(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldLanguage, v)
+	return u
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateLanguage() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldLanguage)
+	return u
+}
+
+// SetURL sets the "url" field.
+func (u *SeriesProviderUpsert) SetURL(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldURL, v)
+	return u
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateURL() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldURL)
+	return u
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *SeriesProviderUpsert) SetWebURL(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldWebURL, v)
+	return u
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateWebURL() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldWebURL)
+	return u
+}
+
+// SetTitle sets the "title" field.
+func (u *SeriesProviderUpsert) SetTitle(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldTitle, v)
+	return u
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateTitle() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldTitle)
+	return u
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SeriesProviderUpsert) SetMetadata(v bool) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldMetadata, v)
+	return u
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateMetadata() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldMetadata)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesProviderUpsert) SetStatus(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateStatus() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldStatus)
+	return u
+}
+
+// SetFlags sets the "flags" field.
+func (u *SeriesProviderUpsert) SetFlags(v uint32) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldFlags, v)
+	return u
+}
+
+// UpdateFlags sets the "flags" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateFlags() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldFlags)
+	return u
+}
+
+// AddFlags adds v to the "flags" field.
+func (u *SeriesProviderUpsert) AddFlags(v uint32) *SeriesProviderUpsert {
+	u.Add(seriesprovider.FieldFlags, v)
+	return u
+}
+
+// SetImportance sets the "importance" field.
+func (u *SeriesProviderUpsert) SetImportance(v int) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldImportance, v)
+	return u
+}
+
+// UpdateImportance sets the "importance" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateImportance() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldImportance)
+	return u
+}
+
+// AddImportance adds v to the "importance" field.
+func (u *SeriesProviderUpsert) AddImportance(v int) *SeriesProviderUpsert {
+	u.Add(seriesprovider.FieldImportance, v)
+	return u
+}
+
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (u *SeriesProviderUpsert) SetIgnoreFractional(v bool) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldIgnoreFractional, v)
+	return u
+}
+
+// UpdateIgnoreFractional sets the "ignore_fractional" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateIgnoreFractional() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldIgnoreFractional)
+	return u
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesProviderUpsert) SetCoverURL(v string) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldCoverURL, v)
+	return u
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateCoverURL() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldCoverURL)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesProviderUpsert) SetUpdatedAt(v time.Time) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateUpdatedAt() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(seriesprovider.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SeriesProviderUpsertOne) UpdateNewValues() *SeriesProviderUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(seriesprovider.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(seriesprovider.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SeriesProviderUpsertOne) Ignore() *SeriesProviderUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SeriesProviderUpsertOne) DoNothing() *SeriesProviderUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SeriesProviderCreate.OnConflict
+// documentation for more info.
+func (u *SeriesProviderUpsertOne) Update(set func(*SeriesProviderUpsert)) *SeriesProviderUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SeriesProviderUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *SeriesProviderUpsertOne) SetSeriesID(v uuid.UUID) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateSeriesID() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetSuwayomiID sets the "suwayomi_id" field.
+func (u *SeriesProviderUpsertOne) SetSuwayomiID(v int) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetSuwayomiID(v)
+	})
+}
+
+// AddSuwayomiID adds v to the "suwayomi_id" field.
+func (u *SeriesProviderUpsertOne) AddSuwayomiID(v int) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddSuwayomiID(v)
+	})
+}
+
+// UpdateSuwayomiID sets the "suwayomi_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateSuwayomiID() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateSuwayomiID()
+	})
+}
+
+// ClearSuwayomiID clears the value of the "suwayomi_id" field.
+func (u *SeriesProviderUpsertOne) ClearSuwayomiID() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.ClearSuwayomiID()
+	})
+}
+
+// SetProvider sets the "provider" field.
+func (u *SeriesProviderUpsertOne) SetProvider(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetProvider(v)
+	})
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateProvider() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateProvider()
+	})
+}
+
+// SetProviderName sets the "provider_name" field.
+func (u *SeriesProviderUpsertOne) SetProviderName(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetProviderName(v)
+	})
+}
+
+// UpdateProviderName sets the "provider_name" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateProviderName() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateProviderName()
+	})
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (u *SeriesProviderUpsertOne) ClearProviderName() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.ClearProviderName()
+	})
+}
+
+// SetScanlator sets the "scanlator" field.
+func (u *SeriesProviderUpsertOne) SetScanlator(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetScanlator(v)
+	})
+}
+
+// UpdateScanlator sets the "scanlator" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateScanlator() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateScanlator()
+	})
+}
+
+// SetLanguage sets the "language" field.
+func (u *SeriesProviderUpsertOne) SetLanguage(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetLanguage(v)
+	})
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateLanguage() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateLanguage()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *SeriesProviderUpsertOne) SetURL(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateURL() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *SeriesProviderUpsertOne) SetWebURL(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetWebURL(v)
+	})
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateWebURL() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateWebURL()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *SeriesProviderUpsertOne) SetTitle(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateTitle() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SeriesProviderUpsertOne) SetMetadata(v bool) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateMetadata() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesProviderUpsertOne) SetStatus(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateStatus() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetFlags sets the "flags" field.
+func (u *SeriesProviderUpsertOne) SetFlags(v uint32) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetFlags(v)
+	})
+}
+
+// AddFlags adds v to the "flags" field.
+func (u *SeriesProviderUpsertOne) AddFlags(v uint32) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddFlags(v)
+	})
+}
+
+// UpdateFlags sets the "flags" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateFlags() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateFlags()
+	})
+}
+
+// SetImportance sets the "importance" field.
+func (u *SeriesProviderUpsertOne) SetImportance(v int) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetImportance(v)
+	})
+}
+
+// AddImportance adds v to the "importance" field.
+func (u *SeriesProviderUpsertOne) AddImportance(v int) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddImportance(v)
+	})
+}
+
+// UpdateImportance sets the "importance" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateImportance() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateImportance()
+	})
+}
+
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (u *SeriesProviderUpsertOne) SetIgnoreFractional(v bool) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetIgnoreFractional(v)
+	})
+}
+
+// UpdateIgnoreFractional sets the "ignore_fractional" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateIgnoreFractional() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateIgnoreFractional()
+	})
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesProviderUpsertOne) SetCoverURL(v string) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetCoverURL(v)
+	})
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateCoverURL() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateCoverURL()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesProviderUpsertOne) SetUpdatedAt(v time.Time) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateUpdatedAt() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SeriesProviderUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SeriesProviderCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SeriesProviderUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SeriesProviderUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SeriesProviderUpsertOne.ID is not supported by MySQL driver. Use SeriesProviderUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SeriesProviderUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SeriesProviderCreateBulk is the builder for creating many SeriesProvider entities in bulk.
 type SeriesProviderCreateBulk struct {
 	config
 	err      error
 	builders []*SeriesProviderCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SeriesProvider entities in the database.
@@ -663,6 +1287,7 @@ func (_c *SeriesProviderCreateBulk) Save(ctx context.Context) ([]*SeriesProvider
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -709,6 +1334,382 @@ func (_c *SeriesProviderCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SeriesProviderCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SeriesProvider.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SeriesProviderUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SeriesProviderCreateBulk) OnConflict(opts ...sql.ConflictOption) *SeriesProviderUpsertBulk {
+	_c.conflict = opts
+	return &SeriesProviderUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SeriesProviderCreateBulk) OnConflictColumns(columns ...string) *SeriesProviderUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SeriesProviderUpsertBulk{
+		create: _c,
+	}
+}
+
+// SeriesProviderUpsertBulk is the builder for "upsert"-ing
+// a bulk of SeriesProvider nodes.
+type SeriesProviderUpsertBulk struct {
+	create *SeriesProviderCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(seriesprovider.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SeriesProviderUpsertBulk) UpdateNewValues() *SeriesProviderUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(seriesprovider.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(seriesprovider.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SeriesProvider.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SeriesProviderUpsertBulk) Ignore() *SeriesProviderUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SeriesProviderUpsertBulk) DoNothing() *SeriesProviderUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SeriesProviderCreateBulk.OnConflict
+// documentation for more info.
+func (u *SeriesProviderUpsertBulk) Update(set func(*SeriesProviderUpsert)) *SeriesProviderUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SeriesProviderUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *SeriesProviderUpsertBulk) SetSeriesID(v uuid.UUID) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateSeriesID() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetSuwayomiID sets the "suwayomi_id" field.
+func (u *SeriesProviderUpsertBulk) SetSuwayomiID(v int) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetSuwayomiID(v)
+	})
+}
+
+// AddSuwayomiID adds v to the "suwayomi_id" field.
+func (u *SeriesProviderUpsertBulk) AddSuwayomiID(v int) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddSuwayomiID(v)
+	})
+}
+
+// UpdateSuwayomiID sets the "suwayomi_id" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateSuwayomiID() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateSuwayomiID()
+	})
+}
+
+// ClearSuwayomiID clears the value of the "suwayomi_id" field.
+func (u *SeriesProviderUpsertBulk) ClearSuwayomiID() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.ClearSuwayomiID()
+	})
+}
+
+// SetProvider sets the "provider" field.
+func (u *SeriesProviderUpsertBulk) SetProvider(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetProvider(v)
+	})
+}
+
+// UpdateProvider sets the "provider" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateProvider() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateProvider()
+	})
+}
+
+// SetProviderName sets the "provider_name" field.
+func (u *SeriesProviderUpsertBulk) SetProviderName(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetProviderName(v)
+	})
+}
+
+// UpdateProviderName sets the "provider_name" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateProviderName() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateProviderName()
+	})
+}
+
+// ClearProviderName clears the value of the "provider_name" field.
+func (u *SeriesProviderUpsertBulk) ClearProviderName() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.ClearProviderName()
+	})
+}
+
+// SetScanlator sets the "scanlator" field.
+func (u *SeriesProviderUpsertBulk) SetScanlator(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetScanlator(v)
+	})
+}
+
+// UpdateScanlator sets the "scanlator" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateScanlator() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateScanlator()
+	})
+}
+
+// SetLanguage sets the "language" field.
+func (u *SeriesProviderUpsertBulk) SetLanguage(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetLanguage(v)
+	})
+}
+
+// UpdateLanguage sets the "language" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateLanguage() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateLanguage()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *SeriesProviderUpsertBulk) SetURL(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateURL() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *SeriesProviderUpsertBulk) SetWebURL(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetWebURL(v)
+	})
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateWebURL() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateWebURL()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *SeriesProviderUpsertBulk) SetTitle(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateTitle() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetMetadata sets the "metadata" field.
+func (u *SeriesProviderUpsertBulk) SetMetadata(v bool) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetMetadata(v)
+	})
+}
+
+// UpdateMetadata sets the "metadata" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateMetadata() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateMetadata()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesProviderUpsertBulk) SetStatus(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateStatus() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetFlags sets the "flags" field.
+func (u *SeriesProviderUpsertBulk) SetFlags(v uint32) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetFlags(v)
+	})
+}
+
+// AddFlags adds v to the "flags" field.
+func (u *SeriesProviderUpsertBulk) AddFlags(v uint32) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddFlags(v)
+	})
+}
+
+// UpdateFlags sets the "flags" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateFlags() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateFlags()
+	})
+}
+
+// SetImportance sets the "importance" field.
+func (u *SeriesProviderUpsertBulk) SetImportance(v int) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetImportance(v)
+	})
+}
+
+// AddImportance adds v to the "importance" field.
+func (u *SeriesProviderUpsertBulk) AddImportance(v int) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.AddImportance(v)
+	})
+}
+
+// UpdateImportance sets the "importance" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateImportance() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateImportance()
+	})
+}
+
+// SetIgnoreFractional sets the "ignore_fractional" field.
+func (u *SeriesProviderUpsertBulk) SetIgnoreFractional(v bool) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetIgnoreFractional(v)
+	})
+}
+
+// UpdateIgnoreFractional sets the "ignore_fractional" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateIgnoreFractional() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateIgnoreFractional()
+	})
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesProviderUpsertBulk) SetCoverURL(v string) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetCoverURL(v)
+	})
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateCoverURL() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateCoverURL()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesProviderUpsertBulk) SetUpdatedAt(v time.Time) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateUpdatedAt() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SeriesProviderUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SeriesProviderCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SeriesProviderCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SeriesProviderUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type DisabledSourceCreate struct {
 	config
 	mutation *DisabledSourceMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -139,6 +142,7 @@ func (_c *DisabledSourceCreate) createSpec() (*DisabledSource, *sqlgraph.CreateS
 		_node = &DisabledSource{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(disabledsource.Table, sqlgraph.NewFieldSpec(disabledsource.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -154,11 +158,189 @@ func (_c *DisabledSourceCreate) createSpec() (*DisabledSource, *sqlgraph.CreateS
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.DisabledSource.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.DisabledSourceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *DisabledSourceCreate) OnConflict(opts ...sql.ConflictOption) *DisabledSourceUpsertOne {
+	_c.conflict = opts
+	return &DisabledSourceUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *DisabledSourceCreate) OnConflictColumns(columns ...string) *DisabledSourceUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &DisabledSourceUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// DisabledSourceUpsertOne is the builder for "upsert"-ing
+	//  one DisabledSource node.
+	DisabledSourceUpsertOne struct {
+		create *DisabledSourceCreate
+	}
+
+	// DisabledSourceUpsert is the "OnConflict" setter.
+	DisabledSourceUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *DisabledSourceUpsert) SetSourceID(v int64) *DisabledSourceUpsert {
+	u.Set(disabledsource.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *DisabledSourceUpsert) UpdateSourceID() *DisabledSourceUpsert {
+	u.SetExcluded(disabledsource.FieldSourceID)
+	return u
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *DisabledSourceUpsert) AddSourceID(v int64) *DisabledSourceUpsert {
+	u.Add(disabledsource.FieldSourceID, v)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(disabledsource.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *DisabledSourceUpsertOne) UpdateNewValues() *DisabledSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(disabledsource.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(disabledsource.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *DisabledSourceUpsertOne) Ignore() *DisabledSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *DisabledSourceUpsertOne) DoNothing() *DisabledSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the DisabledSourceCreate.OnConflict
+// documentation for more info.
+func (u *DisabledSourceUpsertOne) Update(set func(*DisabledSourceUpsert)) *DisabledSourceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&DisabledSourceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *DisabledSourceUpsertOne) SetSourceID(v int64) *DisabledSourceUpsertOne {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *DisabledSourceUpsertOne) AddSourceID(v int64) *DisabledSourceUpsertOne {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *DisabledSourceUpsertOne) UpdateSourceID() *DisabledSourceUpsertOne {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// Exec executes the query.
+func (u *DisabledSourceUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for DisabledSourceCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *DisabledSourceUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *DisabledSourceUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: DisabledSourceUpsertOne.ID is not supported by MySQL driver. Use DisabledSourceUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *DisabledSourceUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // DisabledSourceCreateBulk is the builder for creating many DisabledSource entities in bulk.
 type DisabledSourceCreateBulk struct {
 	config
 	err      error
 	builders []*DisabledSourceCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the DisabledSource entities in the database.
@@ -188,6 +370,7 @@ func (_c *DisabledSourceCreateBulk) Save(ctx context.Context) ([]*DisabledSource
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -234,6 +417,144 @@ func (_c *DisabledSourceCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *DisabledSourceCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.DisabledSource.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.DisabledSourceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *DisabledSourceCreateBulk) OnConflict(opts ...sql.ConflictOption) *DisabledSourceUpsertBulk {
+	_c.conflict = opts
+	return &DisabledSourceUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *DisabledSourceCreateBulk) OnConflictColumns(columns ...string) *DisabledSourceUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &DisabledSourceUpsertBulk{
+		create: _c,
+	}
+}
+
+// DisabledSourceUpsertBulk is the builder for "upsert"-ing
+// a bulk of DisabledSource nodes.
+type DisabledSourceUpsertBulk struct {
+	create *DisabledSourceCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(disabledsource.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *DisabledSourceUpsertBulk) UpdateNewValues() *DisabledSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(disabledsource.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(disabledsource.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.DisabledSource.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *DisabledSourceUpsertBulk) Ignore() *DisabledSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *DisabledSourceUpsertBulk) DoNothing() *DisabledSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the DisabledSourceCreateBulk.OnConflict
+// documentation for more info.
+func (u *DisabledSourceUpsertBulk) Update(set func(*DisabledSourceUpsert)) *DisabledSourceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&DisabledSourceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *DisabledSourceUpsertBulk) SetSourceID(v int64) *DisabledSourceUpsertBulk {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *DisabledSourceUpsertBulk) AddSourceID(v int64) *DisabledSourceUpsertBulk {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *DisabledSourceUpsertBulk) UpdateSourceID() *DisabledSourceUpsertBulk {
+	return u.Update(func(s *DisabledSourceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// Exec executes the query.
+func (u *DisabledSourceUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the DisabledSourceCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for DisabledSourceCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *DisabledSourceUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

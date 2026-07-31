@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceSeedStateCreate struct {
 	config
 	mutation *SourceSeedStateMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -237,6 +240,7 @@ func (_c *SourceSeedStateCreate) createSpec() (*SourceSeedState, *sqlgraph.Creat
 		_node = &SourceSeedState{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourceseedstate.Table, sqlgraph.NewFieldSpec(sourceseedstate.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -272,11 +276,332 @@ func (_c *SourceSeedStateCreate) createSpec() (*SourceSeedState, *sqlgraph.Creat
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceSeedState.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceSeedStateUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceSeedStateCreate) OnConflict(opts ...sql.ConflictOption) *SourceSeedStateUpsertOne {
+	_c.conflict = opts
+	return &SourceSeedStateUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceSeedStateCreate) OnConflictColumns(columns ...string) *SourceSeedStateUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceSeedStateUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceSeedStateUpsertOne is the builder for "upsert"-ing
+	//  one SourceSeedState node.
+	SourceSeedStateUpsertOne struct {
+		create *SourceSeedStateCreate
+	}
+
+	// SourceSeedStateUpsert is the "OnConflict" setter.
+	SourceSeedStateUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceSeedStateUpsert) SetSourceID(v int64) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdateSourceID() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldSourceID)
+	return u
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceSeedStateUpsert) AddSourceID(v int64) *SourceSeedStateUpsert {
+	u.Add(sourceseedstate.FieldSourceID, v)
+	return u
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceSeedStateUpsert) SetSourceName(v string) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldSourceName, v)
+	return u
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdateSourceName() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldSourceName)
+	return u
+}
+
+// SetPrefsReadOk sets the "prefs_read_ok" field.
+func (u *SourceSeedStateUpsert) SetPrefsReadOk(v bool) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldPrefsReadOk, v)
+	return u
+}
+
+// UpdatePrefsReadOk sets the "prefs_read_ok" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdatePrefsReadOk() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldPrefsReadOk)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceSeedStateUpsert) SetLastError(v string) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdateLastError() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldLastError)
+	return u
+}
+
+// SetPrefsReadAt sets the "prefs_read_at" field.
+func (u *SourceSeedStateUpsert) SetPrefsReadAt(v time.Time) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldPrefsReadAt, v)
+	return u
+}
+
+// UpdatePrefsReadAt sets the "prefs_read_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdatePrefsReadAt() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldPrefsReadAt)
+	return u
+}
+
+// ClearPrefsReadAt clears the value of the "prefs_read_at" field.
+func (u *SourceSeedStateUpsert) ClearPrefsReadAt() *SourceSeedStateUpsert {
+	u.SetNull(sourceseedstate.FieldPrefsReadAt)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceSeedStateUpsert) SetUpdatedAt(v time.Time) *SourceSeedStateUpsert {
+	u.Set(sourceseedstate.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsert) UpdateUpdatedAt() *SourceSeedStateUpsert {
+	u.SetExcluded(sourceseedstate.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourceseedstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceSeedStateUpsertOne) UpdateNewValues() *SourceSeedStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourceseedstate.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(sourceseedstate.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceSeedStateUpsertOne) Ignore() *SourceSeedStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceSeedStateUpsertOne) DoNothing() *SourceSeedStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceSeedStateCreate.OnConflict
+// documentation for more info.
+func (u *SourceSeedStateUpsertOne) Update(set func(*SourceSeedStateUpsert)) *SourceSeedStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceSeedStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceSeedStateUpsertOne) SetSourceID(v int64) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceSeedStateUpsertOne) AddSourceID(v int64) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdateSourceID() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceSeedStateUpsertOne) SetSourceName(v string) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdateSourceName() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetPrefsReadOk sets the "prefs_read_ok" field.
+func (u *SourceSeedStateUpsertOne) SetPrefsReadOk(v bool) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetPrefsReadOk(v)
+	})
+}
+
+// UpdatePrefsReadOk sets the "prefs_read_ok" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdatePrefsReadOk() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdatePrefsReadOk()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceSeedStateUpsertOne) SetLastError(v string) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdateLastError() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetPrefsReadAt sets the "prefs_read_at" field.
+func (u *SourceSeedStateUpsertOne) SetPrefsReadAt(v time.Time) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetPrefsReadAt(v)
+	})
+}
+
+// UpdatePrefsReadAt sets the "prefs_read_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdatePrefsReadAt() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdatePrefsReadAt()
+	})
+}
+
+// ClearPrefsReadAt clears the value of the "prefs_read_at" field.
+func (u *SourceSeedStateUpsertOne) ClearPrefsReadAt() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.ClearPrefsReadAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceSeedStateUpsertOne) SetUpdatedAt(v time.Time) *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertOne) UpdateUpdatedAt() *SourceSeedStateUpsertOne {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceSeedStateUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceSeedStateCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceSeedStateUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceSeedStateUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceSeedStateUpsertOne.ID is not supported by MySQL driver. Use SourceSeedStateUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceSeedStateUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceSeedStateCreateBulk is the builder for creating many SourceSeedState entities in bulk.
 type SourceSeedStateCreateBulk struct {
 	config
 	err      error
 	builders []*SourceSeedStateCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceSeedState entities in the database.
@@ -306,6 +631,7 @@ func (_c *SourceSeedStateCreateBulk) Save(ctx context.Context) ([]*SourceSeedSta
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -352,6 +678,221 @@ func (_c *SourceSeedStateCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceSeedStateCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceSeedState.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceSeedStateUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceSeedStateCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceSeedStateUpsertBulk {
+	_c.conflict = opts
+	return &SourceSeedStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceSeedStateCreateBulk) OnConflictColumns(columns ...string) *SourceSeedStateUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceSeedStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceSeedStateUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceSeedState nodes.
+type SourceSeedStateUpsertBulk struct {
+	create *SourceSeedStateCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourceseedstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceSeedStateUpsertBulk) UpdateNewValues() *SourceSeedStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourceseedstate.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(sourceseedstate.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceSeedState.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceSeedStateUpsertBulk) Ignore() *SourceSeedStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceSeedStateUpsertBulk) DoNothing() *SourceSeedStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceSeedStateCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceSeedStateUpsertBulk) Update(set func(*SourceSeedStateUpsert)) *SourceSeedStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceSeedStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceSeedStateUpsertBulk) SetSourceID(v int64) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceSeedStateUpsertBulk) AddSourceID(v int64) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdateSourceID() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceSeedStateUpsertBulk) SetSourceName(v string) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdateSourceName() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetPrefsReadOk sets the "prefs_read_ok" field.
+func (u *SourceSeedStateUpsertBulk) SetPrefsReadOk(v bool) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetPrefsReadOk(v)
+	})
+}
+
+// UpdatePrefsReadOk sets the "prefs_read_ok" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdatePrefsReadOk() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdatePrefsReadOk()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceSeedStateUpsertBulk) SetLastError(v string) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdateLastError() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetPrefsReadAt sets the "prefs_read_at" field.
+func (u *SourceSeedStateUpsertBulk) SetPrefsReadAt(v time.Time) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetPrefsReadAt(v)
+	})
+}
+
+// UpdatePrefsReadAt sets the "prefs_read_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdatePrefsReadAt() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdatePrefsReadAt()
+	})
+}
+
+// ClearPrefsReadAt clears the value of the "prefs_read_at" field.
+func (u *SourceSeedStateUpsertBulk) ClearPrefsReadAt() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.ClearPrefsReadAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceSeedStateUpsertBulk) SetUpdatedAt(v time.Time) *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceSeedStateUpsertBulk) UpdateUpdatedAt() *SourceSeedStateUpsertBulk {
+	return u.Update(func(s *SourceSeedStateUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceSeedStateUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceSeedStateCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceSeedStateCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceSeedStateUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

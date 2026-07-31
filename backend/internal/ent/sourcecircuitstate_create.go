@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceCircuitStateCreate struct {
 	config
 	mutation *SourceCircuitStateMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceKey sets the "source_key" field.
@@ -209,6 +212,7 @@ func (_c *SourceCircuitStateCreate) createSpec() (*SourceCircuitState, *sqlgraph
 		_node = &SourceCircuitState{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourcecircuitstate.Table, sqlgraph.NewFieldSpec(sourcecircuitstate.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -240,11 +244,342 @@ func (_c *SourceCircuitStateCreate) createSpec() (*SourceCircuitState, *sqlgraph
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceCircuitState.Create().
+//		SetSourceKey(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceCircuitStateUpsert) {
+//			SetSourceKey(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceCircuitStateCreate) OnConflict(opts ...sql.ConflictOption) *SourceCircuitStateUpsertOne {
+	_c.conflict = opts
+	return &SourceCircuitStateUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceCircuitStateCreate) OnConflictColumns(columns ...string) *SourceCircuitStateUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceCircuitStateUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceCircuitStateUpsertOne is the builder for "upsert"-ing
+	//  one SourceCircuitState node.
+	SourceCircuitStateUpsertOne struct {
+		create *SourceCircuitStateCreate
+	}
+
+	// SourceCircuitStateUpsert is the "OnConflict" setter.
+	SourceCircuitStateUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceCircuitStateUpsert) SetSourceKey(v string) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldSourceKey, v)
+	return u
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateSourceKey() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldSourceKey)
+	return u
+}
+
+// SetConsecutiveFailures sets the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsert) SetConsecutiveFailures(v int) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldConsecutiveFailures, v)
+	return u
+}
+
+// UpdateConsecutiveFailures sets the "consecutive_failures" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateConsecutiveFailures() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldConsecutiveFailures)
+	return u
+}
+
+// AddConsecutiveFailures adds v to the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsert) AddConsecutiveFailures(v int) *SourceCircuitStateUpsert {
+	u.Add(sourcecircuitstate.FieldConsecutiveFailures, v)
+	return u
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (u *SourceCircuitStateUpsert) SetCooldownUntil(v time.Time) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldCooldownUntil, v)
+	return u
+}
+
+// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateCooldownUntil() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldCooldownUntil)
+	return u
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (u *SourceCircuitStateUpsert) ClearCooldownUntil() *SourceCircuitStateUpsert {
+	u.SetNull(sourcecircuitstate.FieldCooldownUntil)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCircuitStateUpsert) SetLastError(v string) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateLastError() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldLastError)
+	return u
+}
+
+// SetFailingSince sets the "failing_since" field.
+func (u *SourceCircuitStateUpsert) SetFailingSince(v time.Time) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldFailingSince, v)
+	return u
+}
+
+// UpdateFailingSince sets the "failing_since" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateFailingSince() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldFailingSince)
+	return u
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (u *SourceCircuitStateUpsert) ClearFailingSince() *SourceCircuitStateUpsert {
+	u.SetNull(sourcecircuitstate.FieldFailingSince)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCircuitStateUpsert) SetUpdatedAt(v time.Time) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateUpdatedAt() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcecircuitstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceCircuitStateUpsertOne) UpdateNewValues() *SourceCircuitStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourcecircuitstate.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceCircuitStateUpsertOne) Ignore() *SourceCircuitStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceCircuitStateUpsertOne) DoNothing() *SourceCircuitStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceCircuitStateCreate.OnConflict
+// documentation for more info.
+func (u *SourceCircuitStateUpsertOne) Update(set func(*SourceCircuitStateUpsert)) *SourceCircuitStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceCircuitStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceCircuitStateUpsertOne) SetSourceKey(v string) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetSourceKey(v)
+	})
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateSourceKey() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateSourceKey()
+	})
+}
+
+// SetConsecutiveFailures sets the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsertOne) SetConsecutiveFailures(v int) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetConsecutiveFailures(v)
+	})
+}
+
+// AddConsecutiveFailures adds v to the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsertOne) AddConsecutiveFailures(v int) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.AddConsecutiveFailures(v)
+	})
+}
+
+// UpdateConsecutiveFailures sets the "consecutive_failures" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateConsecutiveFailures() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateConsecutiveFailures()
+	})
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (u *SourceCircuitStateUpsertOne) SetCooldownUntil(v time.Time) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetCooldownUntil(v)
+	})
+}
+
+// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateCooldownUntil() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateCooldownUntil()
+	})
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (u *SourceCircuitStateUpsertOne) ClearCooldownUntil() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.ClearCooldownUntil()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCircuitStateUpsertOne) SetLastError(v string) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateLastError() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetFailingSince sets the "failing_since" field.
+func (u *SourceCircuitStateUpsertOne) SetFailingSince(v time.Time) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetFailingSince(v)
+	})
+}
+
+// UpdateFailingSince sets the "failing_since" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateFailingSince() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateFailingSince()
+	})
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (u *SourceCircuitStateUpsertOne) ClearFailingSince() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.ClearFailingSince()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCircuitStateUpsertOne) SetUpdatedAt(v time.Time) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateUpdatedAt() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceCircuitStateUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceCircuitStateCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceCircuitStateUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceCircuitStateUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceCircuitStateUpsertOne.ID is not supported by MySQL driver. Use SourceCircuitStateUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceCircuitStateUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceCircuitStateCreateBulk is the builder for creating many SourceCircuitState entities in bulk.
 type SourceCircuitStateCreateBulk struct {
 	config
 	err      error
 	builders []*SourceCircuitStateCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceCircuitState entities in the database.
@@ -274,6 +609,7 @@ func (_c *SourceCircuitStateCreateBulk) Save(ctx context.Context) ([]*SourceCirc
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -320,6 +656,225 @@ func (_c *SourceCircuitStateCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceCircuitStateCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceCircuitState.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceCircuitStateUpsert) {
+//			SetSourceKey(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceCircuitStateCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceCircuitStateUpsertBulk {
+	_c.conflict = opts
+	return &SourceCircuitStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceCircuitStateCreateBulk) OnConflictColumns(columns ...string) *SourceCircuitStateUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceCircuitStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceCircuitStateUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceCircuitState nodes.
+type SourceCircuitStateUpsertBulk struct {
+	create *SourceCircuitStateCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcecircuitstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceCircuitStateUpsertBulk) UpdateNewValues() *SourceCircuitStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourcecircuitstate.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceCircuitState.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceCircuitStateUpsertBulk) Ignore() *SourceCircuitStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceCircuitStateUpsertBulk) DoNothing() *SourceCircuitStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceCircuitStateCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceCircuitStateUpsertBulk) Update(set func(*SourceCircuitStateUpsert)) *SourceCircuitStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceCircuitStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceKey sets the "source_key" field.
+func (u *SourceCircuitStateUpsertBulk) SetSourceKey(v string) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetSourceKey(v)
+	})
+}
+
+// UpdateSourceKey sets the "source_key" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateSourceKey() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateSourceKey()
+	})
+}
+
+// SetConsecutiveFailures sets the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsertBulk) SetConsecutiveFailures(v int) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetConsecutiveFailures(v)
+	})
+}
+
+// AddConsecutiveFailures adds v to the "consecutive_failures" field.
+func (u *SourceCircuitStateUpsertBulk) AddConsecutiveFailures(v int) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.AddConsecutiveFailures(v)
+	})
+}
+
+// UpdateConsecutiveFailures sets the "consecutive_failures" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateConsecutiveFailures() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateConsecutiveFailures()
+	})
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (u *SourceCircuitStateUpsertBulk) SetCooldownUntil(v time.Time) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetCooldownUntil(v)
+	})
+}
+
+// UpdateCooldownUntil sets the "cooldown_until" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateCooldownUntil() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateCooldownUntil()
+	})
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (u *SourceCircuitStateUpsertBulk) ClearCooldownUntil() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.ClearCooldownUntil()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceCircuitStateUpsertBulk) SetLastError(v string) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateLastError() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetFailingSince sets the "failing_since" field.
+func (u *SourceCircuitStateUpsertBulk) SetFailingSince(v time.Time) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetFailingSince(v)
+	})
+}
+
+// UpdateFailingSince sets the "failing_since" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateFailingSince() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateFailingSince()
+	})
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (u *SourceCircuitStateUpsertBulk) ClearFailingSince() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.ClearFailingSince()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceCircuitStateUpsertBulk) SetUpdatedAt(v time.Time) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateUpdatedAt() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceCircuitStateUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceCircuitStateCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceCircuitStateCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceCircuitStateUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

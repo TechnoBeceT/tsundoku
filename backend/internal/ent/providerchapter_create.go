@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ type ProviderChapterCreate struct {
 	config
 	mutation *ProviderChapterMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSeriesProviderID sets the "series_provider_id" field.
@@ -339,6 +342,7 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 		_node = &ProviderChapter{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(providerchapter.Table, sqlgraph.NewFieldSpec(providerchapter.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -415,11 +419,654 @@ func (_c *ProviderChapterCreate) createSpec() (*ProviderChapter, *sqlgraph.Creat
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.ProviderChapter.Create().
+//		SetSeriesProviderID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ProviderChapterUpsert) {
+//			SetSeriesProviderID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ProviderChapterCreate) OnConflict(opts ...sql.ConflictOption) *ProviderChapterUpsertOne {
+	_c.conflict = opts
+	return &ProviderChapterUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ProviderChapterCreate) OnConflictColumns(columns ...string) *ProviderChapterUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ProviderChapterUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// ProviderChapterUpsertOne is the builder for "upsert"-ing
+	//  one ProviderChapter node.
+	ProviderChapterUpsertOne struct {
+		create *ProviderChapterCreate
+	}
+
+	// ProviderChapterUpsert is the "OnConflict" setter.
+	ProviderChapterUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *ProviderChapterUpsert) SetSeriesProviderID(v uuid.UUID) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldSeriesProviderID, v)
+	return u
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateSeriesProviderID() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldSeriesProviderID)
+	return u
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ProviderChapterUpsert) SetChapterKey(v string) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldChapterKey, v)
+	return u
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateChapterKey() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldChapterKey)
+	return u
+}
+
+// SetNumber sets the "number" field.
+func (u *ProviderChapterUpsert) SetNumber(v float64) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldNumber, v)
+	return u
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateNumber() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldNumber)
+	return u
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ProviderChapterUpsert) AddNumber(v float64) *ProviderChapterUpsert {
+	u.Add(providerchapter.FieldNumber, v)
+	return u
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ProviderChapterUpsert) ClearNumber() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldNumber)
+	return u
+}
+
+// SetName sets the "name" field.
+func (u *ProviderChapterUpsert) SetName(v string) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldName, v)
+	return u
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateName() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldName)
+	return u
+}
+
+// SetURL sets the "url" field.
+func (u *ProviderChapterUpsert) SetURL(v string) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldURL, v)
+	return u
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateURL() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldURL)
+	return u
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *ProviderChapterUpsert) SetWebURL(v string) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldWebURL, v)
+	return u
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateWebURL() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldWebURL)
+	return u
+}
+
+// SetProviderUploadDate sets the "provider_upload_date" field.
+func (u *ProviderChapterUpsert) SetProviderUploadDate(v time.Time) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldProviderUploadDate, v)
+	return u
+}
+
+// UpdateProviderUploadDate sets the "provider_upload_date" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateProviderUploadDate() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldProviderUploadDate)
+	return u
+}
+
+// ClearProviderUploadDate clears the value of the "provider_upload_date" field.
+func (u *ProviderChapterUpsert) ClearProviderUploadDate() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldProviderUploadDate)
+	return u
+}
+
+// SetProviderIndex sets the "provider_index" field.
+func (u *ProviderChapterUpsert) SetProviderIndex(v int) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldProviderIndex, v)
+	return u
+}
+
+// UpdateProviderIndex sets the "provider_index" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateProviderIndex() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldProviderIndex)
+	return u
+}
+
+// AddProviderIndex adds v to the "provider_index" field.
+func (u *ProviderChapterUpsert) AddProviderIndex(v int) *ProviderChapterUpsert {
+	u.Add(providerchapter.FieldProviderIndex, v)
+	return u
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ProviderChapterUpsert) SetPageCount(v int) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldPageCount, v)
+	return u
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdatePageCount() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldPageCount)
+	return u
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ProviderChapterUpsert) AddPageCount(v int) *ProviderChapterUpsert {
+	u.Add(providerchapter.FieldPageCount, v)
+	return u
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ProviderChapterUpsert) ClearPageCount() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldPageCount)
+	return u
+}
+
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsert) SetSuwayomiChapterID(v int) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldSuwayomiChapterID, v)
+	return u
+}
+
+// UpdateSuwayomiChapterID sets the "suwayomi_chapter_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateSuwayomiChapterID() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldSuwayomiChapterID)
+	return u
+}
+
+// AddSuwayomiChapterID adds v to the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsert) AddSuwayomiChapterID(v int) *ProviderChapterUpsert {
+	u.Add(providerchapter.FieldSuwayomiChapterID, v)
+	return u
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsert) ClearSuwayomiChapterID() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldSuwayomiChapterID)
+	return u
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *ProviderChapterUpsert) SetAttempts(v int) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldAttempts, v)
+	return u
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateAttempts() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldAttempts)
+	return u
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *ProviderChapterUpsert) AddAttempts(v int) *ProviderChapterUpsert {
+	u.Add(providerchapter.FieldAttempts, v)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ProviderChapterUpsert) SetLastError(v string) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateLastError() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldLastError)
+	return u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ProviderChapterUpsert) SetNextAttemptAt(v time.Time) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldNextAttemptAt, v)
+	return u
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdateNextAttemptAt() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldNextAttemptAt)
+	return u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ProviderChapterUpsert) ClearNextAttemptAt() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldNextAttemptAt)
+	return u
+}
+
+// SetPageLinks sets the "page_links" field.
+func (u *ProviderChapterUpsert) SetPageLinks(v []fetcher.PageLink) *ProviderChapterUpsert {
+	u.Set(providerchapter.FieldPageLinks, v)
+	return u
+}
+
+// UpdatePageLinks sets the "page_links" field to the value that was provided on create.
+func (u *ProviderChapterUpsert) UpdatePageLinks() *ProviderChapterUpsert {
+	u.SetExcluded(providerchapter.FieldPageLinks)
+	return u
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (u *ProviderChapterUpsert) ClearPageLinks() *ProviderChapterUpsert {
+	u.SetNull(providerchapter.FieldPageLinks)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(providerchapter.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ProviderChapterUpsertOne) UpdateNewValues() *ProviderChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(providerchapter.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *ProviderChapterUpsertOne) Ignore() *ProviderChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ProviderChapterUpsertOne) DoNothing() *ProviderChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ProviderChapterCreate.OnConflict
+// documentation for more info.
+func (u *ProviderChapterUpsertOne) Update(set func(*ProviderChapterUpsert)) *ProviderChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ProviderChapterUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *ProviderChapterUpsertOne) SetSeriesProviderID(v uuid.UUID) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetSeriesProviderID(v)
+	})
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateSeriesProviderID() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateSeriesProviderID()
+	})
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ProviderChapterUpsertOne) SetChapterKey(v string) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetChapterKey(v)
+	})
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateChapterKey() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateChapterKey()
+	})
+}
+
+// SetNumber sets the "number" field.
+func (u *ProviderChapterUpsertOne) SetNumber(v float64) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetNumber(v)
+	})
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ProviderChapterUpsertOne) AddNumber(v float64) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddNumber(v)
+	})
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateNumber() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateNumber()
+	})
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ProviderChapterUpsertOne) ClearNumber() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearNumber()
+	})
+}
+
+// SetName sets the "name" field.
+func (u *ProviderChapterUpsertOne) SetName(v string) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateName() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *ProviderChapterUpsertOne) SetURL(v string) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateURL() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *ProviderChapterUpsertOne) SetWebURL(v string) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetWebURL(v)
+	})
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateWebURL() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateWebURL()
+	})
+}
+
+// SetProviderUploadDate sets the "provider_upload_date" field.
+func (u *ProviderChapterUpsertOne) SetProviderUploadDate(v time.Time) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetProviderUploadDate(v)
+	})
+}
+
+// UpdateProviderUploadDate sets the "provider_upload_date" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateProviderUploadDate() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateProviderUploadDate()
+	})
+}
+
+// ClearProviderUploadDate clears the value of the "provider_upload_date" field.
+func (u *ProviderChapterUpsertOne) ClearProviderUploadDate() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearProviderUploadDate()
+	})
+}
+
+// SetProviderIndex sets the "provider_index" field.
+func (u *ProviderChapterUpsertOne) SetProviderIndex(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetProviderIndex(v)
+	})
+}
+
+// AddProviderIndex adds v to the "provider_index" field.
+func (u *ProviderChapterUpsertOne) AddProviderIndex(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddProviderIndex(v)
+	})
+}
+
+// UpdateProviderIndex sets the "provider_index" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateProviderIndex() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateProviderIndex()
+	})
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ProviderChapterUpsertOne) SetPageCount(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetPageCount(v)
+	})
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ProviderChapterUpsertOne) AddPageCount(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddPageCount(v)
+	})
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdatePageCount() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdatePageCount()
+	})
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ProviderChapterUpsertOne) ClearPageCount() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearPageCount()
+	})
+}
+
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertOne) SetSuwayomiChapterID(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetSuwayomiChapterID(v)
+	})
+}
+
+// AddSuwayomiChapterID adds v to the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertOne) AddSuwayomiChapterID(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddSuwayomiChapterID(v)
+	})
+}
+
+// UpdateSuwayomiChapterID sets the "suwayomi_chapter_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateSuwayomiChapterID() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateSuwayomiChapterID()
+	})
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertOne) ClearSuwayomiChapterID() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearSuwayomiChapterID()
+	})
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *ProviderChapterUpsertOne) SetAttempts(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetAttempts(v)
+	})
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *ProviderChapterUpsertOne) AddAttempts(v int) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddAttempts(v)
+	})
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateAttempts() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateAttempts()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ProviderChapterUpsertOne) SetLastError(v string) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateLastError() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ProviderChapterUpsertOne) SetNextAttemptAt(v time.Time) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdateNextAttemptAt() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ProviderChapterUpsertOne) ClearNextAttemptAt() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetPageLinks sets the "page_links" field.
+func (u *ProviderChapterUpsertOne) SetPageLinks(v []fetcher.PageLink) *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetPageLinks(v)
+	})
+}
+
+// UpdatePageLinks sets the "page_links" field to the value that was provided on create.
+func (u *ProviderChapterUpsertOne) UpdatePageLinks() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdatePageLinks()
+	})
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (u *ProviderChapterUpsertOne) ClearPageLinks() *ProviderChapterUpsertOne {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearPageLinks()
+	})
+}
+
+// Exec executes the query.
+func (u *ProviderChapterUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ProviderChapterCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ProviderChapterUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *ProviderChapterUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: ProviderChapterUpsertOne.ID is not supported by MySQL driver. Use ProviderChapterUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *ProviderChapterUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // ProviderChapterCreateBulk is the builder for creating many ProviderChapter entities in bulk.
 type ProviderChapterCreateBulk struct {
 	config
 	err      error
 	builders []*ProviderChapterCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the ProviderChapter entities in the database.
@@ -449,6 +1096,7 @@ func (_c *ProviderChapterCreateBulk) Save(ctx context.Context) ([]*ProviderChapt
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -495,6 +1143,393 @@ func (_c *ProviderChapterCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *ProviderChapterCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.ProviderChapter.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ProviderChapterUpsert) {
+//			SetSeriesProviderID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ProviderChapterCreateBulk) OnConflict(opts ...sql.ConflictOption) *ProviderChapterUpsertBulk {
+	_c.conflict = opts
+	return &ProviderChapterUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ProviderChapterCreateBulk) OnConflictColumns(columns ...string) *ProviderChapterUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ProviderChapterUpsertBulk{
+		create: _c,
+	}
+}
+
+// ProviderChapterUpsertBulk is the builder for "upsert"-ing
+// a bulk of ProviderChapter nodes.
+type ProviderChapterUpsertBulk struct {
+	create *ProviderChapterCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(providerchapter.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ProviderChapterUpsertBulk) UpdateNewValues() *ProviderChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(providerchapter.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.ProviderChapter.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *ProviderChapterUpsertBulk) Ignore() *ProviderChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ProviderChapterUpsertBulk) DoNothing() *ProviderChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ProviderChapterCreateBulk.OnConflict
+// documentation for more info.
+func (u *ProviderChapterUpsertBulk) Update(set func(*ProviderChapterUpsert)) *ProviderChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ProviderChapterUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *ProviderChapterUpsertBulk) SetSeriesProviderID(v uuid.UUID) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetSeriesProviderID(v)
+	})
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateSeriesProviderID() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateSeriesProviderID()
+	})
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ProviderChapterUpsertBulk) SetChapterKey(v string) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetChapterKey(v)
+	})
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateChapterKey() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateChapterKey()
+	})
+}
+
+// SetNumber sets the "number" field.
+func (u *ProviderChapterUpsertBulk) SetNumber(v float64) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetNumber(v)
+	})
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ProviderChapterUpsertBulk) AddNumber(v float64) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddNumber(v)
+	})
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateNumber() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateNumber()
+	})
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ProviderChapterUpsertBulk) ClearNumber() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearNumber()
+	})
+}
+
+// SetName sets the "name" field.
+func (u *ProviderChapterUpsertBulk) SetName(v string) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateName() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *ProviderChapterUpsertBulk) SetURL(v string) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateURL() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetWebURL sets the "web_url" field.
+func (u *ProviderChapterUpsertBulk) SetWebURL(v string) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetWebURL(v)
+	})
+}
+
+// UpdateWebURL sets the "web_url" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateWebURL() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateWebURL()
+	})
+}
+
+// SetProviderUploadDate sets the "provider_upload_date" field.
+func (u *ProviderChapterUpsertBulk) SetProviderUploadDate(v time.Time) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetProviderUploadDate(v)
+	})
+}
+
+// UpdateProviderUploadDate sets the "provider_upload_date" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateProviderUploadDate() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateProviderUploadDate()
+	})
+}
+
+// ClearProviderUploadDate clears the value of the "provider_upload_date" field.
+func (u *ProviderChapterUpsertBulk) ClearProviderUploadDate() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearProviderUploadDate()
+	})
+}
+
+// SetProviderIndex sets the "provider_index" field.
+func (u *ProviderChapterUpsertBulk) SetProviderIndex(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetProviderIndex(v)
+	})
+}
+
+// AddProviderIndex adds v to the "provider_index" field.
+func (u *ProviderChapterUpsertBulk) AddProviderIndex(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddProviderIndex(v)
+	})
+}
+
+// UpdateProviderIndex sets the "provider_index" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateProviderIndex() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateProviderIndex()
+	})
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ProviderChapterUpsertBulk) SetPageCount(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetPageCount(v)
+	})
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ProviderChapterUpsertBulk) AddPageCount(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddPageCount(v)
+	})
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdatePageCount() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdatePageCount()
+	})
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ProviderChapterUpsertBulk) ClearPageCount() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearPageCount()
+	})
+}
+
+// SetSuwayomiChapterID sets the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertBulk) SetSuwayomiChapterID(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetSuwayomiChapterID(v)
+	})
+}
+
+// AddSuwayomiChapterID adds v to the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertBulk) AddSuwayomiChapterID(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddSuwayomiChapterID(v)
+	})
+}
+
+// UpdateSuwayomiChapterID sets the "suwayomi_chapter_id" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateSuwayomiChapterID() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateSuwayomiChapterID()
+	})
+}
+
+// ClearSuwayomiChapterID clears the value of the "suwayomi_chapter_id" field.
+func (u *ProviderChapterUpsertBulk) ClearSuwayomiChapterID() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearSuwayomiChapterID()
+	})
+}
+
+// SetAttempts sets the "attempts" field.
+func (u *ProviderChapterUpsertBulk) SetAttempts(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetAttempts(v)
+	})
+}
+
+// AddAttempts adds v to the "attempts" field.
+func (u *ProviderChapterUpsertBulk) AddAttempts(v int) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.AddAttempts(v)
+	})
+}
+
+// UpdateAttempts sets the "attempts" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateAttempts() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateAttempts()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ProviderChapterUpsertBulk) SetLastError(v string) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateLastError() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ProviderChapterUpsertBulk) SetNextAttemptAt(v time.Time) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdateNextAttemptAt() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ProviderChapterUpsertBulk) ClearNextAttemptAt() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetPageLinks sets the "page_links" field.
+func (u *ProviderChapterUpsertBulk) SetPageLinks(v []fetcher.PageLink) *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.SetPageLinks(v)
+	})
+}
+
+// UpdatePageLinks sets the "page_links" field to the value that was provided on create.
+func (u *ProviderChapterUpsertBulk) UpdatePageLinks() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.UpdatePageLinks()
+	})
+}
+
+// ClearPageLinks clears the value of the "page_links" field.
+func (u *ProviderChapterUpsertBulk) ClearPageLinks() *ProviderChapterUpsertBulk {
+	return u.Update(func(s *ProviderChapterUpsert) {
+		s.ClearPageLinks()
+	})
+}
+
+// Exec executes the query.
+func (u *ProviderChapterUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the ProviderChapterCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ProviderChapterCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ProviderChapterUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -24,6 +26,7 @@ type SeriesCreate struct {
 	config
 	mutation *SeriesMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetTitle sets the "title" field.
@@ -525,6 +528,7 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 		_node = &Series{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(series.Table, sqlgraph.NewFieldSpec(series.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -689,11 +693,878 @@ func (_c *SeriesCreate) createSpec() (*Series, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Series.Create().
+//		SetTitle(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SeriesUpsert) {
+//			SetTitle(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SeriesCreate) OnConflict(opts ...sql.ConflictOption) *SeriesUpsertOne {
+	_c.conflict = opts
+	return &SeriesUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SeriesCreate) OnConflictColumns(columns ...string) *SeriesUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SeriesUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SeriesUpsertOne is the builder for "upsert"-ing
+	//  one Series node.
+	SeriesUpsertOne struct {
+		create *SeriesCreate
+	}
+
+	// SeriesUpsert is the "OnConflict" setter.
+	SeriesUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetTitle sets the "title" field.
+func (u *SeriesUpsert) SetTitle(v string) *SeriesUpsert {
+	u.Set(series.FieldTitle, v)
+	return u
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateTitle() *SeriesUpsert {
+	u.SetExcluded(series.FieldTitle)
+	return u
+}
+
+// SetSlug sets the "slug" field.
+func (u *SeriesUpsert) SetSlug(v string) *SeriesUpsert {
+	u.Set(series.FieldSlug, v)
+	return u
+}
+
+// UpdateSlug sets the "slug" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateSlug() *SeriesUpsert {
+	u.SetExcluded(series.FieldSlug)
+	return u
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesUpsert) SetCoverURL(v string) *SeriesUpsert {
+	u.Set(series.FieldCoverURL, v)
+	return u
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCoverURL() *SeriesUpsert {
+	u.SetExcluded(series.FieldCoverURL)
+	return u
+}
+
+// SetDescription sets the "description" field.
+func (u *SeriesUpsert) SetDescription(v string) *SeriesUpsert {
+	u.Set(series.FieldDescription, v)
+	return u
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateDescription() *SeriesUpsert {
+	u.SetExcluded(series.FieldDescription)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesUpsert) SetStatus(v string) *SeriesUpsert {
+	u.Set(series.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateStatus() *SeriesUpsert {
+	u.SetExcluded(series.FieldStatus)
+	return u
+}
+
+// SetGenres sets the "genres" field.
+func (u *SeriesUpsert) SetGenres(v []string) *SeriesUpsert {
+	u.Set(series.FieldGenres, v)
+	return u
+}
+
+// UpdateGenres sets the "genres" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateGenres() *SeriesUpsert {
+	u.SetExcluded(series.FieldGenres)
+	return u
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (u *SeriesUpsert) ClearGenres() *SeriesUpsert {
+	u.SetNull(series.FieldGenres)
+	return u
+}
+
+// SetTags sets the "tags" field.
+func (u *SeriesUpsert) SetTags(v []string) *SeriesUpsert {
+	u.Set(series.FieldTags, v)
+	return u
+}
+
+// UpdateTags sets the "tags" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateTags() *SeriesUpsert {
+	u.SetExcluded(series.FieldTags)
+	return u
+}
+
+// ClearTags clears the value of the "tags" field.
+func (u *SeriesUpsert) ClearTags() *SeriesUpsert {
+	u.SetNull(series.FieldTags)
+	return u
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (u *SeriesUpsert) SetAltTitles(v []metadata.AltTitle) *SeriesUpsert {
+	u.Set(series.FieldAltTitles, v)
+	return u
+}
+
+// UpdateAltTitles sets the "alt_titles" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateAltTitles() *SeriesUpsert {
+	u.SetExcluded(series.FieldAltTitles)
+	return u
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (u *SeriesUpsert) ClearAltTitles() *SeriesUpsert {
+	u.SetNull(series.FieldAltTitles)
+	return u
+}
+
+// SetAuthors sets the "authors" field.
+func (u *SeriesUpsert) SetAuthors(v []metadata.Author) *SeriesUpsert {
+	u.Set(series.FieldAuthors, v)
+	return u
+}
+
+// UpdateAuthors sets the "authors" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateAuthors() *SeriesUpsert {
+	u.SetExcluded(series.FieldAuthors)
+	return u
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (u *SeriesUpsert) ClearAuthors() *SeriesUpsert {
+	u.SetNull(series.FieldAuthors)
+	return u
+}
+
+// SetLinks sets the "links" field.
+func (u *SeriesUpsert) SetLinks(v []metadata.Link) *SeriesUpsert {
+	u.Set(series.FieldLinks, v)
+	return u
+}
+
+// UpdateLinks sets the "links" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateLinks() *SeriesUpsert {
+	u.SetExcluded(series.FieldLinks)
+	return u
+}
+
+// ClearLinks clears the value of the "links" field.
+func (u *SeriesUpsert) ClearLinks() *SeriesUpsert {
+	u.SetNull(series.FieldLinks)
+	return u
+}
+
+// SetYear sets the "year" field.
+func (u *SeriesUpsert) SetYear(v int) *SeriesUpsert {
+	u.Set(series.FieldYear, v)
+	return u
+}
+
+// UpdateYear sets the "year" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateYear() *SeriesUpsert {
+	u.SetExcluded(series.FieldYear)
+	return u
+}
+
+// AddYear adds v to the "year" field.
+func (u *SeriesUpsert) AddYear(v int) *SeriesUpsert {
+	u.Add(series.FieldYear, v)
+	return u
+}
+
+// SetCategoryID sets the "category_id" field.
+func (u *SeriesUpsert) SetCategoryID(v uuid.UUID) *SeriesUpsert {
+	u.Set(series.FieldCategoryID, v)
+	return u
+}
+
+// UpdateCategoryID sets the "category_id" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCategoryID() *SeriesUpsert {
+	u.SetExcluded(series.FieldCategoryID)
+	return u
+}
+
+// ClearCategoryID clears the value of the "category_id" field.
+func (u *SeriesUpsert) ClearCategoryID() *SeriesUpsert {
+	u.SetNull(series.FieldCategoryID)
+	return u
+}
+
+// SetMonitored sets the "monitored" field.
+func (u *SeriesUpsert) SetMonitored(v bool) *SeriesUpsert {
+	u.Set(series.FieldMonitored, v)
+	return u
+}
+
+// UpdateMonitored sets the "monitored" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateMonitored() *SeriesUpsert {
+	u.SetExcluded(series.FieldMonitored)
+	return u
+}
+
+// SetCompleted sets the "completed" field.
+func (u *SeriesUpsert) SetCompleted(v bool) *SeriesUpsert {
+	u.Set(series.FieldCompleted, v)
+	return u
+}
+
+// UpdateCompleted sets the "completed" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCompleted() *SeriesUpsert {
+	u.SetExcluded(series.FieldCompleted)
+	return u
+}
+
+// SetNotifyArmed sets the "notify_armed" field.
+func (u *SeriesUpsert) SetNotifyArmed(v bool) *SeriesUpsert {
+	u.Set(series.FieldNotifyArmed, v)
+	return u
+}
+
+// UpdateNotifyArmed sets the "notify_armed" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateNotifyArmed() *SeriesUpsert {
+	u.SetExcluded(series.FieldNotifyArmed)
+	return u
+}
+
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (u *SeriesUpsert) SetMetadataProviderID(v uuid.UUID) *SeriesUpsert {
+	u.Set(series.FieldMetadataProviderID, v)
+	return u
+}
+
+// UpdateMetadataProviderID sets the "metadata_provider_id" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateMetadataProviderID() *SeriesUpsert {
+	u.SetExcluded(series.FieldMetadataProviderID)
+	return u
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (u *SeriesUpsert) ClearMetadataProviderID() *SeriesUpsert {
+	u.SetNull(series.FieldMetadataProviderID)
+	return u
+}
+
+// SetMetadataSource sets the "metadata_source" field.
+func (u *SeriesUpsert) SetMetadataSource(v *metadata.SourceRef) *SeriesUpsert {
+	u.Set(series.FieldMetadataSource, v)
+	return u
+}
+
+// UpdateMetadataSource sets the "metadata_source" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateMetadataSource() *SeriesUpsert {
+	u.SetExcluded(series.FieldMetadataSource)
+	return u
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (u *SeriesUpsert) ClearMetadataSource() *SeriesUpsert {
+	u.SetNull(series.FieldMetadataSource)
+	return u
+}
+
+// SetMetadataLocked sets the "metadata_locked" field.
+func (u *SeriesUpsert) SetMetadataLocked(v bool) *SeriesUpsert {
+	u.Set(series.FieldMetadataLocked, v)
+	return u
+}
+
+// UpdateMetadataLocked sets the "metadata_locked" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateMetadataLocked() *SeriesUpsert {
+	u.SetExcluded(series.FieldMetadataLocked)
+	return u
+}
+
+// SetCoverFile sets the "cover_file" field.
+func (u *SeriesUpsert) SetCoverFile(v string) *SeriesUpsert {
+	u.Set(series.FieldCoverFile, v)
+	return u
+}
+
+// UpdateCoverFile sets the "cover_file" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCoverFile() *SeriesUpsert {
+	u.SetExcluded(series.FieldCoverFile)
+	return u
+}
+
+// SetCoverSourceURL sets the "cover_source_url" field.
+func (u *SeriesUpsert) SetCoverSourceURL(v string) *SeriesUpsert {
+	u.Set(series.FieldCoverSourceURL, v)
+	return u
+}
+
+// UpdateCoverSourceURL sets the "cover_source_url" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCoverSourceURL() *SeriesUpsert {
+	u.SetExcluded(series.FieldCoverSourceURL)
+	return u
+}
+
+// SetCoverVersion sets the "cover_version" field.
+func (u *SeriesUpsert) SetCoverVersion(v string) *SeriesUpsert {
+	u.Set(series.FieldCoverVersion, v)
+	return u
+}
+
+// UpdateCoverVersion sets the "cover_version" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCoverVersion() *SeriesUpsert {
+	u.SetExcluded(series.FieldCoverVersion)
+	return u
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (u *SeriesUpsert) SetCoverSource(v *metadata.SourceRef) *SeriesUpsert {
+	u.Set(series.FieldCoverSource, v)
+	return u
+}
+
+// UpdateCoverSource sets the "cover_source" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateCoverSource() *SeriesUpsert {
+	u.SetExcluded(series.FieldCoverSource)
+	return u
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (u *SeriesUpsert) ClearCoverSource() *SeriesUpsert {
+	u.SetNull(series.FieldCoverSource)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesUpsert) SetUpdatedAt(v time.Time) *SeriesUpsert {
+	u.Set(series.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesUpsert) UpdateUpdatedAt() *SeriesUpsert {
+	u.SetExcluded(series.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(series.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SeriesUpsertOne) UpdateNewValues() *SeriesUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(series.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(series.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SeriesUpsertOne) Ignore() *SeriesUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SeriesUpsertOne) DoNothing() *SeriesUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SeriesCreate.OnConflict
+// documentation for more info.
+func (u *SeriesUpsertOne) Update(set func(*SeriesUpsert)) *SeriesUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SeriesUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTitle sets the "title" field.
+func (u *SeriesUpsertOne) SetTitle(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateTitle() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetSlug sets the "slug" field.
+func (u *SeriesUpsertOne) SetSlug(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetSlug(v)
+	})
+}
+
+// UpdateSlug sets the "slug" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateSlug() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateSlug()
+	})
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesUpsertOne) SetCoverURL(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverURL(v)
+	})
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCoverURL() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverURL()
+	})
+}
+
+// SetDescription sets the "description" field.
+func (u *SeriesUpsertOne) SetDescription(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetDescription(v)
+	})
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateDescription() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateDescription()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesUpsertOne) SetStatus(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateStatus() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetGenres sets the "genres" field.
+func (u *SeriesUpsertOne) SetGenres(v []string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetGenres(v)
+	})
+}
+
+// UpdateGenres sets the "genres" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateGenres() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateGenres()
+	})
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (u *SeriesUpsertOne) ClearGenres() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearGenres()
+	})
+}
+
+// SetTags sets the "tags" field.
+func (u *SeriesUpsertOne) SetTags(v []string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetTags(v)
+	})
+}
+
+// UpdateTags sets the "tags" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateTags() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateTags()
+	})
+}
+
+// ClearTags clears the value of the "tags" field.
+func (u *SeriesUpsertOne) ClearTags() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearTags()
+	})
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (u *SeriesUpsertOne) SetAltTitles(v []metadata.AltTitle) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetAltTitles(v)
+	})
+}
+
+// UpdateAltTitles sets the "alt_titles" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateAltTitles() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateAltTitles()
+	})
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (u *SeriesUpsertOne) ClearAltTitles() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearAltTitles()
+	})
+}
+
+// SetAuthors sets the "authors" field.
+func (u *SeriesUpsertOne) SetAuthors(v []metadata.Author) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetAuthors(v)
+	})
+}
+
+// UpdateAuthors sets the "authors" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateAuthors() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateAuthors()
+	})
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (u *SeriesUpsertOne) ClearAuthors() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearAuthors()
+	})
+}
+
+// SetLinks sets the "links" field.
+func (u *SeriesUpsertOne) SetLinks(v []metadata.Link) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetLinks(v)
+	})
+}
+
+// UpdateLinks sets the "links" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateLinks() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateLinks()
+	})
+}
+
+// ClearLinks clears the value of the "links" field.
+func (u *SeriesUpsertOne) ClearLinks() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearLinks()
+	})
+}
+
+// SetYear sets the "year" field.
+func (u *SeriesUpsertOne) SetYear(v int) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetYear(v)
+	})
+}
+
+// AddYear adds v to the "year" field.
+func (u *SeriesUpsertOne) AddYear(v int) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.AddYear(v)
+	})
+}
+
+// UpdateYear sets the "year" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateYear() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateYear()
+	})
+}
+
+// SetCategoryID sets the "category_id" field.
+func (u *SeriesUpsertOne) SetCategoryID(v uuid.UUID) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCategoryID(v)
+	})
+}
+
+// UpdateCategoryID sets the "category_id" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCategoryID() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCategoryID()
+	})
+}
+
+// ClearCategoryID clears the value of the "category_id" field.
+func (u *SeriesUpsertOne) ClearCategoryID() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearCategoryID()
+	})
+}
+
+// SetMonitored sets the "monitored" field.
+func (u *SeriesUpsertOne) SetMonitored(v bool) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMonitored(v)
+	})
+}
+
+// UpdateMonitored sets the "monitored" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateMonitored() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMonitored()
+	})
+}
+
+// SetCompleted sets the "completed" field.
+func (u *SeriesUpsertOne) SetCompleted(v bool) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCompleted(v)
+	})
+}
+
+// UpdateCompleted sets the "completed" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCompleted() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCompleted()
+	})
+}
+
+// SetNotifyArmed sets the "notify_armed" field.
+func (u *SeriesUpsertOne) SetNotifyArmed(v bool) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetNotifyArmed(v)
+	})
+}
+
+// UpdateNotifyArmed sets the "notify_armed" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateNotifyArmed() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateNotifyArmed()
+	})
+}
+
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (u *SeriesUpsertOne) SetMetadataProviderID(v uuid.UUID) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataProviderID(v)
+	})
+}
+
+// UpdateMetadataProviderID sets the "metadata_provider_id" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateMetadataProviderID() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataProviderID()
+	})
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (u *SeriesUpsertOne) ClearMetadataProviderID() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearMetadataProviderID()
+	})
+}
+
+// SetMetadataSource sets the "metadata_source" field.
+func (u *SeriesUpsertOne) SetMetadataSource(v *metadata.SourceRef) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataSource(v)
+	})
+}
+
+// UpdateMetadataSource sets the "metadata_source" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateMetadataSource() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataSource()
+	})
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (u *SeriesUpsertOne) ClearMetadataSource() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearMetadataSource()
+	})
+}
+
+// SetMetadataLocked sets the "metadata_locked" field.
+func (u *SeriesUpsertOne) SetMetadataLocked(v bool) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataLocked(v)
+	})
+}
+
+// UpdateMetadataLocked sets the "metadata_locked" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateMetadataLocked() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataLocked()
+	})
+}
+
+// SetCoverFile sets the "cover_file" field.
+func (u *SeriesUpsertOne) SetCoverFile(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverFile(v)
+	})
+}
+
+// UpdateCoverFile sets the "cover_file" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCoverFile() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverFile()
+	})
+}
+
+// SetCoverSourceURL sets the "cover_source_url" field.
+func (u *SeriesUpsertOne) SetCoverSourceURL(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverSourceURL(v)
+	})
+}
+
+// UpdateCoverSourceURL sets the "cover_source_url" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCoverSourceURL() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverSourceURL()
+	})
+}
+
+// SetCoverVersion sets the "cover_version" field.
+func (u *SeriesUpsertOne) SetCoverVersion(v string) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverVersion(v)
+	})
+}
+
+// UpdateCoverVersion sets the "cover_version" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCoverVersion() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverVersion()
+	})
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (u *SeriesUpsertOne) SetCoverSource(v *metadata.SourceRef) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverSource(v)
+	})
+}
+
+// UpdateCoverSource sets the "cover_source" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateCoverSource() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverSource()
+	})
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (u *SeriesUpsertOne) ClearCoverSource() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearCoverSource()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesUpsertOne) SetUpdatedAt(v time.Time) *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesUpsertOne) UpdateUpdatedAt() *SeriesUpsertOne {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SeriesUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SeriesCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SeriesUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SeriesUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SeriesUpsertOne.ID is not supported by MySQL driver. Use SeriesUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SeriesUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SeriesCreateBulk is the builder for creating many Series entities in bulk.
 type SeriesCreateBulk struct {
 	config
 	err      error
 	builders []*SeriesCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the Series entities in the database.
@@ -723,6 +1594,7 @@ func (_c *SeriesCreateBulk) Save(ctx context.Context) ([]*Series, error) {
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -769,6 +1641,515 @@ func (_c *SeriesCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SeriesCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Series.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SeriesUpsert) {
+//			SetTitle(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SeriesCreateBulk) OnConflict(opts ...sql.ConflictOption) *SeriesUpsertBulk {
+	_c.conflict = opts
+	return &SeriesUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SeriesCreateBulk) OnConflictColumns(columns ...string) *SeriesUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SeriesUpsertBulk{
+		create: _c,
+	}
+}
+
+// SeriesUpsertBulk is the builder for "upsert"-ing
+// a bulk of Series nodes.
+type SeriesUpsertBulk struct {
+	create *SeriesCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(series.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SeriesUpsertBulk) UpdateNewValues() *SeriesUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(series.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(series.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Series.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SeriesUpsertBulk) Ignore() *SeriesUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SeriesUpsertBulk) DoNothing() *SeriesUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SeriesCreateBulk.OnConflict
+// documentation for more info.
+func (u *SeriesUpsertBulk) Update(set func(*SeriesUpsert)) *SeriesUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SeriesUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetTitle sets the "title" field.
+func (u *SeriesUpsertBulk) SetTitle(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateTitle() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetSlug sets the "slug" field.
+func (u *SeriesUpsertBulk) SetSlug(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetSlug(v)
+	})
+}
+
+// UpdateSlug sets the "slug" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateSlug() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateSlug()
+	})
+}
+
+// SetCoverURL sets the "cover_url" field.
+func (u *SeriesUpsertBulk) SetCoverURL(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverURL(v)
+	})
+}
+
+// UpdateCoverURL sets the "cover_url" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCoverURL() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverURL()
+	})
+}
+
+// SetDescription sets the "description" field.
+func (u *SeriesUpsertBulk) SetDescription(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetDescription(v)
+	})
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateDescription() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateDescription()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *SeriesUpsertBulk) SetStatus(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateStatus() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetGenres sets the "genres" field.
+func (u *SeriesUpsertBulk) SetGenres(v []string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetGenres(v)
+	})
+}
+
+// UpdateGenres sets the "genres" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateGenres() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateGenres()
+	})
+}
+
+// ClearGenres clears the value of the "genres" field.
+func (u *SeriesUpsertBulk) ClearGenres() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearGenres()
+	})
+}
+
+// SetTags sets the "tags" field.
+func (u *SeriesUpsertBulk) SetTags(v []string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetTags(v)
+	})
+}
+
+// UpdateTags sets the "tags" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateTags() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateTags()
+	})
+}
+
+// ClearTags clears the value of the "tags" field.
+func (u *SeriesUpsertBulk) ClearTags() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearTags()
+	})
+}
+
+// SetAltTitles sets the "alt_titles" field.
+func (u *SeriesUpsertBulk) SetAltTitles(v []metadata.AltTitle) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetAltTitles(v)
+	})
+}
+
+// UpdateAltTitles sets the "alt_titles" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateAltTitles() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateAltTitles()
+	})
+}
+
+// ClearAltTitles clears the value of the "alt_titles" field.
+func (u *SeriesUpsertBulk) ClearAltTitles() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearAltTitles()
+	})
+}
+
+// SetAuthors sets the "authors" field.
+func (u *SeriesUpsertBulk) SetAuthors(v []metadata.Author) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetAuthors(v)
+	})
+}
+
+// UpdateAuthors sets the "authors" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateAuthors() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateAuthors()
+	})
+}
+
+// ClearAuthors clears the value of the "authors" field.
+func (u *SeriesUpsertBulk) ClearAuthors() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearAuthors()
+	})
+}
+
+// SetLinks sets the "links" field.
+func (u *SeriesUpsertBulk) SetLinks(v []metadata.Link) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetLinks(v)
+	})
+}
+
+// UpdateLinks sets the "links" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateLinks() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateLinks()
+	})
+}
+
+// ClearLinks clears the value of the "links" field.
+func (u *SeriesUpsertBulk) ClearLinks() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearLinks()
+	})
+}
+
+// SetYear sets the "year" field.
+func (u *SeriesUpsertBulk) SetYear(v int) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetYear(v)
+	})
+}
+
+// AddYear adds v to the "year" field.
+func (u *SeriesUpsertBulk) AddYear(v int) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.AddYear(v)
+	})
+}
+
+// UpdateYear sets the "year" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateYear() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateYear()
+	})
+}
+
+// SetCategoryID sets the "category_id" field.
+func (u *SeriesUpsertBulk) SetCategoryID(v uuid.UUID) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCategoryID(v)
+	})
+}
+
+// UpdateCategoryID sets the "category_id" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCategoryID() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCategoryID()
+	})
+}
+
+// ClearCategoryID clears the value of the "category_id" field.
+func (u *SeriesUpsertBulk) ClearCategoryID() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearCategoryID()
+	})
+}
+
+// SetMonitored sets the "monitored" field.
+func (u *SeriesUpsertBulk) SetMonitored(v bool) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMonitored(v)
+	})
+}
+
+// UpdateMonitored sets the "monitored" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateMonitored() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMonitored()
+	})
+}
+
+// SetCompleted sets the "completed" field.
+func (u *SeriesUpsertBulk) SetCompleted(v bool) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCompleted(v)
+	})
+}
+
+// UpdateCompleted sets the "completed" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCompleted() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCompleted()
+	})
+}
+
+// SetNotifyArmed sets the "notify_armed" field.
+func (u *SeriesUpsertBulk) SetNotifyArmed(v bool) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetNotifyArmed(v)
+	})
+}
+
+// UpdateNotifyArmed sets the "notify_armed" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateNotifyArmed() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateNotifyArmed()
+	})
+}
+
+// SetMetadataProviderID sets the "metadata_provider_id" field.
+func (u *SeriesUpsertBulk) SetMetadataProviderID(v uuid.UUID) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataProviderID(v)
+	})
+}
+
+// UpdateMetadataProviderID sets the "metadata_provider_id" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateMetadataProviderID() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataProviderID()
+	})
+}
+
+// ClearMetadataProviderID clears the value of the "metadata_provider_id" field.
+func (u *SeriesUpsertBulk) ClearMetadataProviderID() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearMetadataProviderID()
+	})
+}
+
+// SetMetadataSource sets the "metadata_source" field.
+func (u *SeriesUpsertBulk) SetMetadataSource(v *metadata.SourceRef) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataSource(v)
+	})
+}
+
+// UpdateMetadataSource sets the "metadata_source" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateMetadataSource() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataSource()
+	})
+}
+
+// ClearMetadataSource clears the value of the "metadata_source" field.
+func (u *SeriesUpsertBulk) ClearMetadataSource() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearMetadataSource()
+	})
+}
+
+// SetMetadataLocked sets the "metadata_locked" field.
+func (u *SeriesUpsertBulk) SetMetadataLocked(v bool) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetMetadataLocked(v)
+	})
+}
+
+// UpdateMetadataLocked sets the "metadata_locked" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateMetadataLocked() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateMetadataLocked()
+	})
+}
+
+// SetCoverFile sets the "cover_file" field.
+func (u *SeriesUpsertBulk) SetCoverFile(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverFile(v)
+	})
+}
+
+// UpdateCoverFile sets the "cover_file" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCoverFile() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverFile()
+	})
+}
+
+// SetCoverSourceURL sets the "cover_source_url" field.
+func (u *SeriesUpsertBulk) SetCoverSourceURL(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverSourceURL(v)
+	})
+}
+
+// UpdateCoverSourceURL sets the "cover_source_url" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCoverSourceURL() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverSourceURL()
+	})
+}
+
+// SetCoverVersion sets the "cover_version" field.
+func (u *SeriesUpsertBulk) SetCoverVersion(v string) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverVersion(v)
+	})
+}
+
+// UpdateCoverVersion sets the "cover_version" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCoverVersion() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverVersion()
+	})
+}
+
+// SetCoverSource sets the "cover_source" field.
+func (u *SeriesUpsertBulk) SetCoverSource(v *metadata.SourceRef) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetCoverSource(v)
+	})
+}
+
+// UpdateCoverSource sets the "cover_source" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateCoverSource() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateCoverSource()
+	})
+}
+
+// ClearCoverSource clears the value of the "cover_source" field.
+func (u *SeriesUpsertBulk) ClearCoverSource() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.ClearCoverSource()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SeriesUpsertBulk) SetUpdatedAt(v time.Time) *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SeriesUpsertBulk) UpdateUpdatedAt() *SeriesUpsertBulk {
+	return u.Update(func(s *SeriesUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SeriesUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SeriesCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SeriesCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SeriesUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

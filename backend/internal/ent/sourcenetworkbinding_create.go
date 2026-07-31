@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceNetworkBindingCreate struct {
 	config
 	mutation *SourceNetworkBindingMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -209,6 +212,7 @@ func (_c *SourceNetworkBindingCreate) createSpec() (*SourceNetworkBinding, *sqlg
 		_node = &SourceNetworkBinding{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourcenetworkbinding.Table, sqlgraph.NewFieldSpec(sourcenetworkbinding.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -240,11 +244,319 @@ func (_c *SourceNetworkBindingCreate) createSpec() (*SourceNetworkBinding, *sqlg
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceNetworkBinding.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceNetworkBindingUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceNetworkBindingCreate) OnConflict(opts ...sql.ConflictOption) *SourceNetworkBindingUpsertOne {
+	_c.conflict = opts
+	return &SourceNetworkBindingUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceNetworkBindingCreate) OnConflictColumns(columns ...string) *SourceNetworkBindingUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceNetworkBindingUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceNetworkBindingUpsertOne is the builder for "upsert"-ing
+	//  one SourceNetworkBinding node.
+	SourceNetworkBindingUpsertOne struct {
+		create *SourceNetworkBindingCreate
+	}
+
+	// SourceNetworkBindingUpsert is the "OnConflict" setter.
+	SourceNetworkBindingUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceNetworkBindingUpsert) SetSourceID(v int64) *SourceNetworkBindingUpsert {
+	u.Set(sourcenetworkbinding.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsert) UpdateSourceID() *SourceNetworkBindingUpsert {
+	u.SetExcluded(sourcenetworkbinding.FieldSourceID)
+	return u
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceNetworkBindingUpsert) AddSourceID(v int64) *SourceNetworkBindingUpsert {
+	u.Add(sourcenetworkbinding.FieldSourceID, v)
+	return u
+}
+
+// SetSocksEndpointID sets the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsert) SetSocksEndpointID(v uuid.UUID) *SourceNetworkBindingUpsert {
+	u.Set(sourcenetworkbinding.FieldSocksEndpointID, v)
+	return u
+}
+
+// UpdateSocksEndpointID sets the "socks_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsert) UpdateSocksEndpointID() *SourceNetworkBindingUpsert {
+	u.SetExcluded(sourcenetworkbinding.FieldSocksEndpointID)
+	return u
+}
+
+// ClearSocksEndpointID clears the value of the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsert) ClearSocksEndpointID() *SourceNetworkBindingUpsert {
+	u.SetNull(sourcenetworkbinding.FieldSocksEndpointID)
+	return u
+}
+
+// SetFlareMode sets the "flare_mode" field.
+func (u *SourceNetworkBindingUpsert) SetFlareMode(v string) *SourceNetworkBindingUpsert {
+	u.Set(sourcenetworkbinding.FieldFlareMode, v)
+	return u
+}
+
+// UpdateFlareMode sets the "flare_mode" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsert) UpdateFlareMode() *SourceNetworkBindingUpsert {
+	u.SetExcluded(sourcenetworkbinding.FieldFlareMode)
+	return u
+}
+
+// SetFlareEndpointID sets the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsert) SetFlareEndpointID(v uuid.UUID) *SourceNetworkBindingUpsert {
+	u.Set(sourcenetworkbinding.FieldFlareEndpointID, v)
+	return u
+}
+
+// UpdateFlareEndpointID sets the "flare_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsert) UpdateFlareEndpointID() *SourceNetworkBindingUpsert {
+	u.SetExcluded(sourcenetworkbinding.FieldFlareEndpointID)
+	return u
+}
+
+// ClearFlareEndpointID clears the value of the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsert) ClearFlareEndpointID() *SourceNetworkBindingUpsert {
+	u.SetNull(sourcenetworkbinding.FieldFlareEndpointID)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceNetworkBindingUpsert) SetUpdatedAt(v time.Time) *SourceNetworkBindingUpsert {
+	u.Set(sourcenetworkbinding.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsert) UpdateUpdatedAt() *SourceNetworkBindingUpsert {
+	u.SetExcluded(sourcenetworkbinding.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcenetworkbinding.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceNetworkBindingUpsertOne) UpdateNewValues() *SourceNetworkBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourcenetworkbinding.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(sourcenetworkbinding.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceNetworkBindingUpsertOne) Ignore() *SourceNetworkBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceNetworkBindingUpsertOne) DoNothing() *SourceNetworkBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceNetworkBindingCreate.OnConflict
+// documentation for more info.
+func (u *SourceNetworkBindingUpsertOne) Update(set func(*SourceNetworkBindingUpsert)) *SourceNetworkBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceNetworkBindingUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceNetworkBindingUpsertOne) SetSourceID(v int64) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceNetworkBindingUpsertOne) AddSourceID(v int64) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertOne) UpdateSourceID() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSocksEndpointID sets the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertOne) SetSocksEndpointID(v uuid.UUID) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetSocksEndpointID(v)
+	})
+}
+
+// UpdateSocksEndpointID sets the "socks_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertOne) UpdateSocksEndpointID() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateSocksEndpointID()
+	})
+}
+
+// ClearSocksEndpointID clears the value of the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertOne) ClearSocksEndpointID() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.ClearSocksEndpointID()
+	})
+}
+
+// SetFlareMode sets the "flare_mode" field.
+func (u *SourceNetworkBindingUpsertOne) SetFlareMode(v string) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetFlareMode(v)
+	})
+}
+
+// UpdateFlareMode sets the "flare_mode" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertOne) UpdateFlareMode() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateFlareMode()
+	})
+}
+
+// SetFlareEndpointID sets the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertOne) SetFlareEndpointID(v uuid.UUID) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetFlareEndpointID(v)
+	})
+}
+
+// UpdateFlareEndpointID sets the "flare_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertOne) UpdateFlareEndpointID() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateFlareEndpointID()
+	})
+}
+
+// ClearFlareEndpointID clears the value of the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertOne) ClearFlareEndpointID() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.ClearFlareEndpointID()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceNetworkBindingUpsertOne) SetUpdatedAt(v time.Time) *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertOne) UpdateUpdatedAt() *SourceNetworkBindingUpsertOne {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceNetworkBindingUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceNetworkBindingCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceNetworkBindingUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceNetworkBindingUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceNetworkBindingUpsertOne.ID is not supported by MySQL driver. Use SourceNetworkBindingUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceNetworkBindingUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceNetworkBindingCreateBulk is the builder for creating many SourceNetworkBinding entities in bulk.
 type SourceNetworkBindingCreateBulk struct {
 	config
 	err      error
 	builders []*SourceNetworkBindingCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceNetworkBinding entities in the database.
@@ -274,6 +586,7 @@ func (_c *SourceNetworkBindingCreateBulk) Save(ctx context.Context) ([]*SourceNe
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -320,6 +633,214 @@ func (_c *SourceNetworkBindingCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceNetworkBindingCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceNetworkBinding.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceNetworkBindingUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceNetworkBindingCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceNetworkBindingUpsertBulk {
+	_c.conflict = opts
+	return &SourceNetworkBindingUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceNetworkBindingCreateBulk) OnConflictColumns(columns ...string) *SourceNetworkBindingUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceNetworkBindingUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceNetworkBindingUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceNetworkBinding nodes.
+type SourceNetworkBindingUpsertBulk struct {
+	create *SourceNetworkBindingCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcenetworkbinding.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceNetworkBindingUpsertBulk) UpdateNewValues() *SourceNetworkBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourcenetworkbinding.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(sourcenetworkbinding.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceNetworkBinding.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceNetworkBindingUpsertBulk) Ignore() *SourceNetworkBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceNetworkBindingUpsertBulk) DoNothing() *SourceNetworkBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceNetworkBindingCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceNetworkBindingUpsertBulk) Update(set func(*SourceNetworkBindingUpsert)) *SourceNetworkBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceNetworkBindingUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceNetworkBindingUpsertBulk) SetSourceID(v int64) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourceNetworkBindingUpsertBulk) AddSourceID(v int64) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertBulk) UpdateSourceID() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSocksEndpointID sets the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertBulk) SetSocksEndpointID(v uuid.UUID) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetSocksEndpointID(v)
+	})
+}
+
+// UpdateSocksEndpointID sets the "socks_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertBulk) UpdateSocksEndpointID() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateSocksEndpointID()
+	})
+}
+
+// ClearSocksEndpointID clears the value of the "socks_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertBulk) ClearSocksEndpointID() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.ClearSocksEndpointID()
+	})
+}
+
+// SetFlareMode sets the "flare_mode" field.
+func (u *SourceNetworkBindingUpsertBulk) SetFlareMode(v string) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetFlareMode(v)
+	})
+}
+
+// UpdateFlareMode sets the "flare_mode" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertBulk) UpdateFlareMode() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateFlareMode()
+	})
+}
+
+// SetFlareEndpointID sets the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertBulk) SetFlareEndpointID(v uuid.UUID) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetFlareEndpointID(v)
+	})
+}
+
+// UpdateFlareEndpointID sets the "flare_endpoint_id" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertBulk) UpdateFlareEndpointID() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateFlareEndpointID()
+	})
+}
+
+// ClearFlareEndpointID clears the value of the "flare_endpoint_id" field.
+func (u *SourceNetworkBindingUpsertBulk) ClearFlareEndpointID() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.ClearFlareEndpointID()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceNetworkBindingUpsertBulk) SetUpdatedAt(v time.Time) *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceNetworkBindingUpsertBulk) UpdateUpdatedAt() *SourceNetworkBindingUpsertBulk {
+	return u.Update(func(s *SourceNetworkBindingUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceNetworkBindingUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceNetworkBindingCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceNetworkBindingCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceNetworkBindingUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

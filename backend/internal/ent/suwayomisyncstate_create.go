@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type SuwayomiSyncStateCreate struct {
 	config
 	mutation *SuwayomiSyncStateMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSeriesProviderID sets the "series_provider_id" field.
@@ -183,6 +186,7 @@ func (_c *SuwayomiSyncStateCreate) createSpec() (*SuwayomiSyncState, *sqlgraph.C
 		_node = &SuwayomiSyncState{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(suwayomisyncstate.Table, sqlgraph.NewFieldSpec(suwayomisyncstate.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -219,11 +223,264 @@ func (_c *SuwayomiSyncStateCreate) createSpec() (*SuwayomiSyncState, *sqlgraph.C
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SuwayomiSyncState.Create().
+//		SetSeriesProviderID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SuwayomiSyncStateUpsert) {
+//			SetSeriesProviderID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SuwayomiSyncStateCreate) OnConflict(opts ...sql.ConflictOption) *SuwayomiSyncStateUpsertOne {
+	_c.conflict = opts
+	return &SuwayomiSyncStateUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SuwayomiSyncStateCreate) OnConflictColumns(columns ...string) *SuwayomiSyncStateUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SuwayomiSyncStateUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SuwayomiSyncStateUpsertOne is the builder for "upsert"-ing
+	//  one SuwayomiSyncState node.
+	SuwayomiSyncStateUpsertOne struct {
+		create *SuwayomiSyncStateCreate
+	}
+
+	// SuwayomiSyncStateUpsert is the "OnConflict" setter.
+	SuwayomiSyncStateUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *SuwayomiSyncStateUpsert) SetSeriesProviderID(v uuid.UUID) *SuwayomiSyncStateUpsert {
+	u.Set(suwayomisyncstate.FieldSeriesProviderID, v)
+	return u
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsert) UpdateSeriesProviderID() *SuwayomiSyncStateUpsert {
+	u.SetExcluded(suwayomisyncstate.FieldSeriesProviderID)
+	return u
+}
+
+// SetLastSyncedAt sets the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsert) SetLastSyncedAt(v time.Time) *SuwayomiSyncStateUpsert {
+	u.Set(suwayomisyncstate.FieldLastSyncedAt, v)
+	return u
+}
+
+// UpdateLastSyncedAt sets the "last_synced_at" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsert) UpdateLastSyncedAt() *SuwayomiSyncStateUpsert {
+	u.SetExcluded(suwayomisyncstate.FieldLastSyncedAt)
+	return u
+}
+
+// ClearLastSyncedAt clears the value of the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsert) ClearLastSyncedAt() *SuwayomiSyncStateUpsert {
+	u.SetNull(suwayomisyncstate.FieldLastSyncedAt)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SuwayomiSyncStateUpsert) SetLastError(v string) *SuwayomiSyncStateUpsert {
+	u.Set(suwayomisyncstate.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsert) UpdateLastError() *SuwayomiSyncStateUpsert {
+	u.SetExcluded(suwayomisyncstate.FieldLastError)
+	return u
+}
+
+// SetState sets the "state" field.
+func (u *SuwayomiSyncStateUpsert) SetState(v string) *SuwayomiSyncStateUpsert {
+	u.Set(suwayomisyncstate.FieldState, v)
+	return u
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsert) UpdateState() *SuwayomiSyncStateUpsert {
+	u.SetExcluded(suwayomisyncstate.FieldState)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(suwayomisyncstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SuwayomiSyncStateUpsertOne) UpdateNewValues() *SuwayomiSyncStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(suwayomisyncstate.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SuwayomiSyncStateUpsertOne) Ignore() *SuwayomiSyncStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SuwayomiSyncStateUpsertOne) DoNothing() *SuwayomiSyncStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SuwayomiSyncStateCreate.OnConflict
+// documentation for more info.
+func (u *SuwayomiSyncStateUpsertOne) Update(set func(*SuwayomiSyncStateUpsert)) *SuwayomiSyncStateUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SuwayomiSyncStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *SuwayomiSyncStateUpsertOne) SetSeriesProviderID(v uuid.UUID) *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetSeriesProviderID(v)
+	})
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertOne) UpdateSeriesProviderID() *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateSeriesProviderID()
+	})
+}
+
+// SetLastSyncedAt sets the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsertOne) SetLastSyncedAt(v time.Time) *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetLastSyncedAt(v)
+	})
+}
+
+// UpdateLastSyncedAt sets the "last_synced_at" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertOne) UpdateLastSyncedAt() *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateLastSyncedAt()
+	})
+}
+
+// ClearLastSyncedAt clears the value of the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsertOne) ClearLastSyncedAt() *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.ClearLastSyncedAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SuwayomiSyncStateUpsertOne) SetLastError(v string) *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertOne) UpdateLastError() *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetState sets the "state" field.
+func (u *SuwayomiSyncStateUpsertOne) SetState(v string) *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetState(v)
+	})
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertOne) UpdateState() *SuwayomiSyncStateUpsertOne {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateState()
+	})
+}
+
+// Exec executes the query.
+func (u *SuwayomiSyncStateUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SuwayomiSyncStateCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SuwayomiSyncStateUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SuwayomiSyncStateUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SuwayomiSyncStateUpsertOne.ID is not supported by MySQL driver. Use SuwayomiSyncStateUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SuwayomiSyncStateUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SuwayomiSyncStateCreateBulk is the builder for creating many SuwayomiSyncState entities in bulk.
 type SuwayomiSyncStateCreateBulk struct {
 	config
 	err      error
 	builders []*SuwayomiSyncStateCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SuwayomiSyncState entities in the database.
@@ -253,6 +510,7 @@ func (_c *SuwayomiSyncStateCreateBulk) Save(ctx context.Context) ([]*SuwayomiSyn
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -299,6 +557,183 @@ func (_c *SuwayomiSyncStateCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SuwayomiSyncStateCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SuwayomiSyncState.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SuwayomiSyncStateUpsert) {
+//			SetSeriesProviderID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SuwayomiSyncStateCreateBulk) OnConflict(opts ...sql.ConflictOption) *SuwayomiSyncStateUpsertBulk {
+	_c.conflict = opts
+	return &SuwayomiSyncStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SuwayomiSyncStateCreateBulk) OnConflictColumns(columns ...string) *SuwayomiSyncStateUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SuwayomiSyncStateUpsertBulk{
+		create: _c,
+	}
+}
+
+// SuwayomiSyncStateUpsertBulk is the builder for "upsert"-ing
+// a bulk of SuwayomiSyncState nodes.
+type SuwayomiSyncStateUpsertBulk struct {
+	create *SuwayomiSyncStateCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(suwayomisyncstate.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SuwayomiSyncStateUpsertBulk) UpdateNewValues() *SuwayomiSyncStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(suwayomisyncstate.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SuwayomiSyncState.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SuwayomiSyncStateUpsertBulk) Ignore() *SuwayomiSyncStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SuwayomiSyncStateUpsertBulk) DoNothing() *SuwayomiSyncStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SuwayomiSyncStateCreateBulk.OnConflict
+// documentation for more info.
+func (u *SuwayomiSyncStateUpsertBulk) Update(set func(*SuwayomiSyncStateUpsert)) *SuwayomiSyncStateUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SuwayomiSyncStateUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesProviderID sets the "series_provider_id" field.
+func (u *SuwayomiSyncStateUpsertBulk) SetSeriesProviderID(v uuid.UUID) *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetSeriesProviderID(v)
+	})
+}
+
+// UpdateSeriesProviderID sets the "series_provider_id" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertBulk) UpdateSeriesProviderID() *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateSeriesProviderID()
+	})
+}
+
+// SetLastSyncedAt sets the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsertBulk) SetLastSyncedAt(v time.Time) *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetLastSyncedAt(v)
+	})
+}
+
+// UpdateLastSyncedAt sets the "last_synced_at" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertBulk) UpdateLastSyncedAt() *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateLastSyncedAt()
+	})
+}
+
+// ClearLastSyncedAt clears the value of the "last_synced_at" field.
+func (u *SuwayomiSyncStateUpsertBulk) ClearLastSyncedAt() *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.ClearLastSyncedAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SuwayomiSyncStateUpsertBulk) SetLastError(v string) *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertBulk) UpdateLastError() *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetState sets the "state" field.
+func (u *SuwayomiSyncStateUpsertBulk) SetState(v string) *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.SetState(v)
+	})
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *SuwayomiSyncStateUpsertBulk) UpdateState() *SuwayomiSyncStateUpsertBulk {
+	return u.Update(func(s *SuwayomiSyncStateUpsert) {
+		s.UpdateState()
+	})
+}
+
+// Exec executes the query.
+func (u *SuwayomiSyncStateUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SuwayomiSyncStateCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SuwayomiSyncStateCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SuwayomiSyncStateUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

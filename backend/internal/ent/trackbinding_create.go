@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type TrackBindingCreate struct {
 	config
 	mutation *TrackBindingMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSeriesID sets the "series_id" field.
@@ -380,6 +383,7 @@ func (_c *TrackBindingCreate) createSpec() (*TrackBinding, *sqlgraph.CreateSpec)
 		_node = &TrackBinding{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(trackbinding.Table, sqlgraph.NewFieldSpec(trackbinding.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -460,11 +464,605 @@ func (_c *TrackBindingCreate) createSpec() (*TrackBinding, *sqlgraph.CreateSpec)
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.TrackBinding.Create().
+//		SetSeriesID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.TrackBindingUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *TrackBindingCreate) OnConflict(opts ...sql.ConflictOption) *TrackBindingUpsertOne {
+	_c.conflict = opts
+	return &TrackBindingUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *TrackBindingCreate) OnConflictColumns(columns ...string) *TrackBindingUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &TrackBindingUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// TrackBindingUpsertOne is the builder for "upsert"-ing
+	//  one TrackBinding node.
+	TrackBindingUpsertOne struct {
+		create *TrackBindingCreate
+	}
+
+	// TrackBindingUpsert is the "OnConflict" setter.
+	TrackBindingUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSeriesID sets the "series_id" field.
+func (u *TrackBindingUpsert) SetSeriesID(v uuid.UUID) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldSeriesID, v)
+	return u
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateSeriesID() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldSeriesID)
+	return u
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackBindingUpsert) SetTrackerID(v int) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldTrackerID, v)
+	return u
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateTrackerID() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldTrackerID)
+	return u
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackBindingUpsert) AddTrackerID(v int) *TrackBindingUpsert {
+	u.Add(trackbinding.FieldTrackerID, v)
+	return u
+}
+
+// SetRemoteID sets the "remote_id" field.
+func (u *TrackBindingUpsert) SetRemoteID(v string) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldRemoteID, v)
+	return u
+}
+
+// UpdateRemoteID sets the "remote_id" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateRemoteID() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldRemoteID)
+	return u
+}
+
+// SetRemoteURL sets the "remote_url" field.
+func (u *TrackBindingUpsert) SetRemoteURL(v string) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldRemoteURL, v)
+	return u
+}
+
+// UpdateRemoteURL sets the "remote_url" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateRemoteURL() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldRemoteURL)
+	return u
+}
+
+// SetLibraryID sets the "library_id" field.
+func (u *TrackBindingUpsert) SetLibraryID(v string) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldLibraryID, v)
+	return u
+}
+
+// UpdateLibraryID sets the "library_id" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateLibraryID() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldLibraryID)
+	return u
+}
+
+// ClearLibraryID clears the value of the "library_id" field.
+func (u *TrackBindingUpsert) ClearLibraryID() *TrackBindingUpsert {
+	u.SetNull(trackbinding.FieldLibraryID)
+	return u
+}
+
+// SetTitle sets the "title" field.
+func (u *TrackBindingUpsert) SetTitle(v string) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldTitle, v)
+	return u
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateTitle() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldTitle)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *TrackBindingUpsert) SetStatus(v string) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateStatus() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldStatus)
+	return u
+}
+
+// SetLastChapterRead sets the "last_chapter_read" field.
+func (u *TrackBindingUpsert) SetLastChapterRead(v float64) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldLastChapterRead, v)
+	return u
+}
+
+// UpdateLastChapterRead sets the "last_chapter_read" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateLastChapterRead() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldLastChapterRead)
+	return u
+}
+
+// AddLastChapterRead adds v to the "last_chapter_read" field.
+func (u *TrackBindingUpsert) AddLastChapterRead(v float64) *TrackBindingUpsert {
+	u.Add(trackbinding.FieldLastChapterRead, v)
+	return u
+}
+
+// SetTotalChapters sets the "total_chapters" field.
+func (u *TrackBindingUpsert) SetTotalChapters(v int) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldTotalChapters, v)
+	return u
+}
+
+// UpdateTotalChapters sets the "total_chapters" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateTotalChapters() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldTotalChapters)
+	return u
+}
+
+// AddTotalChapters adds v to the "total_chapters" field.
+func (u *TrackBindingUpsert) AddTotalChapters(v int) *TrackBindingUpsert {
+	u.Add(trackbinding.FieldTotalChapters, v)
+	return u
+}
+
+// SetScore sets the "score" field.
+func (u *TrackBindingUpsert) SetScore(v float64) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldScore, v)
+	return u
+}
+
+// UpdateScore sets the "score" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateScore() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldScore)
+	return u
+}
+
+// AddScore adds v to the "score" field.
+func (u *TrackBindingUpsert) AddScore(v float64) *TrackBindingUpsert {
+	u.Add(trackbinding.FieldScore, v)
+	return u
+}
+
+// SetStartDate sets the "start_date" field.
+func (u *TrackBindingUpsert) SetStartDate(v time.Time) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldStartDate, v)
+	return u
+}
+
+// UpdateStartDate sets the "start_date" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateStartDate() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldStartDate)
+	return u
+}
+
+// ClearStartDate clears the value of the "start_date" field.
+func (u *TrackBindingUpsert) ClearStartDate() *TrackBindingUpsert {
+	u.SetNull(trackbinding.FieldStartDate)
+	return u
+}
+
+// SetFinishDate sets the "finish_date" field.
+func (u *TrackBindingUpsert) SetFinishDate(v time.Time) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldFinishDate, v)
+	return u
+}
+
+// UpdateFinishDate sets the "finish_date" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateFinishDate() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldFinishDate)
+	return u
+}
+
+// ClearFinishDate clears the value of the "finish_date" field.
+func (u *TrackBindingUpsert) ClearFinishDate() *TrackBindingUpsert {
+	u.SetNull(trackbinding.FieldFinishDate)
+	return u
+}
+
+// SetPrivate sets the "private" field.
+func (u *TrackBindingUpsert) SetPrivate(v bool) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldPrivate, v)
+	return u
+}
+
+// UpdatePrivate sets the "private" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdatePrivate() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldPrivate)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackBindingUpsert) SetUpdatedAt(v time.Time) *TrackBindingUpsert {
+	u.Set(trackbinding.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackBindingUpsert) UpdateUpdatedAt() *TrackBindingUpsert {
+	u.SetExcluded(trackbinding.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(trackbinding.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *TrackBindingUpsertOne) UpdateNewValues() *TrackBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(trackbinding.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(trackbinding.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *TrackBindingUpsertOne) Ignore() *TrackBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *TrackBindingUpsertOne) DoNothing() *TrackBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the TrackBindingCreate.OnConflict
+// documentation for more info.
+func (u *TrackBindingUpsertOne) Update(set func(*TrackBindingUpsert)) *TrackBindingUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&TrackBindingUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *TrackBindingUpsertOne) SetSeriesID(v uuid.UUID) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateSeriesID() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackBindingUpsertOne) SetTrackerID(v int) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTrackerID(v)
+	})
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackBindingUpsertOne) AddTrackerID(v int) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddTrackerID(v)
+	})
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateTrackerID() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTrackerID()
+	})
+}
+
+// SetRemoteID sets the "remote_id" field.
+func (u *TrackBindingUpsertOne) SetRemoteID(v string) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetRemoteID(v)
+	})
+}
+
+// UpdateRemoteID sets the "remote_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateRemoteID() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateRemoteID()
+	})
+}
+
+// SetRemoteURL sets the "remote_url" field.
+func (u *TrackBindingUpsertOne) SetRemoteURL(v string) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetRemoteURL(v)
+	})
+}
+
+// UpdateRemoteURL sets the "remote_url" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateRemoteURL() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateRemoteURL()
+	})
+}
+
+// SetLibraryID sets the "library_id" field.
+func (u *TrackBindingUpsertOne) SetLibraryID(v string) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetLibraryID(v)
+	})
+}
+
+// UpdateLibraryID sets the "library_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateLibraryID() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateLibraryID()
+	})
+}
+
+// ClearLibraryID clears the value of the "library_id" field.
+func (u *TrackBindingUpsertOne) ClearLibraryID() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearLibraryID()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *TrackBindingUpsertOne) SetTitle(v string) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateTitle() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *TrackBindingUpsertOne) SetStatus(v string) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateStatus() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetLastChapterRead sets the "last_chapter_read" field.
+func (u *TrackBindingUpsertOne) SetLastChapterRead(v float64) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetLastChapterRead(v)
+	})
+}
+
+// AddLastChapterRead adds v to the "last_chapter_read" field.
+func (u *TrackBindingUpsertOne) AddLastChapterRead(v float64) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddLastChapterRead(v)
+	})
+}
+
+// UpdateLastChapterRead sets the "last_chapter_read" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateLastChapterRead() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateLastChapterRead()
+	})
+}
+
+// SetTotalChapters sets the "total_chapters" field.
+func (u *TrackBindingUpsertOne) SetTotalChapters(v int) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTotalChapters(v)
+	})
+}
+
+// AddTotalChapters adds v to the "total_chapters" field.
+func (u *TrackBindingUpsertOne) AddTotalChapters(v int) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddTotalChapters(v)
+	})
+}
+
+// UpdateTotalChapters sets the "total_chapters" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateTotalChapters() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTotalChapters()
+	})
+}
+
+// SetScore sets the "score" field.
+func (u *TrackBindingUpsertOne) SetScore(v float64) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetScore(v)
+	})
+}
+
+// AddScore adds v to the "score" field.
+func (u *TrackBindingUpsertOne) AddScore(v float64) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddScore(v)
+	})
+}
+
+// UpdateScore sets the "score" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateScore() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateScore()
+	})
+}
+
+// SetStartDate sets the "start_date" field.
+func (u *TrackBindingUpsertOne) SetStartDate(v time.Time) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetStartDate(v)
+	})
+}
+
+// UpdateStartDate sets the "start_date" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateStartDate() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateStartDate()
+	})
+}
+
+// ClearStartDate clears the value of the "start_date" field.
+func (u *TrackBindingUpsertOne) ClearStartDate() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearStartDate()
+	})
+}
+
+// SetFinishDate sets the "finish_date" field.
+func (u *TrackBindingUpsertOne) SetFinishDate(v time.Time) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetFinishDate(v)
+	})
+}
+
+// UpdateFinishDate sets the "finish_date" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateFinishDate() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateFinishDate()
+	})
+}
+
+// ClearFinishDate clears the value of the "finish_date" field.
+func (u *TrackBindingUpsertOne) ClearFinishDate() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearFinishDate()
+	})
+}
+
+// SetPrivate sets the "private" field.
+func (u *TrackBindingUpsertOne) SetPrivate(v bool) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetPrivate(v)
+	})
+}
+
+// UpdatePrivate sets the "private" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdatePrivate() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdatePrivate()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackBindingUpsertOne) SetUpdatedAt(v time.Time) *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackBindingUpsertOne) UpdateUpdatedAt() *TrackBindingUpsertOne {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *TrackBindingUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for TrackBindingCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *TrackBindingUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *TrackBindingUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: TrackBindingUpsertOne.ID is not supported by MySQL driver. Use TrackBindingUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *TrackBindingUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // TrackBindingCreateBulk is the builder for creating many TrackBinding entities in bulk.
 type TrackBindingCreateBulk struct {
 	config
 	err      error
 	builders []*TrackBindingCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the TrackBinding entities in the database.
@@ -494,6 +1092,7 @@ func (_c *TrackBindingCreateBulk) Save(ctx context.Context) ([]*TrackBinding, er
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -540,6 +1139,368 @@ func (_c *TrackBindingCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *TrackBindingCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.TrackBinding.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.TrackBindingUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *TrackBindingCreateBulk) OnConflict(opts ...sql.ConflictOption) *TrackBindingUpsertBulk {
+	_c.conflict = opts
+	return &TrackBindingUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *TrackBindingCreateBulk) OnConflictColumns(columns ...string) *TrackBindingUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &TrackBindingUpsertBulk{
+		create: _c,
+	}
+}
+
+// TrackBindingUpsertBulk is the builder for "upsert"-ing
+// a bulk of TrackBinding nodes.
+type TrackBindingUpsertBulk struct {
+	create *TrackBindingCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(trackbinding.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *TrackBindingUpsertBulk) UpdateNewValues() *TrackBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(trackbinding.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(trackbinding.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.TrackBinding.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *TrackBindingUpsertBulk) Ignore() *TrackBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *TrackBindingUpsertBulk) DoNothing() *TrackBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the TrackBindingCreateBulk.OnConflict
+// documentation for more info.
+func (u *TrackBindingUpsertBulk) Update(set func(*TrackBindingUpsert)) *TrackBindingUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&TrackBindingUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *TrackBindingUpsertBulk) SetSeriesID(v uuid.UUID) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateSeriesID() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetTrackerID sets the "tracker_id" field.
+func (u *TrackBindingUpsertBulk) SetTrackerID(v int) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTrackerID(v)
+	})
+}
+
+// AddTrackerID adds v to the "tracker_id" field.
+func (u *TrackBindingUpsertBulk) AddTrackerID(v int) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddTrackerID(v)
+	})
+}
+
+// UpdateTrackerID sets the "tracker_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateTrackerID() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTrackerID()
+	})
+}
+
+// SetRemoteID sets the "remote_id" field.
+func (u *TrackBindingUpsertBulk) SetRemoteID(v string) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetRemoteID(v)
+	})
+}
+
+// UpdateRemoteID sets the "remote_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateRemoteID() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateRemoteID()
+	})
+}
+
+// SetRemoteURL sets the "remote_url" field.
+func (u *TrackBindingUpsertBulk) SetRemoteURL(v string) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetRemoteURL(v)
+	})
+}
+
+// UpdateRemoteURL sets the "remote_url" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateRemoteURL() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateRemoteURL()
+	})
+}
+
+// SetLibraryID sets the "library_id" field.
+func (u *TrackBindingUpsertBulk) SetLibraryID(v string) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetLibraryID(v)
+	})
+}
+
+// UpdateLibraryID sets the "library_id" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateLibraryID() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateLibraryID()
+	})
+}
+
+// ClearLibraryID clears the value of the "library_id" field.
+func (u *TrackBindingUpsertBulk) ClearLibraryID() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearLibraryID()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *TrackBindingUpsertBulk) SetTitle(v string) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateTitle() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *TrackBindingUpsertBulk) SetStatus(v string) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateStatus() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetLastChapterRead sets the "last_chapter_read" field.
+func (u *TrackBindingUpsertBulk) SetLastChapterRead(v float64) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetLastChapterRead(v)
+	})
+}
+
+// AddLastChapterRead adds v to the "last_chapter_read" field.
+func (u *TrackBindingUpsertBulk) AddLastChapterRead(v float64) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddLastChapterRead(v)
+	})
+}
+
+// UpdateLastChapterRead sets the "last_chapter_read" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateLastChapterRead() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateLastChapterRead()
+	})
+}
+
+// SetTotalChapters sets the "total_chapters" field.
+func (u *TrackBindingUpsertBulk) SetTotalChapters(v int) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetTotalChapters(v)
+	})
+}
+
+// AddTotalChapters adds v to the "total_chapters" field.
+func (u *TrackBindingUpsertBulk) AddTotalChapters(v int) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddTotalChapters(v)
+	})
+}
+
+// UpdateTotalChapters sets the "total_chapters" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateTotalChapters() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateTotalChapters()
+	})
+}
+
+// SetScore sets the "score" field.
+func (u *TrackBindingUpsertBulk) SetScore(v float64) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetScore(v)
+	})
+}
+
+// AddScore adds v to the "score" field.
+func (u *TrackBindingUpsertBulk) AddScore(v float64) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.AddScore(v)
+	})
+}
+
+// UpdateScore sets the "score" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateScore() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateScore()
+	})
+}
+
+// SetStartDate sets the "start_date" field.
+func (u *TrackBindingUpsertBulk) SetStartDate(v time.Time) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetStartDate(v)
+	})
+}
+
+// UpdateStartDate sets the "start_date" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateStartDate() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateStartDate()
+	})
+}
+
+// ClearStartDate clears the value of the "start_date" field.
+func (u *TrackBindingUpsertBulk) ClearStartDate() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearStartDate()
+	})
+}
+
+// SetFinishDate sets the "finish_date" field.
+func (u *TrackBindingUpsertBulk) SetFinishDate(v time.Time) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetFinishDate(v)
+	})
+}
+
+// UpdateFinishDate sets the "finish_date" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateFinishDate() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateFinishDate()
+	})
+}
+
+// ClearFinishDate clears the value of the "finish_date" field.
+func (u *TrackBindingUpsertBulk) ClearFinishDate() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.ClearFinishDate()
+	})
+}
+
+// SetPrivate sets the "private" field.
+func (u *TrackBindingUpsertBulk) SetPrivate(v bool) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetPrivate(v)
+	})
+}
+
+// UpdatePrivate sets the "private" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdatePrivate() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdatePrivate()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *TrackBindingUpsertBulk) SetUpdatedAt(v time.Time) *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *TrackBindingUpsertBulk) UpdateUpdatedAt() *TrackBindingUpsertBulk {
+	return u.Update(func(s *TrackBindingUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *TrackBindingUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the TrackBindingCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for TrackBindingCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *TrackBindingUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

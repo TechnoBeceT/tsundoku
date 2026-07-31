@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ type ChapterCreate struct {
 	config
 	mutation *ChapterMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSeriesID sets the "series_id" field.
@@ -420,6 +423,7 @@ func (_c *ChapterCreate) createSpec() (*Chapter, *sqlgraph.CreateSpec) {
 		_node = &Chapter{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(chapter.Table, sqlgraph.NewFieldSpec(chapter.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -521,11 +525,758 @@ func (_c *ChapterCreate) createSpec() (*Chapter, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Chapter.Create().
+//		SetSeriesID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ChapterUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ChapterCreate) OnConflict(opts ...sql.ConflictOption) *ChapterUpsertOne {
+	_c.conflict = opts
+	return &ChapterUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ChapterCreate) OnConflictColumns(columns ...string) *ChapterUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ChapterUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// ChapterUpsertOne is the builder for "upsert"-ing
+	//  one Chapter node.
+	ChapterUpsertOne struct {
+		create *ChapterCreate
+	}
+
+	// ChapterUpsert is the "OnConflict" setter.
+	ChapterUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSeriesID sets the "series_id" field.
+func (u *ChapterUpsert) SetSeriesID(v uuid.UUID) *ChapterUpsert {
+	u.Set(chapter.FieldSeriesID, v)
+	return u
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateSeriesID() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldSeriesID)
+	return u
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ChapterUpsert) SetChapterKey(v string) *ChapterUpsert {
+	u.Set(chapter.FieldChapterKey, v)
+	return u
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateChapterKey() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldChapterKey)
+	return u
+}
+
+// SetNumber sets the "number" field.
+func (u *ChapterUpsert) SetNumber(v float64) *ChapterUpsert {
+	u.Set(chapter.FieldNumber, v)
+	return u
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateNumber() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldNumber)
+	return u
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ChapterUpsert) AddNumber(v float64) *ChapterUpsert {
+	u.Add(chapter.FieldNumber, v)
+	return u
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ChapterUpsert) ClearNumber() *ChapterUpsert {
+	u.SetNull(chapter.FieldNumber)
+	return u
+}
+
+// SetState sets the "state" field.
+func (u *ChapterUpsert) SetState(v chapter.State) *ChapterUpsert {
+	u.Set(chapter.FieldState, v)
+	return u
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateState() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldState)
+	return u
+}
+
+// SetSatisfiedByProviderID sets the "satisfied_by_provider_id" field.
+func (u *ChapterUpsert) SetSatisfiedByProviderID(v uuid.UUID) *ChapterUpsert {
+	u.Set(chapter.FieldSatisfiedByProviderID, v)
+	return u
+}
+
+// UpdateSatisfiedByProviderID sets the "satisfied_by_provider_id" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateSatisfiedByProviderID() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldSatisfiedByProviderID)
+	return u
+}
+
+// ClearSatisfiedByProviderID clears the value of the "satisfied_by_provider_id" field.
+func (u *ChapterUpsert) ClearSatisfiedByProviderID() *ChapterUpsert {
+	u.SetNull(chapter.FieldSatisfiedByProviderID)
+	return u
+}
+
+// SetSatisfiedImportance sets the "satisfied_importance" field.
+func (u *ChapterUpsert) SetSatisfiedImportance(v int) *ChapterUpsert {
+	u.Set(chapter.FieldSatisfiedImportance, v)
+	return u
+}
+
+// UpdateSatisfiedImportance sets the "satisfied_importance" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateSatisfiedImportance() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldSatisfiedImportance)
+	return u
+}
+
+// AddSatisfiedImportance adds v to the "satisfied_importance" field.
+func (u *ChapterUpsert) AddSatisfiedImportance(v int) *ChapterUpsert {
+	u.Add(chapter.FieldSatisfiedImportance, v)
+	return u
+}
+
+// ClearSatisfiedImportance clears the value of the "satisfied_importance" field.
+func (u *ChapterUpsert) ClearSatisfiedImportance() *ChapterUpsert {
+	u.SetNull(chapter.FieldSatisfiedImportance)
+	return u
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ChapterUpsert) SetPageCount(v int) *ChapterUpsert {
+	u.Set(chapter.FieldPageCount, v)
+	return u
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdatePageCount() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldPageCount)
+	return u
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ChapterUpsert) AddPageCount(v int) *ChapterUpsert {
+	u.Add(chapter.FieldPageCount, v)
+	return u
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ChapterUpsert) ClearPageCount() *ChapterUpsert {
+	u.SetNull(chapter.FieldPageCount)
+	return u
+}
+
+// SetFilename sets the "filename" field.
+func (u *ChapterUpsert) SetFilename(v string) *ChapterUpsert {
+	u.Set(chapter.FieldFilename, v)
+	return u
+}
+
+// UpdateFilename sets the "filename" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateFilename() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldFilename)
+	return u
+}
+
+// SetDownloadDate sets the "download_date" field.
+func (u *ChapterUpsert) SetDownloadDate(v time.Time) *ChapterUpsert {
+	u.Set(chapter.FieldDownloadDate, v)
+	return u
+}
+
+// UpdateDownloadDate sets the "download_date" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateDownloadDate() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldDownloadDate)
+	return u
+}
+
+// ClearDownloadDate clears the value of the "download_date" field.
+func (u *ChapterUpsert) ClearDownloadDate() *ChapterUpsert {
+	u.SetNull(chapter.FieldDownloadDate)
+	return u
+}
+
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (u *ChapterUpsert) SetFirstDownloadedAt(v time.Time) *ChapterUpsert {
+	u.Set(chapter.FieldFirstDownloadedAt, v)
+	return u
+}
+
+// UpdateFirstDownloadedAt sets the "first_downloaded_at" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateFirstDownloadedAt() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldFirstDownloadedAt)
+	return u
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (u *ChapterUpsert) ClearFirstDownloadedAt() *ChapterUpsert {
+	u.SetNull(chapter.FieldFirstDownloadedAt)
+	return u
+}
+
+// SetRetries sets the "retries" field.
+func (u *ChapterUpsert) SetRetries(v int) *ChapterUpsert {
+	u.Set(chapter.FieldRetries, v)
+	return u
+}
+
+// UpdateRetries sets the "retries" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateRetries() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldRetries)
+	return u
+}
+
+// AddRetries adds v to the "retries" field.
+func (u *ChapterUpsert) AddRetries(v int) *ChapterUpsert {
+	u.Add(chapter.FieldRetries, v)
+	return u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ChapterUpsert) SetNextAttemptAt(v time.Time) *ChapterUpsert {
+	u.Set(chapter.FieldNextAttemptAt, v)
+	return u
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateNextAttemptAt() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldNextAttemptAt)
+	return u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ChapterUpsert) ClearNextAttemptAt() *ChapterUpsert {
+	u.SetNull(chapter.FieldNextAttemptAt)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ChapterUpsert) SetLastError(v string) *ChapterUpsert {
+	u.Set(chapter.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateLastError() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldLastError)
+	return u
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *ChapterUpsert) SetErrorCategory(v string) *ChapterUpsert {
+	u.Set(chapter.FieldErrorCategory, v)
+	return u
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateErrorCategory() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldErrorCategory)
+	return u
+}
+
+// SetRead sets the "read" field.
+func (u *ChapterUpsert) SetRead(v bool) *ChapterUpsert {
+	u.Set(chapter.FieldRead, v)
+	return u
+}
+
+// UpdateRead sets the "read" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateRead() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldRead)
+	return u
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (u *ChapterUpsert) SetLastReadPage(v int) *ChapterUpsert {
+	u.Set(chapter.FieldLastReadPage, v)
+	return u
+}
+
+// UpdateLastReadPage sets the "last_read_page" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateLastReadPage() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldLastReadPage)
+	return u
+}
+
+// AddLastReadPage adds v to the "last_read_page" field.
+func (u *ChapterUpsert) AddLastReadPage(v int) *ChapterUpsert {
+	u.Add(chapter.FieldLastReadPage, v)
+	return u
+}
+
+// SetReadAt sets the "read_at" field.
+func (u *ChapterUpsert) SetReadAt(v time.Time) *ChapterUpsert {
+	u.Set(chapter.FieldReadAt, v)
+	return u
+}
+
+// UpdateReadAt sets the "read_at" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateReadAt() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldReadAt)
+	return u
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (u *ChapterUpsert) ClearReadAt() *ChapterUpsert {
+	u.SetNull(chapter.FieldReadAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(chapter.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ChapterUpsertOne) UpdateNewValues() *ChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(chapter.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *ChapterUpsertOne) Ignore() *ChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ChapterUpsertOne) DoNothing() *ChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ChapterCreate.OnConflict
+// documentation for more info.
+func (u *ChapterUpsertOne) Update(set func(*ChapterUpsert)) *ChapterUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ChapterUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *ChapterUpsertOne) SetSeriesID(v uuid.UUID) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateSeriesID() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ChapterUpsertOne) SetChapterKey(v string) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetChapterKey(v)
+	})
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateChapterKey() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateChapterKey()
+	})
+}
+
+// SetNumber sets the "number" field.
+func (u *ChapterUpsertOne) SetNumber(v float64) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetNumber(v)
+	})
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ChapterUpsertOne) AddNumber(v float64) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddNumber(v)
+	})
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateNumber() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateNumber()
+	})
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ChapterUpsertOne) ClearNumber() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearNumber()
+	})
+}
+
+// SetState sets the "state" field.
+func (u *ChapterUpsertOne) SetState(v chapter.State) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetState(v)
+	})
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateState() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateState()
+	})
+}
+
+// SetSatisfiedByProviderID sets the "satisfied_by_provider_id" field.
+func (u *ChapterUpsertOne) SetSatisfiedByProviderID(v uuid.UUID) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSatisfiedByProviderID(v)
+	})
+}
+
+// UpdateSatisfiedByProviderID sets the "satisfied_by_provider_id" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateSatisfiedByProviderID() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSatisfiedByProviderID()
+	})
+}
+
+// ClearSatisfiedByProviderID clears the value of the "satisfied_by_provider_id" field.
+func (u *ChapterUpsertOne) ClearSatisfiedByProviderID() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearSatisfiedByProviderID()
+	})
+}
+
+// SetSatisfiedImportance sets the "satisfied_importance" field.
+func (u *ChapterUpsertOne) SetSatisfiedImportance(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSatisfiedImportance(v)
+	})
+}
+
+// AddSatisfiedImportance adds v to the "satisfied_importance" field.
+func (u *ChapterUpsertOne) AddSatisfiedImportance(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddSatisfiedImportance(v)
+	})
+}
+
+// UpdateSatisfiedImportance sets the "satisfied_importance" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateSatisfiedImportance() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSatisfiedImportance()
+	})
+}
+
+// ClearSatisfiedImportance clears the value of the "satisfied_importance" field.
+func (u *ChapterUpsertOne) ClearSatisfiedImportance() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearSatisfiedImportance()
+	})
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ChapterUpsertOne) SetPageCount(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetPageCount(v)
+	})
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ChapterUpsertOne) AddPageCount(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddPageCount(v)
+	})
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdatePageCount() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdatePageCount()
+	})
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ChapterUpsertOne) ClearPageCount() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearPageCount()
+	})
+}
+
+// SetFilename sets the "filename" field.
+func (u *ChapterUpsertOne) SetFilename(v string) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetFilename(v)
+	})
+}
+
+// UpdateFilename sets the "filename" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateFilename() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateFilename()
+	})
+}
+
+// SetDownloadDate sets the "download_date" field.
+func (u *ChapterUpsertOne) SetDownloadDate(v time.Time) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetDownloadDate(v)
+	})
+}
+
+// UpdateDownloadDate sets the "download_date" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateDownloadDate() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateDownloadDate()
+	})
+}
+
+// ClearDownloadDate clears the value of the "download_date" field.
+func (u *ChapterUpsertOne) ClearDownloadDate() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearDownloadDate()
+	})
+}
+
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (u *ChapterUpsertOne) SetFirstDownloadedAt(v time.Time) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetFirstDownloadedAt(v)
+	})
+}
+
+// UpdateFirstDownloadedAt sets the "first_downloaded_at" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateFirstDownloadedAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateFirstDownloadedAt()
+	})
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (u *ChapterUpsertOne) ClearFirstDownloadedAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearFirstDownloadedAt()
+	})
+}
+
+// SetRetries sets the "retries" field.
+func (u *ChapterUpsertOne) SetRetries(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetRetries(v)
+	})
+}
+
+// AddRetries adds v to the "retries" field.
+func (u *ChapterUpsertOne) AddRetries(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddRetries(v)
+	})
+}
+
+// UpdateRetries sets the "retries" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateRetries() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateRetries()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ChapterUpsertOne) SetNextAttemptAt(v time.Time) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateNextAttemptAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ChapterUpsertOne) ClearNextAttemptAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ChapterUpsertOne) SetLastError(v string) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateLastError() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *ChapterUpsertOne) SetErrorCategory(v string) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetErrorCategory(v)
+	})
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateErrorCategory() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateErrorCategory()
+	})
+}
+
+// SetRead sets the "read" field.
+func (u *ChapterUpsertOne) SetRead(v bool) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetRead(v)
+	})
+}
+
+// UpdateRead sets the "read" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateRead() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateRead()
+	})
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (u *ChapterUpsertOne) SetLastReadPage(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetLastReadPage(v)
+	})
+}
+
+// AddLastReadPage adds v to the "last_read_page" field.
+func (u *ChapterUpsertOne) AddLastReadPage(v int) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddLastReadPage(v)
+	})
+}
+
+// UpdateLastReadPage sets the "last_read_page" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateLastReadPage() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateLastReadPage()
+	})
+}
+
+// SetReadAt sets the "read_at" field.
+func (u *ChapterUpsertOne) SetReadAt(v time.Time) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetReadAt(v)
+	})
+}
+
+// UpdateReadAt sets the "read_at" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateReadAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateReadAt()
+	})
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (u *ChapterUpsertOne) ClearReadAt() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearReadAt()
+	})
+}
+
+// Exec executes the query.
+func (u *ChapterUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ChapterCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ChapterUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *ChapterUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: ChapterUpsertOne.ID is not supported by MySQL driver. Use ChapterUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *ChapterUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // ChapterCreateBulk is the builder for creating many Chapter entities in bulk.
 type ChapterCreateBulk struct {
 	config
 	err      error
 	builders []*ChapterCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the Chapter entities in the database.
@@ -555,6 +1306,7 @@ func (_c *ChapterCreateBulk) Save(ctx context.Context) ([]*Chapter, error) {
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -601,6 +1353,449 @@ func (_c *ChapterCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *ChapterCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.Chapter.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ChapterUpsert) {
+//			SetSeriesID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ChapterCreateBulk) OnConflict(opts ...sql.ConflictOption) *ChapterUpsertBulk {
+	_c.conflict = opts
+	return &ChapterUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ChapterCreateBulk) OnConflictColumns(columns ...string) *ChapterUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ChapterUpsertBulk{
+		create: _c,
+	}
+}
+
+// ChapterUpsertBulk is the builder for "upsert"-ing
+// a bulk of Chapter nodes.
+type ChapterUpsertBulk struct {
+	create *ChapterCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(chapter.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ChapterUpsertBulk) UpdateNewValues() *ChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(chapter.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.Chapter.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *ChapterUpsertBulk) Ignore() *ChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ChapterUpsertBulk) DoNothing() *ChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ChapterCreateBulk.OnConflict
+// documentation for more info.
+func (u *ChapterUpsertBulk) Update(set func(*ChapterUpsert)) *ChapterUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ChapterUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSeriesID sets the "series_id" field.
+func (u *ChapterUpsertBulk) SetSeriesID(v uuid.UUID) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSeriesID(v)
+	})
+}
+
+// UpdateSeriesID sets the "series_id" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateSeriesID() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSeriesID()
+	})
+}
+
+// SetChapterKey sets the "chapter_key" field.
+func (u *ChapterUpsertBulk) SetChapterKey(v string) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetChapterKey(v)
+	})
+}
+
+// UpdateChapterKey sets the "chapter_key" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateChapterKey() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateChapterKey()
+	})
+}
+
+// SetNumber sets the "number" field.
+func (u *ChapterUpsertBulk) SetNumber(v float64) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetNumber(v)
+	})
+}
+
+// AddNumber adds v to the "number" field.
+func (u *ChapterUpsertBulk) AddNumber(v float64) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddNumber(v)
+	})
+}
+
+// UpdateNumber sets the "number" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateNumber() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateNumber()
+	})
+}
+
+// ClearNumber clears the value of the "number" field.
+func (u *ChapterUpsertBulk) ClearNumber() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearNumber()
+	})
+}
+
+// SetState sets the "state" field.
+func (u *ChapterUpsertBulk) SetState(v chapter.State) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetState(v)
+	})
+}
+
+// UpdateState sets the "state" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateState() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateState()
+	})
+}
+
+// SetSatisfiedByProviderID sets the "satisfied_by_provider_id" field.
+func (u *ChapterUpsertBulk) SetSatisfiedByProviderID(v uuid.UUID) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSatisfiedByProviderID(v)
+	})
+}
+
+// UpdateSatisfiedByProviderID sets the "satisfied_by_provider_id" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateSatisfiedByProviderID() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSatisfiedByProviderID()
+	})
+}
+
+// ClearSatisfiedByProviderID clears the value of the "satisfied_by_provider_id" field.
+func (u *ChapterUpsertBulk) ClearSatisfiedByProviderID() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearSatisfiedByProviderID()
+	})
+}
+
+// SetSatisfiedImportance sets the "satisfied_importance" field.
+func (u *ChapterUpsertBulk) SetSatisfiedImportance(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetSatisfiedImportance(v)
+	})
+}
+
+// AddSatisfiedImportance adds v to the "satisfied_importance" field.
+func (u *ChapterUpsertBulk) AddSatisfiedImportance(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddSatisfiedImportance(v)
+	})
+}
+
+// UpdateSatisfiedImportance sets the "satisfied_importance" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateSatisfiedImportance() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateSatisfiedImportance()
+	})
+}
+
+// ClearSatisfiedImportance clears the value of the "satisfied_importance" field.
+func (u *ChapterUpsertBulk) ClearSatisfiedImportance() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearSatisfiedImportance()
+	})
+}
+
+// SetPageCount sets the "page_count" field.
+func (u *ChapterUpsertBulk) SetPageCount(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetPageCount(v)
+	})
+}
+
+// AddPageCount adds v to the "page_count" field.
+func (u *ChapterUpsertBulk) AddPageCount(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddPageCount(v)
+	})
+}
+
+// UpdatePageCount sets the "page_count" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdatePageCount() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdatePageCount()
+	})
+}
+
+// ClearPageCount clears the value of the "page_count" field.
+func (u *ChapterUpsertBulk) ClearPageCount() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearPageCount()
+	})
+}
+
+// SetFilename sets the "filename" field.
+func (u *ChapterUpsertBulk) SetFilename(v string) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetFilename(v)
+	})
+}
+
+// UpdateFilename sets the "filename" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateFilename() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateFilename()
+	})
+}
+
+// SetDownloadDate sets the "download_date" field.
+func (u *ChapterUpsertBulk) SetDownloadDate(v time.Time) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetDownloadDate(v)
+	})
+}
+
+// UpdateDownloadDate sets the "download_date" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateDownloadDate() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateDownloadDate()
+	})
+}
+
+// ClearDownloadDate clears the value of the "download_date" field.
+func (u *ChapterUpsertBulk) ClearDownloadDate() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearDownloadDate()
+	})
+}
+
+// SetFirstDownloadedAt sets the "first_downloaded_at" field.
+func (u *ChapterUpsertBulk) SetFirstDownloadedAt(v time.Time) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetFirstDownloadedAt(v)
+	})
+}
+
+// UpdateFirstDownloadedAt sets the "first_downloaded_at" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateFirstDownloadedAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateFirstDownloadedAt()
+	})
+}
+
+// ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
+func (u *ChapterUpsertBulk) ClearFirstDownloadedAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearFirstDownloadedAt()
+	})
+}
+
+// SetRetries sets the "retries" field.
+func (u *ChapterUpsertBulk) SetRetries(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetRetries(v)
+	})
+}
+
+// AddRetries adds v to the "retries" field.
+func (u *ChapterUpsertBulk) AddRetries(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddRetries(v)
+	})
+}
+
+// UpdateRetries sets the "retries" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateRetries() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateRetries()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *ChapterUpsertBulk) SetNextAttemptAt(v time.Time) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateNextAttemptAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *ChapterUpsertBulk) ClearNextAttemptAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *ChapterUpsertBulk) SetLastError(v string) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateLastError() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (u *ChapterUpsertBulk) SetErrorCategory(v string) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetErrorCategory(v)
+	})
+}
+
+// UpdateErrorCategory sets the "error_category" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateErrorCategory() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateErrorCategory()
+	})
+}
+
+// SetRead sets the "read" field.
+func (u *ChapterUpsertBulk) SetRead(v bool) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetRead(v)
+	})
+}
+
+// UpdateRead sets the "read" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateRead() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateRead()
+	})
+}
+
+// SetLastReadPage sets the "last_read_page" field.
+func (u *ChapterUpsertBulk) SetLastReadPage(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetLastReadPage(v)
+	})
+}
+
+// AddLastReadPage adds v to the "last_read_page" field.
+func (u *ChapterUpsertBulk) AddLastReadPage(v int) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.AddLastReadPage(v)
+	})
+}
+
+// UpdateLastReadPage sets the "last_read_page" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateLastReadPage() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateLastReadPage()
+	})
+}
+
+// SetReadAt sets the "read_at" field.
+func (u *ChapterUpsertBulk) SetReadAt(v time.Time) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetReadAt(v)
+	})
+}
+
+// UpdateReadAt sets the "read_at" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateReadAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateReadAt()
+	})
+}
+
+// ClearReadAt clears the value of the "read_at" field.
+func (u *ChapterUpsertBulk) ClearReadAt() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.ClearReadAt()
+	})
+}
+
+// Exec executes the query.
+func (u *ChapterUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the ChapterCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ChapterCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ChapterUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

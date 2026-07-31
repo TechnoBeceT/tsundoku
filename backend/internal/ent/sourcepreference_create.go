@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourcePreferenceCreate struct {
 	config
 	mutation *SourcePreferenceMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -211,6 +214,7 @@ func (_c *SourcePreferenceCreate) createSpec() (*SourcePreference, *sqlgraph.Cre
 		_node = &SourcePreference{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourcepreference.Table, sqlgraph.NewFieldSpec(sourcepreference.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -242,11 +246,293 @@ func (_c *SourcePreferenceCreate) createSpec() (*SourcePreference, *sqlgraph.Cre
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourcePreference.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourcePreferenceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourcePreferenceCreate) OnConflict(opts ...sql.ConflictOption) *SourcePreferenceUpsertOne {
+	_c.conflict = opts
+	return &SourcePreferenceUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourcePreferenceCreate) OnConflictColumns(columns ...string) *SourcePreferenceUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourcePreferenceUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourcePreferenceUpsertOne is the builder for "upsert"-ing
+	//  one SourcePreference node.
+	SourcePreferenceUpsertOne struct {
+		create *SourcePreferenceCreate
+	}
+
+	// SourcePreferenceUpsert is the "OnConflict" setter.
+	SourcePreferenceUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *SourcePreferenceUpsert) SetSourceID(v int64) *SourcePreferenceUpsert {
+	u.Set(sourcepreference.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourcePreferenceUpsert) UpdateSourceID() *SourcePreferenceUpsert {
+	u.SetExcluded(sourcepreference.FieldSourceID)
+	return u
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourcePreferenceUpsert) AddSourceID(v int64) *SourcePreferenceUpsert {
+	u.Add(sourcepreference.FieldSourceID, v)
+	return u
+}
+
+// SetKey sets the "key" field.
+func (u *SourcePreferenceUpsert) SetKey(v string) *SourcePreferenceUpsert {
+	u.Set(sourcepreference.FieldKey, v)
+	return u
+}
+
+// UpdateKey sets the "key" field to the value that was provided on create.
+func (u *SourcePreferenceUpsert) UpdateKey() *SourcePreferenceUpsert {
+	u.SetExcluded(sourcepreference.FieldKey)
+	return u
+}
+
+// SetValue sets the "value" field.
+func (u *SourcePreferenceUpsert) SetValue(v string) *SourcePreferenceUpsert {
+	u.Set(sourcepreference.FieldValue, v)
+	return u
+}
+
+// UpdateValue sets the "value" field to the value that was provided on create.
+func (u *SourcePreferenceUpsert) UpdateValue() *SourcePreferenceUpsert {
+	u.SetExcluded(sourcepreference.FieldValue)
+	return u
+}
+
+// SetValueType sets the "value_type" field.
+func (u *SourcePreferenceUpsert) SetValueType(v string) *SourcePreferenceUpsert {
+	u.Set(sourcepreference.FieldValueType, v)
+	return u
+}
+
+// UpdateValueType sets the "value_type" field to the value that was provided on create.
+func (u *SourcePreferenceUpsert) UpdateValueType() *SourcePreferenceUpsert {
+	u.SetExcluded(sourcepreference.FieldValueType)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourcePreferenceUpsert) SetUpdatedAt(v time.Time) *SourcePreferenceUpsert {
+	u.Set(sourcepreference.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourcePreferenceUpsert) UpdateUpdatedAt() *SourcePreferenceUpsert {
+	u.SetExcluded(sourcepreference.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcepreference.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourcePreferenceUpsertOne) UpdateNewValues() *SourcePreferenceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourcepreference.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(sourcepreference.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourcePreferenceUpsertOne) Ignore() *SourcePreferenceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourcePreferenceUpsertOne) DoNothing() *SourcePreferenceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourcePreferenceCreate.OnConflict
+// documentation for more info.
+func (u *SourcePreferenceUpsertOne) Update(set func(*SourcePreferenceUpsert)) *SourcePreferenceUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourcePreferenceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourcePreferenceUpsertOne) SetSourceID(v int64) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourcePreferenceUpsertOne) AddSourceID(v int64) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertOne) UpdateSourceID() *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetKey sets the "key" field.
+func (u *SourcePreferenceUpsertOne) SetKey(v string) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetKey(v)
+	})
+}
+
+// UpdateKey sets the "key" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertOne) UpdateKey() *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateKey()
+	})
+}
+
+// SetValue sets the "value" field.
+func (u *SourcePreferenceUpsertOne) SetValue(v string) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetValue(v)
+	})
+}
+
+// UpdateValue sets the "value" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertOne) UpdateValue() *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateValue()
+	})
+}
+
+// SetValueType sets the "value_type" field.
+func (u *SourcePreferenceUpsertOne) SetValueType(v string) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetValueType(v)
+	})
+}
+
+// UpdateValueType sets the "value_type" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertOne) UpdateValueType() *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateValueType()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourcePreferenceUpsertOne) SetUpdatedAt(v time.Time) *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertOne) UpdateUpdatedAt() *SourcePreferenceUpsertOne {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourcePreferenceUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourcePreferenceCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourcePreferenceUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourcePreferenceUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourcePreferenceUpsertOne.ID is not supported by MySQL driver. Use SourcePreferenceUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourcePreferenceUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourcePreferenceCreateBulk is the builder for creating many SourcePreference entities in bulk.
 type SourcePreferenceCreateBulk struct {
 	config
 	err      error
 	builders []*SourcePreferenceCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourcePreference entities in the database.
@@ -276,6 +562,7 @@ func (_c *SourcePreferenceCreateBulk) Save(ctx context.Context) ([]*SourcePrefer
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -322,6 +609,200 @@ func (_c *SourcePreferenceCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourcePreferenceCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourcePreference.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourcePreferenceUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourcePreferenceCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourcePreferenceUpsertBulk {
+	_c.conflict = opts
+	return &SourcePreferenceUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourcePreferenceCreateBulk) OnConflictColumns(columns ...string) *SourcePreferenceUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourcePreferenceUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourcePreferenceUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourcePreference nodes.
+type SourcePreferenceUpsertBulk struct {
+	create *SourcePreferenceCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcepreference.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourcePreferenceUpsertBulk) UpdateNewValues() *SourcePreferenceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourcepreference.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(sourcepreference.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourcePreference.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourcePreferenceUpsertBulk) Ignore() *SourcePreferenceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourcePreferenceUpsertBulk) DoNothing() *SourcePreferenceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourcePreferenceCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourcePreferenceUpsertBulk) Update(set func(*SourcePreferenceUpsert)) *SourcePreferenceUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourcePreferenceUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourcePreferenceUpsertBulk) SetSourceID(v int64) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// AddSourceID adds v to the "source_id" field.
+func (u *SourcePreferenceUpsertBulk) AddSourceID(v int64) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.AddSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertBulk) UpdateSourceID() *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetKey sets the "key" field.
+func (u *SourcePreferenceUpsertBulk) SetKey(v string) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetKey(v)
+	})
+}
+
+// UpdateKey sets the "key" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertBulk) UpdateKey() *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateKey()
+	})
+}
+
+// SetValue sets the "value" field.
+func (u *SourcePreferenceUpsertBulk) SetValue(v string) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetValue(v)
+	})
+}
+
+// UpdateValue sets the "value" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertBulk) UpdateValue() *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateValue()
+	})
+}
+
+// SetValueType sets the "value_type" field.
+func (u *SourcePreferenceUpsertBulk) SetValueType(v string) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetValueType(v)
+	})
+}
+
+// UpdateValueType sets the "value_type" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertBulk) UpdateValueType() *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateValueType()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourcePreferenceUpsertBulk) SetUpdatedAt(v time.Time) *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourcePreferenceUpsertBulk) UpdateUpdatedAt() *SourcePreferenceUpsertBulk {
+	return u.Update(func(s *SourcePreferenceUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourcePreferenceUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourcePreferenceCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourcePreferenceCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourcePreferenceUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

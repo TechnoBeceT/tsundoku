@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type NetworkEndpointCreate struct {
 	config
 	mutation *NetworkEndpointMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetName sets the "name" field.
@@ -400,6 +403,7 @@ func (_c *NetworkEndpointCreate) createSpec() (*NetworkEndpoint, *sqlgraph.Creat
 		_node = &NetworkEndpoint{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(networkendpoint.Table, sqlgraph.NewFieldSpec(networkendpoint.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -467,11 +471,566 @@ func (_c *NetworkEndpointCreate) createSpec() (*NetworkEndpoint, *sqlgraph.Creat
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.NetworkEndpoint.Create().
+//		SetName(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.NetworkEndpointUpsert) {
+//			SetName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *NetworkEndpointCreate) OnConflict(opts ...sql.ConflictOption) *NetworkEndpointUpsertOne {
+	_c.conflict = opts
+	return &NetworkEndpointUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *NetworkEndpointCreate) OnConflictColumns(columns ...string) *NetworkEndpointUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &NetworkEndpointUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// NetworkEndpointUpsertOne is the builder for "upsert"-ing
+	//  one NetworkEndpoint node.
+	NetworkEndpointUpsertOne struct {
+		create *NetworkEndpointCreate
+	}
+
+	// NetworkEndpointUpsert is the "OnConflict" setter.
+	NetworkEndpointUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetName sets the "name" field.
+func (u *NetworkEndpointUpsert) SetName(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldName, v)
+	return u
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateName() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldName)
+	return u
+}
+
+// SetKind sets the "kind" field.
+func (u *NetworkEndpointUpsert) SetKind(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldKind, v)
+	return u
+}
+
+// UpdateKind sets the "kind" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateKind() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldKind)
+	return u
+}
+
+// SetEnabled sets the "enabled" field.
+func (u *NetworkEndpointUpsert) SetEnabled(v bool) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldEnabled, v)
+	return u
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateEnabled() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldEnabled)
+	return u
+}
+
+// SetHost sets the "host" field.
+func (u *NetworkEndpointUpsert) SetHost(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldHost, v)
+	return u
+}
+
+// UpdateHost sets the "host" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateHost() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldHost)
+	return u
+}
+
+// SetPort sets the "port" field.
+func (u *NetworkEndpointUpsert) SetPort(v int) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldPort, v)
+	return u
+}
+
+// UpdatePort sets the "port" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdatePort() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldPort)
+	return u
+}
+
+// AddPort adds v to the "port" field.
+func (u *NetworkEndpointUpsert) AddPort(v int) *NetworkEndpointUpsert {
+	u.Add(networkendpoint.FieldPort, v)
+	return u
+}
+
+// SetSocksVersion sets the "socks_version" field.
+func (u *NetworkEndpointUpsert) SetSocksVersion(v int) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldSocksVersion, v)
+	return u
+}
+
+// UpdateSocksVersion sets the "socks_version" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateSocksVersion() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldSocksVersion)
+	return u
+}
+
+// AddSocksVersion adds v to the "socks_version" field.
+func (u *NetworkEndpointUpsert) AddSocksVersion(v int) *NetworkEndpointUpsert {
+	u.Add(networkendpoint.FieldSocksVersion, v)
+	return u
+}
+
+// SetUsername sets the "username" field.
+func (u *NetworkEndpointUpsert) SetUsername(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldUsername, v)
+	return u
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateUsername() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldUsername)
+	return u
+}
+
+// SetPassword sets the "password" field.
+func (u *NetworkEndpointUpsert) SetPassword(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldPassword, v)
+	return u
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdatePassword() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldPassword)
+	return u
+}
+
+// SetURL sets the "url" field.
+func (u *NetworkEndpointUpsert) SetURL(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldURL, v)
+	return u
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateURL() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldURL)
+	return u
+}
+
+// SetSession sets the "session" field.
+func (u *NetworkEndpointUpsert) SetSession(v string) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldSession, v)
+	return u
+}
+
+// UpdateSession sets the "session" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateSession() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldSession)
+	return u
+}
+
+// SetSessionTTL sets the "session_ttl" field.
+func (u *NetworkEndpointUpsert) SetSessionTTL(v int) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldSessionTTL, v)
+	return u
+}
+
+// UpdateSessionTTL sets the "session_ttl" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateSessionTTL() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldSessionTTL)
+	return u
+}
+
+// AddSessionTTL adds v to the "session_ttl" field.
+func (u *NetworkEndpointUpsert) AddSessionTTL(v int) *NetworkEndpointUpsert {
+	u.Add(networkendpoint.FieldSessionTTL, v)
+	return u
+}
+
+// SetTimeout sets the "timeout" field.
+func (u *NetworkEndpointUpsert) SetTimeout(v int) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldTimeout, v)
+	return u
+}
+
+// UpdateTimeout sets the "timeout" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateTimeout() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldTimeout)
+	return u
+}
+
+// AddTimeout adds v to the "timeout" field.
+func (u *NetworkEndpointUpsert) AddTimeout(v int) *NetworkEndpointUpsert {
+	u.Add(networkendpoint.FieldTimeout, v)
+	return u
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (u *NetworkEndpointUpsert) SetAsResponseFallback(v bool) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldAsResponseFallback, v)
+	return u
+}
+
+// UpdateAsResponseFallback sets the "as_response_fallback" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateAsResponseFallback() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldAsResponseFallback)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *NetworkEndpointUpsert) SetUpdatedAt(v time.Time) *NetworkEndpointUpsert {
+	u.Set(networkendpoint.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *NetworkEndpointUpsert) UpdateUpdatedAt() *NetworkEndpointUpsert {
+	u.SetExcluded(networkendpoint.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(networkendpoint.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *NetworkEndpointUpsertOne) UpdateNewValues() *NetworkEndpointUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(networkendpoint.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(networkendpoint.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *NetworkEndpointUpsertOne) Ignore() *NetworkEndpointUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *NetworkEndpointUpsertOne) DoNothing() *NetworkEndpointUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the NetworkEndpointCreate.OnConflict
+// documentation for more info.
+func (u *NetworkEndpointUpsertOne) Update(set func(*NetworkEndpointUpsert)) *NetworkEndpointUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&NetworkEndpointUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetName sets the "name" field.
+func (u *NetworkEndpointUpsertOne) SetName(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateName() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetKind sets the "kind" field.
+func (u *NetworkEndpointUpsertOne) SetKind(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetKind(v)
+	})
+}
+
+// UpdateKind sets the "kind" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateKind() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateKind()
+	})
+}
+
+// SetEnabled sets the "enabled" field.
+func (u *NetworkEndpointUpsertOne) SetEnabled(v bool) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetEnabled(v)
+	})
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateEnabled() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateEnabled()
+	})
+}
+
+// SetHost sets the "host" field.
+func (u *NetworkEndpointUpsertOne) SetHost(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetHost(v)
+	})
+}
+
+// UpdateHost sets the "host" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateHost() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateHost()
+	})
+}
+
+// SetPort sets the "port" field.
+func (u *NetworkEndpointUpsertOne) SetPort(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetPort(v)
+	})
+}
+
+// AddPort adds v to the "port" field.
+func (u *NetworkEndpointUpsertOne) AddPort(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddPort(v)
+	})
+}
+
+// UpdatePort sets the "port" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdatePort() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdatePort()
+	})
+}
+
+// SetSocksVersion sets the "socks_version" field.
+func (u *NetworkEndpointUpsertOne) SetSocksVersion(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSocksVersion(v)
+	})
+}
+
+// AddSocksVersion adds v to the "socks_version" field.
+func (u *NetworkEndpointUpsertOne) AddSocksVersion(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddSocksVersion(v)
+	})
+}
+
+// UpdateSocksVersion sets the "socks_version" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateSocksVersion() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSocksVersion()
+	})
+}
+
+// SetUsername sets the "username" field.
+func (u *NetworkEndpointUpsertOne) SetUsername(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetUsername(v)
+	})
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateUsername() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateUsername()
+	})
+}
+
+// SetPassword sets the "password" field.
+func (u *NetworkEndpointUpsertOne) SetPassword(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetPassword(v)
+	})
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdatePassword() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdatePassword()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *NetworkEndpointUpsertOne) SetURL(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateURL() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetSession sets the "session" field.
+func (u *NetworkEndpointUpsertOne) SetSession(v string) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSession(v)
+	})
+}
+
+// UpdateSession sets the "session" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateSession() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSession()
+	})
+}
+
+// SetSessionTTL sets the "session_ttl" field.
+func (u *NetworkEndpointUpsertOne) SetSessionTTL(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSessionTTL(v)
+	})
+}
+
+// AddSessionTTL adds v to the "session_ttl" field.
+func (u *NetworkEndpointUpsertOne) AddSessionTTL(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddSessionTTL(v)
+	})
+}
+
+// UpdateSessionTTL sets the "session_ttl" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateSessionTTL() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSessionTTL()
+	})
+}
+
+// SetTimeout sets the "timeout" field.
+func (u *NetworkEndpointUpsertOne) SetTimeout(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetTimeout(v)
+	})
+}
+
+// AddTimeout adds v to the "timeout" field.
+func (u *NetworkEndpointUpsertOne) AddTimeout(v int) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddTimeout(v)
+	})
+}
+
+// UpdateTimeout sets the "timeout" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateTimeout() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateTimeout()
+	})
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (u *NetworkEndpointUpsertOne) SetAsResponseFallback(v bool) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetAsResponseFallback(v)
+	})
+}
+
+// UpdateAsResponseFallback sets the "as_response_fallback" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateAsResponseFallback() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateAsResponseFallback()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *NetworkEndpointUpsertOne) SetUpdatedAt(v time.Time) *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertOne) UpdateUpdatedAt() *NetworkEndpointUpsertOne {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *NetworkEndpointUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for NetworkEndpointCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *NetworkEndpointUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *NetworkEndpointUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: NetworkEndpointUpsertOne.ID is not supported by MySQL driver. Use NetworkEndpointUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *NetworkEndpointUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // NetworkEndpointCreateBulk is the builder for creating many NetworkEndpoint entities in bulk.
 type NetworkEndpointCreateBulk struct {
 	config
 	err      error
 	builders []*NetworkEndpointCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the NetworkEndpoint entities in the database.
@@ -501,6 +1060,7 @@ func (_c *NetworkEndpointCreateBulk) Save(ctx context.Context) ([]*NetworkEndpoi
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -547,6 +1107,347 @@ func (_c *NetworkEndpointCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *NetworkEndpointCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.NetworkEndpoint.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.NetworkEndpointUpsert) {
+//			SetName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *NetworkEndpointCreateBulk) OnConflict(opts ...sql.ConflictOption) *NetworkEndpointUpsertBulk {
+	_c.conflict = opts
+	return &NetworkEndpointUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *NetworkEndpointCreateBulk) OnConflictColumns(columns ...string) *NetworkEndpointUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &NetworkEndpointUpsertBulk{
+		create: _c,
+	}
+}
+
+// NetworkEndpointUpsertBulk is the builder for "upsert"-ing
+// a bulk of NetworkEndpoint nodes.
+type NetworkEndpointUpsertBulk struct {
+	create *NetworkEndpointCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(networkendpoint.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *NetworkEndpointUpsertBulk) UpdateNewValues() *NetworkEndpointUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(networkendpoint.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(networkendpoint.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.NetworkEndpoint.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *NetworkEndpointUpsertBulk) Ignore() *NetworkEndpointUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *NetworkEndpointUpsertBulk) DoNothing() *NetworkEndpointUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the NetworkEndpointCreateBulk.OnConflict
+// documentation for more info.
+func (u *NetworkEndpointUpsertBulk) Update(set func(*NetworkEndpointUpsert)) *NetworkEndpointUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&NetworkEndpointUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetName sets the "name" field.
+func (u *NetworkEndpointUpsertBulk) SetName(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetName(v)
+	})
+}
+
+// UpdateName sets the "name" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateName() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateName()
+	})
+}
+
+// SetKind sets the "kind" field.
+func (u *NetworkEndpointUpsertBulk) SetKind(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetKind(v)
+	})
+}
+
+// UpdateKind sets the "kind" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateKind() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateKind()
+	})
+}
+
+// SetEnabled sets the "enabled" field.
+func (u *NetworkEndpointUpsertBulk) SetEnabled(v bool) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetEnabled(v)
+	})
+}
+
+// UpdateEnabled sets the "enabled" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateEnabled() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateEnabled()
+	})
+}
+
+// SetHost sets the "host" field.
+func (u *NetworkEndpointUpsertBulk) SetHost(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetHost(v)
+	})
+}
+
+// UpdateHost sets the "host" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateHost() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateHost()
+	})
+}
+
+// SetPort sets the "port" field.
+func (u *NetworkEndpointUpsertBulk) SetPort(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetPort(v)
+	})
+}
+
+// AddPort adds v to the "port" field.
+func (u *NetworkEndpointUpsertBulk) AddPort(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddPort(v)
+	})
+}
+
+// UpdatePort sets the "port" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdatePort() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdatePort()
+	})
+}
+
+// SetSocksVersion sets the "socks_version" field.
+func (u *NetworkEndpointUpsertBulk) SetSocksVersion(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSocksVersion(v)
+	})
+}
+
+// AddSocksVersion adds v to the "socks_version" field.
+func (u *NetworkEndpointUpsertBulk) AddSocksVersion(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddSocksVersion(v)
+	})
+}
+
+// UpdateSocksVersion sets the "socks_version" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateSocksVersion() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSocksVersion()
+	})
+}
+
+// SetUsername sets the "username" field.
+func (u *NetworkEndpointUpsertBulk) SetUsername(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetUsername(v)
+	})
+}
+
+// UpdateUsername sets the "username" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateUsername() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateUsername()
+	})
+}
+
+// SetPassword sets the "password" field.
+func (u *NetworkEndpointUpsertBulk) SetPassword(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetPassword(v)
+	})
+}
+
+// UpdatePassword sets the "password" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdatePassword() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdatePassword()
+	})
+}
+
+// SetURL sets the "url" field.
+func (u *NetworkEndpointUpsertBulk) SetURL(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetURL(v)
+	})
+}
+
+// UpdateURL sets the "url" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateURL() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateURL()
+	})
+}
+
+// SetSession sets the "session" field.
+func (u *NetworkEndpointUpsertBulk) SetSession(v string) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSession(v)
+	})
+}
+
+// UpdateSession sets the "session" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateSession() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSession()
+	})
+}
+
+// SetSessionTTL sets the "session_ttl" field.
+func (u *NetworkEndpointUpsertBulk) SetSessionTTL(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetSessionTTL(v)
+	})
+}
+
+// AddSessionTTL adds v to the "session_ttl" field.
+func (u *NetworkEndpointUpsertBulk) AddSessionTTL(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddSessionTTL(v)
+	})
+}
+
+// UpdateSessionTTL sets the "session_ttl" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateSessionTTL() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateSessionTTL()
+	})
+}
+
+// SetTimeout sets the "timeout" field.
+func (u *NetworkEndpointUpsertBulk) SetTimeout(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetTimeout(v)
+	})
+}
+
+// AddTimeout adds v to the "timeout" field.
+func (u *NetworkEndpointUpsertBulk) AddTimeout(v int) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.AddTimeout(v)
+	})
+}
+
+// UpdateTimeout sets the "timeout" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateTimeout() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateTimeout()
+	})
+}
+
+// SetAsResponseFallback sets the "as_response_fallback" field.
+func (u *NetworkEndpointUpsertBulk) SetAsResponseFallback(v bool) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetAsResponseFallback(v)
+	})
+}
+
+// UpdateAsResponseFallback sets the "as_response_fallback" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateAsResponseFallback() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateAsResponseFallback()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *NetworkEndpointUpsertBulk) SetUpdatedAt(v time.Time) *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *NetworkEndpointUpsertBulk) UpdateUpdatedAt() *NetworkEndpointUpsertBulk {
+	return u.Update(func(s *NetworkEndpointUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *NetworkEndpointUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the NetworkEndpointCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for NetworkEndpointCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *NetworkEndpointUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

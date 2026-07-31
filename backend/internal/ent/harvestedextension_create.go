@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type HarvestedExtensionCreate struct {
 	config
 	mutation *HarvestedExtensionMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetPkgName sets the "pkg_name" field.
@@ -278,6 +281,7 @@ func (_c *HarvestedExtensionCreate) createSpec() (*HarvestedExtension, *sqlgraph
 		_node = &HarvestedExtension{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(harvestedextension.Table, sqlgraph.NewFieldSpec(harvestedextension.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -325,11 +329,459 @@ func (_c *HarvestedExtensionCreate) createSpec() (*HarvestedExtension, *sqlgraph
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.HarvestedExtension.Create().
+//		SetPkgName(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.HarvestedExtensionUpsert) {
+//			SetPkgName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *HarvestedExtensionCreate) OnConflict(opts ...sql.ConflictOption) *HarvestedExtensionUpsertOne {
+	_c.conflict = opts
+	return &HarvestedExtensionUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *HarvestedExtensionCreate) OnConflictColumns(columns ...string) *HarvestedExtensionUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &HarvestedExtensionUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// HarvestedExtensionUpsertOne is the builder for "upsert"-ing
+	//  one HarvestedExtension node.
+	HarvestedExtensionUpsertOne struct {
+		create *HarvestedExtensionCreate
+	}
+
+	// HarvestedExtensionUpsert is the "OnConflict" setter.
+	HarvestedExtensionUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetPkgName sets the "pkg_name" field.
+func (u *HarvestedExtensionUpsert) SetPkgName(v string) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldPkgName, v)
+	return u
+}
+
+// UpdatePkgName sets the "pkg_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdatePkgName() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldPkgName)
+	return u
+}
+
+// SetRepoURL sets the "repo_url" field.
+func (u *HarvestedExtensionUpsert) SetRepoURL(v string) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldRepoURL, v)
+	return u
+}
+
+// UpdateRepoURL sets the "repo_url" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateRepoURL() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldRepoURL)
+	return u
+}
+
+// SetVersionCode sets the "version_code" field.
+func (u *HarvestedExtensionUpsert) SetVersionCode(v int) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldVersionCode, v)
+	return u
+}
+
+// UpdateVersionCode sets the "version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateVersionCode() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldVersionCode)
+	return u
+}
+
+// AddVersionCode adds v to the "version_code" field.
+func (u *HarvestedExtensionUpsert) AddVersionCode(v int) *HarvestedExtensionUpsert {
+	u.Add(harvestedextension.FieldVersionCode, v)
+	return u
+}
+
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (u *HarvestedExtensionUpsert) SetInstalledVersionCode(v int) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldInstalledVersionCode, v)
+	return u
+}
+
+// UpdateInstalledVersionCode sets the "installed_version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateInstalledVersionCode() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldInstalledVersionCode)
+	return u
+}
+
+// AddInstalledVersionCode adds v to the "installed_version_code" field.
+func (u *HarvestedExtensionUpsert) AddInstalledVersionCode(v int) *HarvestedExtensionUpsert {
+	u.Add(harvestedextension.FieldInstalledVersionCode, v)
+	return u
+}
+
+// SetVersionName sets the "version_name" field.
+func (u *HarvestedExtensionUpsert) SetVersionName(v string) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldVersionName, v)
+	return u
+}
+
+// UpdateVersionName sets the "version_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateVersionName() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldVersionName)
+	return u
+}
+
+// SetSourceIds sets the "source_ids" field.
+func (u *HarvestedExtensionUpsert) SetSourceIds(v []int64) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldSourceIds, v)
+	return u
+}
+
+// UpdateSourceIds sets the "source_ids" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateSourceIds() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldSourceIds)
+	return u
+}
+
+// ClearSourceIds clears the value of the "source_ids" field.
+func (u *HarvestedExtensionUpsert) ClearSourceIds() *HarvestedExtensionUpsert {
+	u.SetNull(harvestedextension.FieldSourceIds)
+	return u
+}
+
+// SetApkSha256 sets the "apk_sha256" field.
+func (u *HarvestedExtensionUpsert) SetApkSha256(v string) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldApkSha256, v)
+	return u
+}
+
+// UpdateApkSha256 sets the "apk_sha256" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateApkSha256() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldApkSha256)
+	return u
+}
+
+// SetApkCached sets the "apk_cached" field.
+func (u *HarvestedExtensionUpsert) SetApkCached(v bool) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldApkCached, v)
+	return u
+}
+
+// UpdateApkCached sets the "apk_cached" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateApkCached() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldApkCached)
+	return u
+}
+
+// SetCachedVersions sets the "cached_versions" field.
+func (u *HarvestedExtensionUpsert) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldCachedVersions, v)
+	return u
+}
+
+// UpdateCachedVersions sets the "cached_versions" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateCachedVersions() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldCachedVersions)
+	return u
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (u *HarvestedExtensionUpsert) ClearCachedVersions() *HarvestedExtensionUpsert {
+	u.SetNull(harvestedextension.FieldCachedVersions)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *HarvestedExtensionUpsert) SetUpdatedAt(v time.Time) *HarvestedExtensionUpsert {
+	u.Set(harvestedextension.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsert) UpdateUpdatedAt() *HarvestedExtensionUpsert {
+	u.SetExcluded(harvestedextension.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(harvestedextension.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *HarvestedExtensionUpsertOne) UpdateNewValues() *HarvestedExtensionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(harvestedextension.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *HarvestedExtensionUpsertOne) Ignore() *HarvestedExtensionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *HarvestedExtensionUpsertOne) DoNothing() *HarvestedExtensionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the HarvestedExtensionCreate.OnConflict
+// documentation for more info.
+func (u *HarvestedExtensionUpsertOne) Update(set func(*HarvestedExtensionUpsert)) *HarvestedExtensionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&HarvestedExtensionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetPkgName sets the "pkg_name" field.
+func (u *HarvestedExtensionUpsertOne) SetPkgName(v string) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetPkgName(v)
+	})
+}
+
+// UpdatePkgName sets the "pkg_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdatePkgName() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdatePkgName()
+	})
+}
+
+// SetRepoURL sets the "repo_url" field.
+func (u *HarvestedExtensionUpsertOne) SetRepoURL(v string) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetRepoURL(v)
+	})
+}
+
+// UpdateRepoURL sets the "repo_url" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateRepoURL() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateRepoURL()
+	})
+}
+
+// SetVersionCode sets the "version_code" field.
+func (u *HarvestedExtensionUpsertOne) SetVersionCode(v int) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetVersionCode(v)
+	})
+}
+
+// AddVersionCode adds v to the "version_code" field.
+func (u *HarvestedExtensionUpsertOne) AddVersionCode(v int) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.AddVersionCode(v)
+	})
+}
+
+// UpdateVersionCode sets the "version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateVersionCode() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateVersionCode()
+	})
+}
+
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (u *HarvestedExtensionUpsertOne) SetInstalledVersionCode(v int) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetInstalledVersionCode(v)
+	})
+}
+
+// AddInstalledVersionCode adds v to the "installed_version_code" field.
+func (u *HarvestedExtensionUpsertOne) AddInstalledVersionCode(v int) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.AddInstalledVersionCode(v)
+	})
+}
+
+// UpdateInstalledVersionCode sets the "installed_version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateInstalledVersionCode() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateInstalledVersionCode()
+	})
+}
+
+// SetVersionName sets the "version_name" field.
+func (u *HarvestedExtensionUpsertOne) SetVersionName(v string) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetVersionName(v)
+	})
+}
+
+// UpdateVersionName sets the "version_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateVersionName() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateVersionName()
+	})
+}
+
+// SetSourceIds sets the "source_ids" field.
+func (u *HarvestedExtensionUpsertOne) SetSourceIds(v []int64) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetSourceIds(v)
+	})
+}
+
+// UpdateSourceIds sets the "source_ids" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateSourceIds() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateSourceIds()
+	})
+}
+
+// ClearSourceIds clears the value of the "source_ids" field.
+func (u *HarvestedExtensionUpsertOne) ClearSourceIds() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.ClearSourceIds()
+	})
+}
+
+// SetApkSha256 sets the "apk_sha256" field.
+func (u *HarvestedExtensionUpsertOne) SetApkSha256(v string) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetApkSha256(v)
+	})
+}
+
+// UpdateApkSha256 sets the "apk_sha256" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateApkSha256() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateApkSha256()
+	})
+}
+
+// SetApkCached sets the "apk_cached" field.
+func (u *HarvestedExtensionUpsertOne) SetApkCached(v bool) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetApkCached(v)
+	})
+}
+
+// UpdateApkCached sets the "apk_cached" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateApkCached() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateApkCached()
+	})
+}
+
+// SetCachedVersions sets the "cached_versions" field.
+func (u *HarvestedExtensionUpsertOne) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetCachedVersions(v)
+	})
+}
+
+// UpdateCachedVersions sets the "cached_versions" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateCachedVersions() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateCachedVersions()
+	})
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (u *HarvestedExtensionUpsertOne) ClearCachedVersions() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.ClearCachedVersions()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *HarvestedExtensionUpsertOne) SetUpdatedAt(v time.Time) *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertOne) UpdateUpdatedAt() *HarvestedExtensionUpsertOne {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *HarvestedExtensionUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for HarvestedExtensionCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *HarvestedExtensionUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *HarvestedExtensionUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: HarvestedExtensionUpsertOne.ID is not supported by MySQL driver. Use HarvestedExtensionUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *HarvestedExtensionUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // HarvestedExtensionCreateBulk is the builder for creating many HarvestedExtension entities in bulk.
 type HarvestedExtensionCreateBulk struct {
 	config
 	err      error
 	builders []*HarvestedExtensionCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the HarvestedExtension entities in the database.
@@ -359,6 +811,7 @@ func (_c *HarvestedExtensionCreateBulk) Save(ctx context.Context) ([]*HarvestedE
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -405,6 +858,288 @@ func (_c *HarvestedExtensionCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *HarvestedExtensionCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.HarvestedExtension.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.HarvestedExtensionUpsert) {
+//			SetPkgName(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *HarvestedExtensionCreateBulk) OnConflict(opts ...sql.ConflictOption) *HarvestedExtensionUpsertBulk {
+	_c.conflict = opts
+	return &HarvestedExtensionUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *HarvestedExtensionCreateBulk) OnConflictColumns(columns ...string) *HarvestedExtensionUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &HarvestedExtensionUpsertBulk{
+		create: _c,
+	}
+}
+
+// HarvestedExtensionUpsertBulk is the builder for "upsert"-ing
+// a bulk of HarvestedExtension nodes.
+type HarvestedExtensionUpsertBulk struct {
+	create *HarvestedExtensionCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(harvestedextension.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *HarvestedExtensionUpsertBulk) UpdateNewValues() *HarvestedExtensionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(harvestedextension.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.HarvestedExtension.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *HarvestedExtensionUpsertBulk) Ignore() *HarvestedExtensionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *HarvestedExtensionUpsertBulk) DoNothing() *HarvestedExtensionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the HarvestedExtensionCreateBulk.OnConflict
+// documentation for more info.
+func (u *HarvestedExtensionUpsertBulk) Update(set func(*HarvestedExtensionUpsert)) *HarvestedExtensionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&HarvestedExtensionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetPkgName sets the "pkg_name" field.
+func (u *HarvestedExtensionUpsertBulk) SetPkgName(v string) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetPkgName(v)
+	})
+}
+
+// UpdatePkgName sets the "pkg_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdatePkgName() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdatePkgName()
+	})
+}
+
+// SetRepoURL sets the "repo_url" field.
+func (u *HarvestedExtensionUpsertBulk) SetRepoURL(v string) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetRepoURL(v)
+	})
+}
+
+// UpdateRepoURL sets the "repo_url" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateRepoURL() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateRepoURL()
+	})
+}
+
+// SetVersionCode sets the "version_code" field.
+func (u *HarvestedExtensionUpsertBulk) SetVersionCode(v int) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetVersionCode(v)
+	})
+}
+
+// AddVersionCode adds v to the "version_code" field.
+func (u *HarvestedExtensionUpsertBulk) AddVersionCode(v int) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.AddVersionCode(v)
+	})
+}
+
+// UpdateVersionCode sets the "version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateVersionCode() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateVersionCode()
+	})
+}
+
+// SetInstalledVersionCode sets the "installed_version_code" field.
+func (u *HarvestedExtensionUpsertBulk) SetInstalledVersionCode(v int) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetInstalledVersionCode(v)
+	})
+}
+
+// AddInstalledVersionCode adds v to the "installed_version_code" field.
+func (u *HarvestedExtensionUpsertBulk) AddInstalledVersionCode(v int) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.AddInstalledVersionCode(v)
+	})
+}
+
+// UpdateInstalledVersionCode sets the "installed_version_code" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateInstalledVersionCode() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateInstalledVersionCode()
+	})
+}
+
+// SetVersionName sets the "version_name" field.
+func (u *HarvestedExtensionUpsertBulk) SetVersionName(v string) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetVersionName(v)
+	})
+}
+
+// UpdateVersionName sets the "version_name" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateVersionName() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateVersionName()
+	})
+}
+
+// SetSourceIds sets the "source_ids" field.
+func (u *HarvestedExtensionUpsertBulk) SetSourceIds(v []int64) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetSourceIds(v)
+	})
+}
+
+// UpdateSourceIds sets the "source_ids" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateSourceIds() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateSourceIds()
+	})
+}
+
+// ClearSourceIds clears the value of the "source_ids" field.
+func (u *HarvestedExtensionUpsertBulk) ClearSourceIds() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.ClearSourceIds()
+	})
+}
+
+// SetApkSha256 sets the "apk_sha256" field.
+func (u *HarvestedExtensionUpsertBulk) SetApkSha256(v string) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetApkSha256(v)
+	})
+}
+
+// UpdateApkSha256 sets the "apk_sha256" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateApkSha256() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateApkSha256()
+	})
+}
+
+// SetApkCached sets the "apk_cached" field.
+func (u *HarvestedExtensionUpsertBulk) SetApkCached(v bool) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetApkCached(v)
+	})
+}
+
+// UpdateApkCached sets the "apk_cached" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateApkCached() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateApkCached()
+	})
+}
+
+// SetCachedVersions sets the "cached_versions" field.
+func (u *HarvestedExtensionUpsertBulk) SetCachedVersions(v []apkcache.CachedVersion) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetCachedVersions(v)
+	})
+}
+
+// UpdateCachedVersions sets the "cached_versions" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateCachedVersions() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateCachedVersions()
+	})
+}
+
+// ClearCachedVersions clears the value of the "cached_versions" field.
+func (u *HarvestedExtensionUpsertBulk) ClearCachedVersions() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.ClearCachedVersions()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *HarvestedExtensionUpsertBulk) SetUpdatedAt(v time.Time) *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *HarvestedExtensionUpsertBulk) UpdateUpdatedAt() *HarvestedExtensionUpsertBulk {
+	return u.Update(func(s *HarvestedExtensionUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *HarvestedExtensionUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the HarvestedExtensionCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for HarvestedExtensionCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *HarvestedExtensionUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type ImportEntryCreate struct {
 	config
 	mutation *ImportEntryMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetPath sets the "path" field.
@@ -235,6 +238,7 @@ func (_c *ImportEntryCreate) createSpec() (*ImportEntry, *sqlgraph.CreateSpec) {
 		_node = &ImportEntry{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(importentry.Table, sqlgraph.NewFieldSpec(importentry.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -274,11 +278,394 @@ func (_c *ImportEntryCreate) createSpec() (*ImportEntry, *sqlgraph.CreateSpec) {
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.ImportEntry.Create().
+//		SetPath(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ImportEntryUpsert) {
+//			SetPath(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ImportEntryCreate) OnConflict(opts ...sql.ConflictOption) *ImportEntryUpsertOne {
+	_c.conflict = opts
+	return &ImportEntryUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ImportEntryCreate) OnConflictColumns(columns ...string) *ImportEntryUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ImportEntryUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// ImportEntryUpsertOne is the builder for "upsert"-ing
+	//  one ImportEntry node.
+	ImportEntryUpsertOne struct {
+		create *ImportEntryCreate
+	}
+
+	// ImportEntryUpsert is the "OnConflict" setter.
+	ImportEntryUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetPath sets the "path" field.
+func (u *ImportEntryUpsert) SetPath(v string) *ImportEntryUpsert {
+	u.Set(importentry.FieldPath, v)
+	return u
+}
+
+// UpdatePath sets the "path" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdatePath() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldPath)
+	return u
+}
+
+// SetTitle sets the "title" field.
+func (u *ImportEntryUpsert) SetTitle(v string) *ImportEntryUpsert {
+	u.Set(importentry.FieldTitle, v)
+	return u
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateTitle() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldTitle)
+	return u
+}
+
+// SetCategory sets the "category" field.
+func (u *ImportEntryUpsert) SetCategory(v string) *ImportEntryUpsert {
+	u.Set(importentry.FieldCategory, v)
+	return u
+}
+
+// UpdateCategory sets the "category" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateCategory() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldCategory)
+	return u
+}
+
+// SetStatus sets the "status" field.
+func (u *ImportEntryUpsert) SetStatus(v string) *ImportEntryUpsert {
+	u.Set(importentry.FieldStatus, v)
+	return u
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateStatus() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldStatus)
+	return u
+}
+
+// SetChapterCount sets the "chapter_count" field.
+func (u *ImportEntryUpsert) SetChapterCount(v int) *ImportEntryUpsert {
+	u.Set(importentry.FieldChapterCount, v)
+	return u
+}
+
+// UpdateChapterCount sets the "chapter_count" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateChapterCount() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldChapterCount)
+	return u
+}
+
+// AddChapterCount adds v to the "chapter_count" field.
+func (u *ImportEntryUpsert) AddChapterCount(v int) *ImportEntryUpsert {
+	u.Add(importentry.FieldChapterCount, v)
+	return u
+}
+
+// SetFound sets the "found" field.
+func (u *ImportEntryUpsert) SetFound(v map[string]interface{}) *ImportEntryUpsert {
+	u.Set(importentry.FieldFound, v)
+	return u
+}
+
+// UpdateFound sets the "found" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateFound() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldFound)
+	return u
+}
+
+// ClearFound clears the value of the "found" field.
+func (u *ImportEntryUpsert) ClearFound() *ImportEntryUpsert {
+	u.SetNull(importentry.FieldFound)
+	return u
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (u *ImportEntryUpsert) SetMatchedSource(v map[string]interface{}) *ImportEntryUpsert {
+	u.Set(importentry.FieldMatchedSource, v)
+	return u
+}
+
+// UpdateMatchedSource sets the "matched_source" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateMatchedSource() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldMatchedSource)
+	return u
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (u *ImportEntryUpsert) ClearMatchedSource() *ImportEntryUpsert {
+	u.SetNull(importentry.FieldMatchedSource)
+	return u
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (u *ImportEntryUpsert) SetScannedAt(v time.Time) *ImportEntryUpsert {
+	u.Set(importentry.FieldScannedAt, v)
+	return u
+}
+
+// UpdateScannedAt sets the "scanned_at" field to the value that was provided on create.
+func (u *ImportEntryUpsert) UpdateScannedAt() *ImportEntryUpsert {
+	u.SetExcluded(importentry.FieldScannedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(importentry.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ImportEntryUpsertOne) UpdateNewValues() *ImportEntryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(importentry.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *ImportEntryUpsertOne) Ignore() *ImportEntryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ImportEntryUpsertOne) DoNothing() *ImportEntryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ImportEntryCreate.OnConflict
+// documentation for more info.
+func (u *ImportEntryUpsertOne) Update(set func(*ImportEntryUpsert)) *ImportEntryUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ImportEntryUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetPath sets the "path" field.
+func (u *ImportEntryUpsertOne) SetPath(v string) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetPath(v)
+	})
+}
+
+// UpdatePath sets the "path" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdatePath() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdatePath()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *ImportEntryUpsertOne) SetTitle(v string) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateTitle() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetCategory sets the "category" field.
+func (u *ImportEntryUpsertOne) SetCategory(v string) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetCategory(v)
+	})
+}
+
+// UpdateCategory sets the "category" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateCategory() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateCategory()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *ImportEntryUpsertOne) SetStatus(v string) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateStatus() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetChapterCount sets the "chapter_count" field.
+func (u *ImportEntryUpsertOne) SetChapterCount(v int) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetChapterCount(v)
+	})
+}
+
+// AddChapterCount adds v to the "chapter_count" field.
+func (u *ImportEntryUpsertOne) AddChapterCount(v int) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.AddChapterCount(v)
+	})
+}
+
+// UpdateChapterCount sets the "chapter_count" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateChapterCount() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateChapterCount()
+	})
+}
+
+// SetFound sets the "found" field.
+func (u *ImportEntryUpsertOne) SetFound(v map[string]interface{}) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetFound(v)
+	})
+}
+
+// UpdateFound sets the "found" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateFound() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateFound()
+	})
+}
+
+// ClearFound clears the value of the "found" field.
+func (u *ImportEntryUpsertOne) ClearFound() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.ClearFound()
+	})
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (u *ImportEntryUpsertOne) SetMatchedSource(v map[string]interface{}) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetMatchedSource(v)
+	})
+}
+
+// UpdateMatchedSource sets the "matched_source" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateMatchedSource() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateMatchedSource()
+	})
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (u *ImportEntryUpsertOne) ClearMatchedSource() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.ClearMatchedSource()
+	})
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (u *ImportEntryUpsertOne) SetScannedAt(v time.Time) *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetScannedAt(v)
+	})
+}
+
+// UpdateScannedAt sets the "scanned_at" field to the value that was provided on create.
+func (u *ImportEntryUpsertOne) UpdateScannedAt() *ImportEntryUpsertOne {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateScannedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *ImportEntryUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ImportEntryCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ImportEntryUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *ImportEntryUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: ImportEntryUpsertOne.ID is not supported by MySQL driver. Use ImportEntryUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *ImportEntryUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // ImportEntryCreateBulk is the builder for creating many ImportEntry entities in bulk.
 type ImportEntryCreateBulk struct {
 	config
 	err      error
 	builders []*ImportEntryCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the ImportEntry entities in the database.
@@ -308,6 +695,7 @@ func (_c *ImportEntryCreateBulk) Save(ctx context.Context) ([]*ImportEntry, erro
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -354,6 +742,253 @@ func (_c *ImportEntryCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *ImportEntryCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.ImportEntry.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.ImportEntryUpsert) {
+//			SetPath(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *ImportEntryCreateBulk) OnConflict(opts ...sql.ConflictOption) *ImportEntryUpsertBulk {
+	_c.conflict = opts
+	return &ImportEntryUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *ImportEntryCreateBulk) OnConflictColumns(columns ...string) *ImportEntryUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &ImportEntryUpsertBulk{
+		create: _c,
+	}
+}
+
+// ImportEntryUpsertBulk is the builder for "upsert"-ing
+// a bulk of ImportEntry nodes.
+type ImportEntryUpsertBulk struct {
+	create *ImportEntryCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(importentry.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *ImportEntryUpsertBulk) UpdateNewValues() *ImportEntryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(importentry.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.ImportEntry.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *ImportEntryUpsertBulk) Ignore() *ImportEntryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *ImportEntryUpsertBulk) DoNothing() *ImportEntryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the ImportEntryCreateBulk.OnConflict
+// documentation for more info.
+func (u *ImportEntryUpsertBulk) Update(set func(*ImportEntryUpsert)) *ImportEntryUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&ImportEntryUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetPath sets the "path" field.
+func (u *ImportEntryUpsertBulk) SetPath(v string) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetPath(v)
+	})
+}
+
+// UpdatePath sets the "path" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdatePath() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdatePath()
+	})
+}
+
+// SetTitle sets the "title" field.
+func (u *ImportEntryUpsertBulk) SetTitle(v string) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetTitle(v)
+	})
+}
+
+// UpdateTitle sets the "title" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateTitle() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateTitle()
+	})
+}
+
+// SetCategory sets the "category" field.
+func (u *ImportEntryUpsertBulk) SetCategory(v string) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetCategory(v)
+	})
+}
+
+// UpdateCategory sets the "category" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateCategory() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateCategory()
+	})
+}
+
+// SetStatus sets the "status" field.
+func (u *ImportEntryUpsertBulk) SetStatus(v string) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetStatus(v)
+	})
+}
+
+// UpdateStatus sets the "status" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateStatus() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateStatus()
+	})
+}
+
+// SetChapterCount sets the "chapter_count" field.
+func (u *ImportEntryUpsertBulk) SetChapterCount(v int) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetChapterCount(v)
+	})
+}
+
+// AddChapterCount adds v to the "chapter_count" field.
+func (u *ImportEntryUpsertBulk) AddChapterCount(v int) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.AddChapterCount(v)
+	})
+}
+
+// UpdateChapterCount sets the "chapter_count" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateChapterCount() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateChapterCount()
+	})
+}
+
+// SetFound sets the "found" field.
+func (u *ImportEntryUpsertBulk) SetFound(v map[string]interface{}) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetFound(v)
+	})
+}
+
+// UpdateFound sets the "found" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateFound() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateFound()
+	})
+}
+
+// ClearFound clears the value of the "found" field.
+func (u *ImportEntryUpsertBulk) ClearFound() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.ClearFound()
+	})
+}
+
+// SetMatchedSource sets the "matched_source" field.
+func (u *ImportEntryUpsertBulk) SetMatchedSource(v map[string]interface{}) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetMatchedSource(v)
+	})
+}
+
+// UpdateMatchedSource sets the "matched_source" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateMatchedSource() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateMatchedSource()
+	})
+}
+
+// ClearMatchedSource clears the value of the "matched_source" field.
+func (u *ImportEntryUpsertBulk) ClearMatchedSource() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.ClearMatchedSource()
+	})
+}
+
+// SetScannedAt sets the "scanned_at" field.
+func (u *ImportEntryUpsertBulk) SetScannedAt(v time.Time) *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.SetScannedAt(v)
+	})
+}
+
+// UpdateScannedAt sets the "scanned_at" field to the value that was provided on create.
+func (u *ImportEntryUpsertBulk) UpdateScannedAt() *ImportEntryUpsertBulk {
+	return u.Update(func(s *ImportEntryUpsert) {
+		s.UpdateScannedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *ImportEntryUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the ImportEntryCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for ImportEntryCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *ImportEntryUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

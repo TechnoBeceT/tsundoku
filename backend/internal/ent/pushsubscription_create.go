@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type PushSubscriptionCreate struct {
 	config
 	mutation *PushSubscriptionMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetEndpoint sets the "endpoint" field.
@@ -192,6 +195,7 @@ func (_c *PushSubscriptionCreate) createSpec() (*PushSubscription, *sqlgraph.Cre
 		_node = &PushSubscription{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(pushsubscription.Table, sqlgraph.NewFieldSpec(pushsubscription.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -223,11 +227,306 @@ func (_c *PushSubscriptionCreate) createSpec() (*PushSubscription, *sqlgraph.Cre
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.PushSubscription.Create().
+//		SetEndpoint(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.PushSubscriptionUpsert) {
+//			SetEndpoint(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *PushSubscriptionCreate) OnConflict(opts ...sql.ConflictOption) *PushSubscriptionUpsertOne {
+	_c.conflict = opts
+	return &PushSubscriptionUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *PushSubscriptionCreate) OnConflictColumns(columns ...string) *PushSubscriptionUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &PushSubscriptionUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// PushSubscriptionUpsertOne is the builder for "upsert"-ing
+	//  one PushSubscription node.
+	PushSubscriptionUpsertOne struct {
+		create *PushSubscriptionCreate
+	}
+
+	// PushSubscriptionUpsert is the "OnConflict" setter.
+	PushSubscriptionUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetEndpoint sets the "endpoint" field.
+func (u *PushSubscriptionUpsert) SetEndpoint(v string) *PushSubscriptionUpsert {
+	u.Set(pushsubscription.FieldEndpoint, v)
+	return u
+}
+
+// UpdateEndpoint sets the "endpoint" field to the value that was provided on create.
+func (u *PushSubscriptionUpsert) UpdateEndpoint() *PushSubscriptionUpsert {
+	u.SetExcluded(pushsubscription.FieldEndpoint)
+	return u
+}
+
+// SetP256dh sets the "p256dh" field.
+func (u *PushSubscriptionUpsert) SetP256dh(v string) *PushSubscriptionUpsert {
+	u.Set(pushsubscription.FieldP256dh, v)
+	return u
+}
+
+// UpdateP256dh sets the "p256dh" field to the value that was provided on create.
+func (u *PushSubscriptionUpsert) UpdateP256dh() *PushSubscriptionUpsert {
+	u.SetExcluded(pushsubscription.FieldP256dh)
+	return u
+}
+
+// SetAuth sets the "auth" field.
+func (u *PushSubscriptionUpsert) SetAuth(v string) *PushSubscriptionUpsert {
+	u.Set(pushsubscription.FieldAuth, v)
+	return u
+}
+
+// UpdateAuth sets the "auth" field to the value that was provided on create.
+func (u *PushSubscriptionUpsert) UpdateAuth() *PushSubscriptionUpsert {
+	u.SetExcluded(pushsubscription.FieldAuth)
+	return u
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *PushSubscriptionUpsert) SetLastSuccessAt(v time.Time) *PushSubscriptionUpsert {
+	u.Set(pushsubscription.FieldLastSuccessAt, v)
+	return u
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *PushSubscriptionUpsert) UpdateLastSuccessAt() *PushSubscriptionUpsert {
+	u.SetExcluded(pushsubscription.FieldLastSuccessAt)
+	return u
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *PushSubscriptionUpsert) ClearLastSuccessAt() *PushSubscriptionUpsert {
+	u.SetNull(pushsubscription.FieldLastSuccessAt)
+	return u
+}
+
+// SetFailureCount sets the "failure_count" field.
+func (u *PushSubscriptionUpsert) SetFailureCount(v int) *PushSubscriptionUpsert {
+	u.Set(pushsubscription.FieldFailureCount, v)
+	return u
+}
+
+// UpdateFailureCount sets the "failure_count" field to the value that was provided on create.
+func (u *PushSubscriptionUpsert) UpdateFailureCount() *PushSubscriptionUpsert {
+	u.SetExcluded(pushsubscription.FieldFailureCount)
+	return u
+}
+
+// AddFailureCount adds v to the "failure_count" field.
+func (u *PushSubscriptionUpsert) AddFailureCount(v int) *PushSubscriptionUpsert {
+	u.Add(pushsubscription.FieldFailureCount, v)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(pushsubscription.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *PushSubscriptionUpsertOne) UpdateNewValues() *PushSubscriptionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(pushsubscription.FieldID)
+		}
+		if _, exists := u.create.mutation.CreatedAt(); exists {
+			s.SetIgnore(pushsubscription.FieldCreatedAt)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *PushSubscriptionUpsertOne) Ignore() *PushSubscriptionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *PushSubscriptionUpsertOne) DoNothing() *PushSubscriptionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the PushSubscriptionCreate.OnConflict
+// documentation for more info.
+func (u *PushSubscriptionUpsertOne) Update(set func(*PushSubscriptionUpsert)) *PushSubscriptionUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&PushSubscriptionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetEndpoint sets the "endpoint" field.
+func (u *PushSubscriptionUpsertOne) SetEndpoint(v string) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetEndpoint(v)
+	})
+}
+
+// UpdateEndpoint sets the "endpoint" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertOne) UpdateEndpoint() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateEndpoint()
+	})
+}
+
+// SetP256dh sets the "p256dh" field.
+func (u *PushSubscriptionUpsertOne) SetP256dh(v string) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetP256dh(v)
+	})
+}
+
+// UpdateP256dh sets the "p256dh" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertOne) UpdateP256dh() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateP256dh()
+	})
+}
+
+// SetAuth sets the "auth" field.
+func (u *PushSubscriptionUpsertOne) SetAuth(v string) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetAuth(v)
+	})
+}
+
+// UpdateAuth sets the "auth" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertOne) UpdateAuth() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateAuth()
+	})
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *PushSubscriptionUpsertOne) SetLastSuccessAt(v time.Time) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetLastSuccessAt(v)
+	})
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertOne) UpdateLastSuccessAt() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateLastSuccessAt()
+	})
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *PushSubscriptionUpsertOne) ClearLastSuccessAt() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.ClearLastSuccessAt()
+	})
+}
+
+// SetFailureCount sets the "failure_count" field.
+func (u *PushSubscriptionUpsertOne) SetFailureCount(v int) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetFailureCount(v)
+	})
+}
+
+// AddFailureCount adds v to the "failure_count" field.
+func (u *PushSubscriptionUpsertOne) AddFailureCount(v int) *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.AddFailureCount(v)
+	})
+}
+
+// UpdateFailureCount sets the "failure_count" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertOne) UpdateFailureCount() *PushSubscriptionUpsertOne {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateFailureCount()
+	})
+}
+
+// Exec executes the query.
+func (u *PushSubscriptionUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for PushSubscriptionCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *PushSubscriptionUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *PushSubscriptionUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: PushSubscriptionUpsertOne.ID is not supported by MySQL driver. Use PushSubscriptionUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *PushSubscriptionUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // PushSubscriptionCreateBulk is the builder for creating many PushSubscription entities in bulk.
 type PushSubscriptionCreateBulk struct {
 	config
 	err      error
 	builders []*PushSubscriptionCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the PushSubscription entities in the database.
@@ -257,6 +556,7 @@ func (_c *PushSubscriptionCreateBulk) Save(ctx context.Context) ([]*PushSubscrip
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -303,6 +603,207 @@ func (_c *PushSubscriptionCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *PushSubscriptionCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.PushSubscription.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.PushSubscriptionUpsert) {
+//			SetEndpoint(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *PushSubscriptionCreateBulk) OnConflict(opts ...sql.ConflictOption) *PushSubscriptionUpsertBulk {
+	_c.conflict = opts
+	return &PushSubscriptionUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *PushSubscriptionCreateBulk) OnConflictColumns(columns ...string) *PushSubscriptionUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &PushSubscriptionUpsertBulk{
+		create: _c,
+	}
+}
+
+// PushSubscriptionUpsertBulk is the builder for "upsert"-ing
+// a bulk of PushSubscription nodes.
+type PushSubscriptionUpsertBulk struct {
+	create *PushSubscriptionCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(pushsubscription.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *PushSubscriptionUpsertBulk) UpdateNewValues() *PushSubscriptionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(pushsubscription.FieldID)
+			}
+			if _, exists := b.mutation.CreatedAt(); exists {
+				s.SetIgnore(pushsubscription.FieldCreatedAt)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.PushSubscription.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *PushSubscriptionUpsertBulk) Ignore() *PushSubscriptionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *PushSubscriptionUpsertBulk) DoNothing() *PushSubscriptionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the PushSubscriptionCreateBulk.OnConflict
+// documentation for more info.
+func (u *PushSubscriptionUpsertBulk) Update(set func(*PushSubscriptionUpsert)) *PushSubscriptionUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&PushSubscriptionUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetEndpoint sets the "endpoint" field.
+func (u *PushSubscriptionUpsertBulk) SetEndpoint(v string) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetEndpoint(v)
+	})
+}
+
+// UpdateEndpoint sets the "endpoint" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertBulk) UpdateEndpoint() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateEndpoint()
+	})
+}
+
+// SetP256dh sets the "p256dh" field.
+func (u *PushSubscriptionUpsertBulk) SetP256dh(v string) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetP256dh(v)
+	})
+}
+
+// UpdateP256dh sets the "p256dh" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertBulk) UpdateP256dh() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateP256dh()
+	})
+}
+
+// SetAuth sets the "auth" field.
+func (u *PushSubscriptionUpsertBulk) SetAuth(v string) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetAuth(v)
+	})
+}
+
+// UpdateAuth sets the "auth" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertBulk) UpdateAuth() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateAuth()
+	})
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *PushSubscriptionUpsertBulk) SetLastSuccessAt(v time.Time) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetLastSuccessAt(v)
+	})
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertBulk) UpdateLastSuccessAt() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateLastSuccessAt()
+	})
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *PushSubscriptionUpsertBulk) ClearLastSuccessAt() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.ClearLastSuccessAt()
+	})
+}
+
+// SetFailureCount sets the "failure_count" field.
+func (u *PushSubscriptionUpsertBulk) SetFailureCount(v int) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.SetFailureCount(v)
+	})
+}
+
+// AddFailureCount adds v to the "failure_count" field.
+func (u *PushSubscriptionUpsertBulk) AddFailureCount(v int) *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.AddFailureCount(v)
+	})
+}
+
+// UpdateFailureCount sets the "failure_count" field to the value that was provided on create.
+func (u *PushSubscriptionUpsertBulk) UpdateFailureCount() *PushSubscriptionUpsertBulk {
+	return u.Update(func(s *PushSubscriptionUpsert) {
+		s.UpdateFailureCount()
+	})
+}
+
+// Exec executes the query.
+func (u *PushSubscriptionUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the PushSubscriptionCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for PushSubscriptionCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *PushSubscriptionUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }

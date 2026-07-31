@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/google/uuid"
@@ -19,6 +21,7 @@ type SourceMetricCreate struct {
 	config
 	mutation *SourceMetricMutation
 	hooks    []Hook
+	conflict []sql.ConflictOption
 }
 
 // SetSourceID sets the "source_id" field.
@@ -328,6 +331,7 @@ func (_c *SourceMetricCreate) createSpec() (*SourceMetric, *sqlgraph.CreateSpec)
 		_node = &SourceMetric{config: _c.config}
 		_spec = sqlgraph.NewCreateSpec(sourcemetric.Table, sqlgraph.NewFieldSpec(sourcemetric.FieldID, field.TypeUUID))
 	)
+	_spec.OnConflict = _c.conflict
 	if id, ok := _c.mutation.ID(); ok {
 		_node.ID = id
 		_spec.ID.Value = &id
@@ -383,11 +387,563 @@ func (_c *SourceMetricCreate) createSpec() (*SourceMetric, *sqlgraph.CreateSpec)
 	return _node, _spec
 }
 
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceMetric.Create().
+//		SetSourceID(v).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceMetricUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceMetricCreate) OnConflict(opts ...sql.ConflictOption) *SourceMetricUpsertOne {
+	_c.conflict = opts
+	return &SourceMetricUpsertOne{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceMetricCreate) OnConflictColumns(columns ...string) *SourceMetricUpsertOne {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceMetricUpsertOne{
+		create: _c,
+	}
+}
+
+type (
+	// SourceMetricUpsertOne is the builder for "upsert"-ing
+	//  one SourceMetric node.
+	SourceMetricUpsertOne struct {
+		create *SourceMetricCreate
+	}
+
+	// SourceMetricUpsert is the "OnConflict" setter.
+	SourceMetricUpsert struct {
+		*sql.UpdateSet
+	}
+)
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceMetricUpsert) SetSourceID(v string) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldSourceID, v)
+	return u
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateSourceID() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldSourceID)
+	return u
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceMetricUpsert) SetSourceName(v string) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldSourceName, v)
+	return u
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateSourceName() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldSourceName)
+	return u
+}
+
+// SetEwmaLatencyMs sets the "ewma_latency_ms" field.
+func (u *SourceMetricUpsert) SetEwmaLatencyMs(v int) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldEwmaLatencyMs, v)
+	return u
+}
+
+// UpdateEwmaLatencyMs sets the "ewma_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateEwmaLatencyMs() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldEwmaLatencyMs)
+	return u
+}
+
+// AddEwmaLatencyMs adds v to the "ewma_latency_ms" field.
+func (u *SourceMetricUpsert) AddEwmaLatencyMs(v int) *SourceMetricUpsert {
+	u.Add(sourcemetric.FieldEwmaLatencyMs, v)
+	return u
+}
+
+// SetLastLatencyMs sets the "last_latency_ms" field.
+func (u *SourceMetricUpsert) SetLastLatencyMs(v int) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldLastLatencyMs, v)
+	return u
+}
+
+// UpdateLastLatencyMs sets the "last_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateLastLatencyMs() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldLastLatencyMs)
+	return u
+}
+
+// AddLastLatencyMs adds v to the "last_latency_ms" field.
+func (u *SourceMetricUpsert) AddLastLatencyMs(v int) *SourceMetricUpsert {
+	u.Add(sourcemetric.FieldLastLatencyMs, v)
+	return u
+}
+
+// SetSearchCount sets the "search_count" field.
+func (u *SourceMetricUpsert) SetSearchCount(v int) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldSearchCount, v)
+	return u
+}
+
+// UpdateSearchCount sets the "search_count" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateSearchCount() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldSearchCount)
+	return u
+}
+
+// AddSearchCount adds v to the "search_count" field.
+func (u *SourceMetricUpsert) AddSearchCount(v int) *SourceMetricUpsert {
+	u.Add(sourcemetric.FieldSearchCount, v)
+	return u
+}
+
+// SetSuccessCount sets the "success_count" field.
+func (u *SourceMetricUpsert) SetSuccessCount(v int) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldSuccessCount, v)
+	return u
+}
+
+// UpdateSuccessCount sets the "success_count" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateSuccessCount() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldSuccessCount)
+	return u
+}
+
+// AddSuccessCount adds v to the "success_count" field.
+func (u *SourceMetricUpsert) AddSuccessCount(v int) *SourceMetricUpsert {
+	u.Add(sourcemetric.FieldSuccessCount, v)
+	return u
+}
+
+// SetFailCount sets the "fail_count" field.
+func (u *SourceMetricUpsert) SetFailCount(v int) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldFailCount, v)
+	return u
+}
+
+// UpdateFailCount sets the "fail_count" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateFailCount() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldFailCount)
+	return u
+}
+
+// AddFailCount adds v to the "fail_count" field.
+func (u *SourceMetricUpsert) AddFailCount(v int) *SourceMetricUpsert {
+	u.Add(sourcemetric.FieldFailCount, v)
+	return u
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceMetricUpsert) SetLastError(v string) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldLastError, v)
+	return u
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateLastError() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldLastError)
+	return u
+}
+
+// SetLastErrorAt sets the "last_error_at" field.
+func (u *SourceMetricUpsert) SetLastErrorAt(v time.Time) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldLastErrorAt, v)
+	return u
+}
+
+// UpdateLastErrorAt sets the "last_error_at" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateLastErrorAt() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldLastErrorAt)
+	return u
+}
+
+// ClearLastErrorAt clears the value of the "last_error_at" field.
+func (u *SourceMetricUpsert) ClearLastErrorAt() *SourceMetricUpsert {
+	u.SetNull(sourcemetric.FieldLastErrorAt)
+	return u
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *SourceMetricUpsert) SetLastSuccessAt(v time.Time) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldLastSuccessAt, v)
+	return u
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateLastSuccessAt() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldLastSuccessAt)
+	return u
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *SourceMetricUpsert) ClearLastSuccessAt() *SourceMetricUpsert {
+	u.SetNull(sourcemetric.FieldLastSuccessAt)
+	return u
+}
+
+// SetLastWarmedAt sets the "last_warmed_at" field.
+func (u *SourceMetricUpsert) SetLastWarmedAt(v time.Time) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldLastWarmedAt, v)
+	return u
+}
+
+// UpdateLastWarmedAt sets the "last_warmed_at" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateLastWarmedAt() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldLastWarmedAt)
+	return u
+}
+
+// ClearLastWarmedAt clears the value of the "last_warmed_at" field.
+func (u *SourceMetricUpsert) ClearLastWarmedAt() *SourceMetricUpsert {
+	u.SetNull(sourcemetric.FieldLastWarmedAt)
+	return u
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceMetricUpsert) SetUpdatedAt(v time.Time) *SourceMetricUpsert {
+	u.Set(sourcemetric.FieldUpdatedAt, v)
+	return u
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceMetricUpsert) UpdateUpdatedAt() *SourceMetricUpsert {
+	u.SetExcluded(sourcemetric.FieldUpdatedAt)
+	return u
+}
+
+// UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
+// Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcemetric.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceMetricUpsertOne) UpdateNewValues() *SourceMetricUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		if _, exists := u.create.mutation.ID(); exists {
+			s.SetIgnore(sourcemetric.FieldID)
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//	    OnConflict(sql.ResolveWithIgnore()).
+//	    Exec(ctx)
+func (u *SourceMetricUpsertOne) Ignore() *SourceMetricUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceMetricUpsertOne) DoNothing() *SourceMetricUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceMetricCreate.OnConflict
+// documentation for more info.
+func (u *SourceMetricUpsertOne) Update(set func(*SourceMetricUpsert)) *SourceMetricUpsertOne {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceMetricUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceMetricUpsertOne) SetSourceID(v string) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateSourceID() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceMetricUpsertOne) SetSourceName(v string) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateSourceName() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetEwmaLatencyMs sets the "ewma_latency_ms" field.
+func (u *SourceMetricUpsertOne) SetEwmaLatencyMs(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetEwmaLatencyMs(v)
+	})
+}
+
+// AddEwmaLatencyMs adds v to the "ewma_latency_ms" field.
+func (u *SourceMetricUpsertOne) AddEwmaLatencyMs(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddEwmaLatencyMs(v)
+	})
+}
+
+// UpdateEwmaLatencyMs sets the "ewma_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateEwmaLatencyMs() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateEwmaLatencyMs()
+	})
+}
+
+// SetLastLatencyMs sets the "last_latency_ms" field.
+func (u *SourceMetricUpsertOne) SetLastLatencyMs(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastLatencyMs(v)
+	})
+}
+
+// AddLastLatencyMs adds v to the "last_latency_ms" field.
+func (u *SourceMetricUpsertOne) AddLastLatencyMs(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddLastLatencyMs(v)
+	})
+}
+
+// UpdateLastLatencyMs sets the "last_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateLastLatencyMs() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastLatencyMs()
+	})
+}
+
+// SetSearchCount sets the "search_count" field.
+func (u *SourceMetricUpsertOne) SetSearchCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSearchCount(v)
+	})
+}
+
+// AddSearchCount adds v to the "search_count" field.
+func (u *SourceMetricUpsertOne) AddSearchCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddSearchCount(v)
+	})
+}
+
+// UpdateSearchCount sets the "search_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateSearchCount() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSearchCount()
+	})
+}
+
+// SetSuccessCount sets the "success_count" field.
+func (u *SourceMetricUpsertOne) SetSuccessCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSuccessCount(v)
+	})
+}
+
+// AddSuccessCount adds v to the "success_count" field.
+func (u *SourceMetricUpsertOne) AddSuccessCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddSuccessCount(v)
+	})
+}
+
+// UpdateSuccessCount sets the "success_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateSuccessCount() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSuccessCount()
+	})
+}
+
+// SetFailCount sets the "fail_count" field.
+func (u *SourceMetricUpsertOne) SetFailCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetFailCount(v)
+	})
+}
+
+// AddFailCount adds v to the "fail_count" field.
+func (u *SourceMetricUpsertOne) AddFailCount(v int) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddFailCount(v)
+	})
+}
+
+// UpdateFailCount sets the "fail_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateFailCount() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateFailCount()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceMetricUpsertOne) SetLastError(v string) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateLastError() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetLastErrorAt sets the "last_error_at" field.
+func (u *SourceMetricUpsertOne) SetLastErrorAt(v time.Time) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastErrorAt(v)
+	})
+}
+
+// UpdateLastErrorAt sets the "last_error_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateLastErrorAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastErrorAt()
+	})
+}
+
+// ClearLastErrorAt clears the value of the "last_error_at" field.
+func (u *SourceMetricUpsertOne) ClearLastErrorAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastErrorAt()
+	})
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *SourceMetricUpsertOne) SetLastSuccessAt(v time.Time) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastSuccessAt(v)
+	})
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateLastSuccessAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastSuccessAt()
+	})
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *SourceMetricUpsertOne) ClearLastSuccessAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastSuccessAt()
+	})
+}
+
+// SetLastWarmedAt sets the "last_warmed_at" field.
+func (u *SourceMetricUpsertOne) SetLastWarmedAt(v time.Time) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastWarmedAt(v)
+	})
+}
+
+// UpdateLastWarmedAt sets the "last_warmed_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateLastWarmedAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastWarmedAt()
+	})
+}
+
+// ClearLastWarmedAt clears the value of the "last_warmed_at" field.
+func (u *SourceMetricUpsertOne) ClearLastWarmedAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastWarmedAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceMetricUpsertOne) SetUpdatedAt(v time.Time) *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertOne) UpdateUpdatedAt() *SourceMetricUpsertOne {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceMetricUpsertOne) Exec(ctx context.Context) error {
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceMetricCreate.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceMetricUpsertOne) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// Exec executes the UPSERT query and returns the inserted/updated ID.
+func (u *SourceMetricUpsertOne) ID(ctx context.Context) (id uuid.UUID, err error) {
+	if u.create.driver.Dialect() == dialect.MySQL {
+		// In case of "ON CONFLICT", there is no way to get back non-numeric ID
+		// fields from the database since MySQL does not support the RETURNING clause.
+		return id, errors.New("ent: SourceMetricUpsertOne.ID is not supported by MySQL driver. Use SourceMetricUpsertOne.Exec instead")
+	}
+	node, err := u.create.Save(ctx)
+	if err != nil {
+		return id, err
+	}
+	return node.ID, nil
+}
+
+// IDX is like ID, but panics if an error occurs.
+func (u *SourceMetricUpsertOne) IDX(ctx context.Context) uuid.UUID {
+	id, err := u.ID(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
 // SourceMetricCreateBulk is the builder for creating many SourceMetric entities in bulk.
 type SourceMetricCreateBulk struct {
 	config
 	err      error
 	builders []*SourceMetricCreate
+	conflict []sql.ConflictOption
 }
 
 // Save creates the SourceMetric entities in the database.
@@ -417,6 +973,7 @@ func (_c *SourceMetricCreateBulk) Save(ctx context.Context) ([]*SourceMetric, er
 					_, err = mutators[i+1].Mutate(root, _c.builders[i+1].mutation)
 				} else {
 					spec := &sqlgraph.BatchCreateSpec{Nodes: specs}
+					spec.OnConflict = _c.conflict
 					// Invoke the actual operation on the latest mutation in the chain.
 					if err = sqlgraph.BatchCreate(ctx, _c.driver, spec); err != nil {
 						if sqlgraph.IsConstraintError(err) {
@@ -463,6 +1020,344 @@ func (_c *SourceMetricCreateBulk) Exec(ctx context.Context) error {
 // ExecX is like Exec, but panics if an error occurs.
 func (_c *SourceMetricCreateBulk) ExecX(ctx context.Context) {
 	if err := _c.Exec(ctx); err != nil {
+		panic(err)
+	}
+}
+
+// OnConflict allows configuring the `ON CONFLICT` / `ON DUPLICATE KEY` clause
+// of the `INSERT` statement. For example:
+//
+//	client.SourceMetric.CreateBulk(builders...).
+//		OnConflict(
+//			// Update the row with the new values
+//			// the was proposed for insertion.
+//			sql.ResolveWithNewValues(),
+//		).
+//		// Override some of the fields with custom
+//		// update values.
+//		Update(func(u *ent.SourceMetricUpsert) {
+//			SetSourceID(v+v).
+//		}).
+//		Exec(ctx)
+func (_c *SourceMetricCreateBulk) OnConflict(opts ...sql.ConflictOption) *SourceMetricUpsertBulk {
+	_c.conflict = opts
+	return &SourceMetricUpsertBulk{
+		create: _c,
+	}
+}
+
+// OnConflictColumns calls `OnConflict` and configures the columns
+// as conflict target. Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//		OnConflict(sql.ConflictColumns(columns...)).
+//		Exec(ctx)
+func (_c *SourceMetricCreateBulk) OnConflictColumns(columns ...string) *SourceMetricUpsertBulk {
+	_c.conflict = append(_c.conflict, sql.ConflictColumns(columns...))
+	return &SourceMetricUpsertBulk{
+		create: _c,
+	}
+}
+
+// SourceMetricUpsertBulk is the builder for "upsert"-ing
+// a bulk of SourceMetric nodes.
+type SourceMetricUpsertBulk struct {
+	create *SourceMetricCreateBulk
+}
+
+// UpdateNewValues updates the mutable fields using the new values that
+// were set on create. Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//		OnConflict(
+//			sql.ResolveWithNewValues(),
+//			sql.ResolveWith(func(u *sql.UpdateSet) {
+//				u.SetIgnore(sourcemetric.FieldID)
+//			}),
+//		).
+//		Exec(ctx)
+func (u *SourceMetricUpsertBulk) UpdateNewValues() *SourceMetricUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithNewValues())
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(s *sql.UpdateSet) {
+		for _, b := range u.create.builders {
+			if _, exists := b.mutation.ID(); exists {
+				s.SetIgnore(sourcemetric.FieldID)
+			}
+		}
+	}))
+	return u
+}
+
+// Ignore sets each column to itself in case of conflict.
+// Using this option is equivalent to using:
+//
+//	client.SourceMetric.Create().
+//		OnConflict(sql.ResolveWithIgnore()).
+//		Exec(ctx)
+func (u *SourceMetricUpsertBulk) Ignore() *SourceMetricUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWithIgnore())
+	return u
+}
+
+// DoNothing configures the conflict_action to `DO NOTHING`.
+// Supported only by SQLite and PostgreSQL.
+func (u *SourceMetricUpsertBulk) DoNothing() *SourceMetricUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.DoNothing())
+	return u
+}
+
+// Update allows overriding fields `UPDATE` values. See the SourceMetricCreateBulk.OnConflict
+// documentation for more info.
+func (u *SourceMetricUpsertBulk) Update(set func(*SourceMetricUpsert)) *SourceMetricUpsertBulk {
+	u.create.conflict = append(u.create.conflict, sql.ResolveWith(func(update *sql.UpdateSet) {
+		set(&SourceMetricUpsert{UpdateSet: update})
+	}))
+	return u
+}
+
+// SetSourceID sets the "source_id" field.
+func (u *SourceMetricUpsertBulk) SetSourceID(v string) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSourceID(v)
+	})
+}
+
+// UpdateSourceID sets the "source_id" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateSourceID() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSourceID()
+	})
+}
+
+// SetSourceName sets the "source_name" field.
+func (u *SourceMetricUpsertBulk) SetSourceName(v string) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSourceName(v)
+	})
+}
+
+// UpdateSourceName sets the "source_name" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateSourceName() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSourceName()
+	})
+}
+
+// SetEwmaLatencyMs sets the "ewma_latency_ms" field.
+func (u *SourceMetricUpsertBulk) SetEwmaLatencyMs(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetEwmaLatencyMs(v)
+	})
+}
+
+// AddEwmaLatencyMs adds v to the "ewma_latency_ms" field.
+func (u *SourceMetricUpsertBulk) AddEwmaLatencyMs(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddEwmaLatencyMs(v)
+	})
+}
+
+// UpdateEwmaLatencyMs sets the "ewma_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateEwmaLatencyMs() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateEwmaLatencyMs()
+	})
+}
+
+// SetLastLatencyMs sets the "last_latency_ms" field.
+func (u *SourceMetricUpsertBulk) SetLastLatencyMs(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastLatencyMs(v)
+	})
+}
+
+// AddLastLatencyMs adds v to the "last_latency_ms" field.
+func (u *SourceMetricUpsertBulk) AddLastLatencyMs(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddLastLatencyMs(v)
+	})
+}
+
+// UpdateLastLatencyMs sets the "last_latency_ms" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateLastLatencyMs() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastLatencyMs()
+	})
+}
+
+// SetSearchCount sets the "search_count" field.
+func (u *SourceMetricUpsertBulk) SetSearchCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSearchCount(v)
+	})
+}
+
+// AddSearchCount adds v to the "search_count" field.
+func (u *SourceMetricUpsertBulk) AddSearchCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddSearchCount(v)
+	})
+}
+
+// UpdateSearchCount sets the "search_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateSearchCount() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSearchCount()
+	})
+}
+
+// SetSuccessCount sets the "success_count" field.
+func (u *SourceMetricUpsertBulk) SetSuccessCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetSuccessCount(v)
+	})
+}
+
+// AddSuccessCount adds v to the "success_count" field.
+func (u *SourceMetricUpsertBulk) AddSuccessCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddSuccessCount(v)
+	})
+}
+
+// UpdateSuccessCount sets the "success_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateSuccessCount() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateSuccessCount()
+	})
+}
+
+// SetFailCount sets the "fail_count" field.
+func (u *SourceMetricUpsertBulk) SetFailCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetFailCount(v)
+	})
+}
+
+// AddFailCount adds v to the "fail_count" field.
+func (u *SourceMetricUpsertBulk) AddFailCount(v int) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.AddFailCount(v)
+	})
+}
+
+// UpdateFailCount sets the "fail_count" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateFailCount() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateFailCount()
+	})
+}
+
+// SetLastError sets the "last_error" field.
+func (u *SourceMetricUpsertBulk) SetLastError(v string) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastError(v)
+	})
+}
+
+// UpdateLastError sets the "last_error" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateLastError() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastError()
+	})
+}
+
+// SetLastErrorAt sets the "last_error_at" field.
+func (u *SourceMetricUpsertBulk) SetLastErrorAt(v time.Time) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastErrorAt(v)
+	})
+}
+
+// UpdateLastErrorAt sets the "last_error_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateLastErrorAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastErrorAt()
+	})
+}
+
+// ClearLastErrorAt clears the value of the "last_error_at" field.
+func (u *SourceMetricUpsertBulk) ClearLastErrorAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastErrorAt()
+	})
+}
+
+// SetLastSuccessAt sets the "last_success_at" field.
+func (u *SourceMetricUpsertBulk) SetLastSuccessAt(v time.Time) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastSuccessAt(v)
+	})
+}
+
+// UpdateLastSuccessAt sets the "last_success_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateLastSuccessAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastSuccessAt()
+	})
+}
+
+// ClearLastSuccessAt clears the value of the "last_success_at" field.
+func (u *SourceMetricUpsertBulk) ClearLastSuccessAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastSuccessAt()
+	})
+}
+
+// SetLastWarmedAt sets the "last_warmed_at" field.
+func (u *SourceMetricUpsertBulk) SetLastWarmedAt(v time.Time) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetLastWarmedAt(v)
+	})
+}
+
+// UpdateLastWarmedAt sets the "last_warmed_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateLastWarmedAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateLastWarmedAt()
+	})
+}
+
+// ClearLastWarmedAt clears the value of the "last_warmed_at" field.
+func (u *SourceMetricUpsertBulk) ClearLastWarmedAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.ClearLastWarmedAt()
+	})
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (u *SourceMetricUpsertBulk) SetUpdatedAt(v time.Time) *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.SetUpdatedAt(v)
+	})
+}
+
+// UpdateUpdatedAt sets the "updated_at" field to the value that was provided on create.
+func (u *SourceMetricUpsertBulk) UpdateUpdatedAt() *SourceMetricUpsertBulk {
+	return u.Update(func(s *SourceMetricUpsert) {
+		s.UpdateUpdatedAt()
+	})
+}
+
+// Exec executes the query.
+func (u *SourceMetricUpsertBulk) Exec(ctx context.Context) error {
+	if u.create.err != nil {
+		return u.create.err
+	}
+	for i, b := range u.create.builders {
+		if len(b.conflict) != 0 {
+			return fmt.Errorf("ent: OnConflict was set for builder %d. Set it on the SourceMetricCreateBulk instead", i)
+		}
+	}
+	if len(u.create.conflict) == 0 {
+		return errors.New("ent: missing options for SourceMetricCreateBulk.OnConflict")
+	}
+	return u.create.Exec(ctx)
+}
+
+// ExecX is like Exec, but panics if an error occurs.
+func (u *SourceMetricUpsertBulk) ExecX(ctx context.Context) {
+	if err := u.create.Exec(ctx); err != nil {
 		panic(err)
 	}
 }
