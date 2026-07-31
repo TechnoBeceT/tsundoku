@@ -51,3 +51,25 @@ func ExportFailCoverage(s *Service, ctx context.Context, sourceID, mangaURL stri
 func ExportMarkCoveragePending(s *Service, ctx context.Context, sourceID, mangaURL string) error {
 	return s.markCoveragePending(ctx, sourceID, mangaURL)
 }
+
+// ExportCoverageNeedsCompute exposes the unexported coverageNeedsCompute
+// admission rule. It takes `now` as an argument precisely so a test can drive
+// the 15- and 30-minute bounds without waiting for them or faking a clock in
+// production code.
+func ExportCoverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time) bool {
+	return coverageNeedsCompute(snap, ok, now)
+}
+
+// ExportCoverageAfterCompute exposes the unexported coverageAfterCompute,
+// which is the only place the "the store kept nothing" case is turned into a
+// valid wire status.
+func ExportCoverageAfterCompute(snap CoverageSnapshot, ok bool) CoverageSnapshot {
+	return coverageAfterCompute(snap, ok)
+}
+
+// ExportCoverageStatuses returns the three statuses that are legal on the
+// breakdown wire, so a test can assert membership rather than hardcoding the
+// literals a rename would silently desync from.
+func ExportCoverageStatuses() []string {
+	return []string{coverageStatusPending, coverageStatusReady, coverageStatusFailed}
+}

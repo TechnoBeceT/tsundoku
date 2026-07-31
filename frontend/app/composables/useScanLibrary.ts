@@ -493,13 +493,22 @@ export function useScanLibrary() {
   // A pending breakdown's eventual outcome arrives here, not by polling —
   // match it against every cache entry sharing this (source, url) pair (in
   // practice at most one) and re-fetch it in place.
+  //
+  // The re-fetch takes the SAME `breakdownsInFlight` latch `loadBreakdowns`
+  // does (§2 — one guard, not two) so a burst of events for one pair collapses
+  // into a single request instead of stacking N. The backend is what makes the
+  // loop impossible — a failed snapshot is served from the store for its
+  // cooldown rather than recomputed, so a re-fetch can no longer produce the
+  // event that triggered it — but an unlatched re-fetch is still an
+  // unnecessary request per event, and the latch is already here.
   const unsubCoverageDone = on('imports.coverage.done', (data) => {
     const payload = data as CoverageDoneEventPayload
     if (!payload.sourceId || !payload.mangaUrl) return
-    for (const ref of breakdownRefs.values()) {
-      if (ref.source === payload.sourceId && ref.url === payload.mangaUrl) {
-        void fetchBreakdown(ref)
-      }
+    for (const [key, ref] of breakdownRefs.entries()) {
+      if (ref.source !== payload.sourceId || ref.url !== payload.mangaUrl) continue
+      if (breakdownsInFlight.has(key)) continue
+      breakdownsInFlight.add(key)
+      void fetchBreakdown(ref).finally(() => breakdownsInFlight.delete(key))
     }
   })
 

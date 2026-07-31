@@ -12,7 +12,10 @@ import (
 
 // Coverage snapshot lifecycle (GAP-140). A row is written `pending` when a job
 // starts, so a second request can distinguish "already being computed" from
-// "never computed" without a separate in-flight registry.
+// "never computed" without a separate in-flight registry — and coverageNeedsCompute
+// is what acts on the distinction, refusing to start a second walk for a pair
+// whose row already claims one is running. See its doc comment for the full
+// admission rule and its one known residual race.
 const (
 	coverageStatusPending = "pending"
 	coverageStatusReady   = "ready"
@@ -22,10 +25,18 @@ const (
 // CoverageSnapshot is one persisted per-scanlator breakdown plus the metadata
 // the owner needs to judge it: what state it is in, when it was computed (the
 // "as of" the UI renders), and why it failed if it did.
+//
+// UpdatedAt is the instant the ROW last changed, which is a different fact
+// from ComputedAt (the as-of of the stored PAYLOAD, cleared whenever there is
+// no payload). It is what Coverage's admission rules measure against: how long
+// a `pending` row has been claiming a walk is running, and how long ago a
+// `failed` one failed. ComputedAt cannot serve that purpose precisely because
+// it is nil in both of those states.
 type CoverageSnapshot struct {
 	Payload    SourceBreakdownDTO
 	Status     string
 	ComputedAt *time.Time
+	UpdatedAt  time.Time
 	LastError  string
 }
 
@@ -43,12 +54,26 @@ func (s *Service) loadCoverage(ctx context.Context, sourceID, mangaURL string) (
 		return CoverageSnapshot{}, false, fmt.Errorf("imports.loadCoverage: query %s %s: %w", sourceID, mangaURL, err)
 	}
 
-	snap := CoverageSnapshot{Status: row.Status, ComputedAt: row.ComputedAt, LastError: row.LastError}
+	snap := CoverageSnapshot{
+		Status:     row.Status,
+		ComputedAt: row.ComputedAt,
+		UpdatedAt:  row.UpdatedAt,
+		LastError:  row.LastError,
+	}
 	if row.Payload != "" {
 		// A payload that no longer parses is treated as absent rather than
-		// fatal: the snapshot is a cache, and a re-computation fixes it.
+		// fatal: the snapshot is a cache, and a re-computation fixes it. It is
+		// reported as `failed` carrying the ROW's own UpdatedAt, not a zero
+		// one, so it is admitted for re-computation by exactly the same
+		// cooldown rule as any other failure (see coverageNeedsCompute) — a
+		// zero UpdatedAt would read as "failed at the epoch" and re-arm a walk
+		// on every single request.
 		if err := json.Unmarshal([]byte(row.Payload), &snap.Payload); err != nil {
-			return CoverageSnapshot{Status: coverageStatusFailed, LastError: "stored snapshot is unreadable"}, true, nil
+			return CoverageSnapshot{
+				Status:    coverageStatusFailed,
+				UpdatedAt: row.UpdatedAt,
+				LastError: "stored snapshot is unreadable",
+			}, true, nil
 		}
 	}
 	return snap, true, nil
@@ -71,6 +96,17 @@ func (s *Service) loadCoverage(ctx context.Context, sourceID, mangaURL string) (
 // PAYLOAD (the schema doc says as much: "Zero while pending"), so it is
 // CLEARED explicitly whenever computedAt is nil, on every call, not only on
 // the INSERT branch.
+//
+// updated_at is set explicitly for the SAME reason, and it is load-bearing
+// rather than cosmetic: the schema's UpdateDefault(time.Now) fires on ent's
+// ordinary Update builder, NOT on a conflict-do-update whose column list this
+// closure spells out, so without the explicit set an existing row's
+// updated_at would freeze at its first INSERT forever. Coverage's admission
+// rules measure a `pending` row's age and a `failed` row's cooldown against
+// that column, so a frozen one would let a fresh pending read as crash-stale
+// (re-arming a duplicate walk on every request) and a fresh failure read as
+// long past its cooldown — reinstating exactly the recompute loop those rules
+// exist to stop.
 func (s *Service) upsertCoverage(ctx context.Context, sourceID, mangaURL, status, payload, lastError string, computedAt *time.Time) error {
 	err := s.db.SourceCoverage.Create().
 		SetSourceID(sourceID).
@@ -84,6 +120,7 @@ func (s *Service) upsertCoverage(ctx context.Context, sourceID, mangaURL, status
 			u.SetStatus(status)
 			u.SetPayload(payload)
 			u.SetLastError(lastError)
+			u.SetUpdatedAt(time.Now().UTC())
 			if computedAt != nil {
 				u.SetComputedAt(*computedAt)
 			} else {

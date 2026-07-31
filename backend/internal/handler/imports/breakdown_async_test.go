@@ -3,14 +3,17 @@ package imports_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -82,11 +85,11 @@ func doBreakdownRequestAfterCompute(t *testing.T, sourceID, url string, total in
 		t.Fatalf("seed request: want 200, got %d (%s)", seed.Code, seed.Body.String())
 	}
 
-	callsAfterSeed := fc.chaptersCallCount
+	callsAfterSeed := fc.chaptersCalls.Load()
 	second := env.do(http.MethodGet, target, "")
-	if fc.chaptersCallCount != callsAfterSeed {
+	if got := fc.chaptersCalls.Load(); got != callsAfterSeed {
 		t.Errorf("Chapters called again on the second request (calls %d -> %d) — the snapshot was not served from the store",
-			callsAfterSeed, fc.chaptersCallCount)
+			callsAfterSeed, got)
 	}
 	return second
 }
@@ -268,5 +271,157 @@ func TestCoverageSurvivesRequestContextCancellation(t *testing.T) {
 	}
 	if done.Status != "ready" || done.Total != 7 {
 		t.Errorf("coverage.done = %+v, want ready with 7 chapters (the computation must survive the request's context being cancelled)", done)
+	}
+}
+
+// breakdownTarget is the endpoint under test for one (sourceID, url) pair.
+func breakdownTarget(sourceID, url string) string {
+	return fmt.Sprintf("/api/sources/%s/manga/1/breakdown?url=%s", sourceID, url)
+}
+
+// decodeBreakdown decodes a recorder's body as the breakdown wire shape,
+// failing the test if the response was not a 200 carrying valid JSON.
+func decodeBreakdown(t *testing.T, rec *httptest.ResponseRecorder) breakdownResponse {
+	t.Helper()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var body breakdownResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return body
+}
+
+// awaitPendingRow blocks until a SourceCoverage row for (sourceID, mangaURL)
+// reports status `pending`, i.e. the backgrounded walk has actually claimed
+// the pair. Polling the STORE rather than sleeping is what makes the
+// concurrency test below deterministic: the second request is issued at a
+// precisely known point — after the claim exists, while the walk is still
+// blocked inside the engine.
+func awaitPendingRow(t *testing.T, env *testEnv, sourceID, mangaURL string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		n, err := env.db.SourceCoverage.Query().
+			Where(sourcecoverage.SourceID(sourceID), sourcecoverage.MangaURL(mangaURL), sourcecoverage.Status("pending")).
+			Count(context.Background())
+		if err != nil {
+			t.Fatalf("query coverage rows: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no pending SourceCoverage row appeared — the background walk never claimed the pair")
+}
+
+// TestBreakdownDoesNotRecomputeAFreshFailure pins GAP-140 final review
+// finding 1, a self-driving infinite recompute loop that was proven by probe:
+// three GETs on a failing source produced three full chapter walks.
+//
+// The cycle was closed, not merely wasteful. A failed walk broadcasts
+// imports.coverage.done; the scan-library screen re-fetches the breakdown for
+// the matching (source, url) on that event; the re-fetch recomputed because
+// only `ready` short-circuited; the recompute failed; it broadcast again.
+// While the screen was open this never stopped — hammering the very source
+// this feature exists to be gentle with.
+//
+// Three GETs here mirror the probe exactly: the FIRST is allowed its walk
+// (nothing is stored yet), and every later one must be served from the
+// persisted failure while its cooldown holds.
+func TestBreakdownDoesNotRecomputeAFreshFailure(t *testing.T) {
+	const sourceID, url = "42", "/qly0d-apotheosis"
+	numericID, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	fc := &fakeEngineClient{
+		sources:     []sourceengine.Source{{ID: numericID, Name: "Test Source", Lang: "en"}},
+		chapterErrs: map[string]error{url: errors.New("upstream timed out")},
+	}
+	env := newTestEnv(t, fc)
+	target := breakdownTarget(sourceID, url)
+
+	first := decodeBreakdown(t, env.do(http.MethodGet, target, ""))
+	if first.Status != "failed" {
+		t.Fatalf("first status = %q, want failed (the walk errors immediately, well inside the fast path)", first.Status)
+	}
+	callsAfterFirst := fc.chaptersCalls.Load()
+	if callsAfterFirst != 1 {
+		t.Fatalf("Chapters called %d times for the first request, want exactly 1", callsAfterFirst)
+	}
+
+	for i := 2; i <= 3; i++ {
+		body := decodeBreakdown(t, env.do(http.MethodGet, target, ""))
+		if body.Status != "failed" {
+			t.Errorf("request %d status = %q, want failed served from the stored snapshot", i, body.Status)
+		}
+		if body.Error == "" {
+			t.Errorf("request %d carries no error text — the owner would see an unexplained empty panel", i)
+		}
+		if got := fc.chaptersCalls.Load(); got != callsAfterFirst {
+			t.Fatalf("request %d ran another chapter walk (Chapters calls %d -> %d) — a plain GET must never re-arm a failed computation, or fail/announce/re-fetch becomes a loop with no termination condition",
+				i, callsAfterFirst, got)
+		}
+	}
+}
+
+// TestBreakdownDoesNotStartASecondWalkWhileOneIsPending pins GAP-140 final
+// review finding 2: the `pending` row's documented purpose — letting a
+// concurrent request tell "being computed" from "never computed" — was
+// written into both the schema and the store's doc comments but never
+// actually read by Coverage. Probed: two requests during ONE blocked walk
+// started TWO concurrent walks. Two tabs, a reload, or the SSE-driven
+// re-fetch each launched another ~20-minute walk against the same source.
+//
+// Both halves of the assertion matter. The call count proves no second walk
+// STARTED; the elapsed time proves the second request short-circuited on the
+// stored claim rather than merely deduplicating downstream — a request that
+// still spawned a computation would sit on the fast-path timeout for
+// coverageFastPath before answering.
+func TestBreakdownDoesNotStartASecondWalkWhileOneIsPending(t *testing.T) {
+	const sourceID, url = "42", "/qly0d-apotheosis"
+	numericID, err := strconv.ParseInt(sourceID, 10, 64)
+	if err != nil {
+		t.Fatalf("source id: %v", err)
+	}
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+
+	fc := &fakeEngineClient{
+		sources:       []sourceengine.Source{{ID: numericID, Name: "Test Source", Lang: "en"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{url: makeChapters(url, 1301)},
+		blockCh:       release,
+	}
+	env := newTestEnv(t, fc)
+	target := breakdownTarget(sourceID, url)
+
+	// Request one starts the walk and (because the engine blocks) rides the
+	// fast-path timeout out to `pending`. It runs on its own goroutine so the
+	// test can issue request two WHILE that walk is still in flight.
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstDone <- env.do(http.MethodGet, target, "") }()
+	awaitPendingRow(t, env, sourceID, url)
+
+	started := time.Now()
+	second := decodeBreakdown(t, env.do(http.MethodGet, target, ""))
+	elapsed := time.Since(started)
+
+	if second.Status != "pending" {
+		t.Errorf("second status = %q, want pending — a walk it must not duplicate is already running", second.Status)
+	}
+	if calls := fc.chaptersCalls.Load(); calls != 1 {
+		t.Errorf("Chapters called %d times, want exactly 1 — a second request during one in-flight walk must not launch its own ~20-minute walk against the same source", calls)
+	}
+	if elapsed >= 2*time.Second {
+		t.Errorf("second request took %v — it waited on a computation of its own instead of short-circuiting on the stored pending claim", elapsed)
+	}
+
+	releaseOnce.Do(func() { close(release) })
+	if rec := <-firstDone; rec.Code != http.StatusOK {
+		t.Errorf("first request status = %d, want 200", rec.Code)
 	}
 }

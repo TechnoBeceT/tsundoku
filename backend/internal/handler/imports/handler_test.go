@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,10 +82,12 @@ type fakeEngineClient struct {
 	// is never received from, so this is a no-op everywhere else.
 	blockCh chan struct{}
 
-	// chaptersCallCount counts every Chapters invocation, so a GAP-140 test can
-	// prove a second breakdown request for an already-computed pair is served
-	// from the persisted snapshot rather than repeating the walk.
-	chaptersCallCount int
+	// chaptersCalls counts every Chapters invocation, so a GAP-140 test can
+	// prove a breakdown request did NOT repeat the walk — served from the
+	// persisted snapshot, refused by the pending guard, or held off by the
+	// failure cooldown. Atomic because the concurrency tests read it from the
+	// test goroutine while a backgrounded walk is inside Chapters on another.
+	chaptersCalls atomic.Int64
 }
 
 // imageCall records one Image(...) invocation's arguments for assertion.
@@ -145,7 +148,7 @@ func (f *fakeEngineClient) MangaDetails(_ context.Context, _ int64, url string) 
 }
 
 func (f *fakeEngineClient) Chapters(_ context.Context, _ int64, url string, _ string) ([]sourceengine.Chapter, error) {
-	f.chaptersCallCount++
+	f.chaptersCalls.Add(1)
 	if f.blockCh != nil {
 		<-f.blockCh
 	}

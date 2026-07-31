@@ -12,6 +12,125 @@ import (
 // give a large one a chance to finish.
 const coverageFastPath = 3 * time.Second
 
+// coveragePendingStale is how long a `pending` row is trusted to mean "a walk
+// is genuinely running right now" before a request is allowed to start a
+// replacement.
+//
+// A bound is unavoidable: nothing rewrites the row when the process dies
+// mid-walk, so a crash (or a container restart, or an engine-host kill)
+// strands a `pending` snapshot that no later request would ever supersede,
+// and the owner would sit on "Computing…" forever with no affordance to
+// clear it.
+//
+// 30 minutes, because the bound has to sit ABOVE the slowest walk this
+// feature was built for and as close above it as is defensible. The worked
+// worst case is the one GAP-140 was opened on: ~1,301 chapters ≈ 330 WebView
+// navigations ≈ 15-20 minutes. 30m clears that with real headroom, so a LIVE
+// walk is never duplicated by its own slowness (the failure mode that would
+// hurt most — two 20-minute walks hammering the source this feature exists to
+// protect), while a walk killed by a restart self-heals within one owner
+// sitting rather than needing a manual intervention that does not exist.
+const coveragePendingStale = 30 * time.Minute
+
+// coverageFailedCooldown is how long a `failed` row is served AS a failure
+// before a request is allowed to retry the walk.
+//
+// A plain GET must not re-arm a walk on a fresh failure (GAP-140 final
+// review, finding 1): a failing computation broadcasts imports.coverage.done,
+// the scan-library screen re-fetches the breakdown on that event, and a
+// re-fetch that recomputes produces another failure, another event, another
+// re-fetch. That is a self-driving loop with no termination condition —
+// measured at 3 full chapter walks from 3 GETs — and it hammers precisely the
+// source this feature exists to be gentle with.
+//
+// A cooldown rather than "never" because the alternative bricks the pair: with
+// no refresh affordance anywhere in the UI (a known, separately-tracked gap),
+// a permanent `failed` row would mean one transient upstream blip costs the
+// owner that series' coverage for good.
+//
+// 15 minutes, chosen against the loop rather than against user patience: the
+// cooldown only has to outlast the round trip that closes the cycle
+// (fail → SSE → re-fetch), which is near-instant, so any non-trivial value
+// breaks it. 15m then bounds a persistently-broken source to at most 4 walks
+// an hour even with a tab left open, which is the same politeness posture the
+// download side takes, and it is short enough that an owner who fixes the
+// underlying problem (restarts the engine, clears a ban) sees coverage return
+// without wondering whether the app noticed.
+const coverageFailedCooldown = 15 * time.Minute
+
+// coverageMissingAfterCompute is the reason reported when a computation
+// finished but left no row behind — see coverageAfterCompute.
+const coverageMissingAfterCompute = "the coverage snapshot could not be stored"
+
+// coverageNeedsCompute is the ADMISSION RULE: may this request start a
+// chapter walk for a pair whose stored snapshot is (snap, ok)?
+//
+// Pure, and deliberately separated from Coverage's I/O, because the two
+// timeouts it weighs are far too long to drive through a real walk in a test
+// — a table test can hand it a synthetic `now` instead.
+//
+//   - never computed (ok == false) → YES. Nothing exists to serve.
+//   - ready → NO. Serving the persisted snapshot with its as-of is the entire
+//     point of GAP-140; one completed walk makes every later view free.
+//   - pending → NO while the row is younger than coveragePendingStale. A
+//     pending row means a walk is already running, and starting a second one
+//     is not a cache miss being filled twice — it is two ~20-minute WebView
+//     walks against one source. Two tabs, a reload and the SSE re-fetch each
+//     used to launch their own. Older than the bound, the claim is treated as
+//     a lie left by a dead process and the walk is restarted.
+//   - failed → NO while the row is younger than coverageFailedCooldown, which
+//     is what breaks the fail → announce → re-fetch → fail loop above.
+//   - anything else (a status a future migration introduces, say) → YES, the
+//     fail-safe direction: recomputing is wasteful, serving an uninterpretable
+//     row as authoritative is wrong.
+//
+// KNOWN RESIDUAL WINDOW: this is a read-then-write, not a lock. Two requests
+// that BOTH load the store before either marks the row pending will both
+// start a walk. That window is the width of one round trip to Postgres, and
+// none of the collisions this rule was written for sit inside it — the tabs,
+// reloads and SSE re-fetches are all separated by orders of magnitude more.
+// The duplicate is also harmless rather than corrupting: the UNIQUE(source_id,
+// manga_url) index means the second walk overwrites the first's row with an
+// equivalent one. Closing it properly needs a conditional write (or the
+// per-series latch pattern internal/library uses), which is not worth the
+// mechanism at this width.
+func coverageNeedsCompute(snap CoverageSnapshot, ok bool, now time.Time) bool {
+	if !ok {
+		return true
+	}
+	switch snap.Status {
+	case coverageStatusReady:
+		return false
+	case coverageStatusPending:
+		return now.Sub(snap.UpdatedAt) >= coveragePendingStale
+	case coverageStatusFailed:
+		return now.Sub(snap.UpdatedAt) >= coverageFailedCooldown
+	default:
+		return true
+	}
+}
+
+// coverageAfterCompute renders what Coverage returns once a computation it
+// started has finished and the store has been re-read as (snap, ok).
+//
+// It exists to honour `ok`. Every exit path of ComputeCoverage persists a row,
+// so ok == false here means the store write itself failed (the mark-pending
+// upsert erroring while reads still succeed) — and the zero CoverageSnapshot
+// that case used to be returned verbatim carries Status "", which is not a
+// member of the wire enum. It reached the client as {"status":""}, which the
+// scan-library row renders as NOTHING: no counts, no "Computing…", no
+// "unavailable" (GAP-140 final review, finding 4).
+//
+// `failed` rather than `pending` is the honest rendering: the computation is
+// over and produced nothing readable, so a `pending` here would spin the UI on
+// a walk that will never report again.
+func coverageAfterCompute(snap CoverageSnapshot, ok bool) CoverageSnapshot {
+	if !ok {
+		return CoverageSnapshot{Status: coverageStatusFailed, LastError: coverageMissingAfterCompute}
+	}
+	return snap
+}
+
 // Coverage returns the per-scanlator breakdown for (sourceID, url), the
 // entry point GAP-140 gives the HTTP handler in place of the old unbounded
 // SourceBreakdown walk.
@@ -26,14 +145,20 @@ const coverageFastPath = 3 * time.Second
 // gives such a row no cleanup path, so a mistyped or stale sourceId must
 // never be allowed to create one in the first place.
 //
-// A READY snapshot is served immediately — no engine call, no wait. Otherwise
-// the computation is started on a DETACHED context (context.WithoutCancel —
-// the walk must NOT die the instant this request's own context is torn down,
-// which is exactly why a slow computation used to be unrecoverable) and the
-// caller waits at most coverageFastPath for it. Small series therefore behave
-// exactly as before (their whole walk finishes well inside the window); only
-// expensive ones fall through to `pending`, with imports.coverage.done
-// delivering the result when it lands.
+// WHETHER a walk starts at all is coverageNeedsCompute's decision, and that
+// doc comment is the authoritative statement of the rule — read it before
+// changing anything here. In short: a plain GET serves a `ready` snapshot, a
+// live `pending` one and a recently-`failed` one as they stand, and starts a
+// walk only for a pair that was never computed, a `pending` row old enough to
+// be a dead process's leftover, or a failure past its cooldown.
+//
+// When a walk IS started it runs on a DETACHED context (context.WithoutCancel
+// — the walk must NOT die the instant this request's own context is torn
+// down, which is exactly why a slow computation used to be unrecoverable) and
+// the caller waits at most coverageFastPath for it. Small series therefore
+// behave exactly as before (their whole walk finishes well inside the
+// window); only expensive ones fall through to `pending`, with
+// imports.coverage.done delivering the result when it lands.
 //
 // A ComputeCoverage failure (once the source itself is known-good — an
 // upstream fetch failure, say) is deliberately NOT surfaced as an error
@@ -43,7 +168,7 @@ const coverageFastPath = 3 * time.Second
 // CoverageSnapshot with Status == coverageStatusFailed, not as an HTTP-level
 // error. The error this function DOES return (besides ErrSourceNotFound) is
 // reserved for a genuine store failure — loadCoverage itself unable to read
-// back what ComputeCoverage just wrote.
+// the store.
 func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string) (CoverageSnapshot, error) {
 	if _, err := s.resolveSource(ctx, sourceID); err != nil {
 		return CoverageSnapshot{}, err
@@ -53,7 +178,7 @@ func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string
 	if err != nil {
 		return CoverageSnapshot{}, err
 	}
-	if ok && snap.Status == coverageStatusReady {
+	if !coverageNeedsCompute(snap, ok, time.Now().UTC()) {
 		return snap, nil
 	}
 
@@ -80,8 +205,11 @@ func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string
 		// would fail on the very row ComputeCoverage just wrote successfully —
 		// the same class of bug WithoutCancel exists to prevent, on the read
 		// side instead of the write side.
-		fresh, _, err := s.loadCoverage(bg, sourceID, url)
-		return fresh, err
+		fresh, freshOK, err := s.loadCoverage(bg, sourceID, url)
+		if err != nil {
+			return CoverageSnapshot{}, err
+		}
+		return coverageAfterCompute(fresh, freshOK), nil
 	case <-time.After(coverageFastPath):
 		return CoverageSnapshot{Status: coverageStatusPending}, nil
 	}

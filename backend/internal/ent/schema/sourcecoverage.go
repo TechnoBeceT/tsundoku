@@ -43,10 +43,20 @@ func (SourceCoverage) Fields() []ent.Field {
 		field.Text("payload").Default(""),
 		// pending | ready | failed. A row is written as `pending` the moment a
 		// job starts, so a concurrent request can tell "being computed" from
-		// "never computed" without a second table.
+		// "never computed" without a second table — and imports.Coverage acts
+		// on that: it serves a live `pending` row as-is instead of launching a
+		// second ~20-minute walk for the same pair.
 		field.String("status").Default("pending"),
-		// When the payload was produced. Zero while pending.
+		// When the PAYLOAD was produced — the "as of" the UI renders. Cleared
+		// whenever there is no payload, i.e. while pending and on a failure.
 		field.Time("computed_at").Optional().Nillable(),
+		// When the ROW last changed. Distinct from computed_at, and the column
+		// imports.Coverage's admission rules measure against: how long a
+		// `pending` row has claimed a walk is running (past a bound it is a
+		// dead process's leftover and is retried) and how long ago a `failed`
+		// one failed (inside its cooldown it is served as a failure rather
+		// than recomputed). computed_at cannot serve that — it is nil in both
+		// of those states by design.
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		// The failure text when status is `failed`, so the owner sees WHY
 		// rather than an empty panel.

@@ -516,6 +516,47 @@ describe('useScanLibrary', () => {
       await Promise.resolve()
       expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(0)
     })
+
+    it('collapses a burst of events for one pair into a single in-flight re-fetch', async () => {
+      const { loadBreakdowns } = mountScanLibrary()
+      await vi.waitFor(() => expect(stubSource).not.toBeNull())
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+
+      // Hold the re-fetch open so every event in the burst lands while the
+      // first request is still in flight — the exact window the latch covers.
+      // The shared GET mock is module-scoped and NOT reset per test, so it is
+      // captured and restored rather than left replaced for everything after.
+      const originalGet = vi.mocked(apiClient.GET).getMockImplementation()!
+      let release: (() => void) | null = null
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        return new Promise(resolve => (release = () => resolve({
+          data: { total: 3, scanlators: [], status: 'ready', computedAt: '2026-07-30T00:00:00Z' },
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })))
+      })
+
+      try {
+        calls = []
+        for (let i = 0; i < 3; i++) {
+          stubSource!.fire('imports.coverage.done', {
+            sourceId: 'src-1',
+            mangaUrl: 'https://src-1.example/title/1',
+            status: 'ready',
+            total: 3,
+          })
+        }
+
+        await vi.waitFor(() => expect(release).not.toBeNull())
+        expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+        release!()
+      }
+      finally {
+        vi.mocked(apiClient.GET).mockImplementation(originalGet)
+      }
+    })
   })
 
   it('loadSources() GETs /api/sources and maps it into the sources ref', async () => {
