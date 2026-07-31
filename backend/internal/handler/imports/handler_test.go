@@ -18,6 +18,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	handler "github.com/technobecet/tsundoku/internal/handler/imports"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/ingest"
@@ -244,6 +245,10 @@ type testEnv struct {
 	// imports.coverage.done — the only channel a caller that stopped waiting
 	// learns a background computation's outcome on.
 	hub *sse.Hub
+	// db is the underlying ent client, exposed so a GAP-140 test can assert
+	// directly on SourceCoverage row counts (e.g. proving an unknown source
+	// never persists one) rather than trusting the HTTP response alone.
+	db *ent.Client
 }
 
 // newTestEnv wires a full Echo with the imports routes behind RequireOwner,
@@ -284,7 +289,7 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, token: token, client: fc, coverCache: coverCache, triggered: triggered, hub: hub}
+	return &testEnv{e: e, token: token, client: fc, coverCache: coverCache, triggered: triggered, hub: hub, db: db}
 }
 
 // do issues an authenticated request.
@@ -846,27 +851,39 @@ func TestBreakdown_OK(t *testing.T) {
 	assertBodyHasKeys(t, rec.Body.String(), `"total"`, `"scanlators"`, `"ranges"`)
 }
 
-// TestBreakdown_UnknownSource_FailedStatus replaces the retired
-// TestBreakdown_UnknownSource_404. Since GAP-140 (Task 4) the endpoint no
-// longer maps a walk failure straight onto an HTTP status: it always answers
-// 200 with a persisted CoverageSnapshot's state, because the same code path
-// backgrounds an expensive walk and cannot tell "still computing" apart from
-// "already failed" by inspecting an error return (see imports.Service.Coverage's
-// doc comment). An unknown source resolves near-instantly — well inside the
-// fast-path window — to a FAILED snapshot carrying the reason, not a 404.
-func TestBreakdown_UnknownSource_FailedStatus(t *testing.T) {
+// TestBreakdown_UnknownSource_404 asserts an unknown :sourceId maps to 404
+// (mirrors TestDetails_UnknownSource_404). Restored after a fix-round review:
+// resolveSource is a fast, synchronous, in-memory list check (one
+// client.Sources call, no WebView walk) — imports.Service.Coverage runs it
+// BEFORE ever touching the coverage store, so an unknown source is a genuine
+// client error and stays a 404, never a 3s wait followed by a persisted
+// `failed` snapshot. This also means no SourceCoverage row is ever written
+// for a source id that does not exist — see
+// TestBreakdown_UnknownSource_NoRowPersisted alongside this test.
+func TestBreakdown_UnknownSource_404(t *testing.T) {
 	fc := &fakeEngineClient{sources: []sourceengine.Source{{ID: 1, Name: "Source One", Lang: "en"}}}
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodGet, "/api/sources/ghost/manga/10/breakdown?url=/manga/10", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Breakdown unknown source: want 200 (failed status embedded), got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Breakdown unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	var body breakdownResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode: %v", err)
+}
+
+// TestBreakdown_UnknownSource_NoRowPersisted proves the early source resolve
+// prevents a permanent orphan: without it, every mistyped or stale sourceId
+// would write a `failed` SourceCoverage row that Rule 2 (never-auto-delete)
+// gives no cleanup path for. Counting rows directly (rather than trusting the
+// HTTP status alone) is the only way to see this — a 404 that still left a
+// row behind would pass TestBreakdown_UnknownSource_404 and still be wrong.
+func TestBreakdown_UnknownSource_NoRowPersisted(t *testing.T) {
+	fc := &fakeEngineClient{sources: []sourceengine.Source{{ID: 1, Name: "Source One", Lang: "en"}}}
+	env := newTestEnv(t, fc)
+	rec := env.do(http.MethodGet, "/api/sources/ghost/manga/10/breakdown?url=/manga/10", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("Breakdown unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if body.Status != "failed" || body.Error == "" {
-		t.Errorf("Breakdown unknown source: body = %+v, want a failed status carrying a reason", body)
+	if n := env.db.SourceCoverage.Query().CountX(context.Background()); n != 0 {
+		t.Errorf("SourceCoverage row count = %d, want 0 — an unknown source must never persist a snapshot", n)
 	}
 }
 

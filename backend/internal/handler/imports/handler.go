@@ -252,14 +252,19 @@ func newBreakdownResponse(snap imports.CoverageSnapshot) breakdownResponse {
 // still feel synchronous; only expensive ones go async, with
 // imports.coverage.done delivering the eventual outcome over SSE.
 //
-// The response is ALWAYS 200 on a resolvable request: a walk failure (unknown
-// source, upstream error, …) is no longer mapped onto an HTTP status — it is
-// persisted and rendered as an ordinary snapshot with status "failed" and a
-// human-readable error, because the same code path that returns `pending` for
-// a slow walk cannot also tell a caller "this failed" via an error return
-// without conflating the two. ?url= is a REQUIRED query param (see
-// InspectChapters's doc comment for the transition); ?title= is OPTIONAL —
-// same free-text/cache-sharing contract as InspectChapters's.
+// An unknown :sourceId still maps to 404 (mirrors Details/Browse):
+// imports.Service.Coverage resolves the source synchronously, before
+// touching the coverage store, because that resolve is a fast in-memory
+// check — a genuinely unknown source is a client error, not something worth
+// a bounded wait and a persisted `failed` snapshot. Once the source is known
+// to exist, any OTHER walk failure (upstream error, …) is no longer mapped
+// onto an HTTP status — it is persisted and rendered as an ordinary snapshot
+// with status "failed" and a human-readable error, because the same code
+// path that returns `pending` for a slow walk cannot also tell a caller
+// "this failed" via an error return without conflating the two. ?url= is a
+// REQUIRED query param (see InspectChapters's doc comment for the
+// transition); ?title= is OPTIONAL — same free-text/cache-sharing contract
+// as InspectChapters's.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
 	url, err := parseChapterURL(c.QueryParam("url"))
@@ -270,6 +275,9 @@ func (h *Handler) Breakdown(c echo.Context) error {
 
 	snap, err := h.svc.Coverage(c.Request().Context(), sourceID, url, title)
 	if err != nil {
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
 		return err
 	}
 	return c.JSON(http.StatusOK, newBreakdownResponse(snap))

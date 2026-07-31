@@ -832,11 +832,18 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, url stri
 //
 // An unknown sourceID yields ErrSourceNotFound; a client.Chapters failure is
 // returned verbatim. GAP-140: the only production caller is ComputeCoverage,
-// which persists either error as a `failed` snapshot rather than mapping it
-// onto an HTTP status — this function's own error contract is unchanged, but
-// no caller renders it as a 404/502 anymore (see imports.Service.Coverage's
-// doc comment). Browse/MangaDetails/Details still map ErrSourceNotFound and
-// upstream failures to 404/502 directly; SourceBreakdown no longer does.
+// reached from imports.Service.Coverage's background computation — by the
+// time SourceBreakdown itself runs there, Coverage has already resolved the
+// source once synchronously (see its doc comment), so in practice
+// SourceBreakdown's own ErrSourceNotFound return is redundant there. What
+// changed is what happens to an error THIS function returns from inside
+// that background computation: ComputeCoverage persists it as a `failed`
+// snapshot rather than mapping it onto an HTTP status, so a Chapters-fetch
+// failure surfaces to the owner as a stored reason, not a 502. This
+// function's own error contract (ErrSourceNotFound / the verbatim fetch
+// error) is unchanged. Browse/MangaDetails/Details still map
+// ErrSourceNotFound and upstream failures to 404/502 directly at the
+// handler.
 func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url string, mangaTitle string) (SourceBreakdownDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
