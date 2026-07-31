@@ -1044,9 +1044,22 @@ export interface paths {
         };
         /**
          * Per-scanlator chapter coverage breakdown
-         * @description Fetches the live chapter feed for this source-manga and groups it by scanlator,
-         *     returning per-group counts and display ranges — powers the adopt UI's auto-split
-         *     of a source into per-scanlator rows, each adoptable with its own importance.
+         * @description Returns a persisted, per-scanlator breakdown of this source-manga's chapters
+         *     — powers the adopt UI's auto-split of a source into per-scanlator rows, each
+         *     adoptable with its own importance.
+         *
+         *     GAP-140: a READY snapshot is returned immediately. Otherwise the walk is
+         *     (re)started in the background and this request waits a short bounded
+         *     window before falling through to a `pending` body — small series still
+         *     feel synchronous, only expensive ones go async, with the eventual
+         *     outcome delivered over SSE as `imports.coverage.done`. An unknown
+         *     `sourceId` is still a 404. Any OTHER walk failure (e.g. an upstream
+         *     source error) is NOT a 502 — it is persisted and rendered as an
+         *     ordinary 200 with `status: "failed"` and a human-readable `error`, so a
+         *     broken source never produces an HTTP-level failure a caller must
+         *     special-case. See the SourceBreakdown schema for the `status` /
+         *     `computedAt` / `error` fields this endpoint adds on top of the
+         *     breakdown payload itself.
          *
          *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
          *     `url` query parameter (the source-relative manga URL); mangaId in the
@@ -3519,12 +3532,35 @@ export interface components {
         /**
          * @description Per-scanlator breakdown of a source-manga's chapters, used by the adopt UI to
          *     auto-split a source into per-scanlator rows with counts + ranges.
+         *
+         *     GAP-140: this is now a PERSISTED, asynchronously-computed snapshot rather
+         *     than a synchronous live walk (a large, JS-Detection-gated series can take
+         *     minutes to walk), so the payload also carries the snapshot's own state.
+         *     `total`/`scanlators` hold the last successfully computed breakdown; while
+         *     `status` is not `ready` they carry no payload — see each field's own
+         *     description for the exact wire shape in that case. `computedAt` is the
+         *     "as of" instant of the STORED snapshot and MUST be surfaced by any UI
+         *     rendering this payload: a snapshot with no visible as-of is
+         *     indistinguishable from one computed moments ago, which is the entire
+         *     reason it is persisted rather than only cached in memory.
          */
         SourceBreakdown: {
-            /** @description Total chapter count across all scanlators. */
+            /** @description Total chapter count across all scanlators. 0 while status is not `ready` (no computed payload yet). */
             total: number;
-            /** @description Per-scanlator breakdown, sorted by count descending (ties by name ascending). */
-            scanlators: components["schemas"]["ScanlatorCoverage"][];
+            /** @description Per-scanlator breakdown, sorted by count descending (ties by name ascending). null while status is `pending` or `failed` (no computed payload yet); a fully-populated, non-null array once `ready`. */
+            scanlators: components["schemas"]["ScanlatorCoverage"][] | null;
+            /**
+             * @description Lifecycle of this snapshot. `ready` means `total`/`scanlators` hold a completed breakdown. `pending` means the computation is running in the background — `total`/`scanlators` are not yet meaningful; re-request this endpoint, or listen for `imports.coverage.done` over SSE for the eventual outcome. `failed` means the last attempt errored (see `error`) and `total`/`scanlators` carry no payload. An upstream/engine failure surfaces this way — as an ordinary 200 with status `failed` — and never as a 502.
+             * @enum {string}
+             */
+            status: "ready" | "pending" | "failed";
+            /**
+             * Format: date-time
+             * @description The as-of instant `total`/`scanlators` were computed. Omitted while status is `pending` (nothing computed yet) or `failed` (explicitly cleared — a failed run has no payload to date it by). Always present when status is `ready`.
+             */
+            computedAt?: string;
+            /** @description Human-readable reason the last computation failed. Present only when status is `failed`; omitted otherwise. */
+            error?: string;
         };
         AdoptRequest: {
             /** @description Canonical series title; all providers attach to the series slug derived from this. */
@@ -7578,7 +7614,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The per-scanlator breakdown. */
+            /** @description The coverage snapshot — ready, pending, or failed (see SourceBreakdown.status). A failed upstream walk is reported here, not as a 502. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7607,15 +7643,6 @@ export interface operations {
             };
             /** @description Unknown source ID. */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The engine host failed to fetch the chapter feed. */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
