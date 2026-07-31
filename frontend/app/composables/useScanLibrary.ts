@@ -56,6 +56,18 @@
  * Configure-stage auto-split, keyed `source:mangaId`, `null` = fetch failed,
  * an absent key = not yet attempted.
  *
+ * `breakdownSnapshots` (GAP-140) carries the SAME cache's snapshot-level
+ * metadata — `status`/`computedAt`/`error` — alongside `breakdowns`, since the
+ * backend's breakdown endpoint is now a persisted, asynchronously-computed
+ * snapshot rather than a synchronous live walk: a `pending` response means the
+ * walk is still running in the background (small series still resolve inline;
+ * large ones fall through to `pending` after a short bounded wait), and the
+ * eventual outcome is announced over SSE as `imports.coverage.done`. This
+ * composable subscribes to it and re-fetches the matching cache entry —
+ * matched by (source, url), NOT the mangaId-keyed cache key, since that is
+ * what the event payload carries — so a row stuck on "Computing…" updates
+ * itself the moment the walk lands, without the owner retrying by hand.
+ *
  * `importWithMatches` (Slice P, was `importWithMatch`) POSTs `{path, matches}`
  * — a `ProviderRef[]` gathered via the shared `useSourceConfigure` Configure
  * stage, replacing the old single `{path, match: {source, mangaId,
@@ -66,11 +78,11 @@
  */
 import { ref, onUnmounted } from 'vue'
 import { useProgressStream } from '~/composables/useProgressStream'
-import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
+import { mapCoverageSnapshot, mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
 
 type FoundSeriesDTO = components['schemas']['FoundSeries']
 type BatchImportFailureDTO = components['schemas']['BatchImportFailure']
@@ -152,6 +164,16 @@ interface ScanEventPayload {
   total?: number
   path?: string
   found?: number
+  error?: string
+}
+
+/** Shape of the imports.coverage.done SSE payload (GAP-140) — the TERMINAL
+ * report of one background per-scanlator breakdown computation. */
+interface CoverageDoneEventPayload {
+  sourceId?: string
+  mangaUrl?: string
+  status?: string
+  total?: number
   error?: string
 }
 
@@ -393,7 +415,49 @@ export function useScanLibrary() {
   // Keyed by `source:mangaId`. `null` = fetch attempted and failed (the panel
   // falls back to a single unsplit row); an absent key = not yet attempted.
   const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+  // The same cache's snapshot-level metadata (GAP-140) — status/computedAt/
+  // error, keyed identically. Populated alongside `breakdowns` by every fetch
+  // (initial or SSE-triggered refetch); an absent key mirrors `breakdowns`'
+  // "not yet attempted".
+  const breakdownSnapshots = ref<Record<string, CoverageSnapshotView>>({})
   const breakdownsInFlight = new Set<string>()
+  // Maps a cache key back to the candidate coordinates that produced it.
+  // imports.coverage.done identifies its subject by (sourceId, mangaUrl), not
+  // the mangaId-keyed cache key, so the SSE handler needs this to resolve
+  // which cached entry (entries) to refetch.
+  const breakdownRefs = new Map<string, { source: string, mangaId: number, url: string }>()
+
+  /**
+   * Fetches one candidate's breakdown and writes both caches. Shared by the
+   * initial `loadBreakdowns` pass and the `imports.coverage.done` refetch
+   * below — a `pending` response is cached exactly like a `ready` one (the
+   * SSE event, not polling, is what unsticks it later).
+   */
+  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }): Promise<void> {
+    const key = breakdownKey(ref.source, ref.mangaId)
+    try {
+      const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
+        params: {
+          path: { sourceId: ref.source, mangaId: ref.mangaId },
+          query: { url: ref.url },
+        },
+      })
+      if (res.error || !res.data) {
+        breakdowns.value = { ...breakdowns.value, [key]: null }
+        breakdownSnapshots.value = {
+          ...breakdownSnapshots.value,
+          [key]: { status: 'failed', computedAt: '', error: res.error && 'message' in res.error ? res.error.message : 'Failed to load breakdown' },
+        }
+        return
+      }
+      breakdowns.value = { ...breakdowns.value, [key]: res.data.scanlators.map(mapScanlatorCoverage) }
+      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: mapCoverageSnapshot(res.data) }
+    }
+    catch {
+      breakdowns.value = { ...breakdowns.value, [key]: null }
+      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: { status: 'failed', computedAt: '', error: 'Failed to load breakdown' } }
+    }
+  }
 
   /**
    * Fetches the per-scanlator breakdown for every given candidate IN
@@ -410,29 +474,38 @@ export function useScanLibrary() {
       return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
     })
     if (toFetch.length === 0) return
-    for (const c of toFetch) breakdownsInFlight.add(breakdownKey(c.source, c.mangaId))
+    for (const c of toFetch) {
+      const key = breakdownKey(c.source, c.mangaId)
+      breakdownsInFlight.add(key)
+      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url })
+    }
     await Promise.all(toFetch.map(async (c) => {
       const key = breakdownKey(c.source, c.mangaId)
       try {
-        const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-          params: {
-            path: { sourceId: c.source, mangaId: c.mangaId },
-            query: { url: c.url },
-          },
-        })
-        breakdowns.value = {
-          ...breakdowns.value,
-          [key]: res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage),
-        }
-      }
-      catch {
-        breakdowns.value = { ...breakdowns.value, [key]: null }
+        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url })
       }
       finally {
         breakdownsInFlight.delete(key)
       }
     }))
   }
+
+  // A pending breakdown's eventual outcome arrives here, not by polling —
+  // match it against every cache entry sharing this (source, url) pair (in
+  // practice at most one) and re-fetch it in place.
+  const unsubCoverageDone = on('imports.coverage.done', (data) => {
+    const payload = data as CoverageDoneEventPayload
+    if (!payload.sourceId || !payload.mangaUrl) return
+    for (const ref of breakdownRefs.values()) {
+      if (ref.source === payload.sourceId && ref.url === payload.mangaUrl) {
+        void fetchBreakdown(ref)
+      }
+    }
+  })
+
+  onUnmounted(() => {
+    unsubCoverageDone()
+  })
 
   // ── Cross-source match search ────────────────────────────────────────────
   const matching = ref(false)
@@ -606,6 +679,7 @@ export function useScanLibrary() {
     importDiskOnly,
     importWithMatches,
     breakdowns,
+    breakdownSnapshots,
     loadBreakdowns,
     matching,
     matchError,

@@ -217,3 +217,63 @@ export const CoverageUnavailable: Story = {
     coverageUnavailable: true,
   },
 }
+
+/**
+ * GAP-140: the async breakdown snapshot is still computing in the background
+ * (a large series' walk can take 15-20 minutes). This must read as work in
+ * flight, never as "Coverage unavailable" — those are different facts.
+ */
+export const CoveragePending: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    coverageStatus: 'pending',
+  },
+}
+
+/**
+ * GAP-140: a ready snapshot always carries its as-of instant — without it, a
+ * three-day-old snapshot would be indistinguishable from a fresh one, which
+ * is the entire reason the result is persisted rather than only cached.
+ */
+export const CoverageReadyWithAsOf: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    coverageStatus: 'ready',
+    chapterCount: 1301,
+    chapterRanges: '1-1301',
+    coverageComputedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+  },
+}
+
+/**
+ * GAP-140: the async computation failed — the reason from `coverageError` is
+ * shown inline instead of a blank/generic panel.
+ */
+export const CoverageFailed: Story = {
+  args: {
+    candidate,
+    selected: true,
+    rank: 1,
+    canUp: false,
+    canDown: true,
+    inspecting: false,
+    inspected: false,
+    chapters: [],
+    coverageStatus: 'failed',
+    coverageError: 'upstream timed out',
+  },
+}

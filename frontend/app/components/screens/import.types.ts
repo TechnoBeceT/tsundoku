@@ -121,6 +121,22 @@ export interface ScanlatorCoverage {
 }
 
 /**
+ * CoverageSnapshotView — the persisted breakdown snapshot's own lifecycle
+ * (GAP-140), separate from the per-scanlator counts it carries. `ready` means
+ * `computedAt` holds the as-of instant; `pending` means a background
+ * computation is running (starting one CLEARS `computedAt` — there is no
+ * "computing… last known N days ago"); `failed` means `error` holds the
+ * reason and `computedAt` is empty (a failed run has no payload to date it by).
+ */
+export interface CoverageSnapshotView {
+  status: 'ready' | 'pending' | 'failed'
+  /** The as-of instant of the stored snapshot; '' while pending or failed. */
+  computedAt: string
+  /** Human-readable failure reason; '' unless status is 'failed'. */
+  error: string
+}
+
+/**
  * AdoptRequest — the `POST /api/series` body. At least one provider is required;
  * `category` is optional and defaults to "Other" server-side.
  */

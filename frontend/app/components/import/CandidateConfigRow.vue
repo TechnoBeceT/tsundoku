@@ -5,6 +5,7 @@ import ReorderControl from '../ui/ReorderControl.vue'
 import Spinner from '../ui/Spinner.vue'
 import ChapterInspectList from './ChapterInspectList.vue'
 import { safeHttpUrl } from '../../utils/safeUrl'
+import { relativeTime } from '../../utils/timeFormat'
 import type { MoveDirection } from '../ui/controls.types'
 import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
 
@@ -40,6 +41,16 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * scanlation group this row tracks, and an inline "N chapters · ranges"
  * coverage line. Left unset, the row renders exactly as before — the two
  * match surfaces never pass these.
+ *
+ * `coverageStatus`/`coverageComputedAt`/`coverageError` (GAP-140) layer the
+ * async breakdown snapshot's own lifecycle on top of that coverage line —
+ * `pending` (a background walk is still running), `ready` (the counts above
+ * are trustworthy, dated by `coverageComputedAt`), or `failed`
+ * (`coverageError` names the reason). These are independent of the existing
+ * `coverageUnavailable` flag, which single-shot callers still set directly on
+ * a synchronous failure — `coverageStatus === 'failed'` renders identically.
+ * A caller that never resolves this snapshot leaves `coverageStatus` unset,
+ * so nothing here changes for it.
  */
 const props = withDefaults(defineProps<{
   /** The candidate this row represents. */
@@ -70,6 +81,12 @@ const props = withDefaults(defineProps<{
   chapterRanges?: string
   /** True when the source's breakdown fetch failed — shows a "Coverage unavailable" note. */
   coverageUnavailable?: boolean
+  /** Lifecycle of the async breakdown snapshot (GAP-140); unset renders exactly as before. */
+  coverageStatus?: 'ready' | 'pending' | 'failed'
+  /** As-of instant of the ready snapshot; rendered alongside the counts so a persisted result is never mistaken for a fresh one. */
+  coverageComputedAt?: string
+  /** Human-readable reason the last computation failed. */
+  coverageError?: string
 }>(), {
   hideInspect: false,
   hideReorder: false,
@@ -77,6 +94,9 @@ const props = withDefaults(defineProps<{
   chapterCount: undefined,
   chapterRanges: '',
   coverageUnavailable: false,
+  coverageStatus: undefined,
+  coverageComputedAt: '',
+  coverageError: '',
 })
 
 const emit = defineEmits<{
@@ -137,9 +157,14 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
           <span v-else class="cand__source">{{ candidate.sourceName }}</span>
           <span v-if="scanlator" class="cand__scanlator">{{ scanlator }}</span>
           <span class="cand__lang">{{ candidate.lang.toUpperCase() }}</span>
-          <span v-if="coverageUnavailable" class="cand__coverage cand__coverage--muted">Coverage unavailable</span>
+          <span v-if="coverageStatus === 'pending'" class="cand__coverage cand__coverage--muted">
+            Computing coverage…
+          </span>
+          <span v-else-if="coverageUnavailable || coverageStatus === 'failed'" class="cand__coverage cand__coverage--muted">
+            Coverage unavailable<span v-if="coverageError"> — {{ coverageError }}</span>
+          </span>
           <span v-else-if="chapterCount != null" class="cand__coverage">
-            {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span>
+            {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span><span v-if="coverageComputedAt" class="cand__asof"> · as of {{ relativeTime(coverageComputedAt) }}</span>
           </span>
         </span>
       </div>

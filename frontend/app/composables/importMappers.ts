@@ -11,7 +11,7 @@
  */
 import { sourceCoverProxyUrl } from '~/utils/sourceCover'
 import type { components } from '~/utils/api/schema.d.ts'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup } from '~/components/screens/import.types'
 
 type SearchCandidateDTO = components['schemas']['SearchCandidate']
 type SearchGroupDTO = components['schemas']['SearchGroup']
@@ -63,5 +63,25 @@ export function mapScanlatorCoverage(dto: ScanlatorCoverageDTO): ScanlatorCovera
     scanlator: dto.scanlator,
     count: dto.count,
     ranges: dto.ranges,
+  }
+}
+
+/**
+ * Maps the breakdown response's snapshot-level metadata (GAP-140) — the
+ * async computation's own lifecycle, distinct from the per-scanlator counts
+ * `mapScanlatorCoverage` maps. `pending` is deliberately NOT folded into the
+ * existing `coverageUnavailable` failure flag: a computation still running
+ * and one that failed are different facts, and the UI must not present the
+ * first as the second (see CandidateConfigRow's coverage states).
+ */
+export function mapCoverageSnapshot(dto: {
+  status: 'ready' | 'pending' | 'failed'
+  computedAt?: string | null
+  error?: string
+}): CoverageSnapshotView {
+  return {
+    status: dto.status,
+    computedAt: dto.computedAt ?? '',
+    error: dto.error ?? '',
   }
 }

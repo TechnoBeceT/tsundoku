@@ -46,6 +46,12 @@ import { ref } from 'vue'
  *     terminal-latch logic (ignore a late scan.progress after scan.done) is
  *     a scan-specific concern that belongs in useScanLibrary, not in this
  *     shared hub.
+ *   imports.coverage.done → payload { sourceId, mangaUrl, status, total, error? }
+ *     — TERMINAL report of one background per-scanlator coverage computation
+ *     (GAP-140). The endpoint that starts a slow walk returns before it
+ *     finishes, so this is the only channel the eventual outcome reaches the
+ *     client on. Forwarded raw via `on()`; useScanLibrary matches it against
+ *     its breakdown cache by (source, url) and re-fetches that entry.
  *
  * What each prop can and cannot drive:
  *   - `unhealthyCount`   ← health.summary payload { unhealthy } — exact, server-authoritative.
@@ -104,6 +110,7 @@ const NAMED_EVENTS = [
   'scan.progress',
   'scan.done',
   'library.dedup.done',
+  'imports.coverage.done',
 ] as const
 
 function emit(event: string, data: unknown): void {

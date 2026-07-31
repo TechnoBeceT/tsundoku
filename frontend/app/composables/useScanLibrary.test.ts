@@ -116,7 +116,12 @@ vi.mock('~/utils/api/client', () => ({
       if (path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown') {
         const sourceId = opts?.params?.path?.sourceId ?? ''
         return Promise.resolve({
-          data: { total: 12, scanlators: [{ scanlator: sourceId, count: 12, ranges: '1-12' }] },
+          data: {
+            total: 12,
+            scanlators: [{ scanlator: sourceId, count: 12, ranges: '1-12' }],
+            status: 'ready',
+            computedAt: '2026-07-30T00:00:00Z',
+          },
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -449,6 +454,67 @@ describe('useScanLibrary', () => {
 
       await loadBreakdowns([candidate])
       expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+    })
+  })
+
+  describe('imports.coverage.done (GAP-140) — a pending row updates itself when the background walk lands', () => {
+    it('re-fetches the matching candidate (by source+url, not the mangaId cache key) and refreshes both caches', async () => {
+      const { breakdowns, breakdownSnapshots, loadBreakdowns } = mountScanLibrary()
+      await vi.waitFor(() => expect(stubSource).not.toBeNull())
+
+      // The initial fetch falls through to pending — a large series' walk is
+      // still running server-side; total/scanlators carry no payload yet.
+      vi.mocked(apiClient.GET).mockImplementationOnce((path: string) => {
+        calls.push({ method: 'GET', path })
+        return Promise.resolve({
+          data: { total: 0, scanlators: [], status: 'pending' },
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      })
+      calls = []
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+
+      expect(breakdowns.value['src-1:1']).toEqual([])
+      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+
+      // The background walk finishes — the event identifies its subject by
+      // (sourceId, mangaUrl), which is exactly what the cache key can't be
+      // reverse-derived from (it's keyed by mangaId).
+      calls = []
+      stubSource!.fire('imports.coverage.done', {
+        sourceId: 'src-1',
+        mangaUrl: 'https://src-1.example/title/1',
+        status: 'ready',
+        total: 12,
+      })
+
+      await vi.waitFor(() => {
+        expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
+      })
+      expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
+      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
+    })
+
+    it('ignores an event for a different (source, url) pair — no extra fetch fires', async () => {
+      const { loadBreakdowns } = mountScanLibrary()
+      await vi.waitFor(() => expect(stubSource).not.toBeNull())
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+
+      calls = []
+      stubSource!.fire('imports.coverage.done', {
+        sourceId: 'src-2',
+        mangaUrl: 'https://src-2.example/title/2',
+        status: 'ready',
+        total: 5,
+      })
+
+      // Give any errant async work a tick to run before asserting nothing fired.
+      await Promise.resolve()
+      expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(0)
     })
   })
 
