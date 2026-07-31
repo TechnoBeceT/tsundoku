@@ -30,6 +30,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
@@ -116,6 +117,7 @@ func checkColumn(t, c string) error {
 			seriesprovider.Table:        seriesprovider.ValidColumn,
 			settings.Table:              settings.ValidColumn,
 			sourcecircuitstate.Table:    sourcecircuitstate.ValidColumn,
+			sourcecoverage.Table:        sourcecoverage.ValidColumn,
 			sourceevent.Table:           sourceevent.ValidColumn,
 			sourcemetric.Table:          sourcemetric.ValidColumn,
 			sourcenetworkbinding.Table:  sourcenetworkbinding.ValidColumn,

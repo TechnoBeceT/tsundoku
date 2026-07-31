@@ -32,6 +32,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
@@ -71,6 +72,7 @@ const (
 	TypeSeriesProvider        = "SeriesProvider"
 	TypeSettings              = "Settings"
 	TypeSourceCircuitState    = "SourceCircuitState"
+	TypeSourceCoverage        = "SourceCoverage"
 	TypeSourceEvent           = "SourceEvent"
 	TypeSourceMetric          = "SourceMetric"
 	TypeSourceNetworkBinding  = "SourceNetworkBinding"
@@ -15879,6 +15881,684 @@ func (m *SourceCircuitStateMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceCircuitStateMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceCircuitState edge %s", name)
+}
+
+// SourceCoverageMutation represents an operation that mutates the SourceCoverage nodes in the graph.
+type SourceCoverageMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	source_id     *string
+	manga_url     *string
+	payload       *string
+	status        *string
+	computed_at   *time.Time
+	updated_at    *time.Time
+	last_error    *string
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SourceCoverage, error)
+	predicates    []predicate.SourceCoverage
+}
+
+var _ ent.Mutation = (*SourceCoverageMutation)(nil)
+
+// sourcecoverageOption allows management of the mutation configuration using functional options.
+type sourcecoverageOption func(*SourceCoverageMutation)
+
+// newSourceCoverageMutation creates new mutation for the SourceCoverage entity.
+func newSourceCoverageMutation(c config, op Op, opts ...sourcecoverageOption) *SourceCoverageMutation {
+	m := &SourceCoverageMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceCoverage,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceCoverageID sets the ID field of the mutation.
+func withSourceCoverageID(id uuid.UUID) sourcecoverageOption {
+	return func(m *SourceCoverageMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceCoverage
+		)
+		m.oldValue = func(ctx context.Context) (*SourceCoverage, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceCoverage.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceCoverage sets the old SourceCoverage of the mutation.
+func withSourceCoverage(node *SourceCoverage) sourcecoverageOption {
+	return func(m *SourceCoverageMutation) {
+		m.oldValue = func(context.Context) (*SourceCoverage, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceCoverageMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceCoverageMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceCoverage entities.
+func (m *SourceCoverageMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceCoverageMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceCoverageMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceCoverage.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceCoverageMutation) SetSourceID(s string) {
+	m.source_id = &s
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceCoverageMutation) SourceID() (r string, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldSourceID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceCoverageMutation) ResetSourceID() {
+	m.source_id = nil
+}
+
+// SetMangaURL sets the "manga_url" field.
+func (m *SourceCoverageMutation) SetMangaURL(s string) {
+	m.manga_url = &s
+}
+
+// MangaURL returns the value of the "manga_url" field in the mutation.
+func (m *SourceCoverageMutation) MangaURL() (r string, exists bool) {
+	v := m.manga_url
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMangaURL returns the old "manga_url" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldMangaURL(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMangaURL is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMangaURL requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMangaURL: %w", err)
+	}
+	return oldValue.MangaURL, nil
+}
+
+// ResetMangaURL resets all changes to the "manga_url" field.
+func (m *SourceCoverageMutation) ResetMangaURL() {
+	m.manga_url = nil
+}
+
+// SetPayload sets the "payload" field.
+func (m *SourceCoverageMutation) SetPayload(s string) {
+	m.payload = &s
+}
+
+// Payload returns the value of the "payload" field in the mutation.
+func (m *SourceCoverageMutation) Payload() (r string, exists bool) {
+	v := m.payload
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPayload returns the old "payload" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldPayload(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPayload is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPayload requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPayload: %w", err)
+	}
+	return oldValue.Payload, nil
+}
+
+// ResetPayload resets all changes to the "payload" field.
+func (m *SourceCoverageMutation) ResetPayload() {
+	m.payload = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *SourceCoverageMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *SourceCoverageMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *SourceCoverageMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetComputedAt sets the "computed_at" field.
+func (m *SourceCoverageMutation) SetComputedAt(t time.Time) {
+	m.computed_at = &t
+}
+
+// ComputedAt returns the value of the "computed_at" field in the mutation.
+func (m *SourceCoverageMutation) ComputedAt() (r time.Time, exists bool) {
+	v := m.computed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldComputedAt returns the old "computed_at" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldComputedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldComputedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldComputedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldComputedAt: %w", err)
+	}
+	return oldValue.ComputedAt, nil
+}
+
+// ClearComputedAt clears the value of the "computed_at" field.
+func (m *SourceCoverageMutation) ClearComputedAt() {
+	m.computed_at = nil
+	m.clearedFields[sourcecoverage.FieldComputedAt] = struct{}{}
+}
+
+// ComputedAtCleared returns if the "computed_at" field was cleared in this mutation.
+func (m *SourceCoverageMutation) ComputedAtCleared() bool {
+	_, ok := m.clearedFields[sourcecoverage.FieldComputedAt]
+	return ok
+}
+
+// ResetComputedAt resets all changes to the "computed_at" field.
+func (m *SourceCoverageMutation) ResetComputedAt() {
+	m.computed_at = nil
+	delete(m.clearedFields, sourcecoverage.FieldComputedAt)
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceCoverageMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceCoverageMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceCoverageMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetLastError sets the "last_error" field.
+func (m *SourceCoverageMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *SourceCoverageMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the SourceCoverage entity.
+// If the SourceCoverage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCoverageMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *SourceCoverageMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// Where appends a list predicates to the SourceCoverageMutation builder.
+func (m *SourceCoverageMutation) Where(ps ...predicate.SourceCoverage) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceCoverageMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceCoverageMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceCoverage, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceCoverageMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceCoverageMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceCoverage).
+func (m *SourceCoverageMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceCoverageMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.source_id != nil {
+		fields = append(fields, sourcecoverage.FieldSourceID)
+	}
+	if m.manga_url != nil {
+		fields = append(fields, sourcecoverage.FieldMangaURL)
+	}
+	if m.payload != nil {
+		fields = append(fields, sourcecoverage.FieldPayload)
+	}
+	if m.status != nil {
+		fields = append(fields, sourcecoverage.FieldStatus)
+	}
+	if m.computed_at != nil {
+		fields = append(fields, sourcecoverage.FieldComputedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcecoverage.FieldUpdatedAt)
+	}
+	if m.last_error != nil {
+		fields = append(fields, sourcecoverage.FieldLastError)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceCoverageMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcecoverage.FieldSourceID:
+		return m.SourceID()
+	case sourcecoverage.FieldMangaURL:
+		return m.MangaURL()
+	case sourcecoverage.FieldPayload:
+		return m.Payload()
+	case sourcecoverage.FieldStatus:
+		return m.Status()
+	case sourcecoverage.FieldComputedAt:
+		return m.ComputedAt()
+	case sourcecoverage.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case sourcecoverage.FieldLastError:
+		return m.LastError()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceCoverageMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcecoverage.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcecoverage.FieldMangaURL:
+		return m.OldMangaURL(ctx)
+	case sourcecoverage.FieldPayload:
+		return m.OldPayload(ctx)
+	case sourcecoverage.FieldStatus:
+		return m.OldStatus(ctx)
+	case sourcecoverage.FieldComputedAt:
+		return m.OldComputedAt(ctx)
+	case sourcecoverage.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case sourcecoverage.FieldLastError:
+		return m.OldLastError(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceCoverage field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceCoverageMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcecoverage.FieldSourceID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcecoverage.FieldMangaURL:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMangaURL(v)
+		return nil
+	case sourcecoverage.FieldPayload:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPayload(v)
+		return nil
+	case sourcecoverage.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case sourcecoverage.FieldComputedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetComputedAt(v)
+		return nil
+	case sourcecoverage.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case sourcecoverage.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCoverage field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceCoverageMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceCoverageMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceCoverageMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown SourceCoverage numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceCoverageMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcecoverage.FieldComputedAt) {
+		fields = append(fields, sourcecoverage.FieldComputedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceCoverageMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceCoverageMutation) ClearField(name string) error {
+	switch name {
+	case sourcecoverage.FieldComputedAt:
+		m.ClearComputedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCoverage nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceCoverageMutation) ResetField(name string) error {
+	switch name {
+	case sourcecoverage.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcecoverage.FieldMangaURL:
+		m.ResetMangaURL()
+		return nil
+	case sourcecoverage.FieldPayload:
+		m.ResetPayload()
+		return nil
+	case sourcecoverage.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case sourcecoverage.FieldComputedAt:
+		m.ResetComputedAt()
+		return nil
+	case sourcecoverage.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case sourcecoverage.FieldLastError:
+		m.ResetLastError()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceCoverage field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceCoverageMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceCoverageMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceCoverageMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceCoverageMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceCoverageMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceCoverageMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceCoverageMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceCoverage unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceCoverageMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceCoverage edge %s", name)
 }
 
 // SourceEventMutation represents an operation that mutates the SourceEvent nodes in the graph.

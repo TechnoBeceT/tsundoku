@@ -34,6 +34,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
@@ -85,6 +86,8 @@ type Client struct {
 	Settings *SettingsClient
 	// SourceCircuitState is the client for interacting with the SourceCircuitState builders.
 	SourceCircuitState *SourceCircuitStateClient
+	// SourceCoverage is the client for interacting with the SourceCoverage builders.
+	SourceCoverage *SourceCoverageClient
 	// SourceEvent is the client for interacting with the SourceEvent builders.
 	SourceEvent *SourceEventClient
 	// SourceMetric is the client for interacting with the SourceMetric builders.
@@ -130,6 +133,7 @@ func (c *Client) init() {
 	c.SeriesProvider = NewSeriesProviderClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
 	c.SourceCircuitState = NewSourceCircuitStateClient(c.config)
+	c.SourceCoverage = NewSourceCoverageClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
 	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SourceNetworkBinding = NewSourceNetworkBindingClient(c.config)
@@ -248,6 +252,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SeriesProvider:        NewSeriesProviderClient(cfg),
 		Settings:              NewSettingsClient(cfg),
 		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
+		SourceCoverage:        NewSourceCoverageClient(cfg),
 		SourceEvent:           NewSourceEventClient(cfg),
 		SourceMetric:          NewSourceMetricClient(cfg),
 		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
@@ -293,6 +298,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SeriesProvider:        NewSeriesProviderClient(cfg),
 		Settings:              NewSettingsClient(cfg),
 		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
+		SourceCoverage:        NewSourceCoverageClient(cfg),
 		SourceEvent:           NewSourceEventClient(cfg),
 		SourceMetric:          NewSourceMetricClient(cfg),
 		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
@@ -334,9 +340,9 @@ func (c *Client) Use(hooks ...Hook) {
 		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
 		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
-		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourceNetworkBinding,
-		c.SourcePreference, c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding,
-		c.TrackerConnection,
+		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
+		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -350,9 +356,9 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
 		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
-		c.SourceCircuitState, c.SourceEvent, c.SourceMetric, c.SourceNetworkBinding,
-		c.SourcePreference, c.SourceSeedState, c.SuwayomiSyncState, c.TrackBinding,
-		c.TrackerConnection,
+		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
+		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -397,6 +403,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Settings.mutate(ctx, m)
 	case *SourceCircuitStateMutation:
 		return c.SourceCircuitState.mutate(ctx, m)
+	case *SourceCoverageMutation:
+		return c.SourceCoverage.mutate(ctx, m)
 	case *SourceEventMutation:
 		return c.SourceEvent.mutate(ctx, m)
 	case *SourceMetricMutation:
@@ -3004,6 +3012,139 @@ func (c *SourceCircuitStateClient) mutate(ctx context.Context, m *SourceCircuitS
 	}
 }
 
+// SourceCoverageClient is a client for the SourceCoverage schema.
+type SourceCoverageClient struct {
+	config
+}
+
+// NewSourceCoverageClient returns a client for the SourceCoverage from the given config.
+func NewSourceCoverageClient(c config) *SourceCoverageClient {
+	return &SourceCoverageClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcecoverage.Hooks(f(g(h())))`.
+func (c *SourceCoverageClient) Use(hooks ...Hook) {
+	c.hooks.SourceCoverage = append(c.hooks.SourceCoverage, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcecoverage.Intercept(f(g(h())))`.
+func (c *SourceCoverageClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceCoverage = append(c.inters.SourceCoverage, interceptors...)
+}
+
+// Create returns a builder for creating a SourceCoverage entity.
+func (c *SourceCoverageClient) Create() *SourceCoverageCreate {
+	mutation := newSourceCoverageMutation(c.config, OpCreate)
+	return &SourceCoverageCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceCoverage entities.
+func (c *SourceCoverageClient) CreateBulk(builders ...*SourceCoverageCreate) *SourceCoverageCreateBulk {
+	return &SourceCoverageCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceCoverageClient) MapCreateBulk(slice any, setFunc func(*SourceCoverageCreate, int)) *SourceCoverageCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceCoverageCreateBulk{err: fmt.Errorf("calling to SourceCoverageClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceCoverageCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceCoverageCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceCoverage.
+func (c *SourceCoverageClient) Update() *SourceCoverageUpdate {
+	mutation := newSourceCoverageMutation(c.config, OpUpdate)
+	return &SourceCoverageUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceCoverageClient) UpdateOne(_m *SourceCoverage) *SourceCoverageUpdateOne {
+	mutation := newSourceCoverageMutation(c.config, OpUpdateOne, withSourceCoverage(_m))
+	return &SourceCoverageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceCoverageClient) UpdateOneID(id uuid.UUID) *SourceCoverageUpdateOne {
+	mutation := newSourceCoverageMutation(c.config, OpUpdateOne, withSourceCoverageID(id))
+	return &SourceCoverageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceCoverage.
+func (c *SourceCoverageClient) Delete() *SourceCoverageDelete {
+	mutation := newSourceCoverageMutation(c.config, OpDelete)
+	return &SourceCoverageDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceCoverageClient) DeleteOne(_m *SourceCoverage) *SourceCoverageDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceCoverageClient) DeleteOneID(id uuid.UUID) *SourceCoverageDeleteOne {
+	builder := c.Delete().Where(sourcecoverage.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceCoverageDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceCoverage.
+func (c *SourceCoverageClient) Query() *SourceCoverageQuery {
+	return &SourceCoverageQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceCoverage},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceCoverage entity by its id.
+func (c *SourceCoverageClient) Get(ctx context.Context, id uuid.UUID) (*SourceCoverage, error) {
+	return c.Query().Where(sourcecoverage.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceCoverageClient) GetX(ctx context.Context, id uuid.UUID) *SourceCoverage {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceCoverageClient) Hooks() []Hook {
+	return c.hooks.SourceCoverage
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceCoverageClient) Interceptors() []Interceptor {
+	return c.inters.SourceCoverage
+}
+
+func (c *SourceCoverageClient) mutate(ctx context.Context, m *SourceCoverageMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceCoverageCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceCoverageUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceCoverageUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceCoverageDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceCoverage mutation op: %q", m.Op())
+	}
+}
+
 // SourceEventClient is a client for the SourceEvent schema.
 type SourceEventClient struct {
 	config
@@ -4106,16 +4247,16 @@ type (
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
 		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
-		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
-		TrackerConnection []ent.Hook
+		Settings, SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
+		SourceNetworkBinding, SourcePreference, SourceSeedState, SuwayomiSyncState,
+		TrackBinding, TrackerConnection []ent.Hook
 	}
 	inters struct {
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
 		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceEvent, SourceMetric, SourceNetworkBinding,
-		SourcePreference, SourceSeedState, SuwayomiSyncState, TrackBinding,
-		TrackerConnection []ent.Interceptor
+		Settings, SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
+		SourceNetworkBinding, SourcePreference, SourceSeedState, SuwayomiSyncState,
+		TrackBinding, TrackerConnection []ent.Interceptor
 	}
 )

@@ -417,6 +417,30 @@ var (
 		Columns:    SourceCircuitStatesColumns,
 		PrimaryKey: []*schema.Column{SourceCircuitStatesColumns[0]},
 	}
+	// SourceCoveragesColumns holds the columns for the "source_coverages" table.
+	SourceCoveragesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeString},
+		{Name: "manga_url", Type: field.TypeString},
+		{Name: "payload", Type: field.TypeString, Size: 2147483647, Default: ""},
+		{Name: "status", Type: field.TypeString, Default: "pending"},
+		{Name: "computed_at", Type: field.TypeTime, Nullable: true},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+	}
+	// SourceCoveragesTable holds the schema information for the "source_coverages" table.
+	SourceCoveragesTable = &schema.Table{
+		Name:       "source_coverages",
+		Columns:    SourceCoveragesColumns,
+		PrimaryKey: []*schema.Column{SourceCoveragesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourcecoverage_source_id_manga_url",
+				Unique:  true,
+				Columns: []*schema.Column{SourceCoveragesColumns[1], SourceCoveragesColumns[2]},
+			},
+		},
+	}
 	// SourceEventsColumns holds the columns for the "source_events" table.
 	SourceEventsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -656,6 +680,7 @@ var (
 		SeriesProvidersTable,
 		SettingsTable,
 		SourceCircuitStatesTable,
+		SourceCoveragesTable,
 		SourceEventsTable,
 		SourceMetricsTable,
 		SourceNetworkBindingsTable,

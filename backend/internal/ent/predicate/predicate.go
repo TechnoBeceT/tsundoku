@@ -60,6 +60,9 @@ type Settings func(*sql.Selector)
 // SourceCircuitState is the predicate function for sourcecircuitstate builders.
 type SourceCircuitState func(*sql.Selector)
 
+// SourceCoverage is the predicate function for sourcecoverage builders.
+type SourceCoverage func(*sql.Selector)
+
 // SourceEvent is the predicate function for sourceevent builders.
 type SourceEvent func(*sql.Selector)
 

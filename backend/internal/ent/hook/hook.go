@@ -225,6 +225,18 @@ func (f SourceCircuitStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceCircuitStateMutation", m)
 }
 
+// The SourceCoverageFunc type is an adapter to allow the use of ordinary
+// function as SourceCoverage mutator.
+type SourceCoverageFunc func(context.Context, *ent.SourceCoverageMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceCoverageFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceCoverageMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceCoverageMutation", m)
+}
+
 // The SourceEventFunc type is an adapter to allow the use of ordinary
 // function as SourceEvent mutator.
 type SourceEventFunc func(context.Context, *ent.SourceEventMutation) (ent.Value, error)

@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
@@ -531,6 +532,30 @@ func init() {
 	sourcecircuitstateDescID := sourcecircuitstateFields[0].Descriptor()
 	// sourcecircuitstate.DefaultID holds the default value on creation for the id field.
 	sourcecircuitstate.DefaultID = sourcecircuitstateDescID.Default.(func() uuid.UUID)
+	sourcecoverageFields := schema.SourceCoverage{}.Fields()
+	_ = sourcecoverageFields
+	// sourcecoverageDescPayload is the schema descriptor for payload field.
+	sourcecoverageDescPayload := sourcecoverageFields[3].Descriptor()
+	// sourcecoverage.DefaultPayload holds the default value on creation for the payload field.
+	sourcecoverage.DefaultPayload = sourcecoverageDescPayload.Default.(string)
+	// sourcecoverageDescStatus is the schema descriptor for status field.
+	sourcecoverageDescStatus := sourcecoverageFields[4].Descriptor()
+	// sourcecoverage.DefaultStatus holds the default value on creation for the status field.
+	sourcecoverage.DefaultStatus = sourcecoverageDescStatus.Default.(string)
+	// sourcecoverageDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcecoverageDescUpdatedAt := sourcecoverageFields[6].Descriptor()
+	// sourcecoverage.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcecoverage.DefaultUpdatedAt = sourcecoverageDescUpdatedAt.Default.(func() time.Time)
+	// sourcecoverage.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcecoverage.UpdateDefaultUpdatedAt = sourcecoverageDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcecoverageDescLastError is the schema descriptor for last_error field.
+	sourcecoverageDescLastError := sourcecoverageFields[7].Descriptor()
+	// sourcecoverage.DefaultLastError holds the default value on creation for the last_error field.
+	sourcecoverage.DefaultLastError = sourcecoverageDescLastError.Default.(string)
+	// sourcecoverageDescID is the schema descriptor for id field.
+	sourcecoverageDescID := sourcecoverageFields[0].Descriptor()
+	// sourcecoverage.DefaultID holds the default value on creation for the id field.
+	sourcecoverage.DefaultID = sourcecoverageDescID.Default.(func() uuid.UUID)
 	sourceeventFields := schema.SourceEvent{}.Fields()
 	_ = sourceeventFields
 	// sourceeventDescSourceID is the schema descriptor for source_id field.
