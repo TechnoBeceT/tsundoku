@@ -12,19 +12,24 @@ import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
  * (this panel renders inline, and its title is a fixed read-only display, not
  * an editable field). Reuses the Import/Adopt flow's own fixtures
  * (`searchResults`/`scanlatorBreakdown`) since the match endpoint returns the
- * identical `SearchGroup`/`SearchCandidate`/`ScanlatorCoverage` DTO. Flip the
- * Storybook theme toolbar to confirm both dark and light.
+ * identical `SearchGroup`/`SearchCandidate`/`ScanlatorCoverage` DTO.
+ * `refreshBreakdown` (GAP-140 follow-up) is logged in the Actions panel. Flip
+ * the Storybook theme toolbar to confirm both dark and light.
  */
 const firstCandidateKey = candKey(searchResults[0]!.candidates[0]!)
 
 const meta = {
   title: 'ScanLibrary/MatchPanel',
   component: MatchPanel,
-  parameters: { layout: 'padded' },
+  parameters: {
+    layout: 'padded',
+    actions: { handles: ['refreshBreakdown'] },
+  },
   args: {
     title: 'Solo Leveling',
     groups: searchResults,
     breakdowns: {},
+    breakdownSnapshots: {},
     searching: false,
     searchError: '',
     busy: false,
@@ -69,6 +74,34 @@ export const ConfigureMulti: Story = {
     await expect(canvas.getByLabelText(`Toggle ${firstCandidate.sourceName}`)).toBeInTheDocument()
     const attach = await canvas.findByRole('button', { name: `Attach ${searchResults[0]!.candidates.length} sources` })
     await expect(attach).toBeEnabled()
+  },
+}
+
+/**
+ * Configure stage with the async breakdown snapshot (GAP-140) at all three
+ * lifecycle states — the first candidate computing, the second ready with its
+ * as-of date + refresh control, the third failed with its reason + refresh
+ * control. Proves `breakdownSnapshots` reaches the rendered row through this
+ * real panel, not a hand-fed `DisplayRow`.
+ */
+export const ConfigureCoverageSnapshot: Story = {
+  args: {
+    breakdowns: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: [],
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: [
+        { scanlator: searchResults[0]!.candidates[1]!.sourceName, count: 175, ranges: '1-175' },
+      ],
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: [],
+    },
+    breakdownSnapshots: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: { status: 'pending', computedAt: '', error: '' },
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
   },
 }
 

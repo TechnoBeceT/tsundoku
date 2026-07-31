@@ -3,18 +3,21 @@ import CandidateConfigRow from './CandidateConfigRow.vue'
 import { inspectChapters, searchResults } from '../../fixtures/import'
 
 /**
- * Stories for one Stage-2 configure row. `toggle`, `inspect`, and `move` are
- * logged in the Actions panel. The variants cover the row states: selected (with
- * the rank stepper), unselected (no stepper), inspect loading (spinner), and
- * inspect resolved (<ChapterInspectList>). Flip the Storybook theme toolbar to
- * confirm both themes.
+ * Stories for one Stage-2 configure row. `toggle`, `inspect`, `move`, and
+ * `refresh` are logged in the Actions panel. The variants cover the row
+ * states: selected (with the rank stepper), unselected (no stepper), inspect
+ * loading (spinner), inspect resolved (<ChapterInspectList>), and the three
+ * async breakdown-snapshot states (`CoveragePending`/`CoverageReadyWithAsOf`/
+ * `CoverageFailed`, GAP-140) — the latter two also carry the refresh control
+ * (`.coverage-refresh`), which `CoveragePending` deliberately omits. Flip the
+ * Storybook theme toolbar to confirm both themes.
  */
 const meta = {
   title: 'Import/CandidateConfigRow',
   component: CandidateConfigRow,
   parameters: {
     layout: 'padded',
-    actions: { handles: ['toggle', 'inspect', 'move'] },
+    actions: { handles: ['toggle', 'inspect', 'move', 'refresh'] },
   },
   decorators: [() => ({ template: '<div style="max-width:780px"><story /></div>' })],
 } satisfies Meta<typeof CandidateConfigRow>
@@ -221,7 +224,9 @@ export const CoverageUnavailable: Story = {
 /**
  * GAP-140: the async breakdown snapshot is still computing in the background
  * (a large series' walk can take 15-20 minutes). This must read as work in
- * flight, never as "Coverage unavailable" — those are different facts.
+ * flight, never as "Coverage unavailable" — those are different facts. No
+ * refresh control while pending — the backend never duplicates a walk
+ * already in flight, so a refresh click here would be a pointless no-op.
  */
 export const CoveragePending: Story = {
   args: {
@@ -240,7 +245,9 @@ export const CoveragePending: Story = {
 /**
  * GAP-140: a ready snapshot always carries its as-of instant — without it, a
  * three-day-old snapshot would be indistinguishable from a fresh one, which
- * is the entire reason the result is persisted rather than only cached.
+ * is the entire reason the result is persisted rather than only cached. The
+ * small refresh control (`.coverage-refresh`) next to the as-of date lets the
+ * owner force a recomputation of a snapshot this stale.
  */
 export const CoverageReadyWithAsOf: Story = {
   args: {
@@ -261,7 +268,8 @@ export const CoverageReadyWithAsOf: Story = {
 
 /**
  * GAP-140: the async computation failed — the reason from `coverageError` is
- * shown inline instead of a blank/generic panel.
+ * shown inline instead of a blank/generic panel, alongside a refresh control
+ * so the owner can retry now rather than waiting out the backend's cooldown.
  */
 export const CoverageFailed: Story = {
   args: {

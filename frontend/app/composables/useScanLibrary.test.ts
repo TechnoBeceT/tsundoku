@@ -559,6 +559,68 @@ describe('useScanLibrary', () => {
     })
   })
 
+  describe('refreshBreakdown (GAP-140 follow-up) — force a recomputation of an already-cached snapshot', () => {
+    it('sends ?refresh=true and overwrites both caches with the fresh response', async () => {
+      const { breakdowns, breakdownSnapshots, loadBreakdowns, refreshBreakdown } = mountScanLibrary()
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+      await loadBreakdowns([candidate])
+      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
+
+      calls = []
+      vi.mocked(apiClient.GET).mockImplementationOnce((path: string, opts?: { params?: { query?: unknown } }) => {
+        calls.push({ method: 'GET', path, query: opts?.params?.query })
+        return Promise.resolve({
+          data: { total: 0, scanlators: [], status: 'pending' },
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })
+      })
+
+      await refreshBreakdown(candidate)
+
+      const refreshCall = calls.find(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
+      expect(refreshCall).toBeDefined()
+      expect(refreshCall!.query).toEqual({ url: 'https://src-1.example/title/1', refresh: true })
+      // The row reflects that work restarted — a large series' forced walk
+      // falls through to pending exactly like a first-ever fetch would.
+      expect(breakdowns.value['src-1:1']).toEqual([])
+      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+    })
+
+    it('is a no-op while a fetch for the same candidate is already in flight', async () => {
+      const { loadBreakdowns, refreshBreakdown } = mountScanLibrary()
+      const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
+
+      const originalGet = vi.mocked(apiClient.GET).getMockImplementation()!
+      let release: (() => void) | null = null
+      vi.mocked(apiClient.GET).mockImplementation((path: string) => {
+        calls.push({ method: 'GET', path })
+        return new Promise(resolve => (release = () => resolve({
+          data: { total: 3, scanlators: [], status: 'ready', computedAt: '2026-07-30T00:00:00Z' },
+          error: null,
+          response: new Response(null, { status: 200 }),
+        })))
+      })
+
+      try {
+        const first = loadBreakdowns([candidate])
+        await vi.waitFor(() => expect(release).not.toBeNull())
+        calls = []
+
+        // A refresh click landing while the initial fetch is still resolving
+        // must not fire a second request for the same key.
+        await refreshBreakdown(candidate)
+        expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(0)
+
+        release!()
+        await first
+      }
+      finally {
+        vi.mocked(apiClient.GET).mockImplementation(originalGet)
+      }
+    })
+  })
+
   it('loadSources() GETs /api/sources and maps it into the sources ref', async () => {
     const { sources, loadSources } = mountScanLibrary()
     calls = []

@@ -64,6 +64,34 @@ export const ConfigureMulti: Story = {
   },
 }
 
+/**
+ * Configure stage with the async breakdown snapshot (GAP-140) at all three
+ * lifecycle states — the first candidate computing, the second ready with its
+ * as-of date + refresh control, the third failed with its reason + refresh
+ * control. Proves `breakdownSnapshots` reaches the rendered row through the
+ * real dialog, not a hand-fed `DisplayRow`.
+ */
+export const ConfigureCoverageSnapshot: Story = {
+  args: {
+    breakdowns: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: [],
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: [
+        { scanlator: searchResults[0]!.candidates[1]!.sourceName, count: 175, ranges: '1-175' },
+      ],
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: [],
+    },
+    breakdownSnapshots: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: { status: 'pending', computedAt: '', error: '' },
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+  },
+}
+
 /** A search or attach failure message banners at the top of the dialog. */
 export const Error: Story = {
   args: { error: 'Suwayomi was unreachable' },

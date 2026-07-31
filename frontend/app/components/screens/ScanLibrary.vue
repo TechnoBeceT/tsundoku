@@ -38,7 +38,8 @@ import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from '
  * `load-breakdowns` / `match-back` (carrying the target `path` alongside the
  * gathered, ranked `ProviderRef[]`, since `<MatchPanel>` itself only knows the
  * selection) for the page to call `importWithMatches` / `loadBreakdowns` and
- * close the panel.
+ * close the panel. `refreshBreakdown` (GAP-140 follow-up) re-emits straight
+ * through as `refresh-breakdown` the same way.
  *
  * A page-level "Limit matches to:" `<SourceFilterChips>` row sits above the
  * staging table (only when a `sources` list is supplied): the owner picks a
@@ -139,6 +140,8 @@ const emit = defineEmits<{
   'match-confirm': [payload: { path: string, matches: ProviderRef[] }]
   /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
   'load-breakdowns': [candidates: SearchCandidate[]]
+  /** Force a recomputation of one candidate's breakdown snapshot (GAP-140). */
+  'refresh-breakdown': [candidate: SearchCandidate]
   /** Abandon the match sub-panel and return to the staging table. */
   'match-back': []
 }>()
@@ -216,6 +219,7 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
             :error="matchRowError"
             @confirm="emit('match-confirm', { path: matchPath!, matches: $event })"
             @load-breakdowns="emit('load-breakdowns', $event)"
+            @refresh-breakdown="emit('refresh-breakdown', $event)"
             @back="emit('match-back')"
           />
 

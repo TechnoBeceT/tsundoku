@@ -55,7 +55,9 @@ import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGr
  * `snapshots` param so `SourceConfigurePanel` can render the pending/ready/
  * failed states instead of a silent blank while a large series' walk runs in
  * the background — see `useScanLibrary.ts` for where it's populated and
- * refreshed off `imports.coverage.done`.
+ * refreshed off `imports.coverage.done`. `refreshBreakdown` (GAP-140
+ * follow-up) is the row's refresh control re-emitted for the parent's
+ * `useScanLibrary.refreshBreakdown` to run.
  *
  * Resets to the Groups stage (and drops the gathered tray + picked group)
  * whenever `groups` changes: a fresh match search's results (the owner
@@ -106,6 +108,8 @@ const emit = defineEmits<{
   back: []
   /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
   loadBreakdowns: [candidates: SearchCandidate[]]
+  /** Force a recomputation of one candidate's breakdown snapshot (GAP-140). */
+  refreshBreakdown: [candidate: SearchCandidate]
 }>()
 
 const stage = ref<'groups' | 'configure'>('groups')
@@ -211,6 +215,7 @@ function confirm(): void {
         label="Sources to attach · use arrows to rank priority"
         @toggle="cfg.toggleCand"
         @move="cfg.moveCand($event.key, $event.dir)"
+        @refresh="emit('refreshBreakdown', $event)"
       />
       <div class="mp-actions mp-actions--between">
         <AppButton variant="ghost" :disabled="busy" @click="handleBack">Back</AppButton>

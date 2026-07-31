@@ -191,4 +191,18 @@ describe('MatchPanel', () => {
     expect(toggles.length).toBe(searchResults.length)
     for (const t of toggles) expect(t.text()).toBe('+ Add')
   })
+
+  it('re-emits a row\'s refresh click as refreshBreakdown with that candidate (GAP-140 follow-up)', async () => {
+    const first = searchResults[0]!.candidates[0]!
+    const key = `${first.source}:${first.mangaId}`
+    const wrapper = mountPanel({
+      breakdowns: { ...resolvedBreakdowns, [key]: [{ scanlator: first.sourceName, count: 12, ranges: '1-12' }] },
+      breakdownSnapshots: { [key]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },
+    })
+    await wrapper.find('.group').trigger('click')
+
+    await wrapper.find('.coverage-refresh').trigger('click')
+
+    expect(wrapper.emitted('refreshBreakdown')).toEqual([[first]])
+  })
 })

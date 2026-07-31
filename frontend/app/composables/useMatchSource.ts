@@ -16,19 +16,34 @@
  * 1:1 `mapSource` as `useImport`) the first time the dialog opens — guarded so
  * it fetches at most once — to populate the filter chips.
  *
- * loadBreakdowns(candidates) is copied from `useImport.loadBreakdowns` (same
- * cache/in-flight-guard/parallel-fetch shape, §2 DRY): fetches the
+ * loadBreakdowns(candidates) is copied from `useScanLibrary.loadBreakdowns`
+ * (same cache/in-flight-guard/parallel-fetch shape, §2 DRY): fetches the
  * per-scanlator chapter-coverage breakdown for each given (source, mangaId)
  * pair, caching by `source:mangaId` — an absent key = not yet fetched, `null`
- * = the fetch failed (the composable falls back to a single unsplit row).
+ * = a request-level failure (the composable falls back to a single unsplit
+ * row).
  *
- * GAP-140: `null` also covers a `pending` OR `failed` snapshot response — the
- * breakdown endpoint now answers 200 with an empty `scanlators` array for
- * both (never a 502), and this composable doesn't track that status. Caching
- * anything other than a `ready` response as resolved data would silently
- * render NO coverage line at all (not even "Coverage unavailable") for the
- * rest of this dialog's lifetime, since `breakdowns` is a permanent cache.
- * See `useImport.loadBreakdowns`'s matching note for the full rationale.
+ * GAP-140: the breakdown endpoint is a persisted, asynchronously-computed
+ * snapshot — `pending`/`ready`/`failed` — announced over SSE as
+ * `imports.coverage.done` once a background walk finishes. This composable
+ * tracks that lifecycle the same way `useScanLibrary.ts` does:
+ * `breakdownSnapshots` (keyed identically to `breakdowns`) carries
+ * `status`/`computedAt`/`error`, and `breakdowns.value[key]` is written from
+ * `res.data.scanlators` UNCONDITIONALLY (a `pending`/`failed` snapshot's
+ * `scanlators` is just an empty array) — never collapsed to `null` for
+ * anything but a genuine request-level failure.
+ *
+ * ⚠ RESOLVING THE "PERMANENT CACHE" PROBLEM: `breakdowns`/`breakdownSnapshots`
+ * still never EXPIRE an entry — but a `pending` entry is not stuck, because a
+ * fresh fetch OVERWRITES the existing key rather than being skipped by
+ * `loadBreakdowns`'s cache guard. This composable subscribes to
+ * `imports.coverage.done` (via the shared `useProgressStream`, the SAME
+ * EventSource every other SSE consumer uses) and, on a match by (sourceId,
+ * mangaUrl) — the event's own identity, which the mangaId-keyed cache key
+ * cannot be reverse-derived from — re-fetches that one entry in place, so a
+ * row left on "Computing coverage…" updates itself the moment the background
+ * walk lands. `refreshBreakdown` is the owner-triggered counterpart: it
+ * forces the same overwrite via `?refresh=true`.
  *
  * batchAddProviders is `POST /api/series/{id}/providers/batch` (Slice P) — it
  * attaches every given `ProviderRef`, best-first, at an importance the
@@ -48,15 +63,26 @@
  * overwrite `groups` with results for the WRONG query, letting the owner
  * attach a candidate that doesn't belong to the title in the search box.
  */
-import { ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
+import { useProgressStream } from '~/composables/useProgressStream'
+import { mapCoverageSnapshot, mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
 
 type SeriesDetailDTO = components['schemas']['SeriesDetail']
 type SourceDTO = components['schemas']['Source']
+
+/** Shape of the imports.coverage.done SSE payload (GAP-140) — the TERMINAL
+ * report of one background per-scanlator breakdown computation. */
+interface CoverageDoneEventPayload {
+  sourceId?: string
+  mangaUrl?: string
+  status?: string
+  total?: number
+  error?: string
+}
 
 /**
  * Maps the `GET /api/sources` DTO onto the screen `Source` type. Re-declared
@@ -98,10 +124,21 @@ export function useMatchSource(seriesId: string) {
   }
 
   // ---- breakdowns (per-scanlator coverage, Configure-stage auto-split) -------
-  // Keyed by `source:mangaId`. `null` = fetch attempted and failed (the dialog
-  // falls back to a single unsplit row); an absent key = not yet attempted.
+  // Keyed by `source:mangaId`. `null` = a request-level failure (the dialog
+  // falls back to a single unsplit row); an absent key = not yet attempted;
+  // otherwise the mapped scanlator groups (possibly `[]` for a pending/failed
+  // snapshot — see `breakdownSnapshots` for that lifecycle, GAP-140).
   const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+  // The same cache's snapshot-level metadata (GAP-140) — status/computedAt/
+  // error, keyed identically. Populated alongside `breakdowns` by every fetch
+  // (initial, SSE-triggered, or an owner-triggered refresh).
+  const breakdownSnapshots = ref<Record<string, CoverageSnapshotView>>({})
   const breakdownsInFlight = new Set<string>()
+  // Maps a cache key back to the candidate coordinates that produced it —
+  // imports.coverage.done identifies its subject by (sourceId, mangaUrl), not
+  // the mangaId-keyed cache key, so the SSE handler needs this to resolve
+  // which cached entry to refetch (mirrors useScanLibrary.ts).
+  const breakdownRefs = new Map<string, { source: string, mangaId: number, url: string }>()
 
   /**
    * Cross-source title search — the same endpoint + grouping as the Import
@@ -141,11 +178,45 @@ export function useMatchSource(seriesId: string) {
   }
 
   /**
+   * Fetches one candidate's breakdown and writes both caches. Shared by
+   * `loadBreakdowns`, the `imports.coverage.done` refetch, and
+   * `refreshBreakdown` below (mirrors `useScanLibrary.fetchBreakdown`).
+   * `opts.refresh` threads `?refresh=true` (GAP-140 follow-up) — forces the
+   * backend to bypass its `ready`/`failed`-cooldown admission guards, without
+   * ever duplicating a walk already in flight (the backend's own guarantee).
+   */
+  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }, opts?: { refresh?: boolean }): Promise<void> {
+    const key = breakdownKey(ref.source, ref.mangaId)
+    try {
+      const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
+        params: {
+          path: { sourceId: ref.source, mangaId: ref.mangaId },
+          query: { url: ref.url, refresh: opts?.refresh ? true : undefined },
+        },
+      })
+      if (res.error || !res.data) {
+        breakdowns.value = { ...breakdowns.value, [key]: null }
+        breakdownSnapshots.value = {
+          ...breakdownSnapshots.value,
+          [key]: { status: 'failed', computedAt: '', error: res.error ? res.error.message : 'Failed to load breakdown' },
+        }
+        return
+      }
+      breakdowns.value = { ...breakdowns.value, [key]: res.data.scanlators.map(mapScanlatorCoverage) }
+      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: mapCoverageSnapshot(res.data) }
+    }
+    catch {
+      breakdowns.value = { ...breakdowns.value, [key]: null }
+      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: { status: 'failed', computedAt: '', error: 'Failed to load breakdown' } }
+    }
+  }
+
+  /**
    * Fetches the per-scanlator breakdown for every given candidate IN
    * PARALLEL, skipping any candidate already cached (success or failure) or
    * already in flight. Never throws — a per-candidate failure caches `null`
    * and is otherwise swallowed (non-fatal; the Configure stage renders that
-   * source as a single unsplit row). Copied from `useImport.loadBreakdowns`
+   * source as a single unsplit row). Mirrors `useScanLibrary.loadBreakdowns`
    * (§2 DRY — identical cache/in-flight-guard/parallel-fetch shape).
    */
   async function loadBreakdowns(candidates: SearchCandidate[]): Promise<void> {
@@ -154,32 +225,66 @@ export function useMatchSource(seriesId: string) {
       return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
     })
     if (toFetch.length === 0) return
-    for (const c of toFetch) breakdownsInFlight.add(breakdownKey(c.source, c.mangaId))
+    for (const c of toFetch) {
+      const key = breakdownKey(c.source, c.mangaId)
+      breakdownsInFlight.add(key)
+      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url })
+    }
     await Promise.all(toFetch.map(async (c) => {
       const key = breakdownKey(c.source, c.mangaId)
       try {
-        const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-          params: {
-            path: { sourceId: c.source, mangaId: c.mangaId },
-            query: { url: c.url },
-          },
-        })
-        breakdowns.value = {
-          ...breakdowns.value,
-          // A pending/failed snapshot is an ordinary 200 with `scanlators: []`
-          // (GAP-140) — only a `ready` snapshot is a resolved result; anything
-          // else caches as null so it renders the same as a request failure.
-          [key]: res.error || res.data?.status !== 'ready' ? null : res.data.scanlators.map(mapScanlatorCoverage),
-        }
-      }
-      catch {
-        breakdowns.value = { ...breakdowns.value, [key]: null }
+        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url })
       }
       finally {
         breakdownsInFlight.delete(key)
       }
     }))
   }
+
+  /**
+   * Forces a recomputation of one already-resolved (or failed) candidate's
+   * breakdown (GAP-140 follow-up, the Configure-stage row's refresh control).
+   * Unlike `loadBreakdowns`, this does NOT check whether the key is already
+   * cached — that guard exists to avoid re-fetching a SETTLED result, which is
+   * exactly what an explicit refresh click means to override. It still takes
+   * the same `breakdownsInFlight` latch, so a click landing while a fetch for
+   * the same key is already resolving is a no-op rather than a second
+   * concurrent request.
+   */
+  async function refreshBreakdown(candidate: SearchCandidate): Promise<void> {
+    const key = breakdownKey(candidate.source, candidate.mangaId)
+    if (breakdownsInFlight.has(key)) return
+    breakdownsInFlight.add(key)
+    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
+    try {
+      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url }, { refresh: true })
+    }
+    finally {
+      breakdownsInFlight.delete(key)
+    }
+  }
+
+  // A pending breakdown's eventual outcome arrives here, not by polling —
+  // match it against every cache entry sharing this (source, url) pair (in
+  // practice at most one) and re-fetch it in place. Takes the SAME
+  // `breakdownsInFlight` latch `loadBreakdowns`/`refreshBreakdown` do (§2 DRY —
+  // one guard, not two), so a burst of events for one pair collapses into a
+  // single re-fetch.
+  const { on } = useProgressStream()
+  const unsubCoverageDone = on('imports.coverage.done', (data) => {
+    const payload = data as CoverageDoneEventPayload
+    if (!payload.sourceId || !payload.mangaUrl) return
+    for (const [key, ref] of breakdownRefs.entries()) {
+      if (ref.source !== payload.sourceId || ref.url !== payload.mangaUrl) continue
+      if (breakdownsInFlight.has(key)) continue
+      breakdownsInFlight.add(key)
+      void fetchBreakdown(ref).finally(() => breakdownsInFlight.delete(key))
+    }
+  })
+
+  onUnmounted(() => {
+    unsubCoverageDone()
+  })
 
   /**
    * Attaches every given source to this series in one call — the batch
@@ -212,5 +317,5 @@ export function useMatchSource(seriesId: string) {
     }
   }
 
-  return { sources, groups, searching, saving, error, breakdowns, loadSources, search, loadBreakdowns, batchAddProviders }
+  return { sources, groups, searching, saving, error, breakdowns, breakdownSnapshots, loadSources, search, loadBreakdowns, refreshBreakdown, batchAddProviders }
 }

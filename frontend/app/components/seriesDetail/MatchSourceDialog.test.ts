@@ -250,3 +250,55 @@ describe('MatchSourceDialog', () => {
     for (const t of toggles) expect(t.text()).toBe('+ Add')
   })
 })
+
+/**
+ * MatchSourceDialog — coverage snapshot wiring (GAP-140 follow-up). Mirrors
+ * Import.test.ts's identical describe block: mounting the DIALOG (not
+ * `CandidateConfigRow`/`SourceConfigurePanel` directly with hand-fed props)
+ * proves `breakdownSnapshots` actually reaches the rendered row through
+ * `useSourceConfigure` — a lower-level test can only prove the leaf CAN
+ * render the three states, never that this real surface supplies them.
+ */
+describe('MatchSourceDialog — coverage snapshot wiring (GAP-140 follow-up)', () => {
+  const first = searchResults[0]!.candidates[0]!
+  const key = `${first.source}:${first.mangaId}`
+
+  it('renders "Computing coverage…" for a pending row, not "Coverage unavailable"', async () => {
+    const wrapper = mountDialog({
+      breakdowns: { ...resolvedBreakdowns, [key]: [] },
+      breakdownSnapshots: { [key]: { status: 'pending', computedAt: '', error: '' } },
+    })
+    await wrapper.find('.group').trigger('click')
+
+    // Scope to the pending row itself — its two sibling candidates in this
+    // fixture (`resolvedBreakdowns`) are genuinely `null` (unavailable), which
+    // is unrelated and must not be mistaken for a regression here.
+    const row = wrapper.findAll('.cand').find(r => r.text().includes(first.sourceName))!
+    expect(row.text()).toContain('Computing coverage')
+    expect(row.text()).not.toContain('Coverage unavailable')
+  })
+
+  it('renders the counts with an as-of date for a ready row, and the refresh control emits refreshBreakdown with that candidate', async () => {
+    const wrapper = mountDialog({
+      breakdowns: { ...resolvedBreakdowns, [key]: [{ scanlator: first.sourceName, count: 42, ranges: '1-42' }] },
+      breakdownSnapshots: { [key]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },
+    })
+    await wrapper.find('.group').trigger('click')
+
+    expect(wrapper.text()).toContain('42 chapters')
+    expect(wrapper.text()).toMatch(/as of/i)
+
+    await wrapper.find('.coverage-refresh').trigger('click')
+    expect(wrapper.emitted('refreshBreakdown')).toEqual([[first]])
+  })
+
+  it('shows no refresh control while a snapshot is pending', async () => {
+    const wrapper = mountDialog({
+      breakdowns: { ...resolvedBreakdowns, [key]: [] },
+      breakdownSnapshots: { [key]: { status: 'pending', computedAt: '', error: '' } },
+    })
+    await wrapper.find('.group').trigger('click')
+
+    expect(wrapper.find('.coverage-refresh').exists()).toBe(false)
+  })
+})

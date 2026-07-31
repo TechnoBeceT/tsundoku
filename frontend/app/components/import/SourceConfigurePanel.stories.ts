@@ -4,19 +4,21 @@ import type { DisplayRow } from '~/composables/useSourceConfigure'
 import type { SearchCandidate } from '../screens/import.types'
 
 /**
- * Stories for the shared Configure-stage rows block. `toggle`, `move`, and
- * `inspect` are logged in the Actions panel. The variants cover: no rows
- * (empty tray), a single selected row, a multi-row ranked selection with
- * coverage, a per-scanlator split source, and the whole-panel `hideInspect`
- * opt-out (the single-select match surfaces). Flip the Storybook theme
- * toolbar to confirm both themes.
+ * Stories for the shared Configure-stage rows block. `toggle`, `move`,
+ * `inspect`, and `refresh` (GAP-140) are logged in the Actions panel. The
+ * variants cover: no rows (empty tray), a single selected row, a multi-row
+ * ranked selection with coverage, a per-scanlator split source, the three
+ * breakdown-snapshot states in one panel (`CoverageSnapshotStates` — proves
+ * `refresh` re-emits with the RIGHT row's candidate), and the whole-panel
+ * `hideInspect` opt-out (the single-select match surfaces). Flip the
+ * Storybook theme toolbar to confirm both themes.
  */
 const meta = {
   title: 'Import/SourceConfigurePanel',
   component: SourceConfigurePanel,
   parameters: {
     layout: 'padded',
-    actions: { handles: ['toggle', 'move', 'inspect'] },
+    actions: { handles: ['toggle', 'move', 'inspect', 'refresh'] },
   },
   decorators: [() => ({ template: '<div style="max-width:780px"><story /></div>' })],
   args: {

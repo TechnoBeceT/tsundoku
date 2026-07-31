@@ -17,6 +17,7 @@ import {
   candKey,
   type AdoptRequest,
   type ChapterInspect,
+  type CoverageSnapshotView,
   type ScanlatorCoverage,
   type SearchCandidate,
   type SearchGroup,
@@ -32,10 +33,18 @@ import {
  * (<Stepper>, <SearchInput>, <Chip>, <AppButton>, <Spinner>) + the import
  * organisms (<SearchGroupCard>, <SourceConfigurePanel>, <ReviewSourceRow>), and
  * keeps only the flow/layout CSS. Data (sources, search results, inspect
- * chapters, breakdowns) arrives by props and every outward action (search,
- * inspect, loadBreakdowns, adopt, cancel) is emitted — no fetching, routing, or
- * stores. It references only design tokens, so it reads correctly in both
- * themes.
+ * chapters, breakdowns, breakdownSnapshots) arrives by props and every
+ * outward action (search, inspect, loadBreakdowns, refreshBreakdown, adopt,
+ * cancel) is emitted — no fetching, routing, or stores. It references only
+ * design tokens, so it reads correctly in both themes.
+ *
+ * `breakdownSnapshots` (GAP-140) is threaded into `useSourceConfigure`'s
+ * `snapshots` param so Stage 2 renders the async breakdown's real lifecycle
+ * (computing/ready-with-as-of/failed) instead of a blanket "Coverage
+ * unavailable" — see `useImport.ts` for where it's populated and kept fresh
+ * off `imports.coverage.done`. `refreshBreakdown` (GAP-140 follow-up) is
+ * `SourceConfigurePanel`'s row-level refresh click, re-emitted with the
+ * candidate for the parent's `useImport.refreshBreakdown` to run.
  *
  * Flow state lives here:
  *  - Stage 1 collects a query + optional source filter, emits `search`, and lists
@@ -87,6 +96,8 @@ const props = withDefaults(defineProps<{
    * array drives the composable's auto-split (see `useSourceConfigure`).
    */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
+  /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
+  breakdownSnapshots?: Record<string, CoverageSnapshotView>
 }>(), {
   searchResults: () => [],
   searching: false,
@@ -96,6 +107,7 @@ const props = withDefaults(defineProps<{
   error: '',
   categories: () => ['Manga', 'Manhwa', 'Manhua', 'Comic', 'Other'],
   breakdowns: () => ({}),
+  breakdownSnapshots: () => ({}),
 })
 
 const emit = defineEmits<{
@@ -105,6 +117,8 @@ const emit = defineEmits<{
   inspect: [payload: { source: string, mangaId: number, url: string }]
   /** Fetch the per-scanlator breakdown for every candidate in the picked group (Stage 2 entry). */
   loadBreakdowns: [candidates: SearchCandidate[]]
+  /** Force a recomputation of one candidate's breakdown snapshot (GAP-140). */
+  refreshBreakdown: [candidate: SearchCandidate]
   /** Submit the adopt request (Stage 3). */
   adopt: [request: AdoptRequest]
   /** Abandon the flow (Stage 1 cancel). */
@@ -162,6 +176,7 @@ const {
   breakdownsResolving,
 } = useSourceConfigure({
   breakdowns: toRef(props, 'breakdowns'),
+  snapshots: toRef(props, 'breakdownSnapshots'),
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
 })
 
@@ -399,6 +414,7 @@ const submit = (): void => {
               @toggle="toggleCand"
               @move="moveCand($event.key, $event.dir)"
               @inspect="onInspect"
+              @refresh="emit('refreshBreakdown', $event)"
             />
           </div>
 

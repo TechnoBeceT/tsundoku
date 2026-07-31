@@ -85,3 +85,38 @@ describe('CandidateConfigRow — coverage states (GAP-140)', () => {
     expect(w.text()).toContain('upstream timed out')
   })
 })
+
+describe('CandidateConfigRow — refresh control (GAP-140)', () => {
+  it('shows a refresh control on a ready row and emits refresh when clicked', async () => {
+    const w = mountRow({
+      coverageStatus: 'ready',
+      chapterCount: 1301,
+      chapterRanges: '1-1301',
+      coverageComputedAt: '2026-07-31T09:00:00Z',
+    })
+
+    const btn = w.find('.coverage-refresh')
+    expect(btn.exists()).toBe(true)
+
+    await btn.trigger('click')
+    expect(w.emitted('refresh')).toBeTruthy()
+  })
+
+  it('shows a refresh control on a failed row', () => {
+    const w = mountRow({ coverageStatus: 'failed', coverageError: 'upstream timed out' })
+
+    expect(w.find('.coverage-refresh').exists()).toBe(true)
+  })
+
+  it('hides the refresh control while a walk is pending — refreshing something already in flight is pointless', () => {
+    const w = mountRow({ coverageStatus: 'pending' })
+
+    expect(w.find('.coverage-refresh').exists()).toBe(false)
+  })
+
+  it('hides the refresh control when the caller never tracks a snapshot (coverageStatus unset) — nothing to refresh', () => {
+    const w = mountRow({ chapterCount: 42, chapterRanges: '1-42' })
+
+    expect(w.find('.coverage-refresh').exists()).toBe(false)
+  })
+})

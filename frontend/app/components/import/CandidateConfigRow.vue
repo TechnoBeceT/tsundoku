@@ -51,6 +51,17 @@ import type { ChapterInspect, SearchCandidate } from '../screens/import.types'
  * a synchronous failure — `coverageStatus === 'failed'` renders identically.
  * A caller that never resolves this snapshot leaves `coverageStatus` unset,
  * so nothing here changes for it.
+ *
+ * A `ready` or `failed` snapshot ALSO shows a small refresh control (GAP-140
+ * follow-up) — a `ready` snapshot's counts are otherwise frozen at the first
+ * computation forever, and a `failed` one otherwise waits out its own cooldown
+ * before anyone can retry it. `pending` shows no control (the backend never
+ * duplicates a walk already in flight, so a refresh click on a pending row
+ * would be a no-op — better to just hide it) and neither does an unset
+ * `coverageStatus` (a caller that doesn't track the snapshot has nothing to
+ * refresh). Presentation-only: the row only EMITS `refresh`; the consumer's
+ * data layer owns the actual re-fetch (§16 — only the composition root learns
+ * whether it succeeded).
  */
 const props = withDefaults(defineProps<{
   /** The candidate this row represents. */
@@ -106,6 +117,8 @@ const emit = defineEmits<{
   inspect: []
   /** Re-rank this candidate: -1 = up (raise), 1 = down (lower). */
   move: [direction: MoveDirection]
+  /** Force a recomputation of this row's breakdown snapshot (GAP-140). */
+  refresh: []
 }>()
 
 // The source name links to the candidate's browser-clickable realUrl, opening
@@ -162,9 +175,33 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
           </span>
           <span v-else-if="coverageUnavailable || coverageStatus === 'failed'" class="cand__coverage cand__coverage--muted">
             Coverage unavailable<span v-if="coverageError"> — {{ coverageError }}</span>
+            <button
+              v-if="coverageStatus === 'failed'"
+              type="button"
+              class="coverage-refresh"
+              :aria-label="`Refresh coverage for ${candidate.sourceName}`"
+              @click.stop="emit('refresh')"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
           </span>
           <span v-else-if="chapterCount != null" class="cand__coverage">
             {{ chapterCount }} chapter{{ chapterCount === 1 ? '' : 's' }}<span v-if="chapterRanges"> · {{ chapterRanges }}</span><span v-if="coverageComputedAt" class="cand__asof"> · as of {{ relativeTime(coverageComputedAt) }}</span>
+            <button
+              v-if="coverageStatus === 'ready'"
+              type="button"
+              class="coverage-refresh"
+              :aria-label="`Refresh coverage for ${candidate.sourceName}`"
+              @click.stop="emit('refresh')"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
           </span>
         </span>
       </div>
@@ -342,6 +379,28 @@ const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 
 .cand__coverage--muted {
   font-style: italic;
+}
+
+.coverage-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem; /* 16px @16 */
+  height: 1rem;
+  margin-left: 0.25rem; /* 4px @16 */
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--faint);
+  cursor: pointer;
+  vertical-align: -0.125rem;
+  transition: color 0.15s;
+}
+
+.coverage-refresh:hover,
+.coverage-refresh:focus-visible {
+  color: var(--accentBright);
+  outline: none;
 }
 
 .inspect {

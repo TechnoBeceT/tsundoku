@@ -429,17 +429,21 @@ export function useScanLibrary() {
 
   /**
    * Fetches one candidate's breakdown and writes both caches. Shared by the
-   * initial `loadBreakdowns` pass and the `imports.coverage.done` refetch
-   * below — a `pending` response is cached exactly like a `ready` one (the
-   * SSE event, not polling, is what unsticks it later).
+   * initial `loadBreakdowns` pass, the `imports.coverage.done` refetch below,
+   * and `refreshBreakdown` — a `pending` response is cached exactly like a
+   * `ready` one (the SSE event, not polling, is what unsticks it later).
+   * `opts.refresh` threads `?refresh=true` (GAP-140 follow-up): forces the
+   * backend to bypass its `ready`/`failed`-cooldown admission guards and
+   * recompute, while still never duplicating a walk already in flight (the
+   * backend's own guarantee — see the endpoint's own doc).
    */
-  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }): Promise<void> {
+  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }, opts?: { refresh?: boolean }): Promise<void> {
     const key = breakdownKey(ref.source, ref.mangaId)
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
         params: {
           path: { sourceId: ref.source, mangaId: ref.mangaId },
-          query: { url: ref.url },
+          query: { url: ref.url, refresh: opts?.refresh ? true : undefined },
         },
       })
       if (res.error || !res.data) {
@@ -488,6 +492,31 @@ export function useScanLibrary() {
         breakdownsInFlight.delete(key)
       }
     }))
+  }
+
+  /**
+   * Forces a recomputation of one already-resolved (or failed) candidate's
+   * breakdown (GAP-140 follow-up, the Configure-stage row's refresh control).
+   * Unlike `loadBreakdowns`, this deliberately does NOT check whether the key
+   * is already cached — that guard exists to avoid re-fetching a SETTLED
+   * result, which is exactly what an explicit refresh click means to override.
+   * It DOES still take the same `breakdownsInFlight` latch: a click landing
+   * while the initial fetch (or an SSE-triggered refetch) is still resolving
+   * is a no-op rather than a second concurrent request for the same key — the
+   * backend's own `?refresh=true` guarantee (never duplicate a live walk)
+   * covers the rest.
+   */
+  async function refreshBreakdown(candidate: SearchCandidate): Promise<void> {
+    const key = breakdownKey(candidate.source, candidate.mangaId)
+    if (breakdownsInFlight.has(key)) return
+    breakdownsInFlight.add(key)
+    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
+    try {
+      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url }, { refresh: true })
+    }
+    finally {
+      breakdownsInFlight.delete(key)
+    }
   }
 
   // A pending breakdown's eventual outcome arrives here, not by polling —
@@ -690,6 +719,7 @@ export function useScanLibrary() {
     breakdowns,
     breakdownSnapshots,
     loadBreakdowns,
+    refreshBreakdown,
     matching,
     matchError,
     matchGroups,

@@ -48,6 +48,7 @@
  *   @import-all-disk-only → importAllDiskOnly()
  *   @match-confirm        → onMatchConfirm({path, matches}) — importWithMatches (Slice P)
  *   @load-breakdowns      → loadBreakdowns(candidates) — Configure-stage per-scanlator coverage
+ *   @refresh-breakdown    → refreshBreakdown(candidate) — force-recompute a row's snapshot (GAP-140)
  *   @match-back           → onMatchBack() — closes the panel, no mutation
  */
 import { computed, ref, watch } from 'vue'
@@ -74,6 +75,7 @@ const {
   breakdowns,
   breakdownSnapshots,
   loadBreakdowns,
+  refreshBreakdown,
   matching,
   matchError,
   matchGroups,
@@ -180,6 +182,7 @@ function onMatchBack(): void {
       @import-all-disk-only="importAllDiskOnly"
       @match-confirm="onMatchConfirm"
       @load-breakdowns="loadBreakdowns"
+      @refresh-breakdown="refreshBreakdown"
       @match-back="onMatchBack"
     />
   </div>

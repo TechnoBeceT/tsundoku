@@ -15,6 +15,8 @@
  *   @load-breakdowns → loadBreakdowns(candidates) — Stage 2 entry, per-scanlator
  *                      auto-split coverage (fetched in parallel, cached, per-
  *                      source failures non-fatal — see useImport's doc comment).
+ *   @refresh-breakdown → refreshBreakdown(candidate) — force-recompute a row's
+ *                      snapshot (GAP-140 follow-up).
  *   @adopt          → onAdopt: call adopt(req) then navigateTo /series/{id} on success
  *   @cancel         → navigateTo('/')
  *   @step           → screen-internal step tracking; no parent action needed (no-op)
@@ -32,9 +34,11 @@ const {
   error,
   newSeriesId,
   breakdowns,
+  breakdownSnapshots,
   search,
   inspect,
   loadBreakdowns,
+  refreshBreakdown,
   adopt,
 } = useImport()
 
@@ -60,9 +64,11 @@ async function onAdopt(req: AdoptRequest): Promise<void> {
       :error="error"
       :categories="categories"
       :breakdowns="breakdowns"
+      :breakdown-snapshots="breakdownSnapshots"
       @search="search"
       @inspect="inspect"
       @load-breakdowns="loadBreakdowns"
+      @refresh-breakdown="refreshBreakdown"
       @adopt="onAdopt"
       @cancel="navigateTo('/')"
       @step="() => {}"

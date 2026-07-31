@@ -75,3 +75,17 @@ describe('SourceConfigurePanel — coverage snapshot pass-through (GAP-140)', ()
     expect(wrapper.text()).toContain('upstream timed out')
   })
 })
+
+describe('SourceConfigurePanel — refresh pass-through (GAP-140)', () => {
+  it('re-emits the row\'s refresh click as the row\'s candidate — the same identity loadBreakdowns/inspect key on', async () => {
+    const wrapper = mount(SourceConfigurePanel, {
+      props: {
+        rows: [row({ coverageStatus: 'ready', chapterCount: 12, coverageComputedAt: '2026-07-31T09:00:00Z' })],
+      },
+    })
+
+    await wrapper.find('.coverage-refresh').trigger('click')
+
+    expect(wrapper.emitted('refresh')).toEqual([[candidate]])
+  })
+})

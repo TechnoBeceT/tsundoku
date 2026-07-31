@@ -113,6 +113,38 @@ export const Inspecting: Story = {
   },
 }
 
+/**
+ * Stage 2 (Configure) with the async breakdown snapshot (GAP-140) at all
+ * three lifecycle states — MangaDex still computing, Asura Scans ready with
+ * its as-of date + refresh control, Manganato failed with its reason +
+ * refresh control. Proves `breakdownSnapshots` reaches the rendered row
+ * through the real Import screen, not a hand-fed `DisplayRow`.
+ */
+export const ConfigureCoverageSnapshot: Story = {
+  args: {
+    sources,
+    searchResults,
+    searched: true,
+    categories,
+    breakdowns: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: [],
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: [
+        { scanlator: searchResults[0]!.candidates[1]!.sourceName, count: 175, ranges: '1-175' },
+      ],
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: [],
+    },
+    breakdownSnapshots: {
+      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: { status: 'pending', computedAt: '', error: '' },
+      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
+      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+  },
+}
+
 /** Stage 3 (Adopt) with the submit in flight — the button spins + disables. */
 export const Adopting: Story = {
   args: {

@@ -86,6 +86,8 @@ import { isReadableChapter } from '~/utils/readableChapters'
  * and the response's authoritative SeriesDetail is applied directly via
  * `useSeriesDetail.reseed` — no extra `GET /api/series/{id}` round-trip
  * (§16 mutate-reseeds-from-response, same shape as `matchDiskProvider`).
+ * `refreshBreakdown` (GAP-140 follow-up) drives useMatchSource's own
+ * `refreshBreakdown` the same way.
  *
  * Match-to-source wiring: `matchTargetId` (set by @match-provider) picks the
  * unlinked provider out of `series.providers` to prefill the dialog's
@@ -205,12 +207,14 @@ const {
   sources: matchSources,
   groups: matchGroups,
   breakdowns: matchBreakdowns,
+  breakdownSnapshots: matchBreakdownSnapshots,
   searching: matchSearching,
   saving: matchSaving,
   error: matchError,
   loadSources: matchLoadSources,
   search: matchSearch,
   loadBreakdowns: matchLoadBreakdowns,
+  refreshBreakdown: matchRefreshBreakdown,
   batchAddProviders,
 } = useMatchSource(id)
 
@@ -731,11 +735,13 @@ function onResume(): void {
       :sources="matchSources"
       :groups="matchGroups"
       :breakdowns="matchBreakdowns"
+      :breakdown-snapshots="matchBreakdownSnapshots"
       :searching="matchSearching"
       :saving="matchSaving"
       :error="matchError"
       @search="matchSearch"
       @load-breakdowns="matchLoadBreakdowns"
+      @refresh-breakdown="matchRefreshBreakdown"
       @confirm="onMatchConfirm"
     />
 

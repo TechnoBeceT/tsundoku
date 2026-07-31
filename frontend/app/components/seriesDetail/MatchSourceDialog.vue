@@ -10,7 +10,7 @@ import AdoptTray from '../import/AdoptTray.vue'
 import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
 import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import { useSourceConfigure, type ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '../screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '../screens/import.types'
 
 /**
  * MatchSourceDialog — the Series-Detail "Add a source" dialog: the inverse of
@@ -45,6 +45,11 @@ import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '..
  *   - `breakdowns`: per-scanlator coverage cache, keyed `source:mangaId`
  *     (mirrors `Import.vue`'s prop of the same name) — drives the
  *     composable's auto-split of a source into per-scanlator rows.
+ *   - `breakdownSnapshots`: the same cache's snapshot lifecycle (GAP-140) —
+ *     threaded into `useSourceConfigure`'s `snapshots` param so the Configure
+ *     stage renders computing/ready-with-as-of/failed instead of a blanket
+ *     "Coverage unavailable"; see `useMatchSource.ts` for where it's
+ *     populated and kept fresh off `imports.coverage.done`.
  *   - `searching`: a search is in flight (spinner + disabled Search button).
  *   - `saving`: the batch-attach POST is in flight — spins + disables the
  *     confirm button and blocks the dialog from being dismissed (§16).
@@ -57,8 +62,9 @@ import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '..
  * Emits `update:open` (v-model), `search` (`{ q, sources }` — the trimmed
  * query plus the optional source-ID filter from the chip row),
  * `loadBreakdowns` (the picked/tray-configured candidates, for the parent to
- * fetch coverage), and `confirm` (the ordered, best-first `ProviderRef[]` to
- * attach).
+ * fetch coverage), `refreshBreakdown` (GAP-140 follow-up — a row's refresh
+ * click, re-emitted with its candidate), and `confirm` (the ordered,
+ * best-first `ProviderRef[]` to attach).
  *
  * Tray-leak guard: `tray-enabled` is intentionally ON here (this surface is
  * MULTI-select) — the single-select match surfaces that reuse
@@ -76,6 +82,8 @@ const props = withDefaults(defineProps<{
   groups?: SearchGroup[]
   /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
+  /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
+  breakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** A search is in flight. */
   searching?: boolean
   /** The batch-attach POST is in flight. */
@@ -87,6 +95,7 @@ const props = withDefaults(defineProps<{
   sources: () => [],
   groups: () => [],
   breakdowns: () => ({}),
+  breakdownSnapshots: () => ({}),
   searching: false,
   saving: false,
   error: null,
@@ -99,6 +108,8 @@ const emit = defineEmits<{
   'search': [payload: { q: string, sources: string[] }]
   /** Fetch the per-scanlator breakdown for every given candidate (Configure-stage entry). */
   'loadBreakdowns': [candidates: SearchCandidate[]]
+  /** Force a recomputation of one candidate's breakdown snapshot (GAP-140). */
+  'refreshBreakdown': [candidate: SearchCandidate]
   /** Attach the gathered, ranked sources — best-first. */
   'confirm': [providers: ProviderRef[]]
 }>()
@@ -129,6 +140,7 @@ const {
   breakdownsResolving,
 } = useSourceConfigure({
   breakdowns: toRef(props, 'breakdowns'),
+  snapshots: toRef(props, 'breakdownSnapshots'),
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
 })
 
@@ -247,6 +259,7 @@ function confirm(): void {
         label="Sources to attach · use arrows to rank priority"
         @toggle="toggleCand"
         @move="moveCand($event.key, $event.dir)"
+        @refresh="emit('refreshBreakdown', $event)"
       />
       <p v-if="breakdownsResolving" class="match-note match-note--loading">Loading coverage…</p>
     </section>

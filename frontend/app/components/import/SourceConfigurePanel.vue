@@ -31,6 +31,11 @@ import type { DisplayRow } from '~/composables/useSourceConfigure'
  * three real states (computing/ready-with-as-of/failed) for free through this
  * shared panel; a caller that doesn't leaves every row's `coverageStatus`
  * undefined and the row renders exactly as it did before that existed.
+ *
+ * `refresh` (GAP-140 follow-up) re-emits `CandidateConfigRow`'s refresh click
+ * as the row's `candidate` — the same identity `loadBreakdowns`/`inspect`
+ * already key on — so the consumer's data layer can force a recomputation
+ * without this panel knowing anything about fetching.
  */
 withDefaults(defineProps<{
   /** The rows to render, in display order (already selection/rank-resolved). */
@@ -60,6 +65,8 @@ const emit = defineEmits<{
   move: [payload: { key: string, dir: MoveDirection }]
   /** Load a candidate's chapter list (Stage 2 inspect). */
   inspect: [candidate: SearchCandidate]
+  /** Force a recomputation of a candidate's breakdown snapshot (GAP-140). */
+  refresh: [candidate: SearchCandidate]
 }>()
 </script>
 
@@ -88,6 +95,7 @@ const emit = defineEmits<{
     @toggle="emit('toggle', row.key)"
     @inspect="emit('inspect', row.candidate)"
     @move="emit('move', { key: row.key, dir: $event })"
+    @refresh="emit('refresh', row.candidate)"
   />
 </template>
 

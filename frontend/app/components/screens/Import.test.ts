@@ -70,6 +70,73 @@ function findButtonByText(wrapper: ReturnType<typeof mountAtStage2>, text: strin
   return btn
 }
 
+/**
+ * Import — coverage snapshot wiring (GAP-140 follow-up). `useImport.ts` now
+ * tracks the async breakdown snapshot's own lifecycle (`breakdownSnapshots`)
+ * and this test proves it actually reaches the rendered row through
+ * `Import.vue` → `useSourceConfigure` → `SourceConfigurePanel` →
+ * `CandidateConfigRow` — mounting the SCREEN (not `CandidateConfigRow`
+ * directly, and not even `SourceConfigurePanel` alone) is the point: a test
+ * that hand-feeds `DisplayRow` props to a lower component proves the leaf can
+ * render the states, never that the real wizard actually supplies them. This
+ * is the exact blind spot that let an earlier task ship invisible in the
+ * running app.
+ */
+describe('Import — coverage snapshot wiring (GAP-140 follow-up)', () => {
+  it('renders "Computing coverage…" for a pending row, not "Coverage unavailable"', async () => {
+    const wrapper = mount(Import, {
+      props: {
+        sources,
+        searchResults: [group],
+        searched: true,
+        categories,
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'pending', computedAt: '', error: '' } },
+      },
+    })
+    await pickGroup(wrapper)
+
+    expect(wrapper.text()).toContain('Computing coverage')
+    expect(wrapper.text()).not.toContain('Coverage unavailable')
+  })
+
+  it('renders the counts with an as-of date for a ready row, and the refresh control emits refreshBreakdown with that candidate', async () => {
+    const wrapper = mount(Import, {
+      props: {
+        sources,
+        searchResults: [group],
+        searched: true,
+        categories,
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [{ scanlator: mangaDex.sourceName, count: 180, ranges: '1-180' }] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },
+      },
+    })
+    await pickGroup(wrapper)
+
+    expect(wrapper.text()).toContain('180 chapters')
+    expect(wrapper.text()).toMatch(/as of/i)
+
+    await wrapper.find('.coverage-refresh').trigger('click')
+    expect(wrapper.emitted('refreshBreakdown')).toEqual([[mangaDex]])
+  })
+
+  it('shows no refresh control while a snapshot is pending — refreshing something already in flight is pointless', async () => {
+    const wrapper = mount(Import, {
+      props: {
+        sources,
+        searchResults: [group],
+        searched: true,
+        categories,
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'pending', computedAt: '', error: '' } },
+      },
+    })
+    await pickGroup(wrapper)
+
+    expect(wrapper.find('.coverage-refresh').exists()).toBe(false)
+  })
+})
+
 describe('Import — Stage 2 auto-split', () => {
   it('picking a group emits loadBreakdowns with that group\'s candidates', async () => {
     const wrapper = mountAtStage2({})
