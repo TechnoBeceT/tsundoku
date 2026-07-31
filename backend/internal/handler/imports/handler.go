@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -212,19 +213,53 @@ func (h *Handler) Details(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// breakdownResponse is the wire shape for GET .../breakdown (GAP-140). It
+// embeds the persisted per-scanlator payload (Total/Scanlators, unchanged
+// from before this endpoint went async) and adds the snapshot's own state, so
+// a client can tell "ready and fresh" from "still converging" from "broken"
+// without a separate poll:
+//   - status: "pending" | "ready" | "failed"
+//   - computedAt: RFC3339 as-of instant of the payload; "" while pending or
+//     never computed — the owner's only signal for how stale a snapshot is.
+//   - error: the failure reason when status is "failed"; omitted otherwise.
+type breakdownResponse struct {
+	imports.SourceBreakdownDTO
+	Status     string `json:"status"`
+	ComputedAt string `json:"computedAt,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+// newBreakdownResponse renders a CoverageSnapshot as the wire shape above.
+func newBreakdownResponse(snap imports.CoverageSnapshot) breakdownResponse {
+	resp := breakdownResponse{SourceBreakdownDTO: snap.Payload, Status: snap.Status, Error: snap.LastError}
+	if snap.ComputedAt != nil {
+		resp.ComputedAt = snap.ComputedAt.UTC().Format(time.RFC3339)
+	}
+	return resp
+}
+
 // Breakdown handles GET /api/sources/:sourceId/manga/:mangaId/breakdown?url=&title=.
 //
-// It fetches the live chapter feed for (sourceId, url) and groups it by
-// scanlator, returning a SourceBreakdownDTO so the adopt UI can auto-split a
-// source into per-scanlator rows with counts + display ranges.
+// GAP-140: this used to fetch the live chapter feed for (sourceId, url) and
+// group it by scanlator synchronously. Since a source moved behind JS
+// Detection, that walk costs one WebView navigation PER PAGE — ~330 for a
+// 1,301-chapter series (~15-20 minutes) — which no HTTP timeout tolerates and
+// which cached nothing on failure, so every retry paid full price. The
+// handler now reads a PERSISTED snapshot via imports.Service.Coverage: a
+// READY one is returned immediately; otherwise the walk is started in the
+// background and this request waits a short bounded window, falling through
+// to a `pending` body if the walk is still running. Small series therefore
+// still feel synchronous; only expensive ones go async, with
+// imports.coverage.done delivering the eventual outcome over SSE.
 //
-// P2 Suwayomi-removal (slice 3b): requires a REQUIRED ?url query param (see
-// InspectChapters's doc comment for the transition). ?title= is OPTIONAL —
-// same free-text/cache-sharing contract as InspectChapters's (see its doc
-// comment). An unknown :sourceId maps to 404 (mirrors Details); any other
-// failure is a genuine upstream source problem and maps to 502 via the shared
-// httperr.Upstream (mirrors Details), so a source outage never surfaces as a
-// false 200.
+// The response is ALWAYS 200 on a resolvable request: a walk failure (unknown
+// source, upstream error, …) is no longer mapped onto an HTTP status — it is
+// persisted and rendered as an ordinary snapshot with status "failed" and a
+// human-readable error, because the same code path that returns `pending` for
+// a slow walk cannot also tell a caller "this failed" via an error return
+// without conflating the two. ?url= is a REQUIRED query param (see
+// InspectChapters's doc comment for the transition); ?title= is OPTIONAL —
+// same free-text/cache-sharing contract as InspectChapters's.
 func (h *Handler) Breakdown(c echo.Context) error {
 	sourceID := c.Param("sourceId")
 	url, err := parseChapterURL(c.QueryParam("url"))
@@ -233,14 +268,11 @@ func (h *Handler) Breakdown(c echo.Context) error {
 	}
 	title := parseOptionalTitle(c.QueryParam("title"))
 
-	out, err := h.svc.SourceBreakdown(c.Request().Context(), sourceID, url, title)
+	snap, err := h.svc.Coverage(c.Request().Context(), sourceID, url, title)
 	if err != nil {
-		if errors.Is(err, imports.ErrSourceNotFound) {
-			return echo.NewHTTPError(http.StatusNotFound, "source not found")
-		}
-		return httperr.Upstream(err)
+		return err
 	}
-	return c.JSON(http.StatusOK, out)
+	return c.JSON(http.StatusOK, newBreakdownResponse(snap))
 }
 
 // Adopt handles POST /api/series.

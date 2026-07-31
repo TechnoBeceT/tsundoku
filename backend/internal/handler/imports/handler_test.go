@@ -26,6 +26,7 @@ import (
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 const testSecret = "imports-handler-test-secret"
@@ -70,6 +71,19 @@ type fakeEngineClient struct {
 	imageExt   string
 	imageErr   error
 	imageCalls []imageCall
+
+	// blockCh, when non-nil, is received from before Chapters returns anything.
+	// It stands in for the slow WebView walk GAP-140 exists to survive (~330
+	// navigations for a 1,301-chapter series) — a test closes it to let the
+	// call complete, or lets t.Cleanup do so to avoid leaking a goroutine past
+	// the test. A nil channel (the zero value, every OTHER test in this file)
+	// is never received from, so this is a no-op everywhere else.
+	blockCh chan struct{}
+
+	// chaptersCallCount counts every Chapters invocation, so a GAP-140 test can
+	// prove a second breakdown request for an already-computed pair is served
+	// from the persisted snapshot rather than repeating the walk.
+	chaptersCallCount int
 }
 
 // imageCall records one Image(...) invocation's arguments for assertion.
@@ -130,6 +144,10 @@ func (f *fakeEngineClient) MangaDetails(_ context.Context, _ int64, url string) 
 }
 
 func (f *fakeEngineClient) Chapters(_ context.Context, _ int64, url string, _ string) ([]sourceengine.Chapter, error) {
+	f.chaptersCallCount++
+	if f.blockCh != nil {
+		<-f.blockCh
+	}
 	if f.chapterErrs != nil {
 		if err, ok := f.chapterErrs[url]; ok {
 			return nil, err
@@ -221,6 +239,11 @@ type testEnv struct {
 	client     *fakeEngineClient
 	coverCache *sourcecover.Cache
 	triggered  *int
+	// hub is the SSE hub backing the imports.Service, mirroring production
+	// wiring (routes.go's WithHub) so a GAP-140 test can subscribe and observe
+	// imports.coverage.done — the only channel a caller that stopped waiting
+	// learns a background computation's outcome on.
+	hub *sse.Hub
 }
 
 // newTestEnv wires a full Echo with the imports routes behind RequireOwner,
@@ -235,8 +258,9 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	db := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
 
+	hub := sse.NewHub()
 	ing := ingest.NewIngest(fc, db)
-	importsSvc := imports.NewService(fc, ing, db, "", 30*time.Second, nil)
+	importsSvc := imports.NewService(fc, ing, db, "", 30*time.Second, nil).WithHub(hub)
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	coverCache := sourcecover.NewCache(sourcecover.New(t.TempDir()), fc, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
@@ -260,7 +284,7 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 		t.Fatalf("Issue token: %v", err)
 	}
 
-	return &testEnv{e: e, token: token, client: fc, coverCache: coverCache, triggered: triggered}
+	return &testEnv{e: e, token: token, client: fc, coverCache: coverCache, triggered: triggered, hub: hub}
 }
 
 // do issues an authenticated request.
@@ -822,28 +846,51 @@ func TestBreakdown_OK(t *testing.T) {
 	assertBodyHasKeys(t, rec.Body.String(), `"total"`, `"scanlators"`, `"ranges"`)
 }
 
-// TestBreakdown_UnknownSource_404 asserts an unknown :sourceId maps to 404
-// (mirrors TestDetails_UnknownSource_404).
-func TestBreakdown_UnknownSource_404(t *testing.T) {
+// TestBreakdown_UnknownSource_FailedStatus replaces the retired
+// TestBreakdown_UnknownSource_404. Since GAP-140 (Task 4) the endpoint no
+// longer maps a walk failure straight onto an HTTP status: it always answers
+// 200 with a persisted CoverageSnapshot's state, because the same code path
+// backgrounds an expensive walk and cannot tell "still computing" apart from
+// "already failed" by inspecting an error return (see imports.Service.Coverage's
+// doc comment). An unknown source resolves near-instantly — well inside the
+// fast-path window — to a FAILED snapshot carrying the reason, not a 404.
+func TestBreakdown_UnknownSource_FailedStatus(t *testing.T) {
 	fc := &fakeEngineClient{sources: []sourceengine.Source{{ID: 1, Name: "Source One", Lang: "en"}}}
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodGet, "/api/sources/ghost/manga/10/breakdown?url=/manga/10", "")
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("Breakdown unknown source: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Breakdown unknown source: want 200 (failed status embedded), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body breakdownResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "failed" || body.Error == "" {
+		t.Errorf("Breakdown unknown source: body = %+v, want a failed status carrying a reason", body)
 	}
 }
 
-// TestBreakdown_UpstreamError_502 asserts an engine-host Chapters failure
-// maps to 502 (mirrors TestDetails_UpstreamError_502).
-func TestBreakdown_UpstreamError_502(t *testing.T) {
+// TestBreakdown_UpstreamError_FailedStatus replaces the retired
+// TestBreakdown_UpstreamError_502 for the same reason as
+// TestBreakdown_UnknownSource_FailedStatus above: an engine-host Chapters
+// failure resolves (still inside the fast-path window, since the fake errors
+// out immediately) to a FAILED snapshot rather than a 502.
+func TestBreakdown_UpstreamError_FailedStatus(t *testing.T) {
 	fc := &fakeEngineClient{
 		sources:     []sourceengine.Source{{ID: 1, Name: "Source One", Lang: "en"}},
 		chapterErrs: map[string]error{"/manga/10": errors.New("source unreachable")},
 	}
 	env := newTestEnv(t, fc)
 	rec := env.do(http.MethodGet, "/api/sources/1/manga/10/breakdown?url=/manga/10", "")
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("Breakdown upstream error: want 502, got %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Breakdown upstream error: want 200 (failed status embedded), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body breakdownResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "failed" || body.Error == "" {
+		t.Errorf("Breakdown upstream error: body = %+v, want a failed status carrying a reason", body)
 	}
 }
 
