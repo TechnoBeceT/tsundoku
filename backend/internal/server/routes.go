@@ -525,7 +525,8 @@ func registerRoutes(
 		WithAutoIdentifier(metaSvc).         // fires a detached background rich-metadata pass after Adopt (spec/metadata-engine-phase1 §4)
 		WithDisabledSources(disabledSrcSvc). // hides owner-disabled sources from the Discover/Search/Browse pickers
 		WithSourceBreakers(gate).            // flags a cooling-down source as degraded in the picker (shared anti-ban breaker snapshot)
-		WithEventRecorder(eventsSvc)         // logs a `search` audit event per source per fan-out (Source Health Console)
+		WithEventRecorder(eventsSvc).        // logs a `search` audit event per source per fan-out (Source Health Console)
+		WithHub(hub)                         // announces imports.coverage.done when a background coverage computation finishes (GAP-140)
 	importsH := importsh.NewHandler(importsSvc, seriesSvc, trigger, coverCache).
 		WithSeriesSync(seriesSync) // GAP-113: adopt → scoped refresh+detect for the new series
 	authed.GET("/sources", importsH.Sources)

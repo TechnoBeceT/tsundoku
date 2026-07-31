@@ -45,6 +45,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // searchConcurrency is the maximum number of sources queried in parallel during
@@ -132,6 +133,12 @@ type Service struct {
 	// per source that ran (mirroring the metrics batch, on the same detached
 	// background context). Nil ⇒ no audit events (existing call sites unaffected).
 	events sourceevents.Recorder
+
+	// hub is the SSE hub ComputeCoverage broadcasts its terminal
+	// imports.coverage.done event on (GAP-140). Nil ⇒ broadcasting is a no-op —
+	// the many read-only/test call sites that never attach one still work,
+	// they just get no background-outcome announcement.
+	hub *sse.Hub
 }
 
 // WithEventRecorder attaches the source-operation audit-log recorder so each
@@ -160,6 +167,15 @@ func (s *Service) WithDisabledSources(d DisabledSources) *Service {
 // nothing.
 func (s *Service) WithSourceBreakers(b SourceBreakers) *Service {
 	s.breakers = b
+	return s
+}
+
+// WithHub attaches the SSE hub used to announce terminal background outcomes
+// (GAP-140) and returns the receiver for chaining off a NewService call. A
+// nil hub is tolerated — broadcasting then becomes a no-op, which is what the
+// many read-only/test call sites want.
+func (s *Service) WithHub(hub *sse.Hub) *Service {
+	s.hub = hub
 	return s
 }
 
