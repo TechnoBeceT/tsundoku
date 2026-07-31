@@ -11,7 +11,7 @@ import SearchInput from '../ui/SearchInput.vue'
 import SourceFilterChips from '../ui/SourceFilterChips.vue'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
 import type { StepItem } from '../ui/nav.types'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from './import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from './import.types'
 import type { BatchImportResult, ScanEntry, ScanState, ScanStatusFilter } from './scanLibrary.types'
 
 /**
@@ -88,6 +88,8 @@ const props = withDefaults(defineProps<{
   matchGroups?: SearchGroup[]
   /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
   matchBreakdowns?: Record<string, ScanlatorCoverage[] | null>
+  /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
+  matchBreakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** True while the match search itself (not the confirm mutation) is in flight. */
   matching?: boolean
   /** A match-search failure message, or "" for none. */
@@ -109,6 +111,7 @@ const props = withDefaults(defineProps<{
   matchTitle: '',
   matchGroups: () => [],
   matchBreakdowns: () => ({}),
+  matchBreakdownSnapshots: () => ({}),
   matching: false,
   matchError: '',
 })
@@ -206,6 +209,7 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
             :title="matchTitle"
             :groups="matchGroups"
             :breakdowns="matchBreakdowns"
+            :breakdown-snapshots="matchBreakdownSnapshots"
             :searching="matching"
             :search-error="matchError"
             :busy="matchBusy"

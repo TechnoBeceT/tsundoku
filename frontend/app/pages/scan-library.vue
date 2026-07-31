@@ -72,6 +72,7 @@ const {
   importDiskOnly,
   importWithMatches,
   breakdowns,
+  breakdownSnapshots,
   loadBreakdowns,
   matching,
   matchError,
@@ -165,6 +166,7 @@ function onMatchBack(): void {
       :match-title="matchTarget?.title ?? ''"
       :match-groups="matchGroups"
       :match-breakdowns="breakdowns"
+      :match-breakdown-snapshots="breakdownSnapshots"
       :matching="matching"
       :match-error="matchError"
       @update:source-filter="sourceFilter = $event"

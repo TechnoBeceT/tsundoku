@@ -192,6 +192,66 @@ export const SplitScanlator: Story = {
 }
 
 /**
+ * GAP-140: three rows sharing the panel, one per breakdown-snapshot state —
+ * proves `row.coverageStatus`/`coverageComputedAt`/`coverageError` actually
+ * cross the `SourceConfigurePanel` → `CandidateConfigRow` boundary (this is
+ * the same wiring `SourceConfigurePanel.test.ts` pins at the parent level).
+ */
+export const CoverageSnapshotStates: Story = {
+  args: {
+    rows: [
+      {
+        key: 'mangadex:1001',
+        candidate: mangaDex,
+        scanlator: '',
+        scanlatorParam: '',
+        chapterCount: undefined,
+        chapterRanges: '',
+        coverageUnavailable: false,
+        isSplit: false,
+        selected: true,
+        rank: 1,
+        canUp: false,
+        canDown: true,
+        coverageStatus: 'pending',
+      },
+      {
+        key: 'asurascans:1002',
+        candidate: asuraScans,
+        scanlator: '',
+        scanlatorParam: '',
+        chapterCount: 1301,
+        chapterRanges: '1-1301',
+        coverageUnavailable: false,
+        isSplit: false,
+        selected: true,
+        rank: 2,
+        canUp: true,
+        canDown: true,
+        coverageStatus: 'ready',
+        coverageComputedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      },
+      {
+        key: 'manganato:1003',
+        candidate: manganato,
+        scanlator: '',
+        scanlatorParam: '',
+        chapterCount: undefined,
+        chapterRanges: '',
+        coverageUnavailable: false,
+        isSplit: false,
+        selected: true,
+        rank: 3,
+        canUp: true,
+        canDown: false,
+        coverageStatus: 'failed',
+        coverageError: 'upstream timed out',
+      },
+    ] satisfies DisplayRow[],
+  },
+}
+
+/**
  * `hideInspect: true` — the single-select match surfaces (`scanLibrary/
  * MatchPanel`, `seriesDetail/MatchSourceDialog`) reuse this panel with no live
  * chapter-inspect endpoint; every row's Inspect button disappears regardless

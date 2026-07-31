@@ -23,6 +23,14 @@ import type { DisplayRow } from '~/composables/useSourceConfigure'
  * `inspectKey` shows the spinner or the resolved chapter list, and
  * `hideInspect` (a whole-panel opt-out, e.g. the single-select match surfaces)
  * always wins over both.
+ *
+ * `row.coverageStatus`/`coverageComputedAt`/`coverageError` (GAP-140) are
+ * forwarded straight onto each `<CandidateConfigRow>` — this is the ONLY
+ * place `DisplayRow`'s coverage-snapshot fields cross into the rendered UI, so
+ * a caller of `useSourceConfigure` that supplies `opts.snapshots` gets the
+ * three real states (computing/ready-with-as-of/failed) for free through this
+ * shared panel; a caller that doesn't leaves every row's `coverageStatus`
+ * undefined and the row renders exactly as it did before that existed.
  */
 withDefaults(defineProps<{
   /** The rows to render, in display order (already selection/rank-resolved). */
@@ -74,6 +82,9 @@ const emit = defineEmits<{
     :chapter-count="row.chapterCount"
     :chapter-ranges="row.chapterRanges"
     :coverage-unavailable="row.coverageUnavailable"
+    :coverage-status="row.coverageStatus"
+    :coverage-computed-at="row.coverageComputedAt"
+    :coverage-error="row.coverageError"
     @toggle="emit('toggle', row.key)"
     @inspect="emit('inspect', row.candidate)"
     @move="emit('move', { key: row.key, dir: $event })"

@@ -15,6 +15,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import {
   candKey,
+  type CoverageSnapshotView,
   type ScanlatorCoverage,
   type SearchCandidate,
   type SearchGroup,
@@ -37,6 +38,16 @@ export interface ConfigRow {
   coverageUnavailable: boolean
   /** True for a per-scanlator split row (2+ scanlators) — hides the Inspect button (coverage is already inline). */
   isSplit: boolean
+  /**
+   * Lifecycle of the async breakdown snapshot (GAP-140), when the caller
+   * supplies `opts.snapshots` — undefined for a caller that doesn't (the row
+   * then renders exactly as it did before that snapshot existed).
+   */
+  coverageStatus?: 'ready' | 'pending' | 'failed'
+  /** As-of instant of the ready snapshot; '' while pending/failed/unset. */
+  coverageComputedAt?: string
+  /** Human-readable reason the last computation failed; '' otherwise. */
+  coverageError?: string
 }
 
 /** `ConfigRow` merged with this row's current selection + rank state (no inspect fields — panel-owned). */
@@ -60,6 +71,14 @@ export interface ProviderRef {
 export function useSourceConfigure(opts: {
   /** Per-scanlator breakdown cache, keyed by `source:mangaId` (owned by the consumer). */
   breakdowns: Ref<Record<string, ScanlatorCoverage[] | null>>
+  /**
+   * The SAME cache's snapshot-level metadata (GAP-140) — status/computedAt/
+   * error, keyed identically. Optional: a caller whose breakdown source
+   * doesn't track this (not every composable does yet) simply omits it, and
+   * every row's `coverageStatus` stays undefined — unchanged from before this
+   * existed.
+   */
+  snapshots?: Ref<Record<string, CoverageSnapshotView>>
   /** Requests a breakdown fetch for each of the given candidates. */
   onLoadBreakdowns: (candidates: SearchCandidate[]) => void
 }): {
@@ -237,6 +256,17 @@ export function useSourceConfigure(opts: {
     for (const c of g.candidates) {
       const baseKey = candKey(c)
       const bd = opts.breakdowns.value[baseKey]
+      // The snapshot describes the WHOLE source's breakdown fetch, so every
+      // row split out of it (one call, N scanlator rows) shares the same
+      // status/computedAt/error (GAP-140). `snapshots` is optional — a
+      // caller that never supplies it leaves every row's `coverageStatus`
+      // undefined, unchanged from before this existed.
+      const snap = opts.snapshots?.value[baseKey]
+      const snapFields = {
+        coverageStatus: snap?.status,
+        coverageComputedAt: snap?.computedAt ?? '',
+        coverageError: snap?.error ?? '',
+      }
       if (bd && bd.length >= 2) {
         for (const sc of bd) {
           // The untagged bucket (SourceBreakdown labels it with the source name)
@@ -256,6 +286,7 @@ export function useSourceConfigure(opts: {
             chapterRanges: sc.ranges,
             coverageUnavailable: false,
             isSplit: true,
+            ...snapFields,
           })
         }
       }
@@ -271,6 +302,7 @@ export function useSourceConfigure(opts: {
           chapterRanges: sc.ranges,
           coverageUnavailable: false,
           isSplit: false,
+          ...snapFields,
         })
       }
       else {
@@ -285,6 +317,7 @@ export function useSourceConfigure(opts: {
           // (not yet fetched / still in flight) shows no coverage line at all.
           coverageUnavailable: bd === null,
           isSplit: false,
+          ...snapFields,
         })
       }
     }

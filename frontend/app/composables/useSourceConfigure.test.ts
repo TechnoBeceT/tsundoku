@@ -1,7 +1,7 @@
 import { ref, nextTick } from 'vue'
 import { describe, it, expect, vi } from 'vitest'
 import { useSourceConfigure, type ProviderRef } from './useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../components/screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup } from '../components/screens/import.types'
 
 const cand = (source: string, mangaId: number, sourceName = source): SearchCandidate =>
   ({ source, mangaId, sourceName, title: 'T', url: '', coverUrl: '', lang: 'en' } as unknown as SearchCandidate)
@@ -128,5 +128,54 @@ describe('useSourceConfigure', () => {
     expect(c.isGroupAdded(g)).toBe(true)
     c.configureTray()
     expect(c.selectedCount.value).toBe(2)
+  })
+
+  describe('coverage snapshot pass-through (GAP-140)', () => {
+    it('carries the snapshot status/computedAt/error onto the row once `snapshots` resolves it', async () => {
+      const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+      const snapshots = ref<Record<string, CoverageSnapshotView>>({})
+      const c = useSourceConfigure({ breakdowns, snapshots, onLoadBreakdowns: vi.fn() })
+      c.enterConfigure([cand('a', 1)])
+
+      // The walk is still running server-side — no counts yet, but the row
+      // must be told it's pending, not left silently blank.
+      snapshots.value = { 'a:1': { status: 'pending', computedAt: '', error: '' } }
+      await nextTick()
+      expect(c.displayRows.value[0]?.coverageStatus).toBe('pending')
+      expect(c.displayRows.value[0]?.coverageComputedAt).toBe('')
+
+      // The walk lands — both caches update together, exactly as the SSE
+      // refetch in useScanLibrary does.
+      breakdowns.value = { 'a:1': [{ scanlator: 'a', count: 12, ranges: '1-12' }] }
+      snapshots.value = { 'a:1': { status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' } }
+      await nextTick()
+      const row = c.displayRows.value[0]
+      expect(row?.coverageStatus).toBe('ready')
+      expect(row?.coverageComputedAt).toBe('2026-07-30T00:00:00Z')
+      expect(row?.chapterCount).toBe(12)
+    })
+
+    it('surfaces a failed snapshot\'s reason on the row', async () => {
+      const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+      const snapshots = ref<Record<string, CoverageSnapshotView>>({})
+      const c = useSourceConfigure({ breakdowns, snapshots, onLoadBreakdowns: vi.fn() })
+      c.enterConfigure([cand('a', 1)])
+
+      breakdowns.value = { 'a:1': null }
+      snapshots.value = { 'a:1': { status: 'failed', computedAt: '', error: 'upstream timed out' } }
+      await nextTick()
+
+      const row = c.displayRows.value[0]
+      expect(row?.coverageStatus).toBe('failed')
+      expect(row?.coverageError).toBe('upstream timed out')
+    })
+
+    it('leaves coverageStatus undefined when the caller never supplies `snapshots` (back-compat)', () => {
+      const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
+      const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
+      c.enterConfigure([cand('a', 1)])
+
+      expect(c.displayRows.value[0]?.coverageStatus).toBeUndefined()
+    })
   })
 })

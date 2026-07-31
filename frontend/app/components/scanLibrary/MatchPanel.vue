@@ -7,7 +7,7 @@ import SearchGroupCard from '../import/SearchGroupCard.vue'
 import AdoptTray from '../import/AdoptTray.vue'
 import SourceConfigurePanel from '../import/SourceConfigurePanel.vue'
 import { useSourceConfigure, type ProviderRef } from '~/composables/useSourceConfigure'
-import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
+import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens/import.types'
 
 /**
  * MatchPanel — the Scan Library "Match a source" sub-panel: attaches one or
@@ -50,6 +50,12 @@ import type { ScanlatorCoverage, SearchCandidate, SearchGroup } from '../screens
  * coverage cache, keyed `source:mangaId`) arrives the same way, and every
  * Configure-stage breakdown fetch is emitted via `loadBreakdowns` for the
  * parent's `useScanLibrary.loadBreakdowns` to run (§16 — no fetching here).
+ * `breakdownSnapshots` (GAP-140) is that SAME cache's snapshot lifecycle
+ * (status/computedAt/error), threaded into `useSourceConfigure`'s optional
+ * `snapshots` param so `SourceConfigurePanel` can render the pending/ready/
+ * failed states instead of a silent blank while a large series' walk runs in
+ * the background — see `useScanLibrary.ts` for where it's populated and
+ * refreshed off `imports.coverage.done`.
  *
  * Resets to the Groups stage (and drops the gathered tray + picked group)
  * whenever `groups` changes: a fresh match search's results (the owner
@@ -74,6 +80,8 @@ const props = withDefaults(defineProps<{
   groups: SearchGroup[]
   /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
+  /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
+  breakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** True while the match search itself is in flight. */
   searching?: boolean
   /** A match-search failure message, or "" for none. */
@@ -84,6 +92,7 @@ const props = withDefaults(defineProps<{
   error?: string
 }>(), {
   breakdowns: () => ({}),
+  breakdownSnapshots: () => ({}),
   searching: false,
   searchError: '',
   busy: false,
@@ -107,6 +116,7 @@ const stage = ref<'groups' | 'configure'>('groups')
 // `MatchSourceDialog`).
 const cfg = useSourceConfigure({
   breakdowns: toRef(props, 'breakdowns'),
+  snapshots: toRef(props, 'breakdownSnapshots'),
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
 })
 
