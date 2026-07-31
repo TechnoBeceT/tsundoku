@@ -106,3 +106,33 @@ func TestCoverageStoreFailureIsVisible(t *testing.T) {
 		t.Errorf("Status=%q LastError=%q, want failed with a reason", got.Status, got.LastError)
 	}
 }
+
+// TestCoverageStoreFailAfterSuccessClearsComputedAt proves a failure that
+// follows a PREVIOUSLY SUCCESSFUL saveCoverage does not leave computed_at
+// pointing at the old success's as-of. computed_at is the as-of of the
+// STORED PAYLOAD; a failed run has no payload, so a stale-but-plausible
+// timestamp next to a failed status is worse than no timestamp at all — it
+// misleads the owner into thinking the failure is recent-and-otherwise-fine.
+func TestCoverageStoreFailAfterSuccessClearsComputedAt(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := imports.NewService(nil, nil, client, t.TempDir(), 0, nil)
+
+	if err := imports.ExportSaveCoverage(svc, ctx, "42", "/x", imports.SourceBreakdownDTO{Total: 10}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := imports.ExportFailCoverage(svc, ctx, "42", "/x", errors.New("upstream timed out")); err != nil {
+		t.Fatalf("failCoverage: %v", err)
+	}
+
+	got, ok, err := imports.ExportLoadCoverage(svc, ctx, "42", "/x")
+	if err != nil || !ok {
+		t.Fatalf("load: ok=%v err=%v", ok, err)
+	}
+	if got.Status != "failed" {
+		t.Errorf("Status = %q, want failed", got.Status)
+	}
+	if got.ComputedAt != nil {
+		t.Errorf("ComputedAt = %v, want nil — a failed run must not carry the PREVIOUS success's stale as-of", *got.ComputedAt)
+	}
+}

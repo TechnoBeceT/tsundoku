@@ -54,9 +54,23 @@ func (s *Service) loadCoverage(ctx context.Context, sourceID, mangaURL string) (
 	return snap, true, nil
 }
 
-// upsertCoverage is the ONE write path, so status/payload/error can never drift
-// apart across the three callers. The UNIQUE(source_id, manga_url) index makes
-// the overwrite structural.
+// upsertCoverage is the ONE write path, so status/payload/error/computed_at can
+// never drift apart across the three callers. The UNIQUE(source_id, manga_url)
+// index makes the overwrite structural.
+//
+// The conflict branch spells out every column explicitly rather than calling
+// UpdateNewValues(): computedAt is a Nillable field, so a nil never reaches
+// Create()'s column list in the first place (SetNillableComputedAt is a no-op
+// on nil) — UpdateNewValues() only re-asserts columns that WERE part of the
+// insert, so it silently leaves computed_at at whatever the existing row
+// already had. That let a failCoverage (or markCoveragePending) after a prior
+// successful saveCoverage leave computed_at pointing at the OLD success's
+// as-of, which is worse than no as-of at all next to a failure or an
+// in-flight recomputation (GAP-140: confirmed live — a failed run showed a
+// stale-but-plausible timestamp). computed_at is the as-of of the STORED
+// PAYLOAD (the schema doc says as much: "Zero while pending"), so it is
+// CLEARED explicitly whenever computedAt is nil, on every call, not only on
+// the INSERT branch.
 func (s *Service) upsertCoverage(ctx context.Context, sourceID, mangaURL, status, payload, lastError string, computedAt *time.Time) error {
 	err := s.db.SourceCoverage.Create().
 		SetSourceID(sourceID).
@@ -66,7 +80,16 @@ func (s *Service) upsertCoverage(ctx context.Context, sourceID, mangaURL, status
 		SetLastError(lastError).
 		SetNillableComputedAt(computedAt).
 		OnConflictColumns(sourcecoverage.FieldSourceID, sourcecoverage.FieldMangaURL).
-		UpdateNewValues().
+		Update(func(u *ent.SourceCoverageUpsert) {
+			u.SetStatus(status)
+			u.SetPayload(payload)
+			u.SetLastError(lastError)
+			if computedAt != nil {
+				u.SetComputedAt(*computedAt)
+			} else {
+				u.ClearComputedAt()
+			}
+		}).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("imports.upsertCoverage: %s %s: %w", sourceID, mangaURL, err)
@@ -91,6 +114,12 @@ func (s *Service) saveCoverage(ctx context.Context, sourceID, mangaURL string, d
 
 // failCoverage records that a computation failed, and why. The reason is shown
 // to the owner — an empty panel with no explanation is the outcome this avoids.
+// computed_at is explicitly CLEARED (passed as nil to upsertCoverage), never
+// left at a previous successful run's timestamp: it is the as-of of the
+// STORED PAYLOAD, a failed run has no payload, and a stale-but-plausible as-of
+// beside a failure is worse than none — the entire reason this snapshot is
+// persisted rather than just cached is that the as-of tells the owner how
+// stale it is.
 func (s *Service) failCoverage(ctx context.Context, sourceID, mangaURL string, cause error) error {
 	return s.upsertCoverage(ctx, sourceID, mangaURL, coverageStatusFailed, "", cause.Error(), nil)
 }
