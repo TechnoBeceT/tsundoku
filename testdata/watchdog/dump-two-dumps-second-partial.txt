@@ -1,60 +1,70 @@
-NOTE: the canonical GAP-137 wedge, built from the dump taken off the live wedged
-process. All 8 RPC pool threads are BLOCKED on the Comix extension's own monitor, and
-the holder — HTTP-Dispatcher, parked in a network wait that never returns — is
-OUTSIDE the pool, which is what allows all 8 to block. This one MUST fire.
+NOTE: a complete dump followed by a second one the settle window cut mid-write — the
+same double-dump situation as dump-two-dumps.txt, caught a fraction of a second
+earlier. The complete dump is the only one that describes the whole pool, so it is
+the one evaluated: 8 seen / 8 blocked. The partial tail agrees with it (its one
+readable thread is blocked too); it simply cannot see the other seven.
 
-KILLS: any predicate that can no longer fire at all — a BLOCKED test that never
-matches, a name shape that no longer covers pool-<n>-thread-<m>, or a rule that
-demands more blocked threads than a pool can have. Without a fixture that fires, a
-predicate hardwired to "never restart" passes every other test in this suite.
-2026-08-04 10:48:22
+KILLS: evaluating the LAST dump region regardless of whether it finished. That
+predicate reports 2 seen / 1 blocked, calls a confirmed wedge "saturated", and leaves
+the engine dead until a human notices.
+2026-08-04 13:41:12
 Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
 
-"HTTP-Dispatcher" #31 prio=5 os_prio=0 tid=0x00007f2c1c0a1000 nid=0x1b runnable  [0x00007f2b9e1fe000]
+"HTTP-Dispatcher" #31 prio=5 os_prio=0 tid=0x00007f2c1c0b1f000 nid=0x1f runnable  [0x00007f2b9d1fd000]
    java.lang.Thread.State: RUNNABLE
 	at sun.nio.ch.EPoll.wait(java.base@21.0.5/Native Method)
 	- locked <0x000000008426ef30> (a sun.nio.ch.EPollSelectorImpl)
 	- locked <0x0000000084272d00> (a okhttp3.internal.concurrent.TaskRunner)
 	- locked <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b2000 nid=0x25 waiting for monitor entry  [0x00007f2b9d0fd000]
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 waiting for monitor entry  [0x00007f2b9d25d000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b3000 nid=0x26 waiting for monitor entry  [0x00007f2b9cffc000]
+"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b26000 nid=0x26 waiting for monitor entry  [0x00007f2b9d26d000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b4000 nid=0x27 waiting for monitor entry  [0x00007f2b9cefb000]
+"pool-1-thread-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b27000 nid=0x27 waiting for monitor entry  [0x00007f2b9d27d000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b5000 nid=0x28 waiting for monitor entry  [0x00007f2b9cdfa000]
+"pool-1-thread-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b28000 nid=0x28 waiting for monitor entry  [0x00007f2b9d28d000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-5" #41 prio=5 os_prio=0 tid=0x00007f2c1c0b6000 nid=0x29 waiting for monitor entry  [0x00007f2b9ccf9000]
+"pool-1-thread-5" #41 prio=5 os_prio=0 tid=0x00007f2c1c0b29000 nid=0x29 waiting for monitor entry  [0x00007f2b9d29d000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-6" #42 prio=5 os_prio=0 tid=0x00007f2c1c0b7000 nid=0x2a waiting for monitor entry  [0x00007f2b9cbf8000]
+"pool-1-thread-6" #42 prio=5 os_prio=0 tid=0x00007f2c1c0b2a000 nid=0x2a waiting for monitor entry  [0x00007f2b9d2ad000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-7" #43 prio=5 os_prio=0 tid=0x00007f2c1c0b8000 nid=0x2b waiting for monitor entry  [0x00007f2b9caf7000]
+"pool-1-thread-7" #43 prio=5 os_prio=0 tid=0x00007f2c1c0b2b000 nid=0x2b waiting for monitor entry  [0x00007f2b9d2bd000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
-"pool-1-thread-8" #44 prio=5 os_prio=0 tid=0x00007f2c1c0b9000 nid=0x2c waiting for monitor entry  [0x00007f2b9c9f6000]
+"pool-1-thread-8" #44 prio=5 os_prio=0 tid=0x00007f2c1c0b2c000 nid=0x2c waiting for monitor entry  [0x00007f2b9d2cd000]
    java.lang.Thread.State: BLOCKED (on object monitor)
 	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
 	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
 
 JNI global refs: 41, weak refs: 0
+
+2026-08-04 13:41:15
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 waiting for monitor entry  [0x00007f2b9d25d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b26

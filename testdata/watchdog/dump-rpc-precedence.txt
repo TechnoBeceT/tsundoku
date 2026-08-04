@@ -1,0 +1,56 @@
+NOTE: pins the PRECEDENCE rule. The engine's own RPC threads (engine-rpc-1..4) are
+all RUNNABLE and healthy. Two unrelated library pools (pool-1-thread-*, pool-2-thread-*)
+are blocked on an okhttp cache monitor, which is an ordinary thing for a busy JVM.
+Because at least one engine-rpc-* thread is present, ONLY those count: 4 seen, 0
+blocked, and no monitor to report.
+
+KILLS: merging the two name shapes into one set (reports 8 seen / 4 blocked), and
+preferring the pool-* fallback when engine-rpc-* threads exist (reports 4 seen / 4
+blocked — every "RPC" thread blocked, so it RESTARTS a completely healthy engine on
+another library's lock contention).
+ALSO KILLS extracting the held monitor without applying the same precedence: the
+monitor field must be `unknown` here, not the DiskLruCache lock.
+2026-08-04 13:27:44
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"engine-rpc-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 runnable  [0x00007f2b9d25d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"engine-rpc-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b26000 nid=0x26 runnable  [0x00007f2b9d26d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"engine-rpc-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b27000 nid=0x27 runnable  [0x00007f2b9d27d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"engine-rpc-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b28000 nid=0x28 runnable  [0x00007f2b9d28d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-1" #51 prio=5 os_prio=0 tid=0x00007f2c1c0b33000 nid=0x33 waiting for monitor entry  [0x00007f2b9d33d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at okhttp3.internal.cache.DiskLruCache.flush(DiskLruCache.kt:520)
+	- waiting to lock <0x00000000842ab440> (a okhttp3.internal.cache.DiskLruCache)
+
+"pool-1-thread-2" #52 prio=5 os_prio=0 tid=0x00007f2c1c0b34000 nid=0x34 waiting for monitor entry  [0x00007f2b9d34d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at okhttp3.internal.cache.DiskLruCache.flush(DiskLruCache.kt:520)
+	- waiting to lock <0x00000000842ab440> (a okhttp3.internal.cache.DiskLruCache)
+
+"pool-2-thread-1" #53 prio=5 os_prio=0 tid=0x00007f2c1c0b35000 nid=0x35 waiting for monitor entry  [0x00007f2b9d35d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at okhttp3.internal.cache.DiskLruCache.flush(DiskLruCache.kt:520)
+	- waiting to lock <0x00000000842ab440> (a okhttp3.internal.cache.DiskLruCache)
+
+"pool-2-thread-2" #54 prio=5 os_prio=0 tid=0x00007f2c1c0b36000 nid=0x36 waiting for monitor entry  [0x00007f2b9d36d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at okhttp3.internal.cache.DiskLruCache.flush(DiskLruCache.kt:520)
+	- waiting to lock <0x00000000842ab440> (a okhttp3.internal.cache.DiskLruCache)
+
+JNI global refs: 41, weak refs: 0

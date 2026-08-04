@@ -1,0 +1,58 @@
+NOTE: the HIGH-1 regression fixture, and the most important file in this suite.
+The engine is SATURATED, not deadlocked. The monitor's owner is pool-1-thread-3,
+which is RUNNABLE inside a legitimate long call (a GAP-140 coverage walk runs ~20
+minutes) and therefore OCCUPIES a pool slot — so only the other 7 of 8 threads can
+ever block. A real wedge cannot look like this: GAP-137's dump had the owner
+(HTTP-Dispatcher) OUTSIDE the pool, which is exactly why all 8 could block there.
+
+KILLS: every majority threshold, including the shipped `blocked >= 6 (of 8)` and any
+`>= N` for N <= 7. Each of those reads this healthy, progressing engine as wedged and
+restarts it — reproduced against a real JVM. Only `blocked == seen` survives.
+ALSO KILLS dropping the `^` anchor from the thread-header match: the indented
+`owned by "pool-1-thread-3"` lines below would then be counted as thread headers.
+2026-08-04 13:02:55
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"pool-1-thread-1" #1 prio=5 os_prio=0 tid=0x00007f2c1c0b01000 nid=0x01 waiting for monitor entry  [0x00007f2b9d01d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@3
+
+"pool-1-thread-2" #2 prio=5 os_prio=0 tid=0x00007f2c1c0b02000 nid=0x02 waiting for monitor entry  [0x00007f2b9d02d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@4
+
+"pool-1-thread-3" #3 prio=5 os_prio=0 tid=0x00007f2c1c0b03000 nid=0x03 runnable  [0x00007f2b9d03d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.EPoll.wait(java.base@21.0.5/Native Method)
+	- locked <0x000000008426ef30> (a sun.nio.ch.EPollSelectorImpl)
+	- locked <0x0000000084272d00> (a okhttp3.internal.concurrent.TaskRunner)
+	- locked <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-4" #4 prio=5 os_prio=0 tid=0x00007f2c1c0b04000 nid=0x04 waiting for monitor entry  [0x00007f2b9d04d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@6
+
+"pool-1-thread-5" #5 prio=5 os_prio=0 tid=0x00007f2c1c0b05000 nid=0x05 waiting for monitor entry  [0x00007f2b9d05d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@7
+
+"pool-1-thread-6" #6 prio=5 os_prio=0 tid=0x00007f2c1c0b06000 nid=0x06 waiting for monitor entry  [0x00007f2b9d06d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@8
+
+"pool-1-thread-7" #7 prio=5 os_prio=0 tid=0x00007f2c1c0b07000 nid=0x07 waiting for monitor entry  [0x00007f2b9d07d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@9
+
+"pool-1-thread-8" #8 prio=5 os_prio=0 tid=0x00007f2c1c0b08000 nid=0x08 waiting for monitor entry  [0x00007f2b9d08d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated) owned by "pool-1-thread-3" t@10
+
+JNI global refs: 41, weak refs: 0

@@ -1,0 +1,16 @@
+NOTE: one RPC pool thread, blocked, and then the dump stops — the region was cut
+before any other thread was printed. `blocked == seen` is trivially true with a
+single thread, so without a floor this one line of evidence would be enough to
+restart the engine. It must NOT fire.
+
+KILLS: removing the WATCHDOG_POOL_MIN_SEEN floor (or lowering it to 1). Such a
+predicate answers "wedge" here, on a dump that says nothing about the other seven
+threads.
+2026-08-04 13:49:58
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 waiting for monitor entry  [0x00007f2b9d25d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+

@@ -5,6 +5,14 @@ appears BEFORE the first pool header is invisible to a predicate that forgets to
 disarm — move these blocks up and this fixture still passes while testing nothing.
 It exists to prove the count ignores lock contention on threads outside the RPC pool
 (a healthy engine has some at almost any instant), so this file must count 0.
+
+KILLS: extracting the held monitor without scoping it to RPC pool threads. HotSpot
+prints JVM-internal threads BEFORE application ones, so a dump-wide search returns
+the Finalizer's java.lang.ref.ReferenceQueue$Lock here — verified against the shipped
+version — and the WEDGE CONFIRMED line then names the JVM's own plumbing instead of
+the extension that wedged, which is the single piece of evidence this feature exists
+to capture. Also kills counting BLOCKED threads that are not in the RPC pool.
+
 2026-08-04 12:04:17
 Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
 

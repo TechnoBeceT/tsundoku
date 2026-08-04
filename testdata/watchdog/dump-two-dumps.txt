@@ -1,0 +1,105 @@
+NOTE: TWO complete dumps in one region, which is routine rather than exotic: GAP-137's
+own diagnosis recipe tells an operator to `kill -3` the engine, and doing so inside
+the watchdog's 3s settle window appends a second dump to the same region. The first
+dump here is healthy (8 running), the second is the wedge (8 blocked). Only the
+second describes the engine now, so the answer is 8 seen / 8 blocked.
+
+KILLS: summing across dumps instead of resetting on each `Full thread dump` line
+(reports 16 seen / 8 blocked — "saturated", so a real wedge is never recovered), and
+evaluating the FIRST dump in the region instead of the last (reports 8 / 0).
+2026-08-04 13:33:01
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 runnable  [0x00007f2b9d25d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b26000 nid=0x26 runnable  [0x00007f2b9d26d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b27000 nid=0x27 runnable  [0x00007f2b9d27d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b28000 nid=0x28 runnable  [0x00007f2b9d28d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-5" #41 prio=5 os_prio=0 tid=0x00007f2c1c0b29000 nid=0x29 runnable  [0x00007f2b9d29d000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-6" #42 prio=5 os_prio=0 tid=0x00007f2c1c0b2a000 nid=0x2a runnable  [0x00007f2b9d2ad000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-7" #43 prio=5 os_prio=0 tid=0x00007f2c1c0b2b000 nid=0x2b runnable  [0x00007f2b9d2bd000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-8" #44 prio=5 os_prio=0 tid=0x00007f2c1c0b2c000 nid=0x2c runnable  [0x00007f2b9d2cd000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+JNI global refs: 41, weak refs: 0
+
+2026-08-04 13:33:04
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"HTTP-Dispatcher" #31 prio=5 os_prio=0 tid=0x00007f2c1c0b1f000 nid=0x1f runnable  [0x00007f2b9d1fd000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.EPoll.wait(java.base@21.0.5/Native Method)
+	- locked <0x000000008426ef30> (a sun.nio.ch.EPollSelectorImpl)
+	- locked <0x0000000084272d00> (a okhttp3.internal.concurrent.TaskRunner)
+	- locked <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b25000 nid=0x25 waiting for monitor entry  [0x00007f2b9d25d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b26000 nid=0x26 waiting for monitor entry  [0x00007f2b9d26d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b27000 nid=0x27 waiting for monitor entry  [0x00007f2b9d27d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b28000 nid=0x28 waiting for monitor entry  [0x00007f2b9d28d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-5" #41 prio=5 os_prio=0 tid=0x00007f2c1c0b29000 nid=0x29 waiting for monitor entry  [0x00007f2b9d29d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-6" #42 prio=5 os_prio=0 tid=0x00007f2c1c0b2a000 nid=0x2a waiting for monitor entry  [0x00007f2b9d2ad000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-7" #43 prio=5 os_prio=0 tid=0x00007f2c1c0b2b000 nid=0x2b waiting for monitor entry  [0x00007f2b9d2bd000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-1-thread-8" #44 prio=5 os_prio=0 tid=0x00007f2c1c0b2c000 nid=0x2c waiting for monitor entry  [0x00007f2b9d2cd000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at eu.kanade.tachiyomi.extension.en.comix.p0.P(SourceFile:1)
+	- waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+JNI global refs: 41, weak refs: 0

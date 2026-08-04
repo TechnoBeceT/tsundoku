@@ -1,3 +1,10 @@
+NOTE: a wedge caught while it is still forming — 5 of 8 pool threads already blocked
+on the extension monitor, 3 still running. The pool can still make progress, so this
+must NOT fire; the next dump, once the last three pile up, will.
+
+KILLS: "any blocked pool thread means a wedge" — including the bare
+`grep -c "waiting to lock"` the original suite failed to catch. That predicate
+restarts the engine here, and would restart it on any transient contention.
 2026-08-04 11:22:41
 Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
 

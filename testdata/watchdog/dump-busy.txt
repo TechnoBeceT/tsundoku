@@ -1,3 +1,10 @@
+NOTE: eight RPC pool threads, all RUNNABLE in ordinary socket reads. This is what a
+saturated-but-healthy engine looks like from the outside: /health is silent because
+every slot is busy, and nothing is blocked on anything. 8 seen, 0 blocked.
+
+KILLS: counting a thread HEADER as a blocked thread without testing the state line
+that follows it. Such a predicate reports 8 of 8 blocked here and restarts an engine
+that is doing exactly what it was asked to do.
 2026-08-04 11:10:02
 Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
 
