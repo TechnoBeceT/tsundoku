@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * RpcServer exposes the loaded sources + extension management + per-source preferences + config
@@ -40,7 +42,9 @@ class RpcServer(
 
     fun start() {
         server = HttpServer.create(InetSocketAddress(port), 0)
-        server.executor = Executors.newFixedThreadPool(8)
+        // The pool SIZE is unchanged; the FACTORY is what matters here — see [RpcThreadFactory],
+        // whose thread names are a production safety anchor the container watchdog reads (GAP-137).
+        server.executor = Executors.newFixedThreadPool(8, RpcThreadFactory())
 
         // ---- ops ----
         server.createContext("/health") { ex -> ex.respondJson(200, mapOf("status" to "ok", "sources" to loader.loaded().size)) }
@@ -289,5 +293,62 @@ class RpcServer(
         responseHeaders.add("Content-Type", "application/json")
         sendResponseHeaders(status, bytes.size.toLong())
         responseBody.use { it.write(bytes) }
+    }
+}
+
+// ================= RPC pool thread naming =================
+
+/**
+ * RpcThreadFactory names the RPC executor's threads `engine-rpc-<n>`, numbered from 1 PER POOL.
+ *
+ * 🔴 THE NAME IS A PRODUCTION SAFETY MECHANISM, NOT COSMETICS — do not rename or delete this
+ * factory without reading watchdog.sh first (GAP-137). The container watchdog diagnoses a wedged
+ * engine by sending SIGQUIT and identifying the RPC pool's threads IN THE THREAD DUMP BY NAME: it
+ * restarts the engine only when every RPC pool thread it can see is `BLOCKED (on object monitor)`,
+ * which is what separates a genuine deadlock (the monitor's owner sits OUTSIDE the pool, so all
+ * threads can block) from a merely saturated pool (the owner IS a pool thread, so one slot is
+ * always running). A thread name is the only handle a shell watchdog has on that distinction.
+ *
+ * The bare `Executors.newFixedThreadPool(n)` this replaced supplied no factory, so the JDK's
+ * `Executors.DefaultThreadFactory` named the threads `pool-<N>-thread-<M>` where `N` comes from a
+ * PROCESS-GLOBAL static counter shared with every library in the JVM. It is `pool-1` today only by
+ * coincidence: any dependency that creates a thread pool before this one shifts the RPC pool to
+ * `pool-2-*`, at which point the watchdog counts ZERO pool threads and silently declines to restart
+ * a permanently deadlocked engine — reproduced end to end. Owning the name removes that coupling.
+ *
+ * `watchdog.sh` still accepts `pool-<n>-thread-<m>` as a FALLBACK so it keeps working against an
+ * older image, but the fallback is ignored the moment any `engine-rpc-*` thread appears in the dump
+ * (an unrelated library pool must never be folded into the count). This factory is the authoritative
+ * half of that contract, and the fallback does NOT rescue a rename: renaming [THREAD_NAME_PREFIX]
+ * here leaves the dump with no `engine-rpc-*` thread AND no `pool-*` thread from this pool, so the
+ * watchdog sees zero either way.
+ *
+ * Behaviour is otherwise identical to `Executors.DefaultThreadFactory`: same thread group (captured
+ * at factory construction), non-daemon, `NORM_PRIORITY`, default stack size. These threads serve
+ * live HTTP requests, so this change is naming ONLY.
+ */
+internal class RpcThreadFactory : ThreadFactory {
+    // Captured at construction, exactly as DefaultThreadFactory does — NOT per newThread(), which
+    // would inherit the group of whichever thread happened to trigger the lazy pool growth.
+    private val group: ThreadGroup? = Thread.currentThread().threadGroup
+
+    // Per-POOL, not process-global: that global counter is the whole defect this factory fixes.
+    private val nextThreadNumber = AtomicInteger(1)
+
+    override fun newThread(r: Runnable): Thread =
+        Thread(group, r, "$THREAD_NAME_PREFIX${nextThreadNumber.getAndIncrement()}", 0).apply {
+            // DefaultThreadFactory normalises both of these rather than trusting the inherited
+            // values; keep the parity so nothing about how requests are served changes.
+            if (isDaemon) isDaemon = false
+            if (priority != Thread.NORM_PRIORITY) priority = Thread.NORM_PRIORITY
+        }
+
+    internal companion object {
+        /**
+         * The prefix `watchdog.sh` anchors its RPC-pool predicate on (`^"engine-rpc-[0-9]+" `).
+         * Changing it in one place only disables the container's deadlock recovery — change both,
+         * or neither.
+         */
+        const val THREAD_NAME_PREFIX = "engine-rpc-"
     }
 }
