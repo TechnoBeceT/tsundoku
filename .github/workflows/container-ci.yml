@@ -1,5 +1,5 @@
-# Container quality gate — lint the shell scripts the image boots from, and run
-# the wedge-watchdog unit tests.
+# Container quality gate — lint the shell scripts the image boots from, run the
+# wedge-watchdog unit tests, and prove the built image can still boot them.
 #
 # These scripts had NO gate at all before this workflow. entrypoint.sh already
 # carried inline `# shellcheck disable=` directives, which read as evidence that
@@ -7,9 +7,11 @@
 # syntax error or an unquoted expansion in the boot path would only ever have
 # surfaced as a container that dies at startup on the deployment host.
 #
-# Two checks, both cheap enough to run on every touch:
+# Three checks:
 #   shellcheck -x --shell=sh -> 0 findings across the three scripts
 #   sh watchdog_test.sh      -> the fixture tests for the wedge predicate
+#   the `image` job          -> the runtime stage builds, and the files the
+#                               entrypoint sources at boot are actually IN it
 name: Container CI
 
 on:
@@ -49,27 +51,45 @@ jobs:
   shell:
     name: Shell lint and tests
     runs-on: ubuntu-latest
+    # Job-level ceiling so a hung run cannot burn the 6-hour default — the same
+    # reason backend-ci.yml carries one. This job is seconds of work, and the
+    # Test step below can HANG rather than fail (see its comment), which is
+    # precisely the shape that needs a ceiling. 5 minutes is a wide margin.
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Installed explicitly rather than relying on whatever the runner image
-      # happens to preinstall, so the gate does not change under us silently.
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-
-      # --shell=sh because both scripts are POSIX sh (the image's /bin/sh), not
-      # bash — without it shellcheck would accept bashisms the container cannot
-      # run.
+      # Pinned by VERSION, and run from the same container image the local gate
+      # uses, so CI and local run the SAME linter.
       #
-      # -x is REQUIRED, not a nicety. entrypoint.sh sources watchdog.sh, and
-      # without -x shellcheck refuses to follow it, reports SC1091 and EXITS 1 —
-      # so the gate would fail on every run. The companion half is the
-      # `# shellcheck source=watchdog.sh` directive at that source line, which
-      # maps the in-image path (/app/watchdog.sh) to the file's location in the
-      # repository. Both are needed; neither works alone.
+      # `apt-get install shellcheck` was not a pin: it installs whatever the
+      # runner image happens to carry (0.9.0 on ubuntu-24.04) while the
+      # documented local command uses koalaman/shellcheck:stable (0.11.0) — two
+      # linters roughly two years apart, either of which could report findings
+      # the other does not. `stable` is not a pin either; it moves. Both sibling
+      # workflows pin their tools (golangci-lint v2.12.2, Node 26, Bun 1.3.11)
+      # for exactly this reason. Bump this as its own commit, with any fixes the
+      # new version demands.
+      #
+      # --shell=sh because all three scripts are POSIX sh (the image's /bin/sh),
+      # not bash — without it shellcheck would accept bashisms the container
+      # cannot run.
+      #
+      # -x plus the `# shellcheck source=watchdog.sh` directive at entrypoint.sh's
+      # source line are what let the linter FOLLOW that source: the directive maps
+      # the in-image path (/app/watchdog.sh) to the file's location in the
+      # repository, and -x is what makes shellcheck act on it. Measured on this
+      # tree with both 0.9.0 and 0.11.0, dropping -x while passing all three files
+      # as inputs still exits 0 — so -x is not what keeps this command green. What
+      # it buys is that `shellcheck entrypoint.sh` ALONE also works: without -x
+      # that single-file invocation reports SC1091 and exits 1, which is what
+      # anyone linting one file by hand would hit.
       - name: Lint
-        run: shellcheck -x --shell=sh entrypoint.sh watchdog.sh watchdog_test.sh
+        run: |
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt \
+            koalaman/shellcheck:v0.11.0 \
+            -x --shell=sh entrypoint.sh watchdog.sh watchdog_test.sh
 
       # Runs under plain `sh`, exactly as it does locally and in the image. The
       # suite sources watchdog.sh, which is contractually side-effect free — if
@@ -77,3 +97,91 @@ jobs:
       # than failing, which is itself the signal.
       - name: Test
         run: sh watchdog_test.sh
+
+  # ── Does the image still BOOT? ──────────────────────────────────────────────
+  # This job exists because of a bug this very branch shipped. Commit a96b1a1
+  # added `. /app/watchdog.sh` to entrypoint.sh; the matching `COPY watchdog.sh`
+  # only arrived two commits later in d358b94. In between, `docker build`
+  # succeeded and the container died instantly at startup — no API, no SPA, no
+  # engine. Dockerfile was already in this workflow's path filter, but nothing
+  # here consumed it, so the gate was blind to a hard boot failure.
+  #
+  # WHAT THIS BUILDS: the REAL runtime stage of the REAL Dockerfile, verbatim.
+  # The four toolchain stages (Go, Bun, Gradle, KCEF) are replaced by an empty
+  # stub context with `--build-context`, so they are never built — but every
+  # instruction of the runtime stage, including each COPY, runs exactly as it
+  # does in production. That is what makes the missing-COPY bug reproducible
+  # here. Both the stub layout and the list of stages to override are DERIVED
+  # from the Dockerfile's own `COPY --from=` lines, so a new stage or a moved
+  # artifact path is picked up automatically rather than silently un-stubbed.
+  #
+  # WHAT IT DOES NOT CATCH, stated plainly:
+  #   * anything inside the four stubbed stages — the Go build, the Nuxt build,
+  #     the engine-host Gradle build and the KCEF Chromium bundle are NOT
+  #     exercised. The first two are covered by backend-ci / frontend-ci; the
+  #     last two are proven only by a real image build.
+  #   * the stubs are empty DIRECTORIES, so nothing that depends on the CONTENT
+  #     of a copied artifact is covered. No runtime-stage instruction reads that
+  #     content today; one that did would fail here and need a real fixture.
+  #   * it does not RUN entrypoint.sh — that starts Xvfb, dbus and a JVM. It
+  #     re-runs only the top-level `. <path>` lines, so a fault LATER in the
+  #     entrypoint (a missing binary at the final exec, a bad gosu call) is out
+  #     of scope.
+  # It DOES catch: a file the entrypoint sources at boot that the Dockerfile
+  # never copies, a syntax error in either script severe enough to abort the
+  # sourcing shell, and a runtime stage that no longer builds at all.
+  image:
+    name: Image boot
+    runs-on: ubuntu-latest
+    # Measured at ~1m40s cold locally; the runner additionally pulls the JRE base
+    # image. 15 leaves a wide margin without approaching the 6-hour default.
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # One empty directory per `COPY --from=` source path. Directories are
+      # enough: BuildKit copies a directory where the real stage produced a file
+      # just as happily, and nothing in the runtime stage reads the content.
+      # Kept outside the repository so it never enters the build context itself.
+      - name: Stub the toolchain stages
+        run: |
+          stub="$RUNNER_TEMP/dockerstub"
+          rm -rf "$stub"
+          grep -E "^COPY[[:space:]]+--from=" Dockerfile | awk '{print $3}' | while read -r src; do
+            mkdir -p "$stub/${src#/}"
+          done
+          find "$stub" -type d
+
+      # `--build-context <stage>=<dir>` overrides a named build stage with a
+      # local directory, so `COPY --from=builder …` reads from the stub and the
+      # builder stage is never built. The stage names come from the Dockerfile
+      # rather than a hardcoded list.
+      - name: Build the runtime stage
+        run: |
+          stub="$RUNNER_TEMP/dockerstub"
+          set --
+          for stage in $(grep -E "^COPY[[:space:]]+--from=" Dockerfile \
+              | sed -E "s/^COPY[[:space:]]+--from=([^[:space:]]+).*/\1/" | sort -u); do
+            set -- "$@" --build-context "$stage=$stub"
+          done
+          echo "overriding stages: $*"
+          docker buildx build "$@" --load -t tsundoku-container-ci:boot .
+
+      # The assertion reads /app/entrypoint.sh OUT OF THE BUILT IMAGE and re-runs
+      # the same top-level `. <path>` lines the container executes at boot, so a
+      # file the Dockerfile forgot to copy fails here exactly as it does in
+      # production ("cannot open /app/watchdog.sh: No such file"). Grepping the
+      # line out of the image rather than hardcoding the path is what keeps this
+      # honest if the entrypoint ever sources something else.
+      - name: Boot check
+        run: |
+          docker run --rm --entrypoint /bin/sh tsundoku-container-ci:boot -ec '
+            sources=$(grep "^\. /" /app/entrypoint.sh)
+            [ -n "$sources" ] || { echo "no top-level source line found in /app/entrypoint.sh"; exit 1; }
+            echo "re-running the entrypoint boot sources: $sources"
+            eval "$sources"
+            command -v supervise_engine_health > /dev/null \
+              || { echo "watchdog functions are undefined after sourcing"; exit 1; }
+            echo "boot check: entrypoint sources resolve and the watchdog is defined"
+          '
