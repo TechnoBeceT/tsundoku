@@ -93,7 +93,12 @@ watchdog_log() {
 # writable layer, not a volume, so unbounded growth is real disk pressure. Returns 0
 # unconditionally: this runs inside a `set -e` loop and must never abort it.
 watchdog_trim_log() {
-    size=$(wc -c < "$WATCHDOG_LOG_FILE" 2>/dev/null || echo 0)
+    # `2>/dev/null` comes BEFORE the input redirect deliberately. Redirections are
+    # applied left to right, so with the input first the SHELL reports the failed
+    # open ("No such file or directory") on the still-attached stderr before the
+    # discard takes effect — one spurious line per probe in the only diagnostic
+    # channel this container has. Do not "tidy" the order back.
+    size=$(wc -c 2>/dev/null < "$WATCHDOG_LOG_FILE" || echo 0)
     if [ "$size" -gt "$WATCHDOG_LOG_MAX" ]; then
         : > "$WATCHDOG_LOG_FILE"
         watchdog_log "captured engine output exceeded ${WATCHDOG_LOG_MAX} bytes; truncated"
