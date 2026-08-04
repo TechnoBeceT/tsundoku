@@ -116,6 +116,10 @@ COPY --from=engine /src/engine-host/build/install/tsundoku-engine-host /app/engi
 COPY --from=kcef /opt/kcef-runtime/bin/kcef /app/kcef-runtime/bin/kcef
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+# The engine-host wedge watchdog (GAP-137). entrypoint.sh SOURCES this file rather
+# than executing it, so it needs no execute bit — but it must be present, or the
+# `.` aborts the non-interactive entrypoint shell and the container never boots.
+COPY watchdog.sh /app/watchdog.sh
 
 # Container defaults. The engine-host owns its extension working-set (installed
 # APKs + prefs) on the /config volume; KCEF is enabled (off-screen). The Go server
