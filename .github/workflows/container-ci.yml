@@ -7,11 +7,13 @@
 # syntax error or an unquoted expansion in the boot path would only ever have
 # surfaced as a container that dies at startup on the deployment host.
 #
-# Three checks:
-#   shellcheck -x --shell=sh -> 0 findings across the three scripts
+# Four checks:
+#   shellcheck -x --shell=sh -> 0 findings across the four scripts
 #   sh watchdog_test.sh      -> the fixture tests for the wedge predicate
 #   the `image` job          -> the runtime stage builds, and the files the
 #                               entrypoint sources at boot are actually IN it
+#   the `e2e` job            -> the watchdog's supervision LOOP, driven against a
+#                               real JVM that really deadlocks
 name: Container CI
 
 on:
@@ -72,16 +74,18 @@ jobs:
       # for exactly this reason. Bump this as its own commit, with any fixes the
       # new version demands.
       #
-      # --shell=sh because all three scripts are POSIX sh (the image's /bin/sh),
+      # --shell=sh because all four scripts are POSIX sh (the image's /bin/sh),
       # not bash — without it shellcheck would accept bashisms the container
-      # cannot run.
+      # cannot run. The e2e runner is linted with the same settings even though it
+      # runs on the HOST: it drives the container, and a bashism there is just as
+      # broken on a machine whose /bin/sh is dash.
       #
       # -x plus the `# shellcheck source=watchdog.sh` directive at entrypoint.sh's
       # source line are what let the linter FOLLOW that source: the directive maps
       # the in-image path (/app/watchdog.sh) to the file's location in the
       # repository, and -x is what makes shellcheck act on it. Measured on this
-      # tree with both 0.9.0 and 0.11.0, dropping -x while passing all three files
-      # as inputs still exits 0 — so -x is not what keeps this command green. What
+      # tree with both 0.9.0 and 0.11.0, dropping -x while passing every file
+      # as an input still exits 0 — so -x is not what keeps this command green. What
       # it buys is that `shellcheck entrypoint.sh` ALONE also works: without -x
       # that single-file invocation reports SC1091 and exits 1, which is what
       # anyone linting one file by hand would hit.
@@ -89,7 +93,8 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt \
             koalaman/shellcheck:v0.11.0 \
-            -x --shell=sh entrypoint.sh watchdog.sh watchdog_test.sh
+            -x --shell=sh entrypoint.sh watchdog.sh watchdog_test.sh \
+            testdata/watchdog/e2e/run.sh
 
       # Runs under plain `sh`, exactly as it does locally and in the image. The
       # suite sources watchdog.sh, which is contractually side-effect free — if
@@ -185,3 +190,56 @@ jobs:
               || { echo "watchdog functions are undefined after sourcing"; exit 1; }
             echo "boot check: entrypoint sources resolve and the watchdog is defined"
           '
+
+  # ── Does the watchdog actually DECIDE correctly? ────────────────────────────
+  # The `shell` job covers the predicate against checked-in thread dumps. It
+  # cannot cover supervise_engine_health — the loop that decides whether to kill
+  # the production source engine, and the only part of this feature whose
+  # mistakes are destructive. Both high-severity defects fixed on this branch
+  # (a majority "6 of 8 blocked" rule that killed a healthy engine, and a
+  # thread-name anchor a process-global JDK counter could shift) were found by
+  # driving that loop against a live JVM. Neither was visible to the fixture
+  # suite, because a fixture is a transcript of a decision already made.
+  #
+  # testdata/watchdog/e2e/run.sh boots the REAL entrypoint.sh and watchdog.sh in
+  # a container around a JVM that really deadlocks, and asserts what the watchdog
+  # DID: it restarts a wedged engine (under both accepted pool-thread naming
+  # shapes) and leaves a merely saturated one alone while its long call finishes.
+  #
+  # WHEN THIS RUNS, and why that choice: on every push and pull request that
+  # touches the container scripts — the same path filter as the rest of this
+  # workflow, at the top of the file. It is NOT nightly and NOT manual-only. It
+  # costs a few minutes, but these files change rarely, so the path filter
+  # already keeps that cost near zero on a normal day; and a nightly run would
+  # report a regression hours after the commit that caused it, on a component
+  # whose failure mode is "the engine is silently never recovered". Paying the
+  # minutes on the commits that can actually break it is the cheaper trade.
+  #
+  # WHAT IT DOES NOT COVER, stated plainly:
+  #   * the real engine-host. The JVM under test is testdata/watchdog/e2e/
+  #     FakeEngine.java, which mirrors RpcServer's pool shape and /health but
+  #     runs no extensions, no KCEF and no Chromium. A wedge that only the real
+  #     extension stack can produce is out of scope.
+  #   * the image itself. This builds its own minimal container (Xvfb, dbus, the
+  #     Go server and the Gradle launcher are all stood in for), so it proves
+  #     nothing about the product image — that is the `image` job's business.
+  #   * the shipped TIMING. Probe interval, thresholds and cooldowns are
+  #     compressed so a case finishes in seconds. The predicate, the verdicts and
+  #     the kill path are the shipped ones.
+  e2e:
+    name: Watchdog e2e
+    runs-on: ubuntu-latest
+    # Measured at ~1m30s locally with a warm image cache; a runner additionally
+    # pulls the JDK base image and builds every layer cold. 20 is a wide margin
+    # and still far short of the 6-hour default.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The runner builds its own image and cleans up its containers on exit.
+      # WATCHDOG_E2E_BREAK is deliberately NOT set here: it re-injects the two
+      # defects to prove the assertions can fail, which is a local verification
+      # step, not a gate.
+      - name: Wedge and saturation e2e
+        run: sh testdata/watchdog/e2e/run.sh
