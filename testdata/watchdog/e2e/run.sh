@@ -28,10 +28,21 @@
 #                  the rollback shape: an image built before the thread factory was named.
 #   busy           a legitimate long call holding the monitor from INSIDE the pool
 #                  -> SATURATED verdict -> the engine is NOT killed -> the long call completes
+#   boot-wedge     the same deadlock, but wedged the instant the listener binds — BEFORE the
+#                  entrypoint's boot health probe has ever succeeded -> the probe must time out per
+#                  attempt, give up on its deadline, log that the watchdog was NOT started, and
+#                  still hand off to the foreground server
 #
 # The busy case is the important one. It is the regression test for the rule that killed a healthy
 # engine, and it asserts three separable things: the verdict, that the process was never restarted
 # (same pid), and that the work finished (the engine's own completed-call counter went up).
+#
+# boot-wedge covers the one ordering the other three cannot reach, because each of them waits for
+# the watchdog to be armed first. A wedged engine ACCEPTS the connection (the accept loop is not a
+# pool thread) and then never replies, so an unbounded boot probe blocks for as long as the fault
+# lasts — leaving the container with no API and no watchdog, and the fault undetectable by the very
+# feature written to detect it. Observed in production before the fix: PID 1 still in entrypoint.sh
+# with a 45-second-old curl child.
 #
 # ── Proving the assertions can fail ──────────────────────────────────────────────────────────
 # An e2e test that cannot fail is worse than none, so the two defects are re-injectable. The
@@ -46,12 +57,17 @@
 #       re-anchors the fallback to pool-1 only. The wedge-jdk case must FAIL: no pool threads are
 #       found and the deadlocked engine is left running forever.
 #
+#   WATCHDOG_E2E_BREAK=bootprobe sh testdata/watchdog/e2e/run.sh boot-wedge
+#       removes --max-time from the entrypoint's boot health probe. The boot-wedge case must FAIL:
+#       the single curl never returns, the entrypoint never reaches its exec, and the container
+#       serves nothing at all. This break targets entrypoint.sh, not watchdog.sh.
+#
 # CI never sets WATCHDOG_E2E_BREAK. A run with it set prints a loud banner and is not a gate.
 #
 # ── Other knobs ──────────────────────────────────────────────────────────────────────────────
 #   WATCHDOG_E2E_IMAGE  image tag to build/use (default tsundoku-watchdog-e2e:local)
 #   WATCHDOG_E2E_KEEP   set to 1 to leave containers running for inspection
-#   $1..                cases to run; default is all three
+#   $1..                cases to run; default is all four
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -74,6 +90,13 @@ E2E_TERM_GRACE=5
 # dump settle) so the verdict is reached while the call is still running — otherwise "not killed"
 # would be true only because there was nothing left to kill.
 E2E_BUSY_HOLD_MS=45000
+
+# The entrypoint's own boot health probe, compressed the same way. The DEADLINE must stay
+# comfortably above the time this fake JVM takes to bind (about a second) or the three healthy
+# cases would fall through it and never arm the watchdog; 30s is that margin, and it is also how
+# long the boot-wedge case takes to give up.
+E2E_BOOT_PROBE_TIMEOUT=3
+E2E_BOOT_WAIT=30
 
 # Budgets, in seconds. Generous: a cold container start on a loaded CI runner is not fast, and a
 # timeout here is reported as a failure with the container log attached rather than as a hang.
@@ -103,12 +126,12 @@ trap cleanup EXIT INT TERM
 
 # ── Build ────────────────────────────────────────────────────────────────────────────────────
 
-# apply_break FILE — re-inject one of the two defects into the build context's copy of watchdog.sh.
-# Each branch verifies its own substitution landed: a sed that quietly matched nothing would turn
+# apply_break CTX — re-inject one of the three defects into the build context's copies of
+# watchdog.sh / entrypoint.sh. Each branch names the file it targets, because they are not all the
+# same file, and verifies its own substitution landed: a sed that quietly matched nothing would turn
 # "the test failed as expected" into a lie, which is the exact failure mode this whole section
 # exists to rule out.
 apply_break() {
-    _f=$1
     case "$BREAK" in
         none)
             return 0
@@ -116,6 +139,7 @@ apply_break() {
         majority)
             # The shipped rule is `blocked == seen`. This restores the majority threshold that could
             # not distinguish a deadlock from saturation.
+            _f=$1/watchdog.sh
             # shellcheck disable=SC2016  # the $v_* here are watchdog.sh's variable NAMES, matched literally
             sed 's/\[ "$v_blocked" -eq "$v_seen" \]/[ "$v_blocked" -ge 6 ]/' "$_f" > "$_f.broken"
             grep -q -- '-ge 6' "$_f.broken" || die "break 'majority' did not apply — the verdict rule has moved"
@@ -123,11 +147,20 @@ apply_break() {
         pool1)
             # The shipped fallback matches any pool number. This re-anchors it to pool-1, which the
             # RPC pool only ever was by coincidence.
+            _f=$1/watchdog.sh
             sed 's/"pool-\[0-9\]+-thread/"pool-1-thread/' "$_f" > "$_f.broken"
             grep -q '"pool-1-thread' "$_f.broken" || die "break 'pool1' did not apply — the fallback pattern has moved"
             ;;
+        bootprobe)
+            # The shipped boot probe bounds every attempt. This removes the bound, restoring the
+            # curl that blocks for as long as a wedged engine holds its accepted connection open.
+            _f=$1/entrypoint.sh
+            # shellcheck disable=SC2016  # matching the literal variable NAME in entrypoint.sh
+            sed 's/curl -fsS --max-time "$ENGINE_BOOT_PROBE_TIMEOUT" "http:\/\/127/curl -fsS "http:\/\/127/' "$_f" > "$_f.broken"
+            grep -q 'curl -fsS "http://127' "$_f.broken" || die "break 'bootprobe' did not apply — the boot probe has moved"
+            ;;
         *)
-            die "unknown WATCHDOG_E2E_BREAK: $BREAK (expected none, majority or pool1)"
+            die "unknown WATCHDOG_E2E_BREAK: $BREAK (expected none, majority, pool1 or bootprobe)"
             ;;
     esac
     mv "$_f.broken" "$_f"
@@ -141,7 +174,7 @@ build_image() {
     _ctx=$(mktemp -d) || die "cannot create a build context"
     cp "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR/FakeEngine.java" "$_ctx/"
     cp "$REPO_ROOT/entrypoint.sh" "$REPO_ROOT/watchdog.sh" "$_ctx/"
-    apply_break "$_ctx/watchdog.sh"
+    apply_break "$_ctx"
     log "building $IMAGE"
     if ! docker build -q -t "$IMAGE" "$_ctx" >/dev/null; then
         rm -rf "$_ctx"
@@ -152,7 +185,10 @@ build_image() {
 
 # ── Container helpers ────────────────────────────────────────────────────────────────────────
 
-# start_engine CONTAINER_NAME THREAD_NAMES
+# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT]
+#
+# WEDGE_AT_BOOT defaults to 0, so the three cases that want a HEALTHY engine to start with are
+# unchanged and do not have to pass it.
 #
 # The caller passes the name and registers it for cleanup ITSELF. This function must not do the
 # registering, because the obvious shape — `cid=$(start_engine …)` with the name echoed out — runs
@@ -164,7 +200,10 @@ start_engine() {
     docker rm -f "$_name" >/dev/null 2>&1 || true
     docker run -d --name "$_name" \
         -e "FAKE_ENGINE_THREAD_NAMES=$2" \
+        -e "FAKE_WEDGE_AT_BOOT=${3:-0}" \
         -e "FAKE_BUSY_HOLD_MS=$E2E_BUSY_HOLD_MS" \
+        -e "ENGINE_BOOT_PROBE_TIMEOUT=$E2E_BOOT_PROBE_TIMEOUT" \
+        -e "ENGINE_BOOT_WAIT=$E2E_BOOT_WAIT" \
         -e "WATCHDOG_PROBE_INTERVAL=$E2E_PROBE_INTERVAL" \
         -e "WATCHDOG_PROBE_TIMEOUT=$E2E_PROBE_TIMEOUT" \
         -e "WATCHDOG_FAIL_THRESHOLD=$E2E_FAIL_THRESHOLD" \
@@ -233,12 +272,14 @@ log_has() {
 
 # wait_log CID PATTERN BUDGET — poll the container log for a line.
 #
-# Every case MUST wait for "wedge watchdog armed" before injecting a fault, and that is not
-# politeness — it is correctness. The entrypoint's boot probe is `curl -fsS <health>` with NO
-# --max-time, so against an engine that accepts the connection and then never replies (which is
-# every fault this harness injects) that single curl blocks for as long as the fault lasts. The
-# watchdog is armed only after it returns. Inject the fault first and the watchdog is armed AFTER the
-# engine has already recovered, and every assertion about what it did is vacuous.
+# Every case that asserts a VERDICT must wait for "wedge watchdog armed" before injecting its
+# fault, and that is not politeness — it is correctness. The watchdog is armed only once the
+# entrypoint's boot health probe has succeeded, so a fault injected before that is judged by a
+# watchdog that does not exist yet and every assertion about what it did is vacuous.
+#
+# The boot probe now bounds each attempt and gives up on a deadline, so injecting first no longer
+# HANGS the container — it just produces the other outcome, "the watchdog was NOT started". That
+# outcome is a case in its own right; see case_boot_wedge.
 wait_log() {
     _left=$3
     while [ "$_left" -gt 0 ]; do
@@ -385,12 +426,57 @@ case_busy() {
     fi
 }
 
+# The regression test for the unbounded boot health probe. The engine is wedged before it has ever
+# answered, so every attempt of the entrypoint's boot probe hits a connection that is accepted and
+# then held open forever. Bounded, each attempt costs at most its timeout and the loop gives up on
+# its deadline; unbounded, the FIRST such attempt never returns and the entrypoint never reaches the
+# `exec` of the foreground server.
+#
+# The assertions are deliberately about BOOT, not about a verdict: with no successful /health the
+# watchdog is correctly never armed, and what has to be proven is that the container came up anyway
+# and said so.
+case_boot_wedge() {
+    log "case boot-wedge: an engine that stalls before the first health poll must not block boot"
+    register boot-wedge
+    start_engine "$_cid" engine-rpc 1
+
+    # Nothing here waits for health — there will never be any. The budget covers the container's
+    # cold start plus the whole compressed boot deadline, with room to spare; a hang shows up as
+    # this timing out rather than as the script blocking.
+    if wait_log "$_cid" "the wedge watchdog was NOT started" $((E2E_BOOT_WAIT + 60)); then
+        pass "boot-wedge: the boot probe gave up on its deadline and said the watchdog was not armed"
+    else
+        dump_container_log "$_cid"
+        fail "boot-wedge: the entrypoint never got past its boot health probe"
+        return 0
+    fi
+
+    # THE assertion. This line comes from the foreground stand-in the entrypoint execs last, so it
+    # can only appear if the boot probe returned. With the defect present the container reaches
+    # nothing after the probe and serves nothing at all.
+    if wait_log "$_cid" "foreground stand-in up" 30; then
+        pass "boot-wedge: boot proceeded and the foreground server was started"
+    else
+        dump_container_log "$_cid"
+        fail "boot-wedge: the foreground server was never started — the container serves nothing"
+        return 0
+    fi
+
+    # The engine really is still wedged, so the case proved what it claims rather than passing
+    # because the fault failed to take hold.
+    if [ -z "$(health "$_cid")" ]; then
+        pass "boot-wedge: the engine is still wedged (as intended) — boot did not depend on it"
+    else
+        fail "boot-wedge: the engine answered /health; the boot-time wedge did not take hold"
+    fi
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────────────────────
 
 command -v docker >/dev/null 2>&1 || die "docker is required"
 docker info >/dev/null 2>&1 || die "docker is not usable by this user"
 
-cases=${*:-'wedge-named wedge-jdk busy'}
+cases=${*:-'wedge-named wedge-jdk busy boot-wedge'}
 build_image
 
 for c in $cases; do
@@ -398,7 +484,8 @@ for c in $cases; do
         wedge-named) case_wedge wedge-named engine-rpc ;;
         wedge-jdk)   case_wedge wedge-jdk jdk-default ;;
         busy)        case_busy ;;
-        *)           die "unknown case: $c (expected wedge-named, wedge-jdk or busy)" ;;
+        boot-wedge)  case_boot_wedge ;;
+        *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy or boot-wedge)" ;;
     esac
 done
 

@@ -207,18 +207,50 @@ supervise_engine() {
 tail -n +1 -F "$WATCHDOG_LOG_FILE" &
 supervise_engine &
 
-# Wait for the host's first /health (bounded, <=60 tries x 2s) so the container
-# reports ready. It NEVER blocks boot: after the cap it proceeds, and the Go server
-# below starts either way.
+# ── Wait for the host's first /health ────────────────────────────────────────
+# EVERY attempt MUST be bounded, and `curl` has no default timeout. A wedged
+# engine-host still ACCEPTS the TCP connection — its accept loop is not one of the
+# blocked request-pool threads — and then never replies, so an unbounded probe blocks
+# for as long as the fault lasts. This loop both arms the wedge watchdog and precedes
+# the `exec` of the Go server below, so one such probe leaves the container with NO API
+# and NO watchdog: the very fault this feature exists to recover would prevent its own
+# detection. Observed against a stalled engine: PID 1 still in this script, with a
+# 45-second-old curl child (GAP-137).
+#
+# ENGINE_BOOT_PROBE_TIMEOUT is deliberately larger than the watchdog's 5s and the image
+# HEALTHCHECK's 5s. Those probe a WARM engine; this one waits on a cold JVM that is
+# loading every installed extension and initialising CEF while serving /health from that
+# same request pool, so a steady-state timeout would read a slow-but-healthy boot as
+# down and skip arming the watchdog.
+#
+# The overall wait is a DEADLINE, not a try count, because the two failure shapes cost
+# very different amounts per attempt: nothing listening yet is REFUSED instantly (~2s an
+# attempt, all of it the sleep), while a bound-but-stalled engine costs up to
+# timeout + 2s. No single try count can give the first case enough grace without giving
+# the second an unacceptable multiple of it. The count survives only as a backstop, so
+# the loop stays bounded even if `date` cannot be read; on the ordinary refused path the
+# two agree exactly (60 x 2s = 120s = ENGINE_BOOT_WAIT).
+ENGINE_BOOT_PROBE_TIMEOUT=${ENGINE_BOOT_PROBE_TIMEOUT:-10}
+ENGINE_BOOT_WAIT=${ENGINE_BOOT_WAIT:-120}
+
 engine_up=0
+# Guarded like every substitution in watchdog.sh's loop: `set -e` is active, and an
+# unguarded `x=$(cmd)` that fails would abort boot outright.
+boot_started=$(date +%s 2>/dev/null || echo 0)
+boot_started=${boot_started:-0}
 i=0
 while [ "$i" -lt 60 ]; do
-    if curl -fsS "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; then
+    if curl -fsS --max-time "$ENGINE_BOOT_PROBE_TIMEOUT" "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; then
         echo "entrypoint: engine-host is up on :${ENGINE_PORT}"
         engine_up=1
         break
     fi
     i=$((i + 1))
+    now=$(date +%s 2>/dev/null || echo 0)
+    now=${now:-0}
+    if [ "$now" -gt 0 ] && [ $((now - boot_started)) -ge "$ENGINE_BOOT_WAIT" ]; then
+        break
+    fi
     sleep 2
 done
 
@@ -235,7 +267,7 @@ if [ "$engine_up" -eq 1 ]; then
     supervise_engine_health &
     echo "entrypoint: wedge watchdog armed (GAP-137)"
 else
-    echo "entrypoint: WARNING: engine-host /health did not answer within ~120s; the wedge watchdog was NOT started (GAP-137). supervise_engine still restarts the host if it DIES, but a deadlock will not be detected or recovered until the container is restarted." >&2
+    echo "entrypoint: WARNING: engine-host /health did not answer within ~${ENGINE_BOOT_WAIT}s; the wedge watchdog was NOT started (GAP-137). supervise_engine still restarts the host if it DIES, but a deadlock will not be detected or recovered until the container is restarted." >&2
 fi
 
 # ── Hand off to the Go server (PID for signals via tini) ─────────────────────

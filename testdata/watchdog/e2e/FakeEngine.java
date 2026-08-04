@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       watchdog's FALLBACK path and what the image emitted before the factory was named. Both
  *       shapes must keep working, so both are tested.</li>
  *   <li>{@code FAKE_BUSY_HOLD_MS} — how long /busy's legitimate long call holds the monitor.</li>
+ *   <li>{@code FAKE_WEDGE_AT_BOOT} — {@code 1} wedges the pool the instant the listener is up,
+ *       BEFORE anything has ever answered /health. See {@code wedgePool}.</li>
  * </ul>
  */
 public final class FakeEngine {
@@ -92,37 +94,10 @@ public final class FakeEngine {
                 + ",\"busyDone\":" + BUSY_DONE.get() + "}"));
 
         // ── A TRUE DEADLOCK ──────────────────────────────────────────────────────────────────
-        // The GAP-137 shape. A NON-pool thread takes the source monitor and parks forever (in
-        // production: a WebView callback parked in a network wait that never returns), then every
-        // pool thread piles up behind it.
-        //
-        // The holder occupies NO pool slot, so all 8 pool threads end up BLOCKED and the dump shows
-        // 8 of 8. Nothing can ever release the monitor, so only a restart clears it — which is
-        // exactly what the watchdog must do here.
-        //
-        // The thread name is the one GAP-137's real dump carried. The JDK's own HttpServer already
-        // runs a thread called HTTP-Dispatcher, so the dump contains two; that is harmless and
-        // deliberate. What the predicate cares about is only that the holder is NOT a pool thread.
+        // The GAP-137 shape, on demand: a healthy engine that has already answered /health, and
+        // therefore already armed the watchdog, wedges here. See wedgePool for the mechanics.
         server.createContext("/wedge", ex -> {
-            final Thread holder = new Thread(() -> {
-                synchronized (SOURCE_MONITOR) {
-                    sleepMs(Long.MAX_VALUE);
-                }
-            }, "HTTP-Dispatcher");
-            holder.setDaemon(true);
-            holder.start();
-            // Let the holder actually acquire the monitor before the waiters are queued behind it.
-            sleepMs(300);
-            // 8 waiters for an 8-thread pool. The thread serving THIS request is one of the 8: it
-            // frees its slot as soon as it has responded and then picks up the queued 8th task, so
-            // the steady state really is 8 blocked threads, not 7.
-            for (int i = 0; i < 8; i++) {
-                pool.execute(() -> {
-                    synchronized (SOURCE_MONITOR) {
-                        // Reached only if the monitor is ever released. It never is.
-                    }
-                });
-            }
+            wedgePool();
             respond(ex, "wedged");
         });
 
@@ -166,6 +141,54 @@ public final class FakeEngine {
                 + " pid=" + ProcessHandle.current().pid()
                 + " threadNames=" + (namedThreads ? "engine-rpc" : "jdk-default"));
         System.out.flush();
+
+        // Wedge AFTER the listener is up, so the port is bound and connections are accepted, but
+        // BEFORE anything has ever answered /health. That ordering is the whole point of the
+        // boot-wedge case: see wedgePool.
+        if ("1".equals(env("FAKE_WEDGE_AT_BOOT", "0"))) {
+            wedgePool();
+            System.out.println("fake-engine: wedged at boot; /health will never answer");
+            System.out.flush();
+        }
+    }
+
+    /**
+     * Parks the source monitor on a NON-pool thread and queues one waiter per pool thread behind
+     * it, so all 8 end up BLOCKED and nothing can ever release them. This is the GAP-137 shape:
+     * in production a WebView callback parks in a network wait that never returns.
+     *
+     * <p>The holder occupies NO pool slot, so all 8 pool threads end up BLOCKED and the dump shows
+     * 8 of 8. Only a restart clears it — which is exactly what the watchdog must do here.
+     *
+     * <p>The holder's thread name is the one GAP-137's real dump carried. The JDK's own HttpServer
+     * already runs a thread called HTTP-Dispatcher, so the dump contains two; that is harmless and
+     * deliberate. What the predicate cares about is only that the holder is NOT a pool thread.
+     *
+     * <p><b>Callable from two places, and the difference matters.</b> From the /wedge handler the
+     * caller is itself a pool thread, which frees its slot as soon as it has responded and then
+     * picks up the queued 8th task — so the steady state is 8 blocked threads, not 7. From
+     * {@code main} at boot (FAKE_WEDGE_AT_BOOT) no pool thread is running at all and the 8 tasks
+     * simply take all 8. Either way the dump shows 8 of 8; only the ORDERING relative to the
+     * entrypoint's boot health probe differs, and that ordering is what the boot-wedge case exists
+     * to exercise.
+     */
+    private static void wedgePool() {
+        final Thread holder = new Thread(() -> {
+            synchronized (SOURCE_MONITOR) {
+                sleepMs(Long.MAX_VALUE);
+            }
+        }, "HTTP-Dispatcher");
+        holder.setDaemon(true);
+        holder.start();
+        // Let the holder actually acquire the monitor before the waiters are queued behind it.
+        sleepMs(300);
+        for (int i = 0; i < 8; i++) {
+            pool.execute(() -> {
+                synchronized (SOURCE_MONITOR) {
+                    // Reached only if the monitor is ever released. It never is.
+                }
+            });
+        }
     }
 
     /**
