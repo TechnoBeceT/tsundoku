@@ -1,0 +1,61 @@
+NOTE: thread ORDER in this fixture is deliberate and load-bearing. The non-pool
+threads at the BOTTOM must stay BELOW the pool block. The predicate arms itself on a
+pool-thread header and disarms on the very next line, so a lock-contention line that
+appears BEFORE the first pool header is invisible to a predicate that forgets to
+disarm — move these blocks up and this fixture still passes while testing nothing.
+It exists to prove the count ignores lock contention on threads outside the RPC pool
+(a healthy engine has some at almost any instant), so this file must count 0.
+2026-08-04 12:04:17
+Full thread dump OpenJDK 64-Bit Server VM (21.0.5+11 mixed mode, sharing):
+
+"pool-1-thread-1" #37 prio=5 os_prio=0 tid=0x00007f2c1c0b2000 nid=0x25 runnable  [0x00007f2b9d0fd000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-2" #38 prio=5 os_prio=0 tid=0x00007f2c1c0b3000 nid=0x26 runnable  [0x00007f2b9cffc000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-3" #39 prio=5 os_prio=0 tid=0x00007f2c1c0b4000 nid=0x27 runnable  [0x00007f2b9cefb000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-4" #40 prio=5 os_prio=0 tid=0x00007f2c1c0b5000 nid=0x28 runnable  [0x00007f2b9cdfa000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-5" #41 prio=5 os_prio=0 tid=0x00007f2c1c0b6000 nid=0x29 runnable  [0x00007f2b9ccf9000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-6" #42 prio=5 os_prio=0 tid=0x00007f2c1c0b7000 nid=0x2a runnable  [0x00007f2b9cbf8000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-7" #43 prio=5 os_prio=0 tid=0x00007f2c1c0b8000 nid=0x2b runnable  [0x00007f2b9caf7000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"pool-1-thread-8" #44 prio=5 os_prio=0 tid=0x00007f2c1c0b9000 nid=0x2c runnable  [0x00007f2b9c9f6000]
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(java.base@21.0.5/Native Method)
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"Finalizer" #4 prio=8 os_prio=0 tid=0x00007f2c1c05a000 nid=0x0c waiting for monitor entry  [0x00007f2b9f3ff000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at java.lang.ref.ReferenceQueue.remove(java.base@21.0.5/ReferenceQueue.java:155)
+	- waiting to lock <0x00000000842aa118> (a java.lang.ref.ReferenceQueue$Lock)
+
+"Cache-Writer" #52 prio=5 os_prio=0 tid=0x00007f2c1c0c1000 nid=0x34 waiting for monitor entry  [0x00007f2b9b8f5000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at okhttp3.internal.cache.DiskLruCache.flush(DiskLruCache.kt:520)
+	- waiting to lock <0x00000000842ab440> (a okhttp3.internal.cache.DiskLruCache)
+
+JNI global refs: 41, weak refs: 0
