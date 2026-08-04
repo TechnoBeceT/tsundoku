@@ -247,6 +247,9 @@ WATCHDOG_TERM_GRACE=${WATCHDOG_TERM_GRACE:-10}
 # the operation the discriminator exists to protect.
 WATCHDOG_COOLDOWN=${WATCHDOG_COOLDOWN:-600}
 WATCHDOG_LOG_MAX=${WATCHDOG_LOG_MAX:-67108864}
+# How long to wait before re-entering the health loop if it ever exits. Matched to
+# the probe interval so a loop stuck in a restart cycle cannot spin.
+WATCHDOG_RELOOP_DELAY=${WATCHDOG_RELOOP_DELAY:-30}
 
 # watchdog_log MESSAGE — one prefix for every line this file emits, so an operator
 # can grep the container log for the watchdog's decisions and see nothing else.
@@ -254,17 +257,24 @@ watchdog_log() {
     echo "watchdog: $1" >&2
 }
 
+# watchdog_log_size — byte size of the captured engine output, or 0 if it cannot be
+# read. ONE helper, because both callers must use the same redirect order:
+#
+# `2>/dev/null` comes BEFORE the input redirect deliberately. Redirections are
+# applied left to right, so with the input first the SHELL reports the failed open
+# ("No such file or directory") on the still-attached stderr before the discard takes
+# effect — one spurious line per probe in the only diagnostic channel this container
+# has. Do not "tidy" the order back.
+watchdog_log_size() {
+    wc -c 2>/dev/null < "$WATCHDOG_LOG_FILE" || echo 0
+}
+
 # watchdog_trim_log — bound the captured engine output. /tmp is on the container's
 # writable layer, not a volume, so unbounded growth is real disk pressure. Returns 0
 # unconditionally: this runs inside a `set -e` loop and must never abort it.
 watchdog_trim_log() {
-    # `2>/dev/null` comes BEFORE the input redirect deliberately. Redirections are
-    # applied left to right, so with the input first the SHELL reports the failed
-    # open ("No such file or directory") on the still-attached stderr before the
-    # discard takes effect — one spurious line per probe in the only diagnostic
-    # channel this container has. Do not "tidy" the order back.
-    size=$(wc -c 2>/dev/null < "$WATCHDOG_LOG_FILE" || echo 0)
-    if [ "$size" -gt "$WATCHDOG_LOG_MAX" ]; then
+    size=$(watchdog_log_size)
+    if [ "${size:-0}" -gt "$WATCHDOG_LOG_MAX" ]; then
         : > "$WATCHDOG_LOG_FILE"
         watchdog_log "captured engine output exceeded ${WATCHDOG_LOG_MAX} bytes; truncated"
     fi
@@ -292,20 +302,27 @@ watchdog_stop_engine() {
     return 0
 }
 
-# supervise_engine_health — probe the engine, and when it stops answering, decide from a
+# watchdog_health_loop — probe the engine, and when it stops answering, decide from a
 # thread dump whether it is deadlocked or merely saturated.
 #
-# Intended to be backgrounded by entrypoint.sh AFTER the engine's first successful
-# /health, so it can never fire against an engine that is still booting.
+# Call it through supervise_engine_health, never directly: that wrapper is what
+# restarts this loop if it ever exits.
 #
-# Every branch is written as an explicit `if`. Under `set -e`, a trailing
-# `[ test ] && command` whose test is FALSE returns non-zero and would kill this loop
-# the first time the engine is healthy — the exact failure that would make the
-# watchdog silently absent when it is finally needed.
-supervise_engine_health() {
+# EVERY command substitution here is guarded with a fallback. Under the `set -e` this
+# inherits from entrypoint.sh, an unguarded `x=$(cmd)` that fails takes the whole
+# backgrounded loop down with NO log line — and a transient fork failure is exactly
+# what accompanies the memory-pressured, CEF-heavy JVM this watches. That was
+# reproduced. For the same reason every branch is an explicit `if`: a trailing
+# `[ test ] && command` whose test is false returns non-zero and would kill the loop
+# the first time the engine is healthy.
+watchdog_health_loop() {
     fails=0
-    last_dump=0
-    last_kill=0
+    # Cooldown state lives in globals initialised only when unset, so a loop that
+    # dies and is re-entered by supervise_engine_health does not forget when it last
+    # dumped or killed — a forgetful restart would walk straight past the thrash
+    # guard.
+    watchdog_last_dump=${watchdog_last_dump:-0}
+    watchdog_last_kill=${watchdog_last_kill:-0}
 
     while true; do
         sleep "$WATCHDOG_PROBE_INTERVAL"
@@ -324,8 +341,9 @@ supervise_engine_health() {
         # verdict, not since boot — otherwise every subsequent probe re-triggers.
         fails=0
 
-        now=$(date +%s)
-        if [ $((now - last_dump)) -lt "$WATCHDOG_COOLDOWN" ]; then
+        now=$(date +%s 2>/dev/null || echo 0)
+        now=${now:-0}
+        if [ $((now - watchdog_last_dump)) -lt "$WATCHDOG_COOLDOWN" ]; then
             continue
         fi
 
@@ -340,21 +358,25 @@ supervise_engine_health() {
         # Only lines appended AFTER this point belong to the dump we are about to
         # request. Reading the whole file would match a PREVIOUS wedge's dump and
         # restart a perfectly healthy engine.
-        offset=$(wc -c < "$WATCHDOG_LOG_FILE" 2>/dev/null || echo 0)
+        offset=$(watchdog_log_size)
+        offset=${offset:-0}
 
         watchdog_log "/health silent for ${WATCHDOG_FAIL_THRESHOLD} probes; requesting a thread dump from pid ${engine_pid} (GAP-137)"
         kill -3 "$engine_pid" 2>/dev/null || true
-        last_dump=$now
+        watchdog_last_dump=$now
         sleep "$WATCHDOG_DUMP_SETTLE"
 
         tail -c "+$((offset + 1))" "$WATCHDOG_LOG_FILE" > "$WATCHDOG_DUMP_FILE" 2>/dev/null || true
-        scan=$(wedge_scan "$WATCHDOG_DUMP_FILE")
+        scan=$(wedge_scan "$WATCHDOG_DUMP_FILE" 2>/dev/null || echo "0 0 unknown")
+        scan=${scan:-0 0 unknown}
         seen=${scan%% *}
         scan_rest=${scan#* }
         blocked=${scan_rest%% *}
         monitor=${scan_rest#* }
+        seen=${seen:-0}
+        blocked=${blocked:-0}
 
-        verdict=$(wedge_verdict "$seen" "$blocked")
+        verdict=$(wedge_verdict "$seen" "$blocked" || echo "insufficient")
         # Three distinct verdicts, never one reassuring line covering all of them.
         # The shipped single message ("engine is SATURATED, not deadlocked") was
         # emitted even when the dump had been parsed into nothing at all, which made
@@ -374,12 +396,37 @@ supervise_engine_health() {
 
         watchdog_log "WEDGE CONFIRMED: all ${seen} RPC pool threads BLOCKED on ${monitor} (GAP-137)"
 
-        if [ $((now - last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
-            watchdog_log "last restart was $((now - last_kill))s ago; holding off (thrash guard)"
+        if [ $((now - watchdog_last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
+            watchdog_log "last restart was $((now - watchdog_last_kill))s ago; holding off (thrash guard)"
             continue
         fi
 
-        last_kill=$now
+        watchdog_last_kill=$now
         watchdog_stop_engine "$engine_pid"
+    done
+}
+
+# supervise_engine_health — what entrypoint.sh backgrounds. Supervises the health
+# loop the same way supervise_engine supervises the engine.
+#
+# A watchdog that can die silently is worse than none: nothing else in the container
+# watches it, so its absence looks exactly like "no wedge has happened yet". The
+# guards inside watchdog_health_loop are the primary defence; this is the last one.
+#
+# Note that calling the loop as `... || true` also suspends `set -e` inside it, which
+# is a second reason a stray non-zero status cannot end it. The re-entry is still
+# logged, because a loop that keeps restarting is a fault worth seeing.
+#
+# Intended to be started AFTER the engine's first successful /health, so it can never
+# fire against an engine that is still booting.
+supervise_engine_health() {
+    restarts=0
+    while true; do
+        if [ "$restarts" -gt 0 ]; then
+            watchdog_log "health supervision loop exited unexpectedly (re-entry #${restarts}); resuming in ${WATCHDOG_RELOOP_DELAY}s (GAP-137)"
+            sleep "$WATCHDOG_RELOOP_DELAY"
+        fi
+        restarts=$((restarts + 1))
+        watchdog_health_loop || true
     done
 }
