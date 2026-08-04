@@ -1,0 +1,190 @@
+# Engine-host quality gate — compile the Kotlin extension-host and run its test
+# suite (63 tests across 9 classes at the time of writing; the final step prints
+# the live counts rather than trusting this line).
+#
+# The whole engine-host/ tree had NO gate at all before this workflow. `grep -rn
+# "gradlew" .github/workflows/` returned nothing: the only thing that ever
+# compiled this module was `docker build`, and the container workflow's `image`
+# job deliberately STUBS the Gradle stage out, so not even that ran it. A broken
+# Kotlin source or a failing assertion could land on v2 with every check green.
+#
+# One test in particular is why this exists now. RpcThreadNamingTest pins the
+# thread-name prefix `engine-rpc-` that RpcThreadFactory hands the RPC pool
+# (GAP-137). That name is a PRODUCTION SAFETY ANCHOR, not cosmetics: watchdog.sh
+# identifies the pool in a SIGQUIT thread dump by name to decide whether the
+# engine is deadlocked, so a rename — or a revert to the bare
+# `Executors.newFixedThreadPool(8)` — makes the watchdog count zero pool threads
+# and silently decline to restart a permanently wedged engine. Reproduced end to
+# end. Container CI gates the watchdog SIDE of that contract; nothing gated the
+# engine-host side, so half the contract was enforced and half was not.
+name: Engine-host CI
+
+# WHY ITS OWN WORKFLOW, and not a job in container-ci.yml:
+# `paths:` filters are per-WORKFLOW, not per-job. Adding an engine-host job to
+# container-ci.yml would force one of two wrong couplings — either
+# `engine-host/**` joins that filter and every Kotlin edit also runs the image
+# build and the watchdog e2e — two container jobs that cannot observe the change
+# — or it does not and this gate never fires on the tree it gates. The
+# engine-host is its own build surface with its own toolchain, exactly like
+# backend/ and frontend/, and the house shape is one workflow per surface.
+on:
+  push:
+    branches:
+      - main
+      # v2 is the long-lived V2 integration branch — V2 work lands there, never
+      # directly on main. Without this entry the engine-host would stay ungated
+      # on the branch it is actually developed on.
+      - v2
+    paths:
+      # Every Gradle file in the repository lives under engine-host/ (build
+      # .gradle.kts, settings.gradle.kts, gradle.properties, gradlew and the
+      # wrapper), so this one pattern covers the build definition as well as the
+      # sources — verified with `git ls-files | grep -Ei 'gradle|\.kts$'`.
+      - "engine-host/**"
+      # The Dockerfile is an INPUT to this workflow, not just a consumer of the
+      # module: the Suwayomi commit the composite build compiles against is read
+      # out of its `ARG SUWAYOMI_COMMIT` (see the vendor step). Bumping that pin
+      # changes what this gate builds, so it has to re-run.
+      - "Dockerfile"
+      - ".github/workflows/engine-host-ci.yml"
+  pull_request:
+    paths:
+      - "engine-host/**"
+      - "Dockerfile"
+      - ".github/workflows/engine-host-ci.yml"
+
+# Only one run per ref at a time: a newer push cancels the older in-progress run.
+concurrency:
+  group: engine-host-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the checks only need to read the repository.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Kotlin tests
+    runs-on: ubuntu-latest
+    # Measured locally against a fresh Suwayomi clone and a clean engine-host
+    # build/ — the exact shape a runner sees. Fully cold (empty
+    # GRADLE_USER_HOME, every dependency downloaded): 2m02s, of which 2s is
+    # vendoring the sources; with the dependency cache restored: 54s. The
+    # remainder either way is compiling Suwayomi's own modules, which a cache
+    # cannot skip (see the cache note below). A runner has fewer cores and a
+    # colder network than this machine, so 20 minutes is a wide margin over the
+    # measured 2m — and still far short of the 6-hour default a job gets with no
+    # ceiling at all.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to the JDK the build actually requires, from the same vendor the
+      # Dockerfile's engine stage uses (eclipse-temurin:21-jdk-noble).
+      #
+      # 21 is not a preference: build.gradle.kts declares `jvmToolchain(21)` and
+      # AndroidCompat's Java sources are compiled `--release 21`, so a JDK 17
+      # runtime fails outright with "Dependency requires at least JVM runtime
+      # version 21". Leaving it unpinned would let the runner image move the
+      # compiler under the gate without a commit — the same reason backend-ci
+      # pins Go 1.25.0 and frontend-ci pins Node 26 / Bun 1.3.11.
+      #
+      # Supplying a matching JDK here also keeps the foojay resolver in
+      # settings.gradle.kts from downloading a second toolchain on every run:
+      # Gradle detects the JVM it is already running on and provisions nothing.
+      #
+      # `cache: gradle` is setup-java's BUILT-IN dependency cache (~/.gradle
+      # caches + wrapper) — the same shape as setup-go's built-in cache in
+      # backend-ci, not a hand-rolled actions/cache scheme. cache-dependency-path
+      # is spelled out for the same reason backend-ci spells out
+      # cache-dependency-path: the build lives in engine-host/, not at the
+      # repository root.
+      #
+      # Honest limit: this caches downloaded DEPENDENCIES only. The Suwayomi
+      # composite build is compiled from source into a throwaway directory every
+      # run and is the bulk of the wall clock; the timeout above is sized for
+      # that, deliberately, rather than for a cache hit.
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            engine-host/*.gradle.kts
+            engine-host/gradle.properties
+            engine-host/gradle/wrapper/gradle-wrapper.properties
+
+      # engine-host is a Gradle COMPOSITE build: settings.gradle.kts includes
+      # Suwayomi-Server's own :server and :AndroidCompat projects, so the module
+      # cannot compile without that source tree. The included path defaults to a
+      # developer's local checkout and is overridden with -PsuwayomiSrc, exactly
+      # as the Dockerfile's engine stage does.
+      #
+      # The repo + commit are READ OUT OF THE DOCKERFILE rather than repeated
+      # here. A second copy of the pin would drift, and a gate compiling against
+      # a different Suwayomi than the shipped image proves the wrong thing —
+      # container-ci.yml derives its stage list from the Dockerfile for the same
+      # reason. The emptiness guard turns a renamed ARG into a loud failure
+      # instead of an empty -PsuwayomiSrc that only fails later and obscurely.
+      #
+      # A shallow fetch of the single pinned commit rather than the Dockerfile's
+      # full `git clone` + `git checkout`: same tree, ~2s instead of a whole
+      # history. Cloned into RUNNER_TEMP so it never enters the workspace.
+      - name: Vendor the Suwayomi sources
+        run: |
+          repo="$(grep -E '^ARG SUWAYOMI_REPO=' Dockerfile | cut -d= -f2-)"
+          commit="$(grep -E '^ARG SUWAYOMI_COMMIT=' Dockerfile | cut -d= -f2-)"
+          if [ -z "$repo" ] || [ -z "$commit" ]; then
+            echo "::error::could not read ARG SUWAYOMI_REPO / ARG SUWAYOMI_COMMIT out of the Dockerfile"
+            exit 1
+          fi
+          echo "vendoring $repo at $commit"
+          src="$RUNNER_TEMP/suwayomi"
+          rm -rf "$src"
+          git init -q "$src"
+          git -C "$src" remote add origin "$repo"
+          git -C "$src" fetch -q --depth 1 origin "$commit"
+          git -C "$src" checkout -q FETCH_HEAD
+          git -C "$src" rev-parse HEAD
+
+      # --no-daemon matches both the Dockerfile's engine stage and Gradle's own
+      # CI guidance: a daemon that outlives the step buys nothing on a runner
+      # that is discarded afterwards.
+      #
+      # This workflow sets no top-level `defaults.run.working-directory` the way
+      # backend-ci and frontend-ci do, because the step above deliberately reads
+      # the repository-ROOT Dockerfile; declaring the module per Gradle step is
+      # clearer than escaping out with `../`.
+      - name: Test
+        working-directory: engine-host
+        run: ./gradlew --no-daemon -PsuwayomiSrc="$RUNNER_TEMP/suwayomi" test
+
+      # Gradle fails the build on a failing test, so this step is not about
+      # failures — it is about the suite running AT ALL. `:test` is an
+      # incremental task: an up-to-date or NO-SOURCE outcome is reported as
+      # BUILD SUCCESSFUL having executed nothing, which is precisely how a gate
+      # ends up unable to fail. (It cannot happen today — a fresh checkout has no
+      # build/ outputs to be up-to-date against, and neither the build cache nor
+      # the configuration cache is enabled — but "cannot happen today" is a
+      # property of the build config, and this asserts it instead of assuming it.)
+      # Counting the JUnit XML the run produced is the cheapest honest proof, and
+      # the printed totals double as the gate's summary line.
+      - name: Assert the suite actually ran
+        working-directory: engine-host
+        run: |
+          results=build/test-results/test
+          if [ ! -d "$results" ]; then
+            echo "::error::$results does not exist — the test task produced no results"
+            exit 1
+          fi
+          classes="$(find "$results" -name 'TEST-*.xml' | wc -l)"
+          tests="$(find "$results" -name 'TEST-*.xml' -exec cat {} + \
+            | grep -o 'tests="[0-9]*"' | grep -o '[0-9]*' \
+            | awk '{n += $1} END {print n + 0}')"
+          if [ "$classes" -eq 0 ] || [ "$tests" -eq 0 ]; then
+            echo "::error::the test task reported success without running any test (classes=$classes tests=$tests)"
+            exit 1
+          fi
+          echo "engine-host: $tests tests across $classes classes"
