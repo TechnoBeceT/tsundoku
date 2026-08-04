@@ -32,6 +32,11 @@ ENGINE_HOST_BIN=/app/engine-host/bin/tsundoku-engine-host
 ENGINE_DATA=${TSUNDOKU_ENGINE_DATA:-/config/engine}
 ENGINE_PORT=${TSUNDOKU_ENGINE_PORT:-7777}
 
+# The wedge watchdog lives in its own file so its predicate can be unit-tested. This
+# script starts Xvfb and dbus at load, so a test that sourced THIS file to reach the
+# predicate would launch a virtual display.
+. /app/watchdog.sh
+
 # ── Start a system D-Bus + a supervised virtual X display for CEF/Aura ───────
 # Both back the engine-host's Chromium (KCEF) layer for the container's whole
 # lifetime. `set -e` is active, so each start is guarded: an already-bound dbus
@@ -171,12 +176,30 @@ supervise_engine() {
         rm -f "${ENGINE_DATA}/cache/kcef/SingletonLock" \
               "${ENGINE_DATA}/cache/kcef/SingletonCookie" \
               "${ENGINE_DATA}/cache/kcef/SingletonSocket" 2>/dev/null || true
+        # Capture the host's output to a file so its SIGQUIT thread dump is readable
+        # by the watchdog (a JVM writes that dump to its own stdout and nowhere else).
+        # Truncated per launch so a dump can never be confused with a previous one.
+        : > "$WATCHDOG_LOG_FILE"
+        # Backgrounded rather than piped: in a `cmd | tee` pipeline `$!` is tee's pid,
+        # not the engine's, and SIGQUIT to the wrong process produces no dump. Both
+        # gosu and the launcher script exec, so this pid IS the JVM's.
         # shellcheck disable=SC2086
-        $RUN_AS "$ENGINE_HOST_BIN" || true
-        echo "entrypoint: engine-host exited (code $?); restarting in 3s" >&2
+        $RUN_AS "$ENGINE_HOST_BIN" >> "$WATCHDOG_LOG_FILE" 2>&1 &
+        engine_pid=$!
+        echo "$engine_pid" > "$WATCHDOG_PID_FILE"
+        engine_status=0
+        wait "$engine_pid" || engine_status=$?
+        rm -f "$WATCHDOG_PID_FILE"
+        # Reported from a saved status: reading $? after `|| true` always yields 0,
+        # which is why this line used to claim every crash exited cleanly.
+        echo "entrypoint: engine-host exited (code $engine_status); restarting in 3s" >&2
         sleep 3
     done
 }
+# `docker logs` must keep showing engine-host output now that it is redirected to a
+# file. `tail -F` follows the per-launch truncation correctly.
+: > "$WATCHDOG_LOG_FILE"
+tail -n +1 -F "$WATCHDOG_LOG_FILE" &
 supervise_engine &
 
 # Wait for the host's first /health (bounded) so the container reports ready.
@@ -190,6 +213,10 @@ while [ "$i" -lt 60 ]; do
     sleep 2
 done
 [ "$i" -ge 60 ] && echo "entrypoint: WARNING: engine-host /health did not come up in time" >&2
+
+# Started only after the engine has answered once, so a slow first boot (CEF init can
+# take a while) can never be mistaken for a wedge.
+supervise_engine_health &
 
 # ── Hand off to the Go server (PID for signals via tini) ─────────────────────
 # shellcheck disable=SC2086
