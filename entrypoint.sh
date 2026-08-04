@@ -207,21 +207,36 @@ supervise_engine() {
 tail -n +1 -F "$WATCHDOG_LOG_FILE" &
 supervise_engine &
 
-# Wait for the host's first /health (bounded) so the container reports ready.
+# Wait for the host's first /health (bounded, <=60 tries x 2s) so the container
+# reports ready. It NEVER blocks boot: after the cap it proceeds, and the Go server
+# below starts either way.
+engine_up=0
 i=0
 while [ "$i" -lt 60 ]; do
     if curl -fsS "http://127.0.0.1:${ENGINE_PORT}/health" > /dev/null 2>&1; then
         echo "entrypoint: engine-host is up on :${ENGINE_PORT}"
+        engine_up=1
         break
     fi
     i=$((i + 1))
     sleep 2
 done
-[ "$i" -ge 60 ] && echo "entrypoint: WARNING: engine-host /health did not come up in time" >&2
 
-# Started only after the engine has answered once, so a slow first boot (CEF init can
-# take a while) can never be mistaken for a wedge.
-supervise_engine_health &
+# The wedge watchdog is armed ONLY inside the success branch, so a slow first boot
+# (CEF init can take a while) can never be mistaken for a wedge. That promise used to
+# be a comment only: the wait above fell through after the cap with nothing but a
+# warning and started the watchdog regardless.
+#
+# Both outcomes are logged, because the failure mode of a watchdog is SILENCE and the
+# two silences are indistinguishable otherwise: "armed, nothing has wedged" and "never
+# armed at all" produce exactly the same empty log. An operator greps for one of these
+# two lines to tell them apart.
+if [ "$engine_up" -eq 1 ]; then
+    supervise_engine_health &
+    echo "entrypoint: wedge watchdog armed (GAP-137)"
+else
+    echo "entrypoint: WARNING: engine-host /health did not answer within ~120s; the wedge watchdog was NOT started (GAP-137). supervise_engine still restarts the host if it DIES, but a deadlock will not be detected or recovered until the container is restarted." >&2
+fi
 
 # ── Hand off to the Go server (PID for signals via tini) ─────────────────────
 # shellcheck disable=SC2086
