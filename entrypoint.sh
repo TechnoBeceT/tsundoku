@@ -35,6 +35,11 @@ ENGINE_PORT=${TSUNDOKU_ENGINE_PORT:-7777}
 # The wedge watchdog lives in its own file so its predicate can be unit-tested. This
 # script starts Xvfb and dbus at load, so a test that sourced THIS file to reach the
 # predicate would launch a virtual display.
+#
+# The path below is the IN-IMAGE one; the directive tells the linter where the same
+# file lives in the repository, so `shellcheck -x` can follow it instead of emitting
+# SC1091 and failing the container lint job.
+# shellcheck source=watchdog.sh
 . /app/watchdog.sh
 
 # ── Start a system D-Bus + a supervised virtual X display for CEF/Aura ───────

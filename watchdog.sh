@@ -70,7 +70,14 @@ wedge_held_monitor() {
 # The probe cadence and timeout deliberately MATCH the image's HEALTHCHECK, so the
 # watchdog and the container agree on what "down" means rather than disagreeing by
 # a few seconds and confusing whoever reads the logs afterwards.
-WATCHDOG_HEALTH_URL=${WATCHDOG_HEALTH_URL:-http://127.0.0.1:7777/health}
+#
+# The PORT must track the entrypoint's `ENGINE_PORT=${TSUNDOKU_ENGINE_PORT:-7777}`,
+# which is why it is derived from the same variable rather than hardcoded. If the two
+# ever drift, the watchdog probes a port nothing is listening on, reads a perfectly
+# healthy engine as permanently silent, and dumps then KILLS it once every cooldown
+# forever. An explicit WATCHDOG_HEALTH_URL still wins, so an operator can point the
+# probe somewhere else entirely.
+WATCHDOG_HEALTH_URL=${WATCHDOG_HEALTH_URL:-http://127.0.0.1:${TSUNDOKU_ENGINE_PORT:-7777}/health}
 WATCHDOG_PROBE_INTERVAL=${WATCHDOG_PROBE_INTERVAL:-30}
 WATCHDOG_PROBE_TIMEOUT=${WATCHDOG_PROBE_TIMEOUT:-5}
 WATCHDOG_FAIL_THRESHOLD=${WATCHDOG_FAIL_THRESHOLD:-3}
