@@ -65,3 +65,134 @@ wedge_held_monitor() {
         echo "$monitor"
     fi
 }
+
+# ── Tunables ─────────────────────────────────────────────────────────────────
+# The probe cadence and timeout deliberately MATCH the image's HEALTHCHECK, so the
+# watchdog and the container agree on what "down" means rather than disagreeing by
+# a few seconds and confusing whoever reads the logs afterwards.
+WATCHDOG_HEALTH_URL=${WATCHDOG_HEALTH_URL:-http://127.0.0.1:7777/health}
+WATCHDOG_PROBE_INTERVAL=${WATCHDOG_PROBE_INTERVAL:-30}
+WATCHDOG_PROBE_TIMEOUT=${WATCHDOG_PROBE_TIMEOUT:-5}
+WATCHDOG_FAIL_THRESHOLD=${WATCHDOG_FAIL_THRESHOLD:-3}
+WATCHDOG_DUMP_SETTLE=${WATCHDOG_DUMP_SETTLE:-3}
+WATCHDOG_BLOCKED_MIN=${WATCHDOG_BLOCKED_MIN:-6}
+WATCHDOG_TERM_GRACE=${WATCHDOG_TERM_GRACE:-10}
+# One cooldown governs BOTH dumps and kills. Without the dump half, a legitimate
+# ~20-minute call would be dumped every 90s — roughly 40 thread dumps during exactly
+# the operation the discriminator exists to protect.
+WATCHDOG_COOLDOWN=${WATCHDOG_COOLDOWN:-600}
+WATCHDOG_LOG_MAX=${WATCHDOG_LOG_MAX:-67108864}
+
+# watchdog_log MESSAGE — one prefix for every line this file emits, so an operator
+# can grep the container log for the watchdog's decisions and see nothing else.
+watchdog_log() {
+    echo "watchdog: $1" >&2
+}
+
+# watchdog_trim_log — bound the captured engine output. /tmp is on the container's
+# writable layer, not a volume, so unbounded growth is real disk pressure. Returns 0
+# unconditionally: this runs inside a `set -e` loop and must never abort it.
+watchdog_trim_log() {
+    size=$(wc -c < "$WATCHDOG_LOG_FILE" 2>/dev/null || echo 0)
+    if [ "$size" -gt "$WATCHDOG_LOG_MAX" ]; then
+        : > "$WATCHDOG_LOG_FILE"
+        watchdog_log "captured engine output exceeded ${WATCHDOG_LOG_MAX} bytes; truncated"
+    fi
+    return 0
+}
+
+# watchdog_stop_engine PID — end the engine-host so supervise_engine can relaunch it
+# cleanly. TERM first, KILL only if it has not exited within the grace period. The
+# relaunch path (reaping orphaned Chromium children, clearing the singleton files) is
+# already owned by supervise_engine and is deliberately NOT duplicated here.
+watchdog_stop_engine() {
+    watchdog_log "stopping engine-host pid $1 (TERM, then KILL after ${WATCHDOG_TERM_GRACE}s)"
+    kill -TERM "$1" 2>/dev/null || true
+    waited=0
+    while [ "$waited" -lt "$WATCHDOG_TERM_GRACE" ]; do
+        if ! kill -0 "$1" 2>/dev/null; then
+            watchdog_log "engine-host pid $1 exited on TERM"
+            return 0
+        fi
+        waited=$((waited + 1))
+        sleep 1
+    done
+    kill -KILL "$1" 2>/dev/null || true
+    watchdog_log "engine-host pid $1 did not exit on TERM; sent KILL"
+    return 0
+}
+
+# supervise_engine_health — probe the engine, and when it stops answering, decide from
+# a thread dump whether it is deadlocked or merely saturated.
+#
+# Intended to be backgrounded by entrypoint.sh AFTER the engine's first successful
+# /health, so it can never fire against an engine that is still booting.
+#
+# Every branch is written as an explicit `if`. Under `set -e`, a trailing
+# `[ test ] && command` whose test is FALSE returns non-zero and would kill this loop
+# the first time the engine is healthy — the exact failure that would make the
+# watchdog silently absent when it is finally needed.
+supervise_engine_health() {
+    fails=0
+    last_dump=0
+    last_kill=0
+
+    while true; do
+        sleep "$WATCHDOG_PROBE_INTERVAL"
+        watchdog_trim_log
+
+        if curl -fsS --max-time "$WATCHDOG_PROBE_TIMEOUT" "$WATCHDOG_HEALTH_URL" >/dev/null 2>&1; then
+            fails=0
+            continue
+        fi
+
+        fails=$((fails + 1))
+        if [ "$fails" -lt "$WATCHDOG_FAIL_THRESHOLD" ]; then
+            continue
+        fi
+        # Reset here so the threshold counts consecutive failures since the LAST
+        # verdict, not since boot — otherwise every subsequent probe re-triggers.
+        fails=0
+
+        now=$(date +%s)
+        if [ $((now - last_dump)) -lt "$WATCHDOG_COOLDOWN" ]; then
+            continue
+        fi
+
+        engine_pid=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null || echo "")
+        if [ -z "$engine_pid" ] || ! kill -0 "$engine_pid" 2>/dev/null; then
+            # No live engine to dump. It either never started or already died, and
+            # supervise_engine owns that case.
+            watchdog_log "engine-host pid unknown or not running; leaving recovery to supervise_engine"
+            continue
+        fi
+
+        # Only lines appended AFTER this point belong to the dump we are about to
+        # request. Reading the whole file would match a PREVIOUS wedge's dump and
+        # restart a perfectly healthy engine.
+        offset=$(wc -c < "$WATCHDOG_LOG_FILE" 2>/dev/null || echo 0)
+
+        watchdog_log "/health silent for ${WATCHDOG_FAIL_THRESHOLD} probes; requesting a thread dump from pid ${engine_pid} (GAP-137)"
+        kill -3 "$engine_pid" 2>/dev/null || true
+        last_dump=$now
+        sleep "$WATCHDOG_DUMP_SETTLE"
+
+        tail -c "+$((offset + 1))" "$WATCHDOG_LOG_FILE" > "$WATCHDOG_DUMP_FILE" 2>/dev/null || true
+        blocked=$(wedge_blocked_count "$WATCHDOG_DUMP_FILE")
+
+        if [ "$blocked" -lt "$WATCHDOG_BLOCKED_MIN" ]; then
+            watchdog_log "${blocked} RPC pool threads blocked (need ${WATCHDOG_BLOCKED_MIN}); engine is SATURATED, not deadlocked — not restarting"
+            continue
+        fi
+
+        watchdog_log "WEDGE CONFIRMED: ${blocked} RPC pool threads BLOCKED on $(wedge_held_monitor "$WATCHDOG_DUMP_FILE") (GAP-137)"
+
+        if [ $((now - last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
+            watchdog_log "last restart was $((now - last_kill))s ago; holding off (thrash guard)"
+            continue
+        fi
+
+        last_kill=$now
+        watchdog_stop_engine "$engine_pid"
+    done
+}
