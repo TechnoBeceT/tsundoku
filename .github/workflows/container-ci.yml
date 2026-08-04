@@ -1,0 +1,79 @@
+# Container quality gate — lint the shell scripts the image boots from, and run
+# the wedge-watchdog unit tests.
+#
+# These scripts had NO gate at all before this workflow. entrypoint.sh already
+# carried inline `# shellcheck disable=` directives, which read as evidence that
+# something was linting it — nothing was. The directives were decorative, and a
+# syntax error or an unquoted expansion in the boot path would only ever have
+# surfaced as a container that dies at startup on the deployment host.
+#
+# Two checks, both cheap enough to run on every touch:
+#   shellcheck -x --shell=sh -> 0 findings across the three scripts
+#   sh watchdog_test.sh      -> the fixture tests for the wedge predicate
+name: Container CI
+
+on:
+  push:
+    branches:
+      - main
+      # v2 is the long-lived V2 integration branch — V2 work lands there, never
+      # directly on main. Without this entry the container scripts would stay
+      # ungated on the branch they are actually developed on.
+      - v2
+    paths:
+      - "entrypoint.sh"
+      - "watchdog.sh"
+      - "watchdog_test.sh"
+      - "testdata/watchdog/**"
+      - "Dockerfile"
+      - ".github/workflows/container-ci.yml"
+  pull_request:
+    paths:
+      - "entrypoint.sh"
+      - "watchdog.sh"
+      - "watchdog_test.sh"
+      - "testdata/watchdog/**"
+      - "Dockerfile"
+      - ".github/workflows/container-ci.yml"
+
+# Only one run per ref at a time: a newer push cancels the older in-progress run.
+concurrency:
+  group: container-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the checks only need to read the repository.
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: Shell lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Installed explicitly rather than relying on whatever the runner image
+      # happens to preinstall, so the gate does not change under us silently.
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      # --shell=sh because both scripts are POSIX sh (the image's /bin/sh), not
+      # bash — without it shellcheck would accept bashisms the container cannot
+      # run.
+      #
+      # -x is REQUIRED, not a nicety. entrypoint.sh sources watchdog.sh, and
+      # without -x shellcheck refuses to follow it, reports SC1091 and EXITS 1 —
+      # so the gate would fail on every run. The companion half is the
+      # `# shellcheck source=watchdog.sh` directive at that source line, which
+      # maps the in-image path (/app/watchdog.sh) to the file's location in the
+      # repository. Both are needed; neither works alone.
+      - name: Lint
+        run: shellcheck -x --shell=sh entrypoint.sh watchdog.sh watchdog_test.sh
+
+      # Runs under plain `sh`, exactly as it does locally and in the image. The
+      # suite sources watchdog.sh, which is contractually side-effect free — if
+      # a top-level statement is ever added to that file this step hangs rather
+      # than failing, which is itself the signal.
+      - name: Test
+        run: sh watchdog_test.sh
