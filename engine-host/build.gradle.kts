@@ -3,6 +3,9 @@ import org.gradle.process.ExecOperations
 
 plugins {
     kotlin("jvm") version "2.4.0"
+    // GAP-145: @Serializable codegen for the protobuf repo-index model (RepoIndex.kt). Version tracks
+    // the Kotlin plugin above — the serialization compiler plugin ships with the Kotlin distribution.
+    kotlin("plugin.serialization") version "2.4.0"
     application
 }
 
@@ -62,6 +65,11 @@ dependencies {
     // JSON for the RPC layer + the extension-repo index parsing (Jackson).
     implementation("com.fasterxml.jackson.core:jackson-databind:2.18.2")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
+
+    // GAP-145: kotlinx-serialization-protobuf decodes the repo's `index.pb` (gzipped protobuf) into
+    // the same model the JSON path produces (RepoIndex.kt). It already rode Suwayomi server's runtime
+    // classpath transitively; declared explicitly here (version pinned to Suwayomi's serialization).
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0")
 
     testImplementation(kotlin("test"))
     // DexStackFrameRewriterTest builds a synthetic broken class with ASM to pin the VerifyError; asm

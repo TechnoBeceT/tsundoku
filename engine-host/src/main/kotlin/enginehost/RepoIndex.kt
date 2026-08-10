@@ -1,15 +1,19 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package enginehost
 
 /*
  * Repo-index model + format-aware parser (GAP-145).
  *
- * A Mihon extension repo advertises its catalogue as `index.json` — a wrapper OBJECT
- * `{ …, extensionList:{ extensions:[ … ] } }` (the current Keiyoushi schema) — and also still accepts
- * the LEGACY flat `[ … ]` array a differently-configured repo may serve. (`index.min.json` was
- * neutered to a 2-entry deprecation stub, which is why the fetch moved off it.)
+ * A Mihon extension repo advertises its catalogue in one of two shapes that differ by URL suffix:
+ *   - `index.json` — a wrapper OBJECT `{ …, extensionList:{ extensions:[ … ] } }` (the current
+ *     Keiyoushi schema). Also accepts the LEGACY flat `[ … ]` array a differently-configured repo
+ *     may still serve.
+ *   - `index.pb`   — the same model, gzip-compressed protobuf.
+ * (`index.min.json` was neutered to a 2-entry deprecation stub, which is why the fetch moved off it.)
  *
- * Both shapes normalise into ONE internal [RepoIndexEntry], so every caller in [ExtensionManager] is
- * format-agnostic. Entries carry RESOLVED absolute apk/icon URLs — the new schema supplies them
+ * Both formats normalise into ONE internal [RepoIndexEntry], so every caller in [ExtensionManager]
+ * is format-agnostic. Entries carry RESOLVED absolute apk/icon URLs — the new schema supplies them
  * directly (`resources.apkUrl`/`iconUrl`), the legacy schema's relative filenames are resolved
  * against the repo base at parse time — so no caller ever rebuilds a URL from a repo base.
  */
@@ -18,11 +22,15 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.convertValue
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoBuf
+import kotlinx.serialization.protobuf.ProtoNumber
+import java.util.zip.GZIPInputStream
 
 /**
- * One extension advertised by a repo, normalised across the JSON-wrapper and legacy-flat formats.
- * [apkUrl]/[iconUrl] are already ABSOLUTE (resolved at parse time). [code] is the numeric version
- * code used for update comparison; [nsfw] is 1 for an adult extension, 0 otherwise.
+ * One extension advertised by a repo, normalised across the JSON-wrapper, legacy-flat and protobuf
+ * formats. [apkUrl]/[iconUrl] are already ABSOLUTE (resolved at parse time). [code] is the numeric
+ * version code used for update comparison; [nsfw] is 1 for an adult extension, 0 otherwise.
  */
 internal data class RepoIndexEntry(
     val name: String,
@@ -50,9 +58,11 @@ internal data class RepoIndexSource(
  */
 internal object RepoIndexParser {
     private val logger = KotlinLogging.logger {}
+    private val protobuf = ProtoBuf { }
 
     /**
-     * Parse [bytes] into entries. [indexUrl] identifies the source (for the log line); [repoBase]
+     * Parse [bytes] into entries. Format is chosen by [indexUrl]'s suffix (`.pb` → protobuf) with a
+     * gzip-magic fallback; everything else is JSON (new wrapper, or the legacy flat array). [repoBase]
      * resolves the legacy schema's relative apk/icon filenames to absolute URLs.
      */
     fun parse(
@@ -61,9 +71,19 @@ internal object RepoIndexParser {
         repoBase: String,
         mapper: ObjectMapper,
     ): List<RepoIndexEntry> =
-        runCatching { parseJson(bytes, repoBase, mapper) }
-            .onFailure { logger.warn(it) { "Failed to parse repo index $indexUrl" } }
+        runCatching {
+            if (looksLikeProtobuf(indexUrl, bytes)) parseProtobuf(bytes) else parseJson(bytes, repoBase, mapper)
+        }.onFailure { logger.warn(it) { "Failed to parse repo index $indexUrl" } }
             .getOrDefault(emptyList())
+
+    private fun looksLikeProtobuf(
+        indexUrl: String,
+        bytes: ByteArray,
+    ): Boolean = indexUrl.endsWith(".pb") || isGzip(bytes)
+
+    private fun isGzip(bytes: ByteArray): Boolean = bytes.size >= 2 && bytes[0] == GZIP_MAGIC_0 && bytes[1] == GZIP_MAGIC_1
+
+    // ---- JSON ----
 
     private fun parseJson(
         bytes: ByteArray,
@@ -78,6 +98,16 @@ internal object RepoIndexParser {
             mapper.convertValue<JsonRepoIndex>(root).extensionList.extensions.map { it.toEntry() }
         }
     }
+
+    // ---- Protobuf ----
+
+    private fun parseProtobuf(bytes: ByteArray): List<RepoIndexEntry> {
+        val raw = if (isGzip(bytes)) GZIPInputStream(bytes.inputStream()).use { it.readBytes() } else bytes
+        return protobuf.decodeFromByteArray(PbRepoIndex.serializer(), raw).extensionList.extensions.map { it.toEntry() }
+    }
+
+    private const val GZIP_MAGIC_0: Byte = 0x1f
+    private const val GZIP_MAGIC_1: Byte = 0x8b.toByte()
 }
 
 // ---- Shared normalisation ----
@@ -89,8 +119,9 @@ internal object RepoIndexParser {
  */
 private fun deriveLang(sources: List<RepoIndexSource>): String = sources.map { it.lang }.toSet().singleOrNull() ?: "all"
 
-/** The `contentWarning` enum member that marks an adult extension. */
+/** The `contentWarning` enum member that marks an adult extension (JSON name / protobuf ordinal). */
 private const val CONTENT_WARNING_NSFW = "CONTENT_WARNING_NSFW"
+private const val CONTENT_WARNING_NSFW_ORDINAL = 3
 
 // ---- New JSON-wrapper schema (Jackson) ----
 
@@ -179,4 +210,59 @@ private data class LegacyRepoSource(
     val lang: String,
     val id: String,
     val baseUrl: String? = null,
+)
+
+// ---- Protobuf schema (kotlinx.serialization) ----
+// Field numbers verified EMPIRICALLY by decoding the live `index.pb` and cross-checking every
+// extension against `index.json` (0 mismatches across the full catalogue). Unknown fields
+// (badgeLabel/signingKey/contact on the root, extensionLib on an extension, jarUrl at resources
+// field 501) are intentionally omitted — protobuf decoding skips them.
+
+@Serializable
+private data class PbRepoIndex(
+    @ProtoNumber(101) val extensionList: PbExtensionList = PbExtensionList(),
+)
+
+@Serializable
+private data class PbExtensionList(
+    @ProtoNumber(1) val extensions: List<PbRepoExtension> = emptyList(),
+)
+
+@Serializable
+private data class PbRepoExtension(
+    @ProtoNumber(1) val name: String = "",
+    @ProtoNumber(2) val packageName: String = "",
+    @ProtoNumber(3) val resources: PbRepoResources = PbRepoResources(),
+    @ProtoNumber(5) val versionCode: Long = 0,
+    @ProtoNumber(6) val versionName: String = "",
+    @ProtoNumber(7) val contentWarning: Int = 0,
+    @ProtoNumber(8) val sources: List<PbRepoSource> = emptyList(),
+) {
+    fun toEntry(): RepoIndexEntry {
+        val srcs = sources.map { RepoIndexSource(it.id, it.name, it.language) }
+        return RepoIndexEntry(
+            name = name,
+            pkg = packageName,
+            apkUrl = resources.apkUrl,
+            iconUrl = resources.iconUrl.ifBlank { null },
+            lang = deriveLang(srcs),
+            code = versionCode,
+            version = versionName,
+            nsfw = if (contentWarning == CONTENT_WARNING_NSFW_ORDINAL) 1 else 0,
+            sources = srcs,
+        )
+    }
+}
+
+@Serializable
+private data class PbRepoResources(
+    @ProtoNumber(1) val apkUrl: String = "",
+    @ProtoNumber(2) val iconUrl: String = "",
+)
+
+@Serializable
+private data class PbRepoSource(
+    @ProtoNumber(1) val id: Long = 0,
+    @ProtoNumber(2) val name: String = "",
+    @ProtoNumber(3) val language: String = "",
 )
