@@ -40,6 +40,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
+	"github.com/technobecet/tsundoku/internal/disabledsource"
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/enginehost"
 	"github.com/technobecet/tsundoku/internal/engineroute"
@@ -316,11 +317,21 @@ func main() {
 	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc).
 		WithEventRecorder(eventsSvc) // logs a `warm` audit event per warm
 
+	// Owner-paused sources (QCAT-513). The DisabledSource store is a stateless
+	// wrapper over the Ent client, so a second instance alongside registerRoutes'
+	// own is safe — the same precedent as healthSvc below. It is attached to BOTH
+	// background engines that reach a source: the dispatcher (no download, no
+	// upgrade from a paused source) and the refresh sweep (no re-poll). Together
+	// with the ranking drop in internal/chapter that is the FULL pause; without
+	// either attachment the toggle would silently keep hammering the source.
+	disabledSrcSvc := disabledsource.NewService(entClient)
+
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
 		Storage:     cfg.Storage.Folder,
 		StagingRoot: stagingRoot,
 	}, settingsSvc, gateSvc).
-		WithEventRecorder(eventsSvc) // logs a `download` audit event per source attempt
+		WithEventRecorder(eventsSvc). // logs a `download` audit event per source attempt
+		WithDisabledSources(disabledSrcSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
 	// One-time startup upgrade-detection pass. ResetOrphanedChapters above unflagged
@@ -383,7 +394,8 @@ func main() {
 		settingsSvc,
 		gateSvc,
 	).
-		WithEventRecorder(eventsSvc) // logs a `refresh` audit event per source-manga group
+		WithEventRecorder(eventsSvc). // logs a `refresh` audit event per source-manga group
+		WithDisabledSources(disabledSrcSvc)
 
 	// healthSvc is a stateless series.Service instance used only to supply the
 	// UnhealthyCount function to StartRefresh. A second stateless instance is

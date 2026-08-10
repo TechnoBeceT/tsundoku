@@ -53,11 +53,18 @@ import (
 )
 
 // SourceToggleStore is the narrow surface the Handler needs for the TSUNDOKU-SIDE
-// per-language enable/disable toggle (the Configure dialog's per-source Switch).
+// per-source enable/disable toggle (the Configure dialog's per-source Switch).
 // It reads the disabled-source set (for the Preferences group `enabled` field)
 // and writes one source's state (SetSourceEnabled). *disabledsource.Service
 // satisfies it. A nil store (focused proxy tests) makes every group report
 // enabled=true and SetSourceEnabled a no-op-if-unwired path (see its doc).
+//
+// The ROUTE and its DTO are unchanged by QCAT-513; what changed is what
+// CONSUMING the flag does. Turning the switch off is now a FULL PAUSE of the
+// source — refresh stops polling it and the dispatcher stops downloading and
+// upgrading from it — not merely a picker filter. See the internal/disabledsource
+// package doc for the exact scope, and for what a pause deliberately does NOT do
+// (it deletes nothing and re-ranks nothing).
 type SourceToggleStore interface {
 	Disabled(ctx context.Context) (map[int64]bool, error)
 	SetEnabled(ctx context.Context, sourceID int64, enabled bool) error

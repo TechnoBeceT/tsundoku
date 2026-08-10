@@ -437,11 +437,15 @@ func registerRoutes(
 	// apkStore is the SAME cache the boot seed writes and the /internal
 	// apk-serving route reads. The extension icon proxy is RETIRED (sourceengine
 	// has no PageBytes-shaped fetch — the FE renders iconUrl directly). The
-	// per-language source enable/disable toggle is RESTORED but TSUNDOKU-SIDE:
-	// the internal engine has no server-side "disabled source" concept, so the
-	// flag is persisted in Tsundoku's OWN Postgres (disabledsource.Service, the
-	// DisabledSource entity) and applied as a picker filter in internal/imports;
-	// it is NEVER pushed to the engine (internal/enginetopo does not read it).
+	// per-source enable/disable toggle is RESTORED but TSUNDOKU-SIDE: the
+	// internal engine has no server-side "disabled source" concept, so the flag is
+	// persisted in Tsundoku's OWN Postgres (disabledsource.Service, the
+	// DisabledSource entity); it is NEVER pushed to the engine
+	// (internal/enginetopo does not read it). Since QCAT-513 it means a FULL
+	// TEMPORARY PAUSE, not just the picker filter in internal/imports: the refresh
+	// sweep and the download dispatcher read the same store (wired in
+	// cmd/tsundoku/main.go, which owns those two engines) and skip a paused source
+	// entirely. This handler still only reads and writes the flag.
 	disabledSrcSvc := disabledsource.NewService(client)
 	// ignoreScanlatorSvc is the sibling Tsundoku-side per-source flag: it collapses
 	// an uploader-in-scanlator source (e.g. Hive Scans) into one [Source] provider
