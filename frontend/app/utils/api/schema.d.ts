@@ -1851,6 +1851,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources/{sourceId}/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the series that carry a source
+         * @description Returns the series that depend on a given source, each flagged whether it
+         *     "goes dark" on pause (no other provider) or which provider would take over,
+         *     plus how many alternatives it has (QCAT-513). Read-only — the impact view
+         *     the owner consults before temporarily pausing a source; it never mutates
+         *     anything and never deletes a file.
+         *
+         *     A sourceId that is not currently loaded (unknown/uninstalled) answers 200
+         *     with an EMPTY list: the display name needed to match disk-origin provider
+         *     rows cannot be resolved, so "nothing depends on it" is the honest answer.
+         */
+        get: operations["listSourceSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/reporting/overview": {
         parameters: {
             query?: never;
@@ -4144,6 +4172,41 @@ export interface components {
             /** @description The source's display name. */
             sourceName: string;
             breaker?: components["schemas"]["SourceBreaker"];
+        };
+        /**
+         * @description One series that carries a given source, with what happens to it if the
+         *     source is paused (QCAT-513). Backs the read-only "what depends on this
+         *     source" impact view: how many series lose their only provider ("go dark")
+         *     vs. keep an alternative that takes over. Already-downloaded chapters stay
+         *     on disk regardless of a pause.
+         */
+        SourceSeries: {
+            /**
+             * Format: uuid
+             * @description The series' id.
+             */
+            seriesId: string;
+            /**
+             * @description The series' display title (its pinned metadata-source title when set,
+             *     else the canonical title) — the same label the library list shows.
+             */
+            title: string;
+            /**
+             * @description How many of the series' providers are NOT this source — the sources
+             *     that would still feed it after this one is paused.
+             */
+            alternativeCount: number;
+            /**
+             * @description True exactly when alternativeCount == 0: pausing this source leaves the
+             *     series with no provider that can fetch new chapters.
+             */
+            goesDark: boolean;
+            /**
+             * @description Display label of the highest-importance provider that is NOT this
+             *     source (the source that would take over). Empty when the series goes
+             *     dark.
+             */
+            topAlternative: string;
         };
         SourceWarmStarted: {
             /**
@@ -8994,6 +9057,59 @@ export interface operations {
             };
             /** @description No source with that id is loaded. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not be reached to resolve the source. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSourceSeries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The engine-host source id whose dependent series to list. */
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description The series carrying the source (empty when none, or when the source id
+             *     is unknown/uninstalled).
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceSeries"][];
+                };
+            };
+            /** @description The sourceId is not a valid numeric id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
