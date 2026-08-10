@@ -1,10 +1,8 @@
 package series
 
 import (
-	"strconv"
-	"strings"
-
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 )
 
 // IsLinkedProvider reports whether p is a real, linked LIVE source (attached
@@ -54,7 +52,13 @@ func ProviderSourceID(p *ent.SeriesProvider) (int64, bool) {
 // One implementation, four entry points (§2 DRY) — IsLinkedProvider,
 // ProviderSourceID, library.driftedSeriesIDs and refresh.buildRefreshGroups —
 // so the linked/disk-origin rule can never fork.
+//
+// The parse itself now lives one layer down, in the stateless kernel
+// internal/pkg/providerid, and this function is its `series`-side entry point.
+// It had to move because internal/series IMPORTS internal/chapter, so chapter
+// cannot import series back — and chapter's candidate ranking needs the same
+// parse to drop an owner-paused source (QCAT-513). Delegating keeps ONE
+// implementation instead of adding the fifth copy this doc exists to prevent.
 func LinkedProviderSourceID(provider string) (int64, bool) {
-	id, err := strconv.ParseInt(strings.TrimSpace(provider), 10, 64)
-	return id, err == nil
+	return providerid.SourceID(provider)
 }
