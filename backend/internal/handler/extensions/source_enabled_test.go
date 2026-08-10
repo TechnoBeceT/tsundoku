@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	handler "github.com/technobecet/tsundoku/internal/handler/extensions"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -41,8 +43,10 @@ func TestPreferences_EnabledReflectsDisabledStore(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	enabledByID := map[string]bool{}
+	sinceByID := map[string]*time.Time{}
 	for _, g := range got.Sources {
 		enabledByID[g.SourceID] = g.Enabled
+		sinceByID[g.SourceID] = g.DisabledSince
 	}
 	if !enabledByID["10"] {
 		t.Errorf("source 10 must be enabled, got %+v", got.Sources)
@@ -50,27 +54,53 @@ func TestPreferences_EnabledReflectsDisabledStore(t *testing.T) {
 	if enabledByID["11"] {
 		t.Errorf("disabled source 11 must report enabled=false, got %+v", got.Sources)
 	}
+	// The paused source carries a "paused since" instant; the active one omits it.
+	if sinceByID["11"] == nil {
+		t.Errorf("disabled source 11 must carry a disabledSince, got nil (%+v)", got.Sources)
+	}
+	if sinceByID["10"] != nil {
+		t.Errorf("active source 10 must omit disabledSince, got %v", sinceByID["10"])
+	}
 }
 
 // --- PATCH /api/sources/:sourceId/enabled ------------------------------------
 
-// TestSetSourceEnabled_RoundTrip proves the toggle disables then re-enables a
-// source, returning the authoritative re-read state each time and persisting it
-// in the store (a subsequent GET reflects it).
-func TestSetSourceEnabled_RoundTrip(t *testing.T) {
-	env := newTestEnv(t, prefsFake())
-
-	// Disable source 42.
-	rec := env.do(http.MethodPatch, "/api/sources/42/enabled", `{"enabled":false}`)
+// decodeEnabledDTO decodes a PATCH /enabled 200 body, asserting the code and
+// that Enabled + the presence of DisabledSince match wantEnabled — a paused
+// source (enabled=false) MUST carry a paused-at instant, an active one must omit
+// it (§16 round-trip). Keeps the round-trip test flat (one assert call per flip).
+func decodeEnabledDTO(t *testing.T, rec *httptest.ResponseRecorder, wantEnabled bool) handler.SourceEnabledDTO {
+	t.Helper()
 	if rec.Code != http.StatusOK {
-		t.Fatalf("disable: want 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("toggle: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	var got handler.SourceEnabledDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.SourceID != "42" || got.Enabled {
-		t.Fatalf("disable response: want {42, enabled=false}, got %+v", got)
+	if got.Enabled != wantEnabled {
+		t.Fatalf("response enabled = %v, want %v (%+v)", got.Enabled, wantEnabled, got)
+	}
+	if wantEnabled && got.DisabledSince != nil {
+		t.Errorf("active source must omit disabledSince, got %v", got.DisabledSince)
+	}
+	if !wantEnabled && got.DisabledSince == nil {
+		t.Error("paused source must carry a non-nil disabledSince (paused-at), got nil")
+	}
+	return got
+}
+
+// TestSetSourceEnabled_RoundTrip proves the toggle disables then re-enables a
+// source, returning the authoritative re-read state each time (incl. the
+// paused-at instant) and persisting it in the store.
+func TestSetSourceEnabled_RoundTrip(t *testing.T) {
+	env := newTestEnv(t, prefsFake())
+
+	// Disable source 42.
+	rec := env.do(http.MethodPatch, "/api/sources/42/enabled", `{"enabled":false}`)
+	got := decodeEnabledDTO(t, rec, false)
+	if got.SourceID != "42" {
+		t.Fatalf("disable response: want sourceId 42, got %+v", got)
 	}
 	if !env.store.disabled[42] {
 		t.Errorf("store not updated: source 42 should be disabled")
@@ -78,13 +108,7 @@ func TestSetSourceEnabled_RoundTrip(t *testing.T) {
 
 	// Re-enable it.
 	rec = env.do(http.MethodPatch, "/api/sources/42/enabled", `{"enabled":true}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("enable: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	_ = json.Unmarshal(rec.Body.Bytes(), &got)
-	if !got.Enabled {
-		t.Fatalf("enable response: want enabled=true, got %+v", got)
-	}
+	decodeEnabledDTO(t, rec, true)
 	if env.store.disabled[42] {
 		t.Errorf("store not updated: source 42 should be re-enabled")
 	}

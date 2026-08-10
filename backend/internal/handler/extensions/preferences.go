@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -59,6 +60,12 @@ func (h *Handler) Preferences(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// The paused-since set drives each disabled group's `disabledSince` label. A
+	// nil store ⇒ an empty set, so no group carries the field.
+	disabledSince, err := h.disabledSinceSet(ctx)
+	if err != nil {
+		return err
+	}
 	// The ignore-scanlator set drives each group's `ignoreScanlator` flag (the FE
 	// seeds its per-source toggle from it). A nil store ⇒ nothing flagged.
 	ignoreScanlator, err := h.ignoreScanlatorSet(ctx)
@@ -72,14 +79,19 @@ func (h *Handler) Preferences(c echo.Context) error {
 		if err != nil {
 			return httperr.Upstream(err)
 		}
-		groups = append(groups, SourcePreferencesGroupDTO{
+		group := SourcePreferencesGroupDTO{
 			SourceID:        formatSourceID(s.ID),
 			SourceName:      s.Name,
 			Lang:            s.Lang,
 			Enabled:         !disabled[s.ID],
 			IgnoreScanlator: ignoreScanlator[s.ID],
 			Preferences:     toSourcePreferenceDTOs(prefs),
-		})
+		}
+		if ts, ok := disabledSince[s.ID]; ok {
+			t := ts
+			group.DisabledSince = &t
+		}
+		groups = append(groups, group)
 	}
 	return c.JSON(http.StatusOK, SourcePreferencesBySourceDTO{Sources: groups})
 }
@@ -94,6 +106,20 @@ func (h *Handler) disabledSet(ctx context.Context) (map[int64]bool, error) {
 		return map[int64]bool{}, nil
 	}
 	set, err := h.disabled.Disabled(ctx)
+	if err != nil {
+		return nil, httperr.Upstream(err)
+	}
+	return set, nil
+}
+
+// disabledSinceSet returns the Tsundoku-side map of source id → paused-at instant
+// for the "Paused since" label, or an empty (non-nil) map when no disabled-flag
+// store is wired. A store read failure is wrapped as a 502 (mirrors disabledSet).
+func (h *Handler) disabledSinceSet(ctx context.Context) (map[int64]time.Time, error) {
+	if h.disabled == nil {
+		return map[int64]time.Time{}, nil
+	}
+	set, err := h.disabled.DisabledSince(ctx)
 	if err != nil {
 		return nil, httperr.Upstream(err)
 	}
@@ -138,10 +164,23 @@ func (h *Handler) SetSourceEnabled(c echo.Context) error {
 	if err != nil {
 		return httperr.Upstream(err)
 	}
-	return c.JSON(http.StatusOK, SourceEnabledDTO{
+	dto := SourceEnabledDTO{
 		SourceID: formatSourceID(sourceID),
 		Enabled:  !set[sourceID],
-	})
+	}
+	// A paused source also reports when it was paused (§16 round-trip) so the FE
+	// can render "Paused since <date>" without a second request.
+	if !dto.Enabled {
+		since, err := h.disabled.DisabledSince(ctx)
+		if err != nil {
+			return httperr.Upstream(err)
+		}
+		if ts, ok := since[sourceID]; ok {
+			t := ts
+			dto.DisabledSince = &t
+		}
+	}
+	return c.JSON(http.StatusOK, dto)
 }
 
 // ignoreScanlatorSet returns the Tsundoku-side set of ignore-scanlator-flagged

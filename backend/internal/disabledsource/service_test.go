@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/disabledsource"
@@ -70,6 +71,46 @@ func TestDisable_IndependentSources(t *testing.T) {
 		t.Fatalf("enable 7: %v", err)
 	}
 	wantDisabled(t, svc, 42)
+}
+
+// TestDisabledSince_TracksPauseInstant proves DisabledSince returns a created_at
+// only for currently-paused sources (same membership as Disabled), timestamped
+// at/after the pause and cleared when the source is re-enabled.
+func TestDisabledSince_TracksPauseInstant(t *testing.T) {
+	ctx := context.Background()
+	svc := disabledsource.NewService(testdb.New(t))
+
+	before := time.Now().Add(-time.Second)
+	if err := svc.SetEnabled(ctx, 7, false); err != nil {
+		t.Fatalf("disable 7: %v", err)
+	}
+
+	since, err := svc.DisabledSince(ctx)
+	if err != nil {
+		t.Fatalf("DisabledSince: %v", err)
+	}
+	ts, ok := since[7]
+	if !ok {
+		t.Fatalf("DisabledSince missing paused source 7: %v", since)
+	}
+	if ts.Before(before) {
+		t.Errorf("paused-at %v is before the pause call %v", ts, before)
+	}
+	if _, ok := since[42]; ok {
+		t.Errorf("DisabledSince must not carry an active source, got %v", since)
+	}
+
+	// Re-enabling clears the paused-at entry.
+	if err := svc.SetEnabled(ctx, 7, true); err != nil {
+		t.Fatalf("enable 7: %v", err)
+	}
+	since, err = svc.DisabledSince(ctx)
+	if err != nil {
+		t.Fatalf("DisabledSince after enable: %v", err)
+	}
+	if len(since) != 0 {
+		t.Errorf("DisabledSince after re-enable = %v, want empty", since)
+	}
 }
 
 // TestEnable_IsIdempotent proves re-enabling an already-enabled source deletes

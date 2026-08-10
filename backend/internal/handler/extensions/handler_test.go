@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -58,16 +59,22 @@ type testEnv struct {
 // without a real DB. A row's presence in disabled = disabled; in ignore =
 // flagged. Errors can be forced independently per store.
 type fakeToggleStore struct {
-	disabled  map[int64]bool
-	disErr    error
-	setErr    error
-	ignore    map[int64]bool
-	ignErr    error
-	ignSetErr error
+	disabled      map[int64]bool
+	disabledSince map[int64]time.Time
+	disErr        error
+	setErr        error
+	ignore        map[int64]bool
+	ignErr        error
+	ignSetErr     error
 }
 
+// fakeDisabledSinceDefault is the paused-at instant the fake reports for a source
+// disabled by writing f.disabled directly (rather than through SetEnabled) — so a
+// test that flips the map still exercises the DisabledSince timestamp path.
+var fakeDisabledSinceDefault = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+
 func newFakeToggleStore() *fakeToggleStore {
-	return &fakeToggleStore{disabled: map[int64]bool{}, ignore: map[int64]bool{}}
+	return &fakeToggleStore{disabled: map[int64]bool{}, disabledSince: map[int64]time.Time{}, ignore: map[int64]bool{}}
 }
 
 func (f *fakeToggleStore) Disabled(_ context.Context) (map[int64]bool, error) {
@@ -83,14 +90,36 @@ func (f *fakeToggleStore) Disabled(_ context.Context) (map[int64]bool, error) {
 	return out, nil
 }
 
+func (f *fakeToggleStore) DisabledSince(_ context.Context) (map[int64]time.Time, error) {
+	if f.disErr != nil {
+		return nil, f.disErr
+	}
+	out := make(map[int64]time.Time, len(f.disabled))
+	for k, v := range f.disabled {
+		if !v {
+			continue
+		}
+		if ts, ok := f.disabledSince[k]; ok {
+			out[k] = ts
+		} else {
+			out[k] = fakeDisabledSinceDefault
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeToggleStore) SetEnabled(_ context.Context, sourceID int64, enabled bool) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
 	if enabled {
 		delete(f.disabled, sourceID)
+		delete(f.disabledSince, sourceID)
 	} else {
 		f.disabled[sourceID] = true
+		if _, ok := f.disabledSince[sourceID]; !ok {
+			f.disabledSince[sourceID] = time.Now()
+		}
 	}
 	return nil
 }

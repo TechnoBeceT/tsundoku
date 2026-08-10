@@ -1,6 +1,8 @@
 package extensions
 
 import (
+	"time"
+
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -58,6 +60,11 @@ type SourcePreferencesGroupDTO struct {
 	// inverse of a DisabledSource row). Defaults to true when no disabled-flag
 	// store is wired.
 	Enabled bool `json:"enabled"`
+	// DisabledSince is when this source was PAUSED — its DisabledSource row's
+	// immutable created_at. Present (non-nil) only while the source is paused
+	// (Enabled=false); nil/omitted when active. Drives the "Paused since <date>"
+	// label next to the pause control (QCAT-513).
+	DisabledSince *time.Time `json:"disabledSince,omitempty"`
 	// IgnoreScanlator is the per-source "ignore scanlator" flag (Tsundoku-side;
 	// presence of an IgnoreScanlatorSource row). true collapses this source's
 	// per-uploader providers into one [Source] provider on future adopts (an
@@ -76,6 +83,10 @@ type SourceEnabledDTO struct {
 	SourceID string `json:"sourceId"`
 	// Enabled is the enable/disable state as re-read after the write.
 	Enabled bool `json:"enabled"`
+	// DisabledSince is when the source was paused (its DisabledSource row's
+	// immutable created_at), re-read after the write. Present (non-nil) only when
+	// the write left the source PAUSED (Enabled=false); nil/omitted when active.
+	DisabledSince *time.Time `json:"disabledSince,omitempty"`
 }
 
 // SourceIgnoreScanlatorDTO is the response of PATCH

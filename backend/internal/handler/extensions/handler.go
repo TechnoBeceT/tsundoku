@@ -41,6 +41,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -67,6 +68,10 @@ import (
 // (it deletes nothing and re-ranks nothing).
 type SourceToggleStore interface {
 	Disabled(ctx context.Context) (map[int64]bool, error)
+	// DisabledSince maps each paused source id to when it was paused (its row's
+	// immutable created_at) — the "paused since" timestamp the Configure dialog
+	// renders. Same membership as Disabled; absence means active.
+	DisabledSince(ctx context.Context) (map[int64]time.Time, error)
 	SetEnabled(ctx context.Context, sourceID int64, enabled bool) error
 }
 

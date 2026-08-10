@@ -42,6 +42,7 @@ package disabledsource
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entdisabledsource "github.com/technobecet/tsundoku/internal/ent/disabledsource"
@@ -77,6 +78,29 @@ func (s *Service) Disabled(ctx context.Context) (map[int64]bool, error) {
 	out := make(map[int64]bool, len(rows))
 	for _, r := range rows {
 		out[r.SourceID] = true
+	}
+	return out, nil
+}
+
+// DisabledSince returns each currently-paused engine-host source id mapped to
+// the immutable instant its DisabledSource row was created — the "paused since"
+// timestamp the UI renders next to the pause control. Absence from the map means
+// the source is active (identical membership to Disabled, which returns only the
+// bool set).
+//
+// Like Disabled it is read ONCE PER PASS, never per source — the only callers are
+// the Configure-dialog GET and the enable-toggle write in
+// internal/handler/extensions, both of which resolve the whole set in one query.
+func (s *Service) DisabledSince(ctx context.Context) (map[int64]time.Time, error) {
+	rows, err := s.client.DisabledSource.Query().
+		Select(entdisabledsource.FieldSourceID, entdisabledsource.FieldCreatedAt).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("disabledsource: query disabled-since: %w", err)
+	}
+	out := make(map[int64]time.Time, len(rows))
+	for _, r := range rows {
+		out[r.SourceID] = r.CreatedAt
 	}
 	return out, nil
 }

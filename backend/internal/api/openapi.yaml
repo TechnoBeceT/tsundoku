@@ -3274,6 +3274,14 @@ components:
           description: |
             The per-language enable/disable state (Tsundoku-side). false when
             the owner has disabled this source; the FE hides its preferences.
+        disabledSince:
+          type: string
+          format: date-time
+          description: |
+            When this source was PAUSED — its DisabledSource row's immutable
+            created_at (RFC3339). Present only while the source is paused
+            (enabled=false); absent when active. Drives the "Paused since <date>"
+            label next to the pause control (QCAT-513).
         ignoreScanlator:
           type: boolean
           description: |
@@ -3303,6 +3311,13 @@ components:
         enabled:
           type: boolean
           description: The enable/disable state as re-read after the write.
+        disabledSince:
+          type: string
+          format: date-time
+          description: |
+            When the source was paused (its DisabledSource row's immutable
+            created_at, RFC3339), re-read after the write. Present only when the
+            write left the source paused (enabled=false); absent when active.
 
     SourceEnabledUpdate:
       type: object
