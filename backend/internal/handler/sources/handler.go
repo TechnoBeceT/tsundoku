@@ -17,6 +17,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
 	"github.com/technobecet/tsundoku/internal/metrics"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/warmup"
@@ -40,34 +41,48 @@ type SlowThreshold interface {
 	WarmupSlowThresholdMs(ctx context.Context) int
 }
 
-// SourceLister resolves the engine's loaded source registry — used only to map a
+// SourceLister resolves the engine's loaded source registry — used to map a
 // numeric source id to the display NAME that keys the circuit-breaker (the reset
-// action). The full sourceengine.Client satisfies it.
+// action) and that matches disk-origin provider rows (the dependent-series view).
+// The full sourceengine.Client satisfies it.
 type SourceLister interface {
 	Sources(ctx context.Context) ([]sourceengine.Source, error)
 }
 
+// SeriesBySource resolves the series that carry a given source, each with its
+// alternative-provider count and take-over source — the read model behind the
+// per-source pause impact view (QCAT-513). *series.Service satisfies it; the
+// interface keeps the handler dependency narrow (bind → resolve name → service →
+// DTO).
+type SeriesBySource interface {
+	SeriesForSource(ctx context.Context, sourceID int64, sourceName string) ([]series.SourceSeriesDTO, error)
+}
+
 // Handler serves the source-level endpoints: GET /api/sources/metrics,
-// POST /api/sources/warmup, and POST /api/sources/:sourceId/reset-breaker.
+// POST /api/sources/warmup, POST /api/sources/:sourceId/reset-breaker, and
+// GET /api/sources/:sourceId/series.
 type Handler struct {
 	metrics *metrics.Service
 	warmup  *warmup.Service
 	slow    SlowThreshold
 	gate    *sourcegate.Service
 	engine  SourceLister
+	series  SeriesBySource
 }
 
 // NewHandler constructs a Handler over the metrics reader, the warm-up service,
 // the slow-threshold provider, the source-politeness gate (for reading + resetting
-// per-source breaker state), and the source lister (id→name resolution).
+// per-source breaker state), the source lister (id→name resolution), and the
+// dependent-series read model.
 func NewHandler(
 	metricsSvc *metrics.Service,
 	warmupSvc *warmup.Service,
 	slow SlowThreshold,
 	gate *sourcegate.Service,
 	engine SourceLister,
+	seriesBySource SeriesBySource,
 ) *Handler {
-	return &Handler{metrics: metricsSvc, warmup: warmupSvc, slow: slow, gate: gate, engine: engine}
+	return &Handler{metrics: metricsSvc, warmup: warmupSvc, slow: slow, gate: gate, engine: engine, series: seriesBySource}
 }
 
 // Metrics handles GET /api/sources/metrics. It returns every source's rolling
@@ -148,6 +163,41 @@ func (h *Handler) resolveSource(ctx context.Context, sourceID int64) (sourceengi
 		}
 	}
 	return sourceengine.Source{}, errSourceNotFound
+}
+
+// SeriesForSource handles GET /api/sources/:sourceId/series — the read-only
+// "what depends on this source" view (QCAT-513). It resolves the numeric source
+// id to its display NAME against the live engine registry (needed to match
+// disk-origin provider rows, whose provider IS that name) and returns every
+// series carrying the source, each flagged whether it goes dark on pause and
+// which provider would take over.
+//
+// A non-numeric id is 400. An id ABSENT from the loaded source set answers 200
+// with an EMPTY list rather than a 404 (the plan's rule): the display name cannot
+// be resolved for an uninstalled/unknown source, so no disk-origin rows can be
+// matched and "nothing depends on it" is the honest answer. A genuine engine
+// failure is a 502; a DB error falls through to the central middleware as a 500.
+func (h *Handler) SeriesForSource(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	sourceID, err := strconv.ParseInt(strings.TrimSpace(c.Param("sourceId")), 10, 64)
+	if err != nil {
+		return httperr.BadRequest("invalid source id")
+	}
+
+	src, err := h.resolveSource(ctx, sourceID)
+	if errors.Is(err, errSourceNotFound) {
+		return c.JSON(http.StatusOK, []series.SourceSeriesDTO{})
+	}
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+
+	rows, err := h.series.SeriesForSource(ctx, src.ID, src.Name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, rows)
 }
 
 // Warmup handles POST /api/sources/warmup. The full WarmAll pass warms sources

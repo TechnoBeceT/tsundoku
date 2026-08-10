@@ -2446,6 +2446,47 @@ components:
         breaker:
           $ref: "#/components/schemas/SourceBreaker"
 
+    SourceSeries:
+      type: object
+      description: |
+        One series that carries a given source, with what happens to it if the
+        source is paused (QCAT-513). Backs the read-only "what depends on this
+        source" impact view: how many series lose their only provider ("go dark")
+        vs. keep an alternative that takes over. Already-downloaded chapters stay
+        on disk regardless of a pause.
+      required:
+        - seriesId
+        - title
+        - alternativeCount
+        - goesDark
+        - topAlternative
+      properties:
+        seriesId:
+          type: string
+          format: uuid
+          description: The series' id.
+        title:
+          type: string
+          description: |
+            The series' display title (its pinned metadata-source title when set,
+            else the canonical title) — the same label the library list shows.
+        alternativeCount:
+          type: integer
+          description: |
+            How many of the series' providers are NOT this source — the sources
+            that would still feed it after this one is paused.
+        goesDark:
+          type: boolean
+          description: |
+            True exactly when alternativeCount == 0: pausing this source leaves the
+            series with no provider that can fetch new chapters.
+        topAlternative:
+          type: string
+          description: |
+            Display label of the highest-importance provider that is NOT this
+            source (the source that would take over). Empty when the series goes
+            dark.
+
     SourceWarmStarted:
       type: object
       required: [started]
@@ -8154,6 +8195,61 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No source with that id is loaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not be reached to resolve the source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/series:
+    get:
+      operationId: listSourceSeries
+      summary: List the series that carry a source
+      description: |
+        Returns the series that depend on a given source, each flagged whether it
+        "goes dark" on pause (no other provider) or which provider would take over,
+        plus how many alternatives it has (QCAT-513). Read-only — the impact view
+        the owner consults before temporarily pausing a source; it never mutates
+        anything and never deletes a file.
+
+        A sourceId that is not currently loaded (unknown/uninstalled) answers 200
+        with an EMPTY list: the display name needed to match disk-origin provider
+        rows cannot be resolved, so "nothing depends on it" is the honest answer.
+      tags:
+        - sources
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The engine-host source id whose dependent series to list.
+      responses:
+        "200":
+          description: |
+            The series carrying the source (empty when none, or when the source id
+            is unknown/uninstalled).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceSeries"
+        "400":
+          description: The sourceId is not a valid numeric id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
           content:
             application/json:
               schema:

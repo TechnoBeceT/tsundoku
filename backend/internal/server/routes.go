@@ -113,6 +113,7 @@ import (
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
+//   - /api/sources/:sourceId/series (GET)          — read-only list of series carrying a source, each flagged goes-dark / take-over provider (QCAT-513) (RequireOwner).
 //   - /api/sources/warmup (POST)                   — trigger a full anti-bot warm-up pass (RequireOwner).
 //   - /api/reporting/overview (GET)                — Source Health Console period KPI overview (RequireOwner).
 //   - /api/reporting/sources (GET)                 — per-source event-log rollup, sorted (RequireOwner).
@@ -358,10 +359,11 @@ func registerRoutes(
 	// per-source performance snapshot (metricsSvc) and triggers a manual warm
 	// pass (warmupSvc); the slow threshold is resolved from the settings overlay
 	// at read time (settingsSvc).
-	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc, gate, engineClient)
+	sourcesH := sourcesh.NewHandler(metricsSvc, warmupSvc, settingsSvc, gate, engineClient, seriesSvc)
 	authed.GET("/sources/metrics", sourcesH.Metrics)
 	authed.POST("/sources/warmup", sourcesH.Warmup)
 	authed.POST("/sources/:sourceId/reset-breaker", sourcesH.ResetBreaker)
+	authed.GET("/sources/:sourceId/series", sourcesH.SeriesForSource)
 
 	// Source Health Console reporting API — read-only, SQL-aggregated views over
 	// the SourceEvent audit log: the period KPI overview, the per-source rollup,

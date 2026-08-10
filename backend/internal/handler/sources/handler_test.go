@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
@@ -23,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
@@ -73,7 +75,8 @@ func newTestEnv(t *testing.T, fc sourceengine.Client) *testEnv {
 	threshold := settings.Static{WarmupSlow: 5000, SourcesFailureThresh: 3, SourcesCooldownIv: 10 * time.Minute}
 	warmupSvc := warmup.NewService(fc, metricsSvc, threshold, nil)
 	gate := sourcegate.NewService(client, threshold)
-	h := handler.NewHandler(metricsSvc, warmupSvc, threshold, gate, fc)
+	seriesSvc := series.NewService(client, t.TempDir(), 14)
+	h := handler.NewHandler(metricsSvc, warmupSvc, threshold, gate, fc, seriesSvc)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -81,6 +84,7 @@ func newTestEnv(t *testing.T, fc sourceengine.Client) *testEnv {
 	authed.GET("/sources/metrics", h.Metrics)
 	authed.POST("/sources/warmup", h.Warmup)
 	authed.POST("/sources/:sourceId/reset-breaker", h.ResetBreaker)
+	authed.GET("/sources/:sourceId/series", h.SeriesForSource)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
@@ -289,6 +293,130 @@ func TestResetBreaker_Unauthorized(t *testing.T) {
 	env.e.ServeHTTP(rec, r)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("ResetBreaker without token: want 401, got %d", rec.Code)
+	}
+}
+
+// TestSeriesForSource_ShapeAndSplit proves GET /api/sources/:sourceId/series
+// resolves the source id → name via the engine, returns every series carrying it,
+// and reports the goes-dark / alternative split with the take-over provider. It
+// also asserts a disk-origin (name-keyed) row is matched through the HTTP layer.
+func TestSeriesForSource_ShapeAndSplit(t *testing.T) {
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 7, Name: "Comix", Lang: "en"}}}
+	env := newTestEnv(t, fc)
+	// Live-row series with no fallback → goes dark.
+	seedSeriesWithProviders(t, env.client, "Only Comix",
+		seedProv{provider: "7", providerName: "Comix", importance: 10})
+	// Live-row series with a higher-importance alternative.
+	seedSeriesWithProviders(t, env.client, "Comix Plus Flame",
+		seedProv{provider: "7", providerName: "Comix", importance: 10},
+		seedProv{provider: "9", providerName: "Flame", importance: 30})
+	// Disk-origin row (provider stores the display NAME) must also match.
+	seedSeriesWithProviders(t, env.client, "Disk Comix",
+		seedProv{provider: "Comix", providerName: "", importance: 10},
+		seedProv{provider: "9", providerName: "Flame", importance: 20})
+
+	rec := env.do(http.MethodGet, "/api/sources/7/series")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SeriesForSource: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got []series.SourceSeriesDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d series, want 3: %+v", len(got), got)
+	}
+	byTitle := map[string]series.SourceSeriesDTO{}
+	for _, r := range got {
+		byTitle[r.Title] = r
+	}
+	assertSourceSeries(t, byTitle, "Only Comix", true, 0, "")
+	assertSourceSeries(t, byTitle, "Comix Plus Flame", false, 1, "Flame")
+	// Disk Comix carries the source as a disk-origin (name-keyed) row — matched.
+	assertSourceSeries(t, byTitle, "Disk Comix", false, 1, "Flame")
+}
+
+// assertSourceSeries asserts the row keyed by title has the expected goes-dark /
+// alternative-count / take-over shape, keeping each test a flat list of
+// expectations rather than a stack of compound conditionals.
+func assertSourceSeries(t *testing.T, byTitle map[string]series.SourceSeriesDTO, title string, goesDark bool, count int, top string) {
+	t.Helper()
+	r, ok := byTitle[title]
+	if !ok {
+		t.Fatalf("%q missing from result: %+v", title, byTitle)
+	}
+	if r.GoesDark != goesDark || r.AlternativeCount != count || r.TopAlternative != top {
+		t.Errorf("%q = {goesDark:%v count:%d top:%q}, want {goesDark:%v count:%d top:%q}",
+			title, r.GoesDark, r.AlternativeCount, r.TopAlternative, goesDark, count, top)
+	}
+}
+
+// TestSeriesForSource_UnknownSourceEmpty200 proves an id absent from the loaded
+// source set answers 200 with an EMPTY list (the plan's rule) — its display name
+// cannot be resolved, so nothing depends on it — never a 404 or 500.
+func TestSeriesForSource_UnknownSourceEmpty200(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "A"}}})
+	rec := env.do(http.MethodGet, "/api/sources/999/series")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unknown source: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got []series.SourceSeriesDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("unknown source should yield an empty list, got %+v", got)
+	}
+}
+
+// TestSeriesForSource_BadId400 proves a non-numeric source id is a 400.
+func TestSeriesForSource_BadId400(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	rec := env.do(http.MethodGet, "/api/sources/not-a-number/series")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad id: want 400, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSeriesForSource_Unauthorized proves the route is behind RequireOwner.
+func TestSeriesForSource_Unauthorized(t *testing.T) {
+	env := newTestEnv(t, &fakeClient{})
+	r := httptest.NewRequest(http.MethodGet, "/api/sources/7/series", nil)
+	rec := httptest.NewRecorder()
+	env.e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("SeriesForSource without token: want 401, got %d", rec.Code)
+	}
+}
+
+// seedProv describes one SeriesProvider to seed for the dependent-series tests.
+type seedProv struct {
+	provider     string
+	providerName string
+	importance   int
+}
+
+// seedSeriesWithProviders creates one series (in the auto-created "Manga"
+// category) carrying the given providers.
+func seedSeriesWithProviders(t *testing.T, client *ent.Client, title string, provs ...seedProv) {
+	t.Helper()
+	ctx := context.Background()
+	catID, err := category.IDByName(ctx, client, "Manga")
+	if err != nil {
+		t.Fatalf("resolve category: %v", err)
+	}
+	s := client.Series.Create().
+		SetTitle(title).
+		SetSlug("slug-" + title).
+		SetCategoryID(catID).
+		SaveX(ctx)
+	for _, p := range provs {
+		client.SeriesProvider.Create().
+			SetSeriesID(s.ID).
+			SetProvider(p.provider).
+			SetProviderName(p.providerName).
+			SetImportance(p.importance).
+			SaveX(ctx)
 	}
 }
 
