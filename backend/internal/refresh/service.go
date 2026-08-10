@@ -58,6 +58,27 @@ type Service struct {
 	// source-manga group (the actual upstream fetch unit), batched and flushed
 	// once after the sweep. Nil ⇒ no audit events (existing call sites unaffected).
 	events sourceevents.Recorder
+	// disabled is the nil-guarded owner-paused-source store (QCAT-513). When
+	// attached (WithDisabledSources), every sweep reads the paused set ONCE and
+	// skips those sources' providers entirely — no upstream fetch, no sync-state
+	// write, no error counted. Nil ⇒ nothing is paused (the pre-QCAT-513
+	// behaviour), so existing call sites and tests are unaffected.
+	disabled DisabledSources
+}
+
+// DisabledSources is the narrow read surface the sweep needs to honour the
+// owner's per-source TEMPORARY PAUSE (QCAT-513): the set of engine source ids
+// that are currently paused (a row's presence = paused). *disabledsource.Service
+// satisfies it.
+//
+// Skipping is the whole point — a paused source is one the owner has established
+// cannot be fetched right now (a CAPTCHA wall, an indefinite outage), so
+// re-polling it every sweep is pure churn against a source that will not answer.
+// The skip DELETES NOTHING: the provider row, its feed and its CBZs are all left
+// exactly as they are, and un-pausing resumes discovery on the very next sweep.
+type DisabledSources interface {
+	// Disabled returns the currently-paused engine source ids.
+	Disabled(ctx context.Context) (map[int64]bool, error)
 }
 
 // WithEventRecorder attaches the source-operation audit-log recorder so each
@@ -67,6 +88,41 @@ type Service struct {
 func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
 	s.events = r
 	return s
+}
+
+// WithDisabledSources attaches the owner's per-source pause store (QCAT-513) so
+// the sweep skips a paused source's providers instead of re-fetching them. It
+// returns the receiver for chaining off NewService, mirroring WithEventRecorder.
+//
+// Passing nil (or never calling this) leaves the sweep exactly as it was before
+// the pause existed. It is a chaining setter rather than a NewService parameter
+// for the same reason WithEventRecorder is: an optional collaborator whose
+// absence means "today's behaviour" does not belong in the required signature,
+// and every existing construction stays valid.
+func (s *Service) WithDisabledSources(d DisabledSources) *Service {
+	s.disabled = d
+	return s
+}
+
+// disabledSourceSet reads the owner's paused-source set ONCE for a sweep. A nil
+// store (nothing wired) yields a nil map, which buildRefreshGroups reads as
+// "nothing is paused".
+//
+// A read failure is LOGGED and treated as "nothing is paused" rather than
+// aborting the sweep: discovery for every OTHER source is worth more than a
+// perfectly-honoured pause for one, and the paused source's own fetch failures
+// are already bounded by the politeness gate. The log line is what keeps this
+// from being a silent degradation.
+func (s *Service) disabledSourceSet(ctx context.Context) map[int64]bool {
+	if s.disabled == nil {
+		return nil
+	}
+	set, err := s.disabled.Disabled(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "refresh: could not read paused sources — sweeping every source this cycle", "err", err)
+		return nil
+	}
+	return set
 }
 
 // NewService constructs a Service. ingestSvc is refresh's OWN ingest instance —
@@ -231,37 +287,29 @@ type refreshGroup struct {
 }
 
 // buildRefreshGroups flattens every monitored series' providers into groups keyed
-// by (numeric source id, manga url), skipping a provider whose Provider column
-// does not parse as a numeric source id (a disk-origin row — never had a live
-// source attached, so there is nothing to fetch) or whose URL is unknown. A
-// whole group whose physical source is currently cooled down by the
-// source-politeness gate is dropped (a tripped source is excluded from the
-// sweep entirely this cycle, mirroring the download dispatcher's candidacy
-// exclusion). Extracted from RefreshAll to keep its cyclomatic complexity low.
+// by (numeric source id, manga url). Which providers are worth fetching at all —
+// disk-origin rows, rows with no URL, and rows whose source the owner has PAUSED
+// (QCAT-513) — is decided by fetchableSourceID. A whole group whose physical
+// source is currently cooled down by the source-politeness gate is then dropped
+// (a tripped source is excluded from the sweep entirely this cycle, mirroring the
+// download dispatcher's candidacy exclusion). Extracted from RefreshAll to keep
+// its cyclomatic complexity low.
+//
+// The paused set is read ONCE here for the whole sweep, never per provider: a
+// library-wide sweep walks every provider of every monitored series, so a
+// per-provider read would be a straight N+1 on the hottest loop in the package.
 func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Series, now time.Time) []refreshGroup {
 	type key struct {
 		source int64
 		url    string
 	}
+	disabled := s.disabledSourceSet(ctx)
 	byKey := make(map[key]*refreshGroup)
 	var order []key
 	for _, sr := range seriesList {
 		for _, p := range sr.Edges.Providers {
-			// The linked/disk-origin decision is ONE rule shared with series +
-			// library (series.LinkedProviderSourceID). Refresh used to carry its own
-			// copy, which had already diverged (it did not trim surrounding
-			// whitespace), so a provider stored as " 8 " counted as disk-origin here
-			// and as a live source everywhere else. That is precisely the predicate
-			// deciding which providers the sweep skips, so the copies must not fork.
-			sourceID, ok := series.LinkedProviderSourceID(p.Provider)
+			sourceID, ok := s.fetchableSourceID(ctx, sr, p, disabled)
 			if !ok {
-				slog.WarnContext(ctx, "refresh: skipping provider with non-numeric provider id (disk-origin)",
-					"series", sr.Title, "provider", p.Provider)
-				continue
-			}
-			if p.URL == "" {
-				slog.WarnContext(ctx, "refresh: skipping provider with unknown url",
-					"series", sr.Title, "provider", p.Provider)
 				continue
 			}
 			k := key{source: sourceID, url: p.URL}
@@ -288,6 +336,50 @@ func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Seri
 		groups = append(groups, *grp)
 	}
 	return groups
+}
+
+// fetchableSourceID answers the per-provider question buildRefreshGroups asks of
+// every provider of every monitored series: is there a live source behind this
+// row that the sweep should re-fetch, and if so which one? It returns the numeric
+// engine source id and ok=true only when all three conditions hold, logging the
+// reason otherwise:
+//
+//   - The provider resolves to a numeric source id. The linked/disk-origin
+//     decision is ONE rule shared with series + library
+//     (series.LinkedProviderSourceID). Refresh used to carry its own copy, which
+//     had already diverged (it did not trim surrounding whitespace), so a provider
+//     stored as " 8 " counted as disk-origin here and as a live source everywhere
+//     else. That is precisely the predicate deciding which providers the sweep
+//     skips, so the copies must not fork.
+//   - The manga URL is known — without it there is nothing to fetch.
+//   - The owner has not PAUSED the source (QCAT-513). A paused source is not
+//     re-polled at all. Nothing is deleted or downgraded: the provider row, its
+//     ProviderChapter feed and every CBZ it produced stay exactly as they are, and
+//     the source resumes on the next sweep after the owner un-pauses it. A series
+//     whose providers are ALL paused therefore contributes no group at all, which
+//     is a no-op sweep for it rather than an error.
+//
+// It is a separate function because folding three independent skip rules into the
+// grouping loop pushed that loop past the repo's cognitive-complexity gate — the
+// gate asking for exactly this split.
+func (s *Service) fetchableSourceID(ctx context.Context, sr *ent.Series, p *ent.SeriesProvider, disabled map[int64]bool) (int64, bool) {
+	sourceID, ok := series.LinkedProviderSourceID(p.Provider)
+	if !ok {
+		slog.WarnContext(ctx, "refresh: skipping provider with non-numeric provider id (disk-origin)",
+			"series", sr.Title, "provider", p.Provider)
+		return 0, false
+	}
+	if p.URL == "" {
+		slog.WarnContext(ctx, "refresh: skipping provider with unknown url",
+			"series", sr.Title, "provider", p.Provider)
+		return 0, false
+	}
+	if disabled[sourceID] {
+		slog.InfoContext(ctx, "refresh: skipping provider — source paused by owner",
+			"series", sr.Title, "source", sourceID)
+		return 0, false
+	}
+	return sourceID, true
 }
 
 // refreshGroup fetches one source-manga's chapter list ONCE (politeness delay +
