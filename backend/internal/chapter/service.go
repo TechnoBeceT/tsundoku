@@ -16,6 +16,7 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 )
 
 // WantedChapters returns up to limit Chapter rows the download dispatcher should
@@ -185,6 +186,37 @@ func dropIgnoredFractionalSources(pcs []*ent.ProviderChapter, ch *ent.Chapter) [
 	return out
 }
 
+// sourceDisabled reports whether sp belongs to an engine source the owner has
+// TEMPORARILY PAUSED (QCAT-513) — the DisabledSource store's set of source ids,
+// passed in by the caller as `disabled`.
+//
+// A paused source is dropped from candidacy exactly like an exhausted or
+// cooled-down one: it stops being offered as a source to download or upgrade
+// FROM, so the next-best provider wins the chapter instead. It is not a
+// deletion and not a re-rank — sp.Importance is never written (Rule 3 / GAP-125),
+// no row and no CBZ is touched (Rule 2), and un-pausing the source restores it
+// on the very next cycle from the same rows.
+//
+// A nil/empty set means nothing is paused, which is the pre-QCAT-513 behaviour
+// and the safe default for every caller that does not wire the store.
+//
+// 🔴 KNOWN LIMIT — this catches a source's LIVE rows only. providerid.SourceID
+// resolves the numeric source id a live-ingested provider stores in `provider`;
+// a DISK-ORIGIN provider stores a display NAME there and carries no source id at
+// all, so it can never match an id-keyed pause set. Disk-origin rows are already
+// excluded from the refresh sweep for the same reason, and the library merge
+// machinery (library.HealDriftedProviders) exists to fold them into their live
+// twin — after which the pause covers them. Matching them here would need a
+// name↔id join, i.e. a SECOND copy of the drift match the library owns; see the
+// QCAT-513 notes rather than adding one.
+func sourceDisabled(sp *ent.SeriesProvider, disabled map[int64]bool) bool {
+	if len(disabled) == 0 {
+		return false
+	}
+	id, ok := providerid.SourceID(sp.Provider)
+	return ok && disabled[id]
+}
+
 // isExhausted reports whether a source has spent its whole per-source retry
 // budget on this chapter (attempts >= maxRetries) and must not be tried again
 // until an owner retry resets it.
@@ -226,7 +258,13 @@ func isLiveCandidate(pc *ent.ProviderChapter, maxRetries int, now time.Time) boo
 // distinguish (via HasAnyProviderChapter / AllProvidersExhausted) between "no
 // source offers this chapter yet", "every source is exhausted", and "sources exist
 // but are all on cooldown".
-func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uuid.UUID, maxRetries int, now time.Time) ([]Candidate, error) {
+//
+// disabled is the set of engine source ids the owner has TEMPORARILY PAUSED
+// (QCAT-513) — read ONCE per dispatch/detection pass by the caller and passed
+// down, never queried per chapter, so the pause costs no extra query per chapter.
+// A paused source is dropped before the live filter (see sourceDisabled). nil
+// means nothing is paused.
+func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uuid.UUID, maxRetries int, now time.Time, disabled map[int64]bool) ([]Candidate, error) {
 	ch, err := client.Chapter.Get(ctx, chapterID)
 	if err != nil {
 		return nil, fmt.Errorf("chapter.RankedLiveCandidates: load chapter %s: %w", chapterID, err)
@@ -237,7 +275,7 @@ func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uui
 		return nil, err
 	}
 
-	return liveCandidatesSorted(pcs, maxRetries, now), nil
+	return liveCandidatesSorted(pcs, maxRetries, now, disabled), nil
 }
 
 // liveCandidatesSorted is the shared ranking core behind RankedLiveCandidates
@@ -250,13 +288,25 @@ func RankedLiveCandidates(ctx context.Context, client *ent.Client, chapterID uui
 // is a TOTAL order (importance, then a unique id), so the result is independent
 // of the input row order — the two paths agree byte-for-byte regardless of how
 // Postgres returned the rows.
-func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.Time) []Candidate {
+//
+// The owner-paused-source drop (QCAT-513) is applied HERE rather than by each
+// caller — unlike the ignore-fractional drop, which is per-chapter and so has to
+// sit outside. Folding it into the shared core is what makes it impossible for
+// the single-chapter and batched paths to disagree about a paused source: there
+// is one call site, not two to keep in step.
+func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.Time, disabled map[int64]bool) []Candidate {
 	var out []Candidate
 	for _, pc := range pcs {
 		sp := pc.Edges.SeriesProvider
 		if sp == nil {
 			// Defensive path: WithSeriesProvider always loads the edge for a valid
 			// FK, so a nil here means a broken FK — not reachable under normal operation.
+			continue
+		}
+		// A paused source is dropped BEFORE the live filter: the pause is a
+		// candidacy rule, not a retry-state one, so it must hold whatever this
+		// source's attempts/cooldown happen to be.
+		if sourceDisabled(sp, disabled) {
 			continue
 		}
 		if isLiveCandidate(pc, maxRetries, now) {
@@ -277,10 +327,10 @@ func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.T
 // it computes every chapter's ranked live candidates for a WHOLE set of chapters
 // (a library-wide upgrade scan) in a bounded number of queries instead of one
 // query per chapter. The result for each chapter is BYTE-IDENTICAL to calling
-// RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now) — same feed set, same
-// ignore-fractional drop, same live filter, same order — because it reuses the
-// exact same helpers (providerChapter matching, dropIgnoredFractionalSources,
-// liveCandidatesSorted).
+// RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now, disabled) — same feed
+// set, same ignore-fractional drop, same paused-source drop, same live filter,
+// same order — because it reuses the exact same helpers (providerChapter
+// matching, dropIgnoredFractionalSources, liveCandidatesSorted).
 //
 // It issues a constant number of queries regardless of len(chapters): ONE query
 // (plus its WithSeriesProvider eager-load) loads every ProviderChapter feed for
@@ -294,7 +344,13 @@ func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.T
 // The returned map is keyed by Chapter.ID. Chapter.ID is unique and the
 // UNIQUE(series_id, chapter_key) constraint means each (series, key) pair maps to
 // at most one chapter, so buckets never collide across chapters in the input.
-func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapters []*ent.Chapter, maxRetries int, now time.Time) (map[uuid.UUID][]Candidate, error) {
+//
+// disabled is the owner's paused-source set (QCAT-513), loaded ONCE by the caller
+// for the whole scan — the same shape as the once-per-scan breaker snapshot, so
+// the pause adds a single query to a library-wide pass rather than one per
+// chapter. It is applied inside liveCandidatesSorted, which is why this path and
+// the single-chapter one cannot disagree about a paused source.
+func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (map[uuid.UUID][]Candidate, error) {
 	result := make(map[uuid.UUID][]Candidate, len(chapters))
 	if len(chapters) == 0 {
 		return result, nil
@@ -345,7 +401,7 @@ func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapte
 		// fractional number) and purely in-memory over the loaded edge — exactly what
 		// providerChaptersForKey applies in the single-chapter path.
 		dropped := dropIgnoredFractionalSources(bucket, ch)
-		result[ch.ID] = liveCandidatesSorted(dropped, maxRetries, now)
+		result[ch.ID] = liveCandidatesSorted(dropped, maxRetries, now, disabled)
 	}
 	return result, nil
 }

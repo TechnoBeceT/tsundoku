@@ -49,7 +49,7 @@ func TestRankedLiveCandidates_ranks_by_importance_desc(t *testing.T) {
 	addSource(ctx, t, client, s, "low", "c1", 5, 0, nil)
 	addSource(ctx, t, client, s, "high", "c1", 10, 0, nil)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestRankedLiveCandidates_excludes_exhausted(t *testing.T) {
 	addSource(ctx, t, client, s, "spent", "c1", 10, 3, nil) // attempts == maxRetries
 	addSource(ctx, t, client, s, "fresh", "c1", 5, 0, nil)  // budget left
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestRankedLiveCandidates_excludes_cooldown(t *testing.T) {
 	addSource(ctx, t, client, s, "cooling", "c1", 10, 1, &future) // on cooldown
 	addSource(ctx, t, client, s, "ready", "c1", 5, 1, &past)      // cooldown elapsed
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, now)
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, now, nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRankedLiveCandidates_empty_when_no_source(t *testing.T) {
 	ctx := context.Background()
 	client, _, ch := seedChapter(ctx, t, "no-source", "c1")
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRankedLiveCandidates_migration_default(t *testing.T) {
 		t.Fatalf("next_attempt_at default: want nil, got %v", pc.NextAttemptAt)
 	}
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}

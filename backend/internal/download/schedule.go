@@ -37,10 +37,15 @@ type resolvedChapter struct {
 // is exhausted). Per-chapter resolution errors are logged and skipped so one bad
 // chapter cannot abort the whole cycle (matching the pre-scheduler behaviour where
 // RunOnce discarded each goroutine's error).
-func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time) map[string][]resolvedChapter {
+//
+// disabled is the owner's paused-source set (QCAT-513), read ONCE by RunOnceAt
+// for the whole pass and passed in here rather than re-read per chapter — this
+// loop runs over every wanted chapter in the pass, so a per-chapter read would be
+// a straight N+1.
+func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]resolvedChapter {
 	groups := make(map[string][]resolvedChapter)
 	for _, ch := range chapters {
-		cands, err := chapter.RankedLiveCandidates(ctx, d.client, ch.ID, maxRetries, now)
+		cands, err := chapter.RankedLiveCandidates(ctx, d.client, ch.ID, maxRetries, now, disabled)
 		if err != nil {
 			slog.WarnContext(ctx, "download.RunOnce: could not rank candidates — skipping chapter this cycle",
 				"chapter_id", ch.ID,

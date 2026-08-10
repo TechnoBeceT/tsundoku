@@ -69,7 +69,7 @@ func assertSoleLiveCandidate(
 	wantProvider, because string,
 ) {
 	t.Helper()
-	cands, err := chapter.RankedLiveCandidates(ctx, client, chapterID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, chapterID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestRankedLiveCandidates_IgnoredSourceOffersNoFractional(t *testing.T) {
 	client, s, ch := seedNumberedChapter(ctx, t, "ignored-fractional", "6.1", 6.1)
 	addFractionalSource(ctx, t, client, s, "comic-asura", "6.1", 40, true)
 
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestIgnoreFractional_DeletesNoRows(t *testing.T) {
 	before := client.ProviderChapter.Query().CountX(ctx)
 
 	// A full candidacy pass: every reader of the shared join.
-	if _, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now()); err != nil {
+	if _, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil); err != nil {
 		t.Fatalf("RankedLiveCandidates: %v", err)
 	}
 	if _, err := chapter.HasAnyProviderChapter(ctx, client, ch.ID); err != nil {
@@ -234,7 +234,7 @@ func TestIgnoreFractional_DeletesNoRows(t *testing.T) {
 
 	// And un-ticking restores the source immediately, from the very same rows.
 	client.SeriesProvider.UpdateOneID(sp.ID).SetIgnoreFractional(false).ExecX(ctx)
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now())
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, time.Now(), nil)
 	if err != nil {
 		t.Fatalf("RankedLiveCandidates after un-ticking: %v", err)
 	}

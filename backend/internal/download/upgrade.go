@@ -79,7 +79,7 @@ type upgradeResult struct {
 // function is kept for callers that hold no gate (tests, non-dispatcher callers)
 // and is equivalent to the method with a nil gate.
 func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (int, error) {
-	return detectUpgrades(ctx, client, nil, maxRetries)
+	return detectUpgrades(ctx, client, nil, maxRetries, nil)
 }
 
 // DetectUpgradesForSeries is the SERIES-SCOPED twin of DetectUpgrades (GAP-113):
@@ -98,7 +98,11 @@ func DetectUpgrades(ctx context.Context, client *ent.Client, maxRetries int) (in
 // whole-library scan would flag for that same series. A nil gate makes it identical
 // to the gate-free form.
 func (d *Dispatcher) DetectUpgradesForSeries(ctx context.Context, seriesID uuid.UUID, maxRetries int) (int, error) {
-	return detectUpgradesScoped(ctx, d.client, d.gate, maxRetries, &seriesID)
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.DetectUpgradesForSeries: %w", err)
+	}
+	return detectUpgradesScoped(ctx, d.client, d.gate, maxRetries, &seriesID, disabled)
 }
 
 // DetectUpgrades is the GATED form used in production. It excludes a source
@@ -109,7 +113,11 @@ func (d *Dispatcher) DetectUpgradesForSeries(ctx context.Context, seriesID uuid.
 // fetch would be blocked anyway by fetchAndRender's gate — this stops the churn
 // at the source). A nil gate makes it identical to the package function.
 func (d *Dispatcher) DetectUpgrades(ctx context.Context, maxRetries int) (int, error) {
-	return detectUpgrades(ctx, d.client, d.gate, maxRetries)
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.DetectUpgrades: %w", err)
+	}
+	return detectUpgrades(ctx, d.client, d.gate, maxRetries, disabled)
 }
 
 // detectUpgrades is the shared implementation behind both DetectUpgrades forms.
@@ -124,8 +132,8 @@ func (d *Dispatcher) DetectUpgrades(ctx context.Context, maxRetries int) (int, e
 // the SetState of a chapter that actually flags — both writes, both proportional to
 // real work, not reads proportional to library size. The decision per chapter is
 // byte-identical to the old per-chapter path.
-func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int) (int, error) {
-	return detectUpgradesScoped(ctx, client, gate, maxRetries, nil)
+func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int, disabled map[int64]bool) (int, error) {
+	return detectUpgradesScoped(ctx, client, gate, maxRetries, nil, disabled)
 }
 
 // detectUpgradesScoped is the shared implementation behind the whole-library
@@ -134,7 +142,7 @@ func detectUpgrades(ctx context.Context, client *ent.Client, gate *sourcegate.Se
 // candidate build, the once-per-scan breaker snapshot, the per-chapter decision) is
 // identical, so a scoped scan flags exactly the chapters of that series the
 // whole-library scan would. See detectUpgrades for the no-N+1 rationale.
-func detectUpgradesScoped(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int, seriesID *uuid.UUID) (int, error) {
+func detectUpgradesScoped(ctx context.Context, client *ent.Client, gate *sourcegate.Service, maxRetries int, seriesID *uuid.UUID, disabled map[int64]bool) (int, error) {
 	now := time.Now()
 	query := client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateDownloaded))
@@ -159,7 +167,7 @@ func detectUpgradesScoped(ctx context.Context, client *ent.Client, gate *sourceg
 
 	// Batch-compute every downloaded chapter's ranked live candidates in a bounded
 	// number of queries — identical per-chapter result to RankedLiveCandidates.
-	candsByChapter, err := chapter.RankedLiveCandidatesForMany(ctx, client, chapters, maxRetries, now)
+	candsByChapter, err := chapter.RankedLiveCandidatesForMany(ctx, client, chapters, maxRetries, now, disabled)
 	if err != nil {
 		return 0, fmt.Errorf("download.DetectUpgrades: batch rank candidates: %w", err)
 	}
@@ -324,8 +332,8 @@ func detectUpgradeForChapter(ctx context.Context, client *ent.Client, ch *ent.Ch
 // (groupByUpgradeTarget) over the already-flagged upgrade_available set — a small,
 // per-cycle-capped set, so its per-chapter query is not a scaling concern. The
 // library-wide DETECTION scan uses the batched detectUpgrades path instead.
-func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time) (*chapter.Candidate, error) {
-	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now)
+func bestUpgradeCandidate(ctx context.Context, client *ent.Client, gate *sourcegate.Service, ch *ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (*chapter.Candidate, error) {
+	cands, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, maxRetries, now, disabled)
 	if err != nil {
 		return nil, fmt.Errorf("rank live candidates for chapter %s: %w", ch.ID, err)
 	}
@@ -391,7 +399,11 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	// Standalone single-chapter entry point: it owns its limiter, so nothing else
 	// contends for it. UpgradeAll drives upgradeWith with ONE limiter shared across
 	// the whole pass instead (see upgradeWith).
-	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)))
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.Upgrade: %w", err)
+	}
+	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled)
 }
 
 // upgradeWith is Upgrade's body, parameterised by the per-provider fetch limiter so
@@ -399,7 +411,7 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 // number of simultaneous fetches against any single physical source at
 // DownloadConcurrency even if two chapters' upgrade targets resolve to the same
 // source. See Upgrade for the full flow + failure semantics.
-func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter) error {
+func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -420,7 +432,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 	// path: the caller's limiter bounds concurrent fetches per physical source at
 	// DownloadConcurrency. UpgradeAll passes ONE limiter for the whole pass, so its
 	// per-source upgrade parallelism can never exceed that cap upstream.
-	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter)
+	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled)
 	if err != nil {
 		if errors.Is(err, errUpgradeNoLongerNeeded) {
 			return d.finishStaleUpgrade(ctx, chapterID)
@@ -472,9 +484,9 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 // UNCHANGED and no breaker (a better source withholding the chapter behind a
 // paywall is not a fault, and the working copy on disk is untouched meanwhile —
 // GAP-141). A render failure returns no pc (not the source's fault, so no charge).
-func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter) (upgradeResult, error) {
+func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool) (upgradeResult, error) {
 	now := time.Now()
-	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now)
+	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now, disabled)
 	if err != nil {
 		return upgradeResult{}, fmt.Errorf("rank live candidates: %w", err)
 	}

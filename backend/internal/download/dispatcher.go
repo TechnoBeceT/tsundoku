@@ -149,6 +149,26 @@ type Dispatcher struct {
 	// `download` event (success or failure). Nil ⇒ no audit events (existing call
 	// sites and tests are unaffected).
 	events sourceevents.Recorder
+	// disabled is the nil-guarded owner-paused-source store (QCAT-513). When
+	// attached (WithDisabledSources), every pass reads the paused set ONCE and
+	// drops those sources from candidacy, so a paused source is neither downloaded
+	// nor upgraded from. Nil ⇒ nothing is paused (the pre-QCAT-513 behaviour), which
+	// is what keeps existing call sites and tests unaffected.
+	disabled DisabledSources
+}
+
+// DisabledSources is the narrow read surface the dispatcher needs to honour the
+// owner's per-source TEMPORARY PAUSE (QCAT-513): the set of engine source ids
+// that are currently paused (a row's presence = paused). *disabledsource.Service
+// satisfies it.
+//
+// It is deliberately a READ port and nothing more — pausing a source never writes
+// to a SeriesProvider (its importance is untouched, Rule 3) and never deletes a
+// row or a CBZ (Rule 2). A nil DisabledSources means "nothing is paused" and every
+// source is a candidate, exactly as before the pause existed.
+type DisabledSources interface {
+	// Disabled returns the currently-paused engine source ids.
+	Disabled(ctx context.Context) (map[int64]bool, error)
 }
 
 // New creates a Dispatcher configured with the given client, fetcher, SSE hub,
@@ -181,6 +201,39 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config,
 func (d *Dispatcher) WithEventRecorder(r sourceevents.Recorder) *Dispatcher {
 	d.events = r
 	return d
+}
+
+// WithDisabledSources attaches the owner's per-source pause store (QCAT-513) so
+// a paused source is dropped from download AND upgrade candidacy. It returns the
+// receiver for chaining off New, mirroring WithEventRecorder.
+//
+// Passing nil (or never calling this) leaves the dispatcher exactly as it was
+// before the pause existed: nothing is paused and every source is a candidate.
+// That is why the hundred-odd test constructions of New need no change — a test
+// opts into the pause by attaching a store, rather than every test having to
+// declare it does not care.
+func (d *Dispatcher) WithDisabledSources(s DisabledSources) *Dispatcher {
+	d.disabled = s
+	return d
+}
+
+// disabledSourceSet reads the owner's paused-source set ONCE for a pass. A nil
+// store (nothing wired) yields a nil map, which every candidate path reads as
+// "nothing is paused".
+//
+// The error is RETURNED, never swallowed: a pause that silently fails open would
+// resume hammering the exact source the owner paused, and the only symptom would
+// be the churn they paused it to stop. Every caller is on a path that can report
+// or abort, so none of them has to guess.
+func (d *Dispatcher) disabledSourceSet(ctx context.Context) (map[int64]bool, error) {
+	if d.disabled == nil {
+		return nil, nil
+	}
+	set, err := d.disabled.Disabled(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read paused sources: %w", err)
+	}
+	return set, nil
 }
 
 // logDownloadEvent records one per-source download attempt outcome (best-effort,
@@ -554,12 +607,20 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 		return 0, nil
 	}
 
+	// Read the owner's paused-source set ONCE for the whole pass (QCAT-513) — the
+	// same once-per-pass shape as the breaker snapshot, so pausing costs one query
+	// per pass rather than one per chapter.
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.Dispatcher.RunOnceAt: %w", err)
+	}
+
 	// Resolve each chapter's live candidates and partition by primary source
 	// (highest-importance live candidate), round-robin-ordered across series
 	// within each source. No-candidate chapters are handled here and never
 	// occupy a start slot. The limiter is shared across the whole cycle so a
 	// provider's fetch cap holds even for fall-through candidates.
-	groups := d.groupBySource(ctx, chapters, maxRetries, now)
+	groups := d.groupBySource(ctx, chapters, maxRetries, now, disabled)
 	limiter := newProviderLimiter(concurrency)
 	budget := BatchPerSource(concurrency)
 
@@ -607,7 +668,11 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 	maxRetries := d.retry.MaxRetries(ctx)
 	now := time.Now()
 	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
-	return d.processChapter(ctx, chapterID, maxRetries, now, limiter)
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.Process: %w", err)
+	}
+	return d.processChapter(ctx, chapterID, maxRetries, now, limiter, disabled)
 }
 
 // processChapter executes the multi-source download pipeline for one chapter.
@@ -625,7 +690,11 @@ func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 //     state bumped (attempts++, last_error, next_attempt_at). If every candidate
 //     fails this cycle, finalizeAfterAllFailed marks the chapter failed (some
 //     source may still recover) or permanently_failed (all sources now exhausted).
-func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, maxRetries int, now time.Time, limiter *providerLimiter) error {
+//
+// disabled is the owner's paused-source set, resolved once by the caller: a
+// paused source is not ranked at all, so the chapter falls through to its next
+// provider — or, if it has none, simply stays wanted.
+func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, maxRetries int, now time.Time, limiter *providerLimiter, disabled map[int64]bool) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -634,7 +703,7 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 		return fmt.Errorf("download.Dispatcher.processChapter: load chapter %s: %w", chapterID, err)
 	}
 
-	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, maxRetries, now)
+	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, maxRetries, now, disabled)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.processChapter: rank candidates for chapter %s: %w", chapterID, err)
 	}

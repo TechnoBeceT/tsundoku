@@ -110,7 +110,15 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	concurrency := d.downloadConcurrency(ctx)
 	now := time.Now()
 
-	groups := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now)
+	// Owner-paused sources (QCAT-513) are read ONCE for the whole pass and shared by
+	// the target grouping and every per-chapter upgrade below, so a paused source is
+	// never chosen as an upgrade target and never fetched from.
+	disabled, err := d.disabledSourceSet(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: %w", err)
+	}
+
+	groups := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now, disabled)
 	capUpgradeGroups(groups, BatchPerSource(concurrency), downloadsConsumed)
 	limiter := newProviderLimiter(concurrency)
 
@@ -118,7 +126,7 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	// returned nil, read after all goroutines have joined.
 	var upgraded atomic.Int64
 	err = runPerSourceQueues(ctx, groups, concurrency, func(ctx context.Context, chapterID uuid.UUID) error {
-		if err := d.upgradeWith(ctx, chapterID, limiter); err != nil {
+		if err := d.upgradeWith(ctx, chapterID, limiter, disabled); err != nil {
 			return fmt.Errorf("download.Dispatcher.UpgradeAll: upgrade chapter %s: %w", chapterID, err)
 		}
 		upgraded.Add(1)
@@ -142,10 +150,10 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 // owner re-rank or a breaker trip landing mid-pass). The shared providerLimiter and
 // the source gate bound the actual fetch rate in that case, so the drift costs
 // scheduling accuracy, never politeness.
-func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time) map[string][]uuid.UUID {
+func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]uuid.UUID {
 	groups := make(map[string][]uuid.UUID)
 	for _, ch := range chapters {
-		best, err := bestUpgradeCandidate(ctx, d.client, d.gate, ch, maxRetries, now)
+		best, err := bestUpgradeCandidate(ctx, d.client, d.gate, ch, maxRetries, now, disabled)
 		if err != nil {
 			slog.WarnContext(ctx, "download.UpgradeAll: could not rank upgrade candidates — running the chapter unqueued so its flag resolves",
 				"chapter_id", ch.ID,
