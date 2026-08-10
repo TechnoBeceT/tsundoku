@@ -12,7 +12,7 @@
  *
  * A preference's own Switch/CheckBox control is `[role="switch"]`, so tests
  * select by aria-label (a preference's is its title, a group's enable Switch is
- * `Enable <source> (<lang>)`) rather than relying on DOM order.
+ * `Pause <source> (<lang>)`) rather than relying on DOM order.
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -70,7 +70,7 @@ describe('ExtensionPreferencesDialog', () => {
 
   it('forwards toggle-enabled when a group Switch is flipped', async () => {
     const wrapper = mountDialog() // preferenceGroup is enabled
-    await wrapper.find('[aria-label="Enable MangaDex (en)"]').trigger('click')
+    await wrapper.find('[aria-label="Pause MangaDex (en)"]').trigger('click')
     const emitted = wrapper.emitted('toggle-enabled')
     expect(emitted).toBeTruthy()
     // An enabled source flips to disabled.
@@ -81,21 +81,47 @@ describe('ExtensionPreferencesDialog', () => {
     // preferenceGroups = [en enabled (all variants), ja DISABLED (one switch)].
     const wrapper = mountDialog({ groups: preferenceGroups })
     // The disabled JA group shows the collapsed note, not its switch control.
-    expect(wrapper.text()).toContain('Disabled — hidden from Discover')
+    expect(wrapper.text()).toContain('Paused — skipped by refresh and downloads')
     // The enabled EN group's Data saver control still renders.
     expect(dataSaverSwitch(wrapper).exists()).toBe(true)
     // The JA group's enable Switch itself is still present (so it can be re-enabled).
-    expect(wrapper.find('[aria-label="Enable MangaDex (ja)"]').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Pause MangaDex (ja)"]').exists()).toBe(true)
   })
 
   it('disables the group Switch being written (enablingKey)', () => {
     const wrapper = mountDialog({ enablingKey: 'src-en' })
-    expect(wrapper.find('[aria-label="Enable MangaDex (en)"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[aria-label="Pause MangaDex (en)"]').attributes('disabled')).toBeDefined()
   })
 
   it('surfaces an enable/disable failure banner (enableError)', () => {
     const wrapper = mountDialog({ enableError: 'Failed to update source' })
     expect(wrapper.text()).toContain('Failed to update source')
+  })
+
+  it('marks a paused group with a "Paused" tag + "Paused <when>" hint from disabledSince', () => {
+    // preferenceGroups[1] (ja) is paused and carries a disabledSince.
+    const wrapper = mountDialog({ groups: preferenceGroups })
+    expect(wrapper.text()).toContain('Paused')
+    // The relative "Paused <when>" hint renders (disabledSince ~2 days ago → "Nd ago").
+    expect(wrapper.find('.prefs__since').exists()).toBe(true)
+  })
+
+  // ---- "Affected series" impact panel (QCAT-513) ------------------------------
+
+  it('forwards toggle-impact with the sourceId when a group\'s Affected series panel is toggled', async () => {
+    const wrapper = mountDialog()
+    await wrapper.find('[aria-controls]').trigger('click')
+    const emitted = wrapper.emitted('toggle-impact')
+    expect(emitted).toBeTruthy()
+    expect(emitted![0]![0]).toBe('src-en')
+  })
+
+  it('renders the SourceSeriesPanel only for the group whose impact is open', () => {
+    const wrapper = mountDialog({
+      impactSourceId: 'src-en',
+      impactRows: [{ seriesId: 's-1', title: 'Solo Leveling', alternativeCount: 0, goesDark: true, topAlternative: '' }],
+    })
+    expect(wrapper.text()).toContain('Goes dark')
   })
 
   // ---- per-source ignore-scanlator Toggle (QCAT-287 Slice A) -----------------
