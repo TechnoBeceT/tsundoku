@@ -4760,6 +4760,14 @@ export interface components {
              */
             enabled: boolean;
             /**
+             * Format: date-time
+             * @description When this source was PAUSED — its DisabledSource row's immutable
+             *     created_at (RFC3339). Present only while the source is paused
+             *     (enabled=false); absent when active. Drives the "Paused since <date>"
+             *     label next to the pause control (QCAT-513).
+             */
+            disabledSince?: string;
+            /**
              * @description The per-source ignore-scanlator flag (Tsundoku-side). true collapses
              *     this source's per-uploader providers into one [Source] provider on
              *     future adopts (an uploader-in-scanlator source, e.g. Hive Scans). The
@@ -4779,6 +4787,13 @@ export interface components {
             sourceId: string;
             /** @description The enable/disable state as re-read after the write. */
             enabled: boolean;
+            /**
+             * Format: date-time
+             * @description When the source was paused (its DisabledSource row's immutable
+             *     created_at, RFC3339), re-read after the write. Present only when the
+             *     write left the source paused (enabled=false); absent when active.
+             */
+            disabledSince?: string;
         };
         /**
          * @description The PATCH /api/sources/{sourceId}/enabled body — the new per-language
