@@ -4,9 +4,10 @@ package enginehost
  * Portions adapted in spirit from Suwayomi-Server (Mozilla Public License 2.0):
  *   suwayomi.tachidesk.manga.impl.extension.ExtensionsList / github.NetworkExtensionStore
  * The Exposed-DB coupling of the originals is removed entirely — this is a stateless,
- * volume-backed extension manager: it fetches the standard Mihon `index.min.json` from the
- * configured repos, merges it with the installed working-set (APKs on the volume + a JSON
- * manifest), and drives install / update / uninstall via [ExtensionLoader].
+ * volume-backed extension manager: it fetches a repo index in any format [RepoIndexParser]
+ * supports (`index.json` wrapper / legacy flat array / `index.pb`), merges it with the installed
+ * working-set (APKs on the volume + a JSON manifest), and drives install / update / uninstall via
+ * [ExtensionLoader].
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -23,27 +24,6 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
-
-/** One extension entry as advertised by a repo's `index.min.json` (unknown fields ignored). */
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class RepoIndexEntry(
-    val name: String,
-    val pkg: String,
-    val apk: String,
-    val lang: String,
-    val code: Long,
-    val version: String,
-    val nsfw: Int = 0,
-    val sources: List<RepoIndexSource> = emptyList(),
-)
-
-@JsonIgnoreProperties(ignoreUnknown = true)
-private data class RepoIndexSource(
-    val name: String,
-    val lang: String,
-    val id: String,
-    val baseUrl: String? = null,
-)
 
 /** The persisted record of an installed extension (the volume working-set manifest). */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -179,9 +159,9 @@ class ExtensionManager(
                 isInstalled = inst != null,
                 hasUpdate = inst != null && availCode != null && availCode > inst.versionCode,
                 isNsfw = inst?.isNsfw ?: (avail?.nsfw == 1),
-                iconUrl = inst?.iconUrl ?: avail?.let { iconUrlFor(repoUrl!!, it.pkg) },
+                iconUrl = inst?.iconUrl ?: avail?.iconUrl,
                 repoUrl = inst?.repoUrl ?: repoUrl,
-                sources = inst?.sources ?: avail?.sources?.map { ExtensionSourceDto(it.id.toLong(), it.name, it.lang) } ?: emptyList(),
+                sources = inst?.sources ?: avail?.sources?.map { ExtensionSourceDto(it.id, it.name, it.lang) } ?: emptyList(),
             )
         }
     }
@@ -203,7 +183,8 @@ class ExtensionManager(
                 Triple(apkUrl, null, null)
             } else {
                 val (rUrl, entry) = findInRepos(pkgName!!) ?: throw IllegalArgumentException("pkgName '$pkgName' not found in configured repos")
-                Triple(apkUrlFor(rUrl, entry.apk), rUrl, entry)
+                // The repo entry carries a fully-resolved absolute apk URL (see [RepoIndexEntry]).
+                Triple(entry.apkUrl, rUrl, entry)
             }
 
         // Ensure the APK bytes live on the volume so the extension survives a restart. A local
@@ -232,7 +213,7 @@ class ExtensionManager(
                 apkFileName = File(volumeUrl).name,
                 mainClass = ext.mainClass,
                 isNsfw = repoEntry?.nsfw == 1,
-                iconUrl = if (repoUrl != null && repoEntry != null) iconUrlFor(repoUrl, repoEntry.pkg) else null,
+                iconUrl = repoEntry?.iconUrl,
                 repoUrl = repoUrl,
                 sourceIds = ext.sources.map { it.id },
                 sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
@@ -323,29 +304,27 @@ class ExtensionManager(
         repoCache.getOrPut(repoUrl) {
             val indexUrl = indexUrlFor(repoUrl)
             runCatching {
-                URI(indexUrl).toURL().openStream().use { mapper.readValue<List<RepoIndexEntry>>(it.readBytes()) }
+                URI(indexUrl).toURL().openStream().use { RepoIndexParser.parse(it.readBytes(), indexUrl, repoBaseFor(repoUrl), mapper) }
             }.onFailure { logger.warn(it) { "Failed to fetch repo index $indexUrl" } }
                 .getOrDefault(emptyList())
         }
 
+    /** A repo URL that already names an index file (`.json`/`.pb`) is fetched verbatim; a bare base gets the default. */
     private fun indexUrlFor(repoUrl: String): String =
-        if (repoUrl.endsWith(".json")) repoUrl else "${repoUrl.trimEnd('/')}/index.min.json"
+        if (namesIndexFile(repoUrl)) repoUrl else "${repoUrl.trimEnd('/')}/index.min.json"
 
+    /** The repo's base (the parent of the index file) — used only to resolve the LEGACY schema's relative filenames. */
     private fun repoBaseFor(repoUrl: String): String =
-        if (repoUrl.endsWith(".json")) repoUrl.substringBeforeLast('/') else repoUrl.trimEnd('/')
+        if (namesIndexFile(repoUrl)) repoUrl.substringBeforeLast('/') else repoUrl.trimEnd('/')
 
-    private fun apkUrlFor(
-        repoUrl: String,
-        apk: String,
-    ): String = "${repoBaseFor(repoUrl)}/apk/$apk"
-
-    private fun iconUrlFor(
-        repoUrl: String,
-        pkg: String,
-    ): String = "${repoBaseFor(repoUrl)}/icon/$pkg.png"
+    private fun namesIndexFile(repoUrl: String): Boolean = repoUrl.endsWith(".json") || repoUrl.endsWith(".pb")
 
     companion object {
-        /** The standard community repo, pre-configured so a fresh host is usable immediately. */
-        val DEFAULT_REPOS = listOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json")
+        /**
+         * The standard community repo, pre-configured so a fresh host is usable immediately. Points at
+         * the full `index.json` (the new wrapper schema): `index.min.json` was neutered to a 2-entry
+         * deprecation stub, so a bare-base default would see no real extensions (GAP-145).
+         */
+        val DEFAULT_REPOS = listOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json")
     }
 }
