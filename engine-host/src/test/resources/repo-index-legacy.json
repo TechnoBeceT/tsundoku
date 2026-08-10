@@ -1,0 +1,27 @@
+[
+  {
+    "name": "Legacy Source One",
+    "pkg": "eu.kanade.tachiyomi.extension.en.legacyone",
+    "apk": "tachiyomi-en.legacyone-v1.2.3.apk",
+    "lang": "en",
+    "code": 7,
+    "version": "1.2.3",
+    "nsfw": 0,
+    "sources": [
+      { "name": "Legacy Source One", "lang": "en", "id": "1111111111111111111", "baseUrl": "https://legacy.example" }
+    ]
+  },
+  {
+    "name": "Legacy Source Two",
+    "pkg": "eu.kanade.tachiyomi.extension.all.legacytwo",
+    "apk": "tachiyomi-all.legacytwo-v2.0.0.apk",
+    "lang": "all",
+    "code": 12,
+    "version": "2.0.0",
+    "nsfw": 1,
+    "sources": [
+      { "name": "Legacy Two EN", "lang": "en", "id": "2222222222222222222" },
+      { "name": "Legacy Two ES", "lang": "es", "id": "3333333333333333333" }
+    ]
+  }
+]
