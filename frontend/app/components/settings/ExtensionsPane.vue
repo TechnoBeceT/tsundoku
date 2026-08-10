@@ -10,6 +10,7 @@ import ExtensionPreferencesDialog from './ExtensionPreferencesDialog.vue'
 import RepoRow from './RepoRow.vue'
 import SettingRow from './SettingRow.vue'
 import { useSourcePreferences } from '~/composables/useSourcePreferences'
+import { useSourceSeries } from '~/composables/useSourceSeries'
 import type { MoveDirection } from '../ui/controls.types'
 import {
   ADD_ACTION_ID,
@@ -182,6 +183,25 @@ const {
   reset: resetPreferences,
 } = useSourcePreferences()
 
+// The per-source "Affected series" impact panel — single-slot (at most one group's
+// panel is open at a time), loaded LAZILY only when a panel is revealed so opening
+// the Configure dialog never triggers the library-wide scan.
+const {
+  rows: impactRows,
+  pending: impactPending,
+  error: impactError,
+  activeSourceId: impactSourceId,
+  load: loadImpact,
+  reset: resetImpact,
+} = useSourceSeries()
+
+// Toggle a group's affected-series panel: re-opening the same source closes it,
+// otherwise fetch the newly-revealed source (replacing the single slot).
+function onToggleImpact(sourceId: string) {
+  if (impactSourceId.value === sourceId) resetImpact()
+  else void loadImpact(sourceId)
+}
+
 const configureExt = ref<{ id: string, name: string } | null>(null)
 const prefsDialogOpen = computed({
   get: () => configureExt.value !== null,
@@ -195,6 +215,7 @@ function startConfigure(e: Extension) {
 function closePreferences() {
   configureExt.value = null
   resetPreferences()
+  resetImpact()
 }
 </script>
 
@@ -304,9 +325,14 @@ function closePreferences() {
     :ignoring-key="prefsIgnoringKey"
     :ignore-error="prefsIgnoreError"
     :migration-message="prefsMigrationMessage"
+    :impact-source-id="impactSourceId"
+    :impact-rows="impactRows"
+    :impact-pending="impactPending"
+    :impact-error="impactError"
     @change="setPreference($event.sourceId, $event.key, $event.value)"
     @toggle-enabled="setEnabled($event.sourceId, $event.enabled)"
     @toggle-ignore-scanlator="setIgnoreScanlator($event.sourceId, $event.ignoreScanlator)"
+    @toggle-impact="onToggleImpact"
   />
 </template>
 

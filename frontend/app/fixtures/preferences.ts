@@ -78,6 +78,8 @@ export const preferenceGroups: Group[] = [
     sourceName: 'MangaDex',
     lang: 'ja',
     enabled: false,
+    // Paused ~2 days ago — drives the "Paused" tag + "Paused <when>" hint.
+    disabledSince: new Date(Date.now() - 2 * 86_400_000).toISOString(),
     ignoreScanlator: false,
     preferences: [{ ...switchPref, currentValue: false }],
   },

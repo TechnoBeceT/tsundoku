@@ -1,16 +1,23 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import ExtensionPreferencesDialog from './ExtensionPreferencesDialog.vue'
 import { preferenceGroups } from '../../fixtures/preferences'
+import type { SourceSeriesRow } from './sourceSeries.types'
 import '../../assets/css/tokens/settings.css'
 
 /**
  * Stories for the extension "Configure" dialog. The dialog is presentation-only
  * (open + groups + §16 state in, change out), so every state is a pure
- * fixture: loaded (all variants across two language sources, the 2nd DISABLED
- * so its preference block is collapsed), loading, error, empty, a per-row
- * saving spinner, and the per-language enable/disable Switch busy + error.
+ * fixture: loaded (all variants across two language sources, the 2nd PAUSED so
+ * its preference block is collapsed and it shows the "Paused" tag + "Paused
+ * <when>" hint), loading, error, empty, a per-row saving spinner, the pause
+ * Switch busy + error, and the "Affected series" impact panel (open / loading).
  * Flip the theme toolbar for dark/light.
  */
+const impactRows: SourceSeriesRow[] = [
+  { seriesId: 's-1', title: 'Solo Leveling', alternativeCount: 2, goesDark: false, topAlternative: 'Flame Comics' },
+  { seriesId: 's-2', title: 'Only Here', alternativeCount: 0, goesDark: true, topAlternative: '' },
+]
+
 const meta = {
   title: 'Settings/ExtensionPreferencesDialog',
   component: ExtensionPreferencesDialog,
@@ -27,6 +34,10 @@ const meta = {
     enableError: null,
     ignoringKey: null,
     ignoreError: null,
+    impactSourceId: null,
+    impactRows: [],
+    impactPending: false,
+    impactError: null,
   },
 } satisfies Meta<typeof ExtensionPreferencesDialog>
 
@@ -35,26 +46,40 @@ type Story = StoryObj<typeof meta>
 
 /**
  * Loaded — every control variant across two language sources; the second
- * language (JA) is DISABLED, so its preference block is collapsed to the
- * "Disabled — hidden from Discover…" note behind an off Switch (feature #2).
+ * language (JA) is PAUSED, so its preference block is collapsed to the "Paused —
+ * skipped by refresh and downloads…" note behind an off pause Switch, with a
+ * "Paused" tag + "Paused <when>" hint from disabledSince.
  */
 export const Loaded: Story = {}
 
-/** Both languages enabled — neither preference block is collapsed. */
+/** Both languages active — neither preference block is collapsed. */
 export const AllEnabled: Story = {
   args: {
     groups: preferenceGroups.map(g => ({ ...g, enabled: true })),
   },
 }
 
-/** The JA source's enable/disable Switch write is in flight (spinner + disabled). */
+/** The JA source's pause Switch write is in flight (spinner + disabled). */
 export const EnableToggling: Story = {
   args: { enablingKey: 'src-ja' },
 }
 
-/** An enable/disable write failed; the error banners at the top of the dialog. */
+/** A pause write failed; the error banners at the top of the dialog. */
 export const EnableError: Story = {
   args: { enableError: 'Failed to update source' },
+}
+
+/**
+ * The EN source's "Affected series" impact panel is open — a mix of a series that
+ * takes over cleanly and one that goes dark on pause.
+ */
+export const AffectedSeries: Story = {
+  args: { impactSourceId: 'src-en', impactRows },
+}
+
+/** The affected-series list is loading (§16). */
+export const AffectedSeriesLoading: Story = {
+  args: { impactSourceId: 'src-en', impactRows: [], impactPending: true },
 }
 
 /**

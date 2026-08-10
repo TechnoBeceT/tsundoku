@@ -4,8 +4,13 @@ import Spinner from '../ui/Spinner.vue'
 import FormError from '../ui/FormError.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import Toggle from '../ui/Toggle.vue'
+import Tag from '../ui/Tag.vue'
+import DisclosurePanel from '../ui/DisclosurePanel.vue'
 import SourcePreferenceControl from './SourcePreferenceControl.vue'
+import SourceSeriesPanel from './SourceSeriesPanel.vue'
 import { preferenceKey, type MigrationBanner, type SourcePreferenceValue } from '~/composables/useSourcePreferences'
+import { relativeTime, absoluteTime } from '~/utils/timeFormat'
+import type { SourceSeriesRow } from './sourceSeries.types'
 import type { components } from '~/utils/api/schema.d.ts'
 
 type Group = components['schemas']['SourcePreferencesGroup']
@@ -18,16 +23,25 @@ type Group = components['schemas']['SourcePreferencesGroup']
  * and after a write the parent swaps in the refreshed list, so the dialog always
  * reflects the engine host's authoritative state (§16).
  *
- * Each group header carries a per-language enable/disable Switch — disabling
- * hides that language from Discover/Search/Browse (a Tsundoku-side flag) without
- * touching series already adopted from it, and COLLAPSES the group's preference
- * block (a disabled language's settings are irrelevant until it is re-enabled).
+ * Each group header carries a per-source PAUSE Switch — turning it off is a FULL
+ * pause (QCAT-513): the source is skipped by the refresh sweep and the download/
+ * upgrade dispatcher, so nothing fetches from it and another provider wins new
+ * chapters. Downloaded chapters keep their files and stay readable — a pause
+ * deletes nothing. A paused group shows a "Paused" tag + "Paused <when>" (from
+ * `disabledSince`) and COLLAPSES its preference block (a paused source's settings
+ * are irrelevant until it is resumed). Re-enabling resumes it on the next cycle.
  *
  * Each group also carries a per-source "Ignore scanlator" Toggle — flagging it
  * ON collapses that source's per-uploader providers into one [Source] provider
  * on FUTURE adopts (an uploader-in-scanlator source, e.g. Hive Scans). It is
  * apply-forward only (never migrates an already-adopted series) and always
- * visible (independent of the enable/disable state).
+ * visible (independent of the pause state).
+ *
+ * Each group finally carries a collapsible "Affected series" panel — the
+ * read-only view of which adopted series carry the source, each flagged whether
+ * it "goes dark" (pausing leaves it with no provider) or which provider takes
+ * over. It loads LAZILY: the parent fetches only when a group's panel is revealed
+ * (`toggle-impact`), and at most one is open at a time (`impactSourceId`).
  *
  *   - `open` (v-model:open): whether the dialog is shown.
  *   - `extensionName`: the extension's display name (dialog title).
@@ -70,6 +84,14 @@ const props = withDefaults(defineProps<{
   ignoreError?: string | null
   /** The on-enable collapse migration banner (message + tone), or null when none ran. */
   migrationMessage?: MigrationBanner | null
+  /** The sourceId whose "Affected series" panel is open (null = none). */
+  impactSourceId?: string | null
+  /** The open panel's affected series (only meaningful for `impactSourceId`). */
+  impactRows?: SourceSeriesRow[]
+  /** Whether the affected-series load is in flight. */
+  impactPending?: boolean
+  /** An affected-series load failure message (or null). */
+  impactError?: string | null
 }>(), {
   extensionName: '',
   groups: () => [],
@@ -82,6 +104,10 @@ const props = withDefaults(defineProps<{
   ignoringKey: null,
   ignoreError: null,
   migrationMessage: null,
+  impactSourceId: null,
+  impactRows: () => [],
+  impactPending: false,
+  impactError: null,
 })
 
 const emit = defineEmits<{
@@ -93,6 +119,8 @@ const emit = defineEmits<{
   'toggle-enabled': [payload: { sourceId: string, enabled: boolean }]
   /** A committed ignore-scanlator flip — forwarded from a group's Toggle. */
   'toggle-ignore-scanlator': [payload: { sourceId: string, ignoreScanlator: boolean }]
+  /** A group's "Affected series" panel was opened/closed — carries the sourceId. */
+  'toggle-impact': [sourceId: string]
 }>()
 
 // A control is busy when its (sourceId, key) matches the saving key.
@@ -160,16 +188,25 @@ function toggleIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): void
         <header class="prefs__grouphead">
           <span class="prefs__sourcename" :class="{ 'prefs__sourcename--off': !group.enabled }">{{ group.sourceName }}</span>
           <span class="prefs__lang">{{ group.lang.toUpperCase() }}</span>
+          <!-- A paused source reads as PAUSED (not "failed"): the pill + a
+               "Paused <when>" hint from disabledSince, precise time on hover. -->
+          <Tag v-if="!group.enabled" tone="frost" size="sm">Paused</Tag>
           <span class="prefs__spacer" />
+          <span
+            v-if="!group.enabled && group.disabledSince"
+            class="prefs__since"
+            :title="absoluteTime(group.disabledSince)"
+          >Paused {{ relativeTime(group.disabledSince) }}</span>
           <Spinner v-if="enableBusy(group.sourceId)" :size="15" tone="accent" />
           <!-- eslint-disable vue/attribute-hyphenation -->
           <!-- camelCase :ariaLabel is required: a bound kebab :aria-label routes to
                the native ARIA attribute, leaving Toggle's REQUIRED ariaLabel prop
-               unset (a vue-tsc type error) — mirrors SourcePreferenceControl. -->
+               unset (a vue-tsc type error) — mirrors SourcePreferenceControl.
+               Off = paused (skipped by refresh + downloads); on = active. -->
           <Toggle
             :model-value="group.enabled"
             :disabled="enableBusy(group.sourceId)"
-            :ariaLabel="`Enable ${group.sourceName} (${group.lang})`"
+            :ariaLabel="`Pause ${group.sourceName} (${group.lang})`"
             @update:model-value="toggleEnabled(group.sourceId, $event)"
           />
           <!-- eslint-enable vue/attribute-hyphenation -->
@@ -196,8 +233,8 @@ function toggleIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): void
           <!-- eslint-enable vue/attribute-hyphenation -->
         </div>
 
-        <!-- A disabled source's preferences are collapsed — they are irrelevant
-             until the language is re-enabled (feature #2). -->
+        <!-- A paused source's preferences are collapsed — they are irrelevant
+             until the source is resumed. -->
         <template v-if="group.enabled">
           <p v-if="group.preferences.length === 0" class="prefs__none">No preferences for this source.</p>
           <SourcePreferenceControl
@@ -209,7 +246,25 @@ function toggleIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): void
             @change="emit('change', $event)"
           />
         </template>
-        <p v-else class="prefs__disabled">Disabled — hidden from Discover, Search, and Browse.</p>
+        <p v-else class="prefs__disabled">Paused — skipped by refresh and downloads. Downloaded chapters stay readable.</p>
+
+        <!-- Read-only "what depends on this source" impact panel. Loads lazily:
+             the parent fetches only when this group's panel is revealed, and at
+             most one is open at a time (impactSourceId). -->
+        <DisclosurePanel
+          flat
+          collapsible
+          title="Affected series"
+          :open="impactSourceId === group.sourceId"
+          @update:open="emit('toggle-impact', group.sourceId)"
+        >
+          <SourceSeriesPanel
+            v-if="impactSourceId === group.sourceId"
+            :rows="impactRows"
+            :pending="impactPending"
+            :error="impactError"
+          />
+        </DisclosurePanel>
       </section>
     </div>
   </Dialog>
@@ -265,6 +320,13 @@ function toggleIgnoreScanlator(sourceId: string, ignoreScanlator: boolean): void
   font-size: var(--text-sm);
   color: var(--faint);
   font-style: italic;
+}
+
+/* "Paused <when>" hint — quiet, right-aligned before the pause Switch. */
+.prefs__since {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 /* Per-source ignore-scanlator flag row — a label + hint on the left, the Toggle
