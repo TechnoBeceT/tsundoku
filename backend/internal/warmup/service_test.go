@@ -90,6 +90,66 @@ func TestWarmAll(t *testing.T) {
 	}
 }
 
+// fakeDisabled is an in-memory warmup.DisabledSources — the owner-paused source
+// set — for the warm-exclusion test (GAP-146).
+type fakeDisabled struct {
+	ids map[int64]bool
+	err error
+}
+
+func (f fakeDisabled) Disabled(context.Context) (map[int64]bool, error) {
+	return f.ids, f.err
+}
+
+// TestWarmAll_ExcludesDisabled proves an owner-PAUSED source (GAP-146) is never
+// warmed — no Popular call, not counted, not stamped — while an enabled sibling
+// in the same pass warms normally. This is the fix's core: warming a paused
+// source re-triggers exactly the anti-bot challenge it is paused for.
+func TestWarmAll_ExcludesDisabled(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "EN", Lang: "en"},
+			{ID: 2, Name: "Paused", Lang: "en"},
+		},
+	}
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil).
+		WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	n, err := svc.WarmAll(ctx)
+	if err != nil {
+		t.Fatalf("WarmAll: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("warmed = %d, want 1 (paused source excluded)", n)
+	}
+	if len(fc.calls) != 1 || fc.calls[0] != 1 {
+		t.Errorf("Popular calls = %v, want [1] only (paused source 2 never warmed)", fc.calls)
+	}
+	if warmed(t, client, sid(2)) {
+		t.Error("paused source 2 must not be stamped warmed")
+	}
+}
+
+// TestWarmAll_DisabledStoreErrorAborts proves a disabled-store read failure
+// aborts the pass (fail-closed) rather than warming a source that may be paused.
+func TestWarmAll_DisabledStoreErrorAborts(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "EN", Lang: "en"}}}
+	sentinel := errors.New("db: disabled read failed")
+	svc := warmup.NewService(fc, metrics.NewService(client), settings.Static{WarmupSlow: 5000}, nil).
+		WithDisabledSources(fakeDisabled{err: sentinel})
+
+	if _, err := svc.WarmAll(ctx); !errors.Is(err, sentinel) {
+		t.Errorf("WarmAll: err = %v, want to wrap %v", err, sentinel)
+	}
+	if len(fc.calls) != 0 {
+		t.Errorf("no source should be warmed when the disabled read fails; calls = %v", fc.calls)
+	}
+}
+
 // TestWarmSlow warms only never-measured OR slow sources (EWMA > threshold),
 // never a fast measured source.
 func TestWarmSlow(t *testing.T) {

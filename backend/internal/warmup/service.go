@@ -43,6 +43,18 @@ type SlowThreshold interface {
 	WarmupSlowThresholdMs(ctx context.Context) int
 }
 
+// DisabledSources is the narrow read surface the warm-up pass needs to skip
+// owner-PAUSED sources (GAP-146): warming a source the owner disabled is exactly
+// the churn the pause exists to stop — the Popular call re-triggers the anti-bot
+// challenge the source is paused FOR and re-saturates the engine's RPC pool. It
+// returns the set of disabled engine-host source ids (a row's presence =
+// disabled). *disabledsource.Service satisfies it; a nil DisabledSources (the
+// base constructor) means "nothing is paused" — every source is warmed, the
+// pre-GAP-146 behaviour.
+type DisabledSources interface {
+	Disabled(ctx context.Context) (map[int64]bool, error)
+}
+
 // Service runs anti-bot session warm-up passes over the engine-host source
 // set. It holds the engine-host client (internal/sourceengine, targeting the
 // running engine host), the metrics store (source of the slow/never-measured
@@ -56,6 +68,10 @@ type Service struct {
 	// attached (WithEventRecorder), each warm logs one `warm` event (success or
 	// failure). Nil ⇒ no audit events (existing call sites and tests unaffected).
 	events sourceevents.Recorder
+	// disabled hides owner-PAUSED sources from every warm pass (see
+	// enabledOnlineSources). Nil ⇒ nothing is paused (existing call sites and
+	// tests unaffected) — attach it with WithDisabledSources.
+	disabled DisabledSources
 }
 
 // NewService constructs a warm-up Service. gate is the source-politeness
@@ -74,6 +90,26 @@ func NewService(client sourceengine.Client, m *metrics.Service, slow SlowThresho
 func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
 	s.events = r
 	return s
+}
+
+// WithDisabledSources attaches the per-source disabled-flag store so every warm
+// pass skips owner-PAUSED sources (GAP-146). It returns the receiver for chaining
+// off NewService. A nil store is tolerated (nothing paused — every source is
+// warmed).
+func (s *Service) WithDisabledSources(d DisabledSources) *Service {
+	s.disabled = d
+	return s
+}
+
+// disabledSet returns the set of owner-paused source ids, or an empty (non-nil)
+// set when no disabled-flag store is attached. A store read failure is returned
+// so enabledOnlineSources can surface it rather than silently warming a source
+// the owner paused.
+func (s *Service) disabledSet(ctx context.Context) (map[int64]bool, error) {
+	if s.disabled == nil {
+		return map[int64]bool{}, nil
+	}
+	return s.disabled.Disabled(ctx)
 }
 
 // logWarmEvent records one warm outcome (best-effort, nil-guarded).
@@ -98,7 +134,7 @@ func (s *Service) logWarmEvent(ctx context.Context, src sourceengine.Source, sta
 // exclusion (enabledOnlineSources, sources.go). Returns the number of sources
 // warmed successfully.
 func (s *Service) WarmAll(ctx context.Context) (int, error) {
-	sources, err := enabledOnlineSources(ctx, s.client)
+	sources, err := s.enabledOnlineSources(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -116,7 +152,7 @@ func (s *Service) WarmAll(ctx context.Context) (int, error) {
 // once so every source is judged against the same clock. Returns the number of
 // sources warmed successfully.
 func (s *Service) WarmSlow(ctx context.Context) (int, error) {
-	sources, err := enabledOnlineSources(ctx, s.client)
+	sources, err := s.enabledOnlineSources(ctx)
 	if err != nil {
 		return 0, err
 	}

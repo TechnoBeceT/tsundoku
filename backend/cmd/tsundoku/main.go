@@ -311,20 +311,26 @@ func main() {
 	// serves those bytes back for offline recovery) — construct-once, one store.
 	apkStore := apkcache.New(filepath.Join(cfg.Engine.RuntimeDir, "apkcache"))
 
-	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
-	// warm with a cheap Popular call so interactive search stays fast. It only
-	// needs the engine-host client and the metrics store.
-	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc).
-		WithEventRecorder(eventsSvc) // logs a `warm` audit event per warm
-
-	// Owner-paused sources (QCAT-513). The DisabledSource store is a stateless
-	// wrapper over the Ent client, so a second instance alongside registerRoutes'
-	// own is safe — the same precedent as healthSvc below. It is attached to BOTH
-	// background engines that reach a source: the dispatcher (no download, no
-	// upgrade from a paused source) and the refresh sweep (no re-poll). Together
-	// with the ranking drop in internal/chapter that is the FULL pause; without
-	// either attachment the toggle would silently keep hammering the source.
+	// Owner-paused sources (QCAT-513 / GAP-146). The DisabledSource store is a
+	// stateless wrapper over the Ent client, so a second instance alongside
+	// registerRoutes' own is safe — the same precedent as healthSvc below. It is
+	// attached to EVERY background engine that reaches a source: warmup (no
+	// anti-bot re-challenge of a paused source — GAP-146's killer), the dispatcher
+	// (no download, no upgrade from a paused source) and the refresh sweep (no
+	// re-poll). Together with the ranking drop in internal/chapter that is the FULL
+	// pause; without every attachment the toggle would silently keep hammering the
+	// source.
 	disabledSrcSvc := disabledsource.NewService(entClient)
+
+	// Anti-bot session warm-up job: keeps slow (Cloudflare-protected) sources
+	// warm with a cheap Popular call so interactive search stays fast. It skips
+	// owner-paused sources (GAP-146) — warming one re-triggers exactly the
+	// challenge it is paused for. This ONE warmupSvc feeds both the background
+	// warm loop (runner.StartWarmup) and the manual POST /api/sources/warmup
+	// trigger, so wiring the pause here covers both.
+	warmupSvc := warmup.NewService(engineClient, metricsSvc, settingsSvc, gateSvc).
+		WithEventRecorder(eventsSvc). // logs a `warm` audit event per warm
+		WithDisabledSources(disabledSrcSvc)
 
 	dispatcher := download.New(entClient, engineFetcher, hub, download.Config{
 		Storage:     cfg.Storage.Folder,
