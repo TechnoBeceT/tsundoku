@@ -616,6 +616,122 @@ func TestService_Search_ExcludesDisabled(t *testing.T) {
 	}
 }
 
+// --- per-source direct-path pause rejection (GAP-146) ------------------------
+
+// disabledClient builds a two-source fake client (id 1 enabled, id 2 to be
+// paused) with Browse/Details/Chapters payloads wired for BOTH, so a leaked call
+// to the paused source 2 would succeed loudly rather than fail for an unrelated
+// reason. Shared by the per-source rejection tests below.
+func disabledClient() *fakeClient {
+	return &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Enabled", Lang: "en"},
+			{ID: 2, Name: "Paused", Lang: "en"},
+		},
+		popularResults: map[int64]sourceengine.SearchResult{
+			2: {Manga: []sourceengine.MangaEntry{{Title: "Leaked"}}},
+		},
+		detailsByURL:  map[string]sourceengine.MangaDetails{"/m": {Title: "Leaked"}},
+		chaptersByURL: map[string][]sourceengine.Chapter{"/m": {{URL: "/c/1", Number: 1}}},
+	}
+}
+
+// TestService_Browse_RejectsDisabled proves Browse on an owner-paused source id
+// is rejected with ErrSourceNotFound (→ 404) and never reaches upstream, while
+// the enabled sibling still browses (the exclusion is not over-broad).
+func TestService_Browse_RejectsDisabled(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(disabledClient()).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	if _, err := svc.Browse(context.Background(), "2", imports.BrowsePopular, 1); !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("Browse(paused): err = %v, want ErrSourceNotFound", err)
+	}
+	if _, err := svc.Browse(context.Background(), "1", imports.BrowsePopular, 1); err != nil {
+		t.Errorf("Browse(enabled): unexpected error %v — exclusion is over-broad", err)
+	}
+}
+
+// TestService_MangaDetails_RejectsDisabled proves the Discover hover-preview
+// details fetch on a paused source is rejected before any upstream call.
+func TestService_MangaDetails_RejectsDisabled(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(disabledClient()).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	if _, err := svc.MangaDetails(context.Background(), "2", "/m"); !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("MangaDetails(paused): err = %v, want ErrSourceNotFound", err)
+	}
+	if _, err := svc.MangaDetails(context.Background(), "1", "/m"); err != nil {
+		t.Errorf("MangaDetails(enabled): unexpected error %v", err)
+	}
+}
+
+// TestService_SourceBreakdown_RejectsDisabled proves the per-scanlator coverage
+// walk (also the GAP-140 background computation's entry) is rejected for a
+// paused source, so it never launches a chapter walk against it.
+func TestService_SourceBreakdown_RejectsDisabled(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(disabledClient()).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	if _, err := svc.SourceBreakdown(context.Background(), "2", "/m", ""); !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("SourceBreakdown(paused): err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+// TestService_InspectChapters_RejectsDisabled proves the chapter-preview path
+// rejects a paused source id (GAP-146: it resolves the source first now).
+func TestService_InspectChapters_RejectsDisabled(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(disabledClient()).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	if _, err := svc.InspectChapters(context.Background(), "2", "/m", ""); !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("InspectChapters(paused): err = %v, want ErrSourceNotFound", err)
+	}
+	if _, err := svc.InspectChapters(context.Background(), "1", "/m", ""); err != nil {
+		t.Errorf("InspectChapters(enabled): unexpected error %v", err)
+	}
+}
+
+// TestService_EnsureSourceEnabled proves the light cover-path guard rejects a
+// paused source id and admits an enabled one, WITHOUT consulting the engine
+// source list (nil client Sources would panic if it did) — the property that
+// keeps the hot cached cover path free of an engine round-trip.
+func TestService_EnsureSourceEnabled(t *testing.T) {
+	t.Parallel()
+
+	// No sources registered: EnsureSourceEnabled must not call client.Sources().
+	svc := newService(&fakeClient{}).WithDisabledSources(fakeDisabled{ids: map[int64]bool{2: true}})
+
+	if err := svc.EnsureSourceEnabled(context.Background(), 2); !errors.Is(err, imports.ErrSourceNotFound) {
+		t.Errorf("EnsureSourceEnabled(paused): err = %v, want ErrSourceNotFound", err)
+	}
+	if err := svc.EnsureSourceEnabled(context.Background(), 1); err != nil {
+		t.Errorf("EnsureSourceEnabled(enabled): unexpected error %v", err)
+	}
+}
+
+// TestService_PerSource_NilDisabledAdmitsAll proves the regression guard: with
+// NO disabled store attached, every per-source path admits the source (nothing
+// is excluded), so the pause is opt-in and never fires by default.
+func TestService_PerSource_NilDisabledAdmitsAll(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(disabledClient()) // no WithDisabledSources
+
+	if _, err := svc.Browse(context.Background(), "2", imports.BrowsePopular, 1); err != nil {
+		t.Errorf("Browse(nil-disabled): unexpected error %v", err)
+	}
+	if _, err := svc.InspectChapters(context.Background(), "2", "/m", ""); err != nil {
+		t.Errorf("InspectChapters(nil-disabled): unexpected error %v", err)
+	}
+	if err := svc.EnsureSourceEnabled(context.Background(), 2); err != nil {
+		t.Errorf("EnsureSourceEnabled(nil-disabled): unexpected error %v", err)
+	}
+}
+
 // --- Search tests ------------------------------------------------------------
 
 // TestService_Search_AllSources verifies that Search(query, nil) fans across
@@ -1004,6 +1120,9 @@ func TestService_InspectChapters(t *testing.T) {
 	t.Parallel()
 
 	fc := &fakeClient{
+		// InspectChapters resolves the source first (GAP-146), so the id must be
+		// in the registry — an unknown/paused id is now a rejection, not a fetch.
+		sources: []sourceengine.Source{{ID: 1, Name: "S1", Lang: "en"}},
 		chapters: []sourceengine.Chapter{
 			{URL: "/ch/1", Name: "Chapter 1", Number: 1.0},
 			{URL: "/ch/2", Name: "Chapter 2", Number: 2.0},
@@ -1048,7 +1167,9 @@ func TestService_InspectChapters_Error(t *testing.T) {
 	t.Parallel()
 
 	sentinel := errors.New("sourceengine: manga not found")
-	fc := &fakeClient{chaptersErr: sentinel}
+	// Source 1 is registered so resolveSource succeeds (GAP-146) and the error
+	// under test genuinely comes from the downstream Chapters call.
+	fc := &fakeClient{sources: []sourceengine.Source{{ID: 1, Name: "S1", Lang: "en"}}, chaptersErr: sentinel}
 	svc := newService(fc)
 
 	_, err := svc.InspectChapters(context.Background(), "1", "/manga/99", "")

@@ -97,6 +97,16 @@ func (h *Handler) SourceCover(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	// GAP-146: never fetch a cover for an owner-PAUSED source (defense-in-depth —
+	// its cards are already gone from every picker). A light disabled-set check
+	// that deliberately avoids resolving the full source list, so the hot cached
+	// cover path keeps its zero-engine-call property (see EnsureSourceEnabled).
+	if err := h.svc.EnsureSourceEnabled(c.Request().Context(), sourceID); err != nil {
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
+		return err
+	}
 	url, err := parseCoverURL(c.QueryParam("url"))
 	if err != nil {
 		return err
@@ -149,6 +159,12 @@ func (h *Handler) InspectChapters(c echo.Context) error {
 
 	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url, title)
 	if err != nil {
+		// An unknown OR owner-disabled source is a 404 (GAP-146), mirroring
+		// Browse/Details/Breakdown; any other failure is a genuine upstream/source
+		// problem and surfaces through the central error middleware.
+		if errors.Is(err, imports.ErrSourceNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, "source not found")
+		}
 		return err
 	}
 	return c.JSON(http.StatusOK, out)

@@ -13,6 +13,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	handler "github.com/technobecet/tsundoku/internal/handler/imports"
+	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
@@ -84,7 +85,10 @@ func TestSourceCover_FailsFastUnderSaturatingBurst(t *testing.T) {
 	const concurrency = 2
 	const deadline = 150 * time.Millisecond
 	coverCache := sourcecover.NewCache(sourcecover.New(t.TempDir()), blockingSourceEngine{}, concurrency, deadline)
-	h := handler.NewHandler(nil, nil, func() {}, coverCache)
+	// SourceCover now consults the service for the owner-pause guard (GAP-146);
+	// a minimal service with no disabled store admits every source (nothing
+	// paused), so the fail-fast burst behaviour under test is unchanged.
+	h := handler.NewHandler(imports.NewService(nil, nil, nil, "", 0, nil), nil, func() {}, coverCache)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler

@@ -261,6 +261,24 @@ type testEnv struct {
 // t.TempDir() — using sourcecover.DefaultDeadline/DefaultConcurrency mirrors
 // production wiring (routes.go) exactly.
 func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
+	return newTestEnvWithDisabled(t, fc, nil)
+}
+
+// fakeDisabled is an in-memory imports.DisabledSources — the owner-paused source
+// set — for the handler-level pause-rejection tests (GAP-146).
+type fakeDisabled struct {
+	ids map[int64]bool
+}
+
+func (f fakeDisabled) Disabled(context.Context) (map[int64]bool, error) {
+	return f.ids, nil
+}
+
+// newTestEnvWithDisabled is newTestEnv with an optional owner-paused source
+// store wired onto the imports.Service (GAP-146). A nil store leaves the pause
+// feature off (the default for every existing test); a non-nil one proves a
+// paused source is rejected at the HTTP boundary.
+func newTestEnvWithDisabled(t *testing.T, fc *fakeEngineClient, disabled imports.DisabledSources) *testEnv {
 	t.Helper()
 
 	db := testdb.New(t)
@@ -269,6 +287,9 @@ func newTestEnv(t *testing.T, fc *fakeEngineClient) *testEnv {
 	hub := sse.NewHub()
 	ing := ingest.NewIngest(fc, db)
 	importsSvc := imports.NewService(fc, ing, db, "", 30*time.Second, nil).WithHub(hub)
+	if disabled != nil {
+		importsSvc = importsSvc.WithDisabledSources(disabled)
+	}
 	seriesSvc := seriessvc.NewService(db, "", 14)
 
 	coverCache := sourcecover.NewCache(sourcecover.New(t.TempDir()), fc, sourcecover.DefaultConcurrency, sourcecover.DefaultDeadline)
@@ -386,6 +407,54 @@ func TestAdopt_Unauth(t *testing.T) {
 	env.e.ServeHTTP(rec, r)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("Adopt unauth: want 401, got %d", rec.Code)
+	}
+}
+
+// --- universal pause (GAP-146) -------------------------------------------------
+
+// TestSources_ExcludesDisabled proves GET /api/sources omits an owner-PAUSED
+// source at the HTTP boundary — the Discover dropdown / adopt chips never offer
+// it — while an enabled sibling is returned.
+func TestSources_ExcludesDisabled(t *testing.T) {
+	fc := &fakeEngineClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Alpha Source", Lang: "en"},
+			{ID: 2, Name: "Paused Source", Lang: "en"},
+		},
+	}
+	env := newTestEnvWithDisabled(t, fc, fakeDisabled{ids: map[int64]bool{2: true}})
+	rec := env.do(http.MethodGet, "/api/sources", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Sources: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got []imports.SourceDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Sources decode: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("Sources: want only enabled source 1, got %+v", got)
+	}
+}
+
+// TestInspectChapters_Disabled_404 proves the chapter-preview endpoint rejects a
+// paused source id with 404 (GAP-146).
+func TestInspectChapters_Disabled_404(t *testing.T) {
+	fc := &fakeEngineClient{sources: []sourceengine.Source{{ID: 2, Name: "Paused", Lang: "en"}}}
+	env := newTestEnvWithDisabled(t, fc, fakeDisabled{ids: map[int64]bool{2: true}})
+	rec := env.do(http.MethodGet, "/api/sources/2/manga/x/chapters?url=/m", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("InspectChapters(paused): want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSourceCover_Disabled_404 proves the cover proxy rejects a paused source id
+// with 404 before any engine fetch (GAP-146).
+func TestSourceCover_Disabled_404(t *testing.T) {
+	fc := &fakeEngineClient{sources: []sourceengine.Source{{ID: 2, Name: "Paused", Lang: "en"}}}
+	env := newTestEnvWithDisabled(t, fc, fakeDisabled{ids: map[int64]bool{2: true}})
+	rec := env.do(http.MethodGet, "/api/sources/2/cover?url=http://x/c.jpg", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("SourceCover(paused): want 404, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -677,6 +746,9 @@ func TestBrowse_UnknownSource_404(t *testing.T) {
 
 func TestInspectChapters_OK(t *testing.T) {
 	fc := &fakeEngineClient{
+		// Source 5 must be in the registry: InspectChapters resolves it first now
+		// (GAP-146) so an unknown/paused id is a 404 rather than a fetch.
+		sources: []sourceengine.Source{{ID: 5, Name: "S5", Lang: "en"}},
 		chaptersByURL: map[string][]sourceengine.Chapter{
 			"/manga/12": {
 				{URL: "/manga/12/ch1", Name: "Chapter 1", Number: 1.0},

@@ -721,6 +721,17 @@ func (s *Service) browseSource(ctx context.Context, sourceID int64, t BrowseType
 // from the live client source list, or ErrSourceNotFound when absent (including
 // when sourceID does not even parse as a numeric engine-host id). Browse needs
 // the resolved source's Name/Lang to tag its candidates.
+//
+// GAP-146: a source the owner has DISABLED (or a known-broken one) is treated as
+// ABSENT — resolveSource returns ErrSourceNotFound for it, so every per-source
+// direct path that resolves through here (Browse, MangaDetails, SourceBreakdown,
+// and Coverage/Breakdown) rejects a paused source with a 404 rather than reaching
+// upstream. This is the defense-in-depth half of the universal pause: the picker
+// list already hides a disabled source (excludedFromPicker in Sources), and this
+// stops a stale/hand-crafted request from still hitting it. It applies the SAME
+// excludedFromPicker rule the picker uses (one rule, no drift); a disabled-store
+// read failure is surfaced (fail-closed — never silently offer a source that may
+// be paused), mirroring Sources()/resolveSources().
 func (s *Service) resolveSource(ctx context.Context, sourceID string) (sourceengine.Source, error) {
 	id, err := strconv.ParseInt(sourceID, 10, 64)
 	if err != nil {
@@ -730,12 +741,43 @@ func (s *Service) resolveSource(ctx context.Context, sourceID string) (sourceeng
 	if err != nil {
 		return sourceengine.Source{}, err
 	}
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return sourceengine.Source{}, err
+	}
 	for _, src := range all {
 		if src.ID == id {
+			if excludedFromPicker(src, disabled) {
+				return sourceengine.Source{}, ErrSourceNotFound
+			}
 			return src, nil
 		}
 	}
 	return sourceengine.Source{}, ErrSourceNotFound
+}
+
+// EnsureSourceEnabled reports whether the numeric engine-host source id is
+// usable, returning ErrSourceNotFound when the owner has PAUSED it (GAP-146).
+//
+// It is the LIGHT guard for the hot source-cover path (SourceCover): it reads
+// ONLY the owner-disabled set (one small indexed query) and deliberately does
+// NOT call client.Sources() the way resolveSource does — a Discover/library grid
+// renders many covers at once and the whole point of the cover cache (GAP-085)
+// is to serve them without an engine round-trip, so resolving the full source
+// list per cover would defeat it. It therefore applies the disabled (pause) half
+// of the exclusion rule but not the known-broken-name half, which needs the
+// resolved source; a broken source is already hidden from every picker, so its
+// covers are never requested in the normal flow. A disabled-store read failure
+// is surfaced (fail-closed).
+func (s *Service) EnsureSourceEnabled(ctx context.Context, sourceID int64) error {
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return err
+	}
+	if disabled[sourceID] {
+		return ErrSourceNotFound
+	}
+	return nil
 }
 
 // fetchChapters returns the raw, unfiltered chapter list for (sourceID, url,
@@ -797,7 +839,15 @@ func chapterNumber(ch sourceengine.Chapter) *float64 {
 // for the same source-manga AND mangaTitle reuses the memoized list and makes
 // NO upstream request (an anti-ban de-amplification; the count is at most a
 // few minutes stale).
+//
+// GAP-146: it resolves the source FIRST (like Browse/Details/Breakdown), so an
+// unknown OR owner-disabled source id yields ErrSourceNotFound (→ 404) and the
+// paused source is never contacted — the same universal-pause rejection its
+// sibling per-source paths apply.
 func (s *Service) InspectChapters(ctx context.Context, sourceID string, url string, mangaTitle string) ([]ChapterInspectDTO, error) {
+	if _, err := s.resolveSource(ctx, sourceID); err != nil {
+		return nil, err
+	}
 	chapters, err := s.fetchChapters(ctx, sourceID, url, mangaTitle)
 	if err != nil {
 		return nil, err
