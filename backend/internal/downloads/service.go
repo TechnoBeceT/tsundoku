@@ -66,12 +66,25 @@ type ThroughputSettings interface {
 	DownloadConcurrency(ctx context.Context) int
 }
 
+// DisabledSources is the narrow read surface over the owner's per-source PAUSE
+// store (QCAT-513 / GAP-146). List and ActiveSourceCounts read it ONCE per call
+// and drop a paused source from the upgrade-target index (newUpgradeTargetIndex),
+// so this read model never names a paused source as a chapter's live source,
+// upgrade target or waited-on source — exactly as the dispatcher drops it from
+// candidacy. *disabledsource.Service satisfies it. Attached via
+// WithDisabledSources; nil (the default) means "nothing is paused" — the
+// pre-GAP-146 output, byte-for-byte.
+type DisabledSources interface {
+	Disabled(ctx context.Context) (map[int64]bool, error)
+}
+
 // Service exposes the cross-library chapter-activity views and the owner retry +
 // re-download actions. It owns the Ent client — all enrichment reuses the exported
 // internal/series resolvers, so no importance/display logic is duplicated here —
-// plus three OPTIONAL, nil-guarded read ports: the circuit-breaker snapshot (for the
-// cooling_down waiting reason), the retry settings (for the N/max badge), and the
-// throughput settings (for the re-download cost quote). All are attached via the
+// plus four OPTIONAL, nil-guarded read ports: the circuit-breaker snapshot (for the
+// cooling_down waiting reason), the retry settings (for the N/max badge), the
+// throughput settings (for the re-download cost quote), and the paused-source set
+// (to drop a paused source from the upgrade-target index). All are attached via the
 // With* builders so the ~20 existing NewService(client) call sites (and unit tests
 // that need none of them) are untouched.
 type Service struct {
@@ -79,6 +92,7 @@ type Service struct {
 	breakers   BreakerSnapshotter
 	retry      RetrySettings
 	throughput ThroughputSettings
+	disabled   DisabledSources
 }
 
 // NewService builds the downloads activity service over the given Ent client. The
@@ -113,6 +127,32 @@ func (s *Service) WithRetrySettings(r RetrySettings) *Service {
 func (s *Service) WithThroughput(t ThroughputSettings) *Service {
 	s.throughput = t
 	return s
+}
+
+// WithDisabledSources attaches the owner's per-source pause store so List /
+// ActiveSourceCounts drop a paused source from the upgrade-target index (a paused
+// source is never named as a chapter's live source, upgrade target or waited-on
+// source — GAP-146). Returns the receiver for chaining. Nil is the no-op default
+// (nothing paused).
+func (s *Service) WithDisabledSources(d DisabledSources) *Service {
+	s.disabled = d
+	return s
+}
+
+// disabledSet reads the owner's paused-source ids ONCE per List/ActiveSourceCounts.
+// It is FAIL-CLOSED: a store read error is returned so the caller aborts rather
+// than falling back to naming a paused source it should be hiding (mirrors the
+// dispatcher's disabledSourceSet, not the advisory breaker join). A nil store (the
+// default) yields a nil set — nothing paused.
+func (s *Service) disabledSet(ctx context.Context) (map[int64]bool, error) {
+	if s.disabled == nil {
+		return nil, nil
+	}
+	set, err := s.disabled.Disabled(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read paused sources: %w", err)
+	}
+	return set, nil
 }
 
 // ListFilter selects and paginates a List call. States is the required set of
@@ -195,7 +235,14 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	if err != nil {
 		return DownloadListDTO{}, err
 	}
-	resolutions := resolveSeries(seriesByID, provBySeries)
+	// The owner's paused-source set, read ONCE for the whole page (GAP-146): a
+	// paused source is dropped from every series' upgrade-target index so no row
+	// names it. Fail-closed — a read error aborts rather than reveal a paused source.
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return DownloadListDTO{}, fmt.Errorf("downloads.List: %w", err)
+	}
+	resolutions := resolveSeries(seriesByID, provBySeries, disabled)
 
 	// One wall-clock read for the whole page so every row's waiting status is judged
 	// against the same instant. The per-source retry budget and the breaker snapshot
@@ -396,7 +443,7 @@ func (s *Service) loadProviders(ctx context.Context, seriesIDs []uuid.UUID) (byI
 // defined exactly once (§2 DRY). It attaches each series' providers onto the node
 // so MetadataProvider/SeriesDisplay can resolve the display name + cover the same
 // way GetSeries does, and indexes their feeds once for the upgrade-target lookup.
-func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.UUID][]*ent.SeriesProvider) map[uuid.UUID]seriesResolution {
+func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.UUID][]*ent.SeriesProvider, disabled map[int64]bool) map[uuid.UUID]seriesResolution {
 	out := make(map[uuid.UUID]seriesResolution, len(seriesByID))
 	for sid, row := range seriesByID {
 		provs := provBySeries[sid]
@@ -407,8 +454,8 @@ func resolveSeries(seriesByID map[uuid.UUID]*ent.Series, provBySeries map[uuid.U
 			displayName: displayName,
 			coverURL:    coverURL,
 			// Built from the SAME eager-loaded feeds — no extra query (see
-			// newUpgradeTargetIndex).
-			upgradeTargets: newUpgradeTargetIndex(provs),
+			// newUpgradeTargetIndex). A paused source (GAP-146) is dropped here.
+			upgradeTargets: newUpgradeTargetIndex(provs, disabled),
 		}
 	}
 	return out

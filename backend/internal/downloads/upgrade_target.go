@@ -11,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
@@ -74,9 +75,28 @@ type upgradeTargetIndex map[string][]feedCarrier
 // cycle — a row naming a source that is not fetching it, the exact lie this index
 // was introduced to kill. A feed row with NO parsed number is KEPT: it cannot be
 // judged fractional, and the engine fails open on it identically.
-func newUpgradeTargetIndex(provs []*ent.SeriesProvider) upgradeTargetIndex {
+//
+// GAP-146: it likewise mirrors the engine's PAUSED-SOURCE exclusion (see
+// chapter.sourceDisabled / liveCandidatesSorted). A source the owner has
+// TEMPORARILY PAUSED (QCAT-513) contributes NO feed rows, so this read model
+// never names it as a chapter's live source, upgrade TARGET, waited-on source or
+// failing source — exactly as the dispatcher drops it from candidacy. Without
+// this a downloaded chapter whose only better source is paused reads "Upgrading →
+// <paused source> (0/N)" forever, since the engine never fetches the paused
+// source to complete or revert the upgrade — a row naming a source that is not
+// fetching it. The `disabled` set is the owner's paused-source ids, loaded once
+// per List/ActiveSourceCounts by the caller; nil/empty means nothing is paused
+// (unchanged output). Provenance is unaffected: chapterSource reads a chapter's
+// SATISFIER from provByID, not this index, so a chapter whose file came from a
+// now-paused source still names it — only future candidacy is dropped, as on the
+// engine side. This catches a source's LIVE rows only (providerid.SourceID), the
+// same known limit chapter.sourceDisabled documents for disk-origin rows.
+func newUpgradeTargetIndex(provs []*ent.SeriesProvider, disabled map[int64]bool) upgradeTargetIndex {
 	idx := upgradeTargetIndex{}
 	for _, sp := range provs {
+		if sourceDisabled(sp, disabled) {
+			continue
+		}
 		for _, pc := range sp.Edges.ProviderChapters {
 			if sp.IgnoreFractional && pc.Number != nil && chapterrange.IsFractional(*pc.Number) {
 				continue
@@ -213,6 +233,22 @@ func earlyAccessUntil(ch *ent.Chapter, idx upgradeTargetIndex, now time.Time) *t
 // isSatisfier reports whether sp is the chapter's current satisfying source.
 func isSatisfier(ch *ent.Chapter, sp *ent.SeriesProvider) bool {
 	return ch.SatisfiedByProviderID != nil && sp != nil && sp.ID == *ch.SatisfiedByProviderID
+}
+
+// sourceDisabled reports whether sp belongs to an engine source the owner has
+// TEMPORARILY PAUSED (QCAT-513 / GAP-146) — its numeric source id is in the
+// `disabled` set. It mirrors chapter.sourceDisabled byte-for-byte (the same
+// providerid.SourceID parse) so this read model's paused-source drop can never
+// diverge from the engine's candidacy drop. A nil/empty set means nothing is
+// paused. LIVE rows only: providerid.SourceID resolves the id a live-ingested
+// provider stores in `provider`; a disk-origin row stores a display NAME and
+// matches no id (the same known limit the engine documents).
+func sourceDisabled(sp *ent.SeriesProvider, disabled map[int64]bool) bool {
+	if len(disabled) == 0 {
+		return false
+	}
+	id, ok := providerid.SourceID(sp.Provider)
+	return ok && disabled[id]
 }
 
 // waitedOnCarrier returns the feed carrier (source + its ProviderChapter feed row)

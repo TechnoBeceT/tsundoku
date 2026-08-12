@@ -492,7 +492,8 @@ func registerRoutes(
 	downloadsSvc := downloads.NewService(client).
 		WithBreakers(gate).
 		WithRetrySettings(settingsSvc).
-		WithThroughput(settingsSvc)
+		WithThroughput(settingsSvc).
+		WithDisabledSources(disabledSrcSvc) // drop a paused source from the upgrade-target index (GAP-146)
 	downloadsH := downloadsh.NewHandler(downloadsSvc, trigger)
 	authed.GET("/downloads", downloadsH.List)
 	authed.GET("/downloads/summary", downloadsH.Summary)

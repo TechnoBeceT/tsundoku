@@ -43,9 +43,16 @@ func (s *Service) ActiveSourceCounts(ctx context.Context) (map[string]int, error
 	if err != nil {
 		return nil, err
 	}
+	// Drop the owner's paused sources from candidacy so the busy-source strip never
+	// attributes an in-flight fetch to a paused source (GAP-146). Read once;
+	// fail-closed on a store error.
+	disabled, err := s.disabledSet(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("downloads.ActiveSourceCounts: %w", err)
+	}
 	idxBySeries := make(map[uuid.UUID]upgradeTargetIndex, len(provBySeries))
 	for sid, provs := range provBySeries {
-		idxBySeries[sid] = newUpgradeTargetIndex(provs)
+		idxBySeries[sid] = newUpgradeTargetIndex(provs, disabled)
 	}
 
 	counts := map[string]int{}

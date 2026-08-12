@@ -186,6 +186,100 @@ func TestListUpgradeTargetAttempts(t *testing.T) {
 	}
 }
 
+// fakeDisabled is an in-memory downloads.DisabledSources — the owner-paused
+// source set — for the GAP-146 upgrade-target drop test.
+type fakeDisabled struct {
+	ids map[int64]bool
+}
+
+func (f fakeDisabled) Disabled(context.Context) (map[int64]bool, error) {
+	return f.ids, nil
+}
+
+// seedPausedTarget builds one series whose UPGRADE TARGET is an owner-pausable
+// source: Comix (numeric source id 100, importance 5, the satisfier) and Asura
+// Scans (numeric source id 200, importance 10, the higher target). One chapter
+// p-1 rests upgrade_available, satisfied by Comix, carried by BOTH feeds — so
+// with nothing paused the row names Asura Scans as its target, and with source
+// 200 paused it must name NO target (the paused source is dropped from candidacy,
+// exactly as the dispatcher drops it).
+func seedPausedTarget(ctx context.Context, t *testing.T, client *ent.Client) {
+	t.Helper()
+	s := client.Series.Create().SetTitle("Paused Wave").SetSlug("paused-wave").
+		SetCategoryID(catID(ctx, client, "Manga")).SaveX(ctx)
+	low := client.SeriesProvider.Create().SetSeries(s).
+		SetProvider("100").SetProviderName("Comix").SetImportance(5).SaveX(ctx)
+	high := client.SeriesProvider.Create().SetSeries(s).
+		SetProvider("200").SetProviderName("Asura Scans").SetImportance(10).SaveX(ctx)
+
+	client.ProviderChapter.Create().SetSeriesProviderID(low.ID).SetChapterKey("p-1").
+		SetURL("https://comix/p-1").SetProviderIndex(0).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(high.ID).SetChapterKey("p-1").
+		SetURL("https://asura/p-1").SetProviderIndex(0).SaveX(ctx)
+
+	client.Chapter.Create().SetSeries(s).SetChapterKey("p-1").SetState(entchapter.StateUpgradeAvailable).
+		SetSatisfiedByProviderID(low.ID).SetSatisfiedImportance(low.Importance).
+		SetFilename("[Comix] Paused Wave p-1.cbz").SaveX(ctx)
+}
+
+// TestListUpgradeTarget_DropsPausedSource proves the GAP-146 fix at the read
+// model: an owner-PAUSED source is never named as a chapter's upgrade target, so
+// a downloaded chapter whose only better source is paused stops reading
+// "Upgrading → <paused source>". The satisfier (the source the CBZ came from) is
+// still named — provenance is unaffected, only future candidacy is dropped.
+func TestListUpgradeTarget_DropsPausedSource(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedPausedTarget(ctx, t, client)
+
+	// Source 200 (Asura Scans, the upgrade target) is paused.
+	svc := downloads.NewService(client).WithDisabledSources(fakeDisabled{ids: map[int64]bool{200: true}})
+	res, err := svc.List(ctx, downloads.ListFilter{States: upgradeStates, Limit: 50})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	item, ok := itemByKey(res.Items, "p-1")
+	if !ok {
+		t.Fatal("chapter p-1 missing from the list")
+	}
+	if item.UpgradeTarget != "" {
+		t.Errorf("paused source named as upgrade target: got %q, want \"\"", item.UpgradeTarget)
+	}
+	// Provenance intact: the chapter's file came from Comix, still named.
+	if item.ProviderName != "Comix" {
+		t.Errorf("providerName = %q, want the satisfier %q (provenance must survive the pause)", item.ProviderName, "Comix")
+	}
+}
+
+// TestListUpgradeTarget_NilDisabledUnchanged is the regression guard: with NO
+// disabled store attached (or an empty set), the read model's output is unchanged
+// — the higher source is still named as the upgrade target.
+func TestListUpgradeTarget_NilDisabledUnchanged(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedPausedTarget(ctx, t, client)
+
+	for _, tc := range []struct {
+		name string
+		svc  *downloads.Service
+	}{
+		{"nil store", downloads.NewService(client)},
+		{"empty set", downloads.NewService(client).WithDisabledSources(fakeDisabled{ids: map[int64]bool{}})},
+	} {
+		res, err := tc.svc.List(ctx, downloads.ListFilter{States: upgradeStates, Limit: 50})
+		if err != nil {
+			t.Fatalf("[%s] List: %v", tc.name, err)
+		}
+		item, ok := itemByKey(res.Items, "p-1")
+		if !ok {
+			t.Fatalf("[%s] chapter p-1 missing", tc.name)
+		}
+		if item.UpgradeTarget != "Asura Scans" {
+			t.Errorf("[%s] upgradeTarget = %q, want %q (nothing paused ⇒ unchanged)", tc.name, item.UpgradeTarget, "Asura Scans")
+		}
+	}
+}
+
 // countingDriver wraps an Ent SQL driver and counts every read query issued
 // through it (eager-loading sub-queries included — Ent runs them through the same
 // driver). Test-only: it exists solely to PROVE the downloads list's query count is
