@@ -144,6 +144,7 @@ type Dispatcher struct {
 	cfg    Config
 	retry  RetrySettings
 	gate   *sourcegate.Service
+	waiter sourceWaiter
 	// events is the nil-guarded source-operation audit-log recorder. When
 	// attached (WithEventRecorder), each per-source download attempt logs one
 	// `download` event (success or failure). Nil ⇒ no audit events (existing call
@@ -155,6 +156,13 @@ type Dispatcher struct {
 	// nor upgraded from. Nil ⇒ nothing is paused (the pre-QCAT-513 behaviour), which
 	// is what keeps existing call sites and tests unaffected.
 	disabled DisabledSources
+}
+
+// sourceWaiter is the minimal source-politeness dependency required at the
+// fetch boundary. *sourcegate.Service satisfies it; keeping the delay operation
+// narrow lets the admission ordering be proven without changing breaker state.
+type sourceWaiter interface {
+	Wait(context.Context, string)
 }
 
 // DisabledSources is the narrow read surface the dispatcher needs to honour the
@@ -184,7 +192,7 @@ type DisabledSources interface {
 // pre-politeness behaviour — so passing nil is a safe default for callers that
 // do not need the gate (tests exercising unrelated dispatcher behaviour).
 func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config, retry RetrySettings, gate *sourcegate.Service) *Dispatcher {
-	return &Dispatcher{
+	d := &Dispatcher{
 		client: client,
 		f:      f,
 		hub:    hub,
@@ -192,6 +200,10 @@ func New(client *ent.Client, f fetcher.ChapterFetcher, hub *sse.Hub, cfg Config,
 		retry:  retry,
 		gate:   gate,
 	}
+	if gate != nil {
+		d.waiter = gate
+	}
+	return d
 }
 
 // WithEventRecorder attaches the source-operation audit-log recorder so each
@@ -348,10 +360,56 @@ func providerSourceID(sp *ent.SeriesProvider) string {
 // gateWait enforces the politeness delay for sourceKey before a fetch. A nil
 // gate is a no-op.
 func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
-	if d.gate == nil {
+	if d.waiter != nil {
+		d.waiter.Wait(ctx, sourceKey)
 		return
 	}
-	d.gate.Wait(ctx, sourceKey)
+	if d.gate != nil {
+		d.gate.Wait(ctx, sourceKey)
+	}
+}
+
+// fetchWithAdmission makes one engine call after all admission controls that
+// precede it. The source gate reserves and waits for the physical source's
+// politeness slot FIRST; only then does the call take its shared global and
+// per-source fetch capacity. Consequently a rate-delayed source occupies neither
+// scarce capacity while asleep, while the global semaphore still bounds every
+// actual engine call across download and upgrade paths.
+//
+// Both acquired permits are released with defers, including when an engine
+// implementation panics. A cancelled context after the politeness wait never
+// reaches the engine or global admission; sourcegate deliberately retains the
+// reserved timestamp in that case, preserving its spacing contract.
+func (d *Dispatcher) fetchWithAdmission(
+	ctx context.Context,
+	sourceKey string,
+	ref fetcher.FetchRef,
+	limiter *providerLimiter,
+	globalSem *semaphore.Weighted,
+	onAdmitted func() error,
+) (fetcher.ChapterPages, error) {
+	d.gateWait(ctx, sourceKey)
+	if err := ctx.Err(); err != nil {
+		return fetcher.ChapterPages{}, err
+	}
+
+	if globalSem != nil {
+		if err := globalSem.Acquire(ctx, 1); err != nil {
+			return fetcher.ChapterPages{}, err
+		}
+		defer globalSem.Release(1)
+	}
+	releaseSource := limiter.acquire(sourceKey)
+	defer releaseSource()
+	if onAdmitted != nil {
+		if err := onAdmitted(); err != nil {
+			return fetcher.ChapterPages{}, err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return fetcher.ChapterPages{}, err
+	}
+	return d.f.Fetch(ctx, ref)
 }
 
 // gateRecordSuccess reports a successful fetch from sourceKey to the breaker
@@ -714,7 +772,7 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 
 	// Process is the single-chapter entry point; the forward-progress claim flag is
 	// only meaningful for RunOnce's drain-loop accounting, so it is discarded here.
-	_, err = d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter)
+	_, err = d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter, nil)
 	return err
 }
 
@@ -738,25 +796,32 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // this is what keeps the wanted→downloading transition gated behind slot
 // acquisition, so a queued chapter stays wanted until it truly starts. ch must be
 // loaded WithSeries(WithCategory()) for the render step.
-func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter) (claimed bool, err error) {
-	// Transition wanted / failed → downloading and announce the attempt. If this
-	// write fails, the chapter is still wanted/failed — report claimed=false so the
-	// caller does NOT count it as progress.
-	if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); setErr != nil {
-		return false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
+func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
+	onAdmitted := func() error {
+		if claimed {
+			return nil
+		}
+		if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); setErr != nil {
+			return fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
+		}
+		claimed = true
+		d.broadcast("download.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloading)})
+		return nil
 	}
-	d.broadcast("download.start", DownloadEvent{
-		ChapterID: chapterID,
-		State:     string(entchapter.StateDownloading),
-	})
 
 	var lastErr error
 	for _, cand := range cands {
-		done, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now)
+		done, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now, globalSem, onAdmitted)
 		if done {
 			return true, nil
 		}
+		if ctx.Err() != nil {
+			return claimed, ctx.Err()
+		}
 		lastErr = cause
+	}
+	if !claimed {
+		return false, nil
 	}
 
 	// Every live source failed this cycle. Decide failed vs permanently_failed
@@ -798,25 +863,19 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
 //     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
-func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time) (done bool, cause error) {
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() error) (done bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
 	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
 	sourceKey := canonicalSourceKey(cand.SeriesProvider)
-	// Politeness delay BEFORE the fetch: enforces the runtime-tunable minimum
-	// gap between successive requests to this physical source (independent of
-	// the per-source concurrency cap below).
-	d.gateWait(pctx, sourceKey)
-	release := limiter.acquire(sourceKey)
 	// Capture whether this attempt will drive its image loop from the links ALREADY
 	// STORED on the row — it must be read BEFORE the fetch, because persistPageLinks
 	// below writes freshly-resolved links onto the same in-memory row and makes the
 	// two cases indistinguishable afterwards (GAP-119; see fetchAttempt).
 	attempt := fetchAttempt{usedCachedLinks: len(cand.ProviderChapter.PageLinks) > 0}
 	fetchStart := time.Now()
-	pages, fetchErr := d.f.Fetch(pctx, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider))
+	pages, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, onAdmitted)
 	fetchDuration := time.Since(fetchStart)
-	release()
 	attempt.stagingDir = pages.StagingDir
 
 	// Write-through the resolved page links the instant they are known (even on a

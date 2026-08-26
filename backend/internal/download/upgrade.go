@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -30,6 +31,7 @@ var errUpgradeNoLongerNeeded = errors.New("upgrade no longer needed: current sat
 // upgradeResult holds the artefacts produced by fetchAndRender so that
 // Upgrade can persist them in a single update call.
 type upgradeResult struct {
+	started     bool
 	pc          *ent.ProviderChapter
 	sp          *ent.SeriesProvider
 	importance  int
@@ -403,7 +405,7 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.Upgrade: %w", err)
 	}
-	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled)
+	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled, nil)
 }
 
 // upgradeWith is Upgrade's body, parameterised by the per-provider fetch limiter so
@@ -411,7 +413,7 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 // number of simultaneous fetches against any single physical source at
 // DownloadConcurrency even if two chapters' upgrade targets resolve to the same
 // source. See Upgrade for the full flow + failure semantics.
-func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool) error {
+func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) error {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -420,22 +422,17 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		return fmt.Errorf("download.Dispatcher.Upgrade: load chapter %s: %w", chapterID, err)
 	}
 
-	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateUpgrading); err != nil {
-		return fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)
-	}
-	d.broadcast("upgrade.start", DownloadEvent{
-		ChapterID: chapterID,
-		State:     string(entchapter.StateUpgrading),
-	})
-
 	// The upgrade fetch honours the SAME per-source concurrency cap as the download
 	// path: the caller's limiter bounds concurrent fetches per physical source at
 	// DownloadConcurrency. UpgradeAll passes ONE limiter for the whole pass, so its
 	// per-source upgrade parallelism can never exceed that cap upstream.
-	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled)
+	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled, globalSem)
 	if err != nil {
+		if !res.started && ctx.Err() != nil {
+			return nil
+		}
 		if errors.Is(err, errUpgradeNoLongerNeeded) {
-			return d.finishStaleUpgrade(ctx, chapterID)
+			return d.finishUnstartedUpgrade(ctx, chapterID)
 		}
 		// A failed upgrade must NEVER reuse its partially-staged, index-keyed pages:
 		// the next attempt re-resolves the page list fresh, and a reordered list
@@ -445,6 +442,9 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// every failure path (fetch, render, or persist). res.stagingDir is populated
 		// on the fetch/render failure returns for exactly this.
 		d.cleanupStaging(ctx, res.stagingDir)
+		if !res.started {
+			return d.finishUnstartedUpgrade(ctx, chapterID)
+		}
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, fetchAttempt{
 			stagingDir:      res.stagingDir,
 			usedCachedLinks: res.usedCachedLinks,
@@ -484,7 +484,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 // UNCHANGED and no breaker (a better source withholding the chapter behind a
 // paywall is not a fault, and the working copy on disk is untouched meanwhile —
 // GAP-141). A render failure returns no pc (not the source's fault, so no charge).
-func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool) (upgradeResult, error) {
+func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) (upgradeResult, error) {
 	now := time.Now()
 	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now, disabled)
 	if err != nil {
@@ -526,15 +526,19 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// Carry a per-chapter progress sink so the upgrade fetch reports live per-page
 	// progress too; the sink throttles + broadcasts download.progress ("upgrading").
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateUpgrading)))
-	// Politeness delay before the fetch (runtime-tunable per-source minimum gap).
-	d.gateWait(pctx, sourceKey)
-	release := limiter.acquire(sourceKey)
 	// Read BEFORE the fetch: the upgrade target's stored links are what an expiry
 	// makes stale, and only a pre-fetch read can distinguish "re-used" from
 	// "resolved this attempt" (GAP-119; see fetchAttempt).
 	usedCachedLinks := len(pc.PageLinks) > 0
-	pages, err := d.f.Fetch(pctx, buildFetchRef(pc, sp))
-	release()
+	started := false
+	pages, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() error {
+		if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateUpgrading); err != nil {
+			return fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)
+		}
+		started = true
+		d.broadcast("upgrade.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateUpgrading)})
+		return nil
+	})
 	if err != nil {
 		// Circuit-breaker: recorded ONLY for a SOURCE-WIDE/ban-class upgrade fetch
 		// failure (same rule as the download path — shouldRecordGateFailure gates on
@@ -548,7 +552,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// with the SAME classified rule as the download path (chapter-specific → bump,
 		// source-wide → cooldown), and stagingDir so the caller wipes the
 		// partially-staged pages — Fetch populates StagingDir even on error.
-		return upgradeResult{pc: pc, sp: sp, stagingDir: pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
+		return upgradeResult{started: started, pc: pc, sp: sp, stagingDir: pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
 	}
 	// The fetch succeeded → the source is reachable; clear its breaker state.
 	// (A later render/persist failure is not the source's fault, so it does not
@@ -569,6 +573,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	}
 
 	return upgradeResult{
+		started:     started,
 		pc:          pc,
 		sp:          sp,
 		importance:  sp.Importance,
@@ -576,6 +581,14 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		pageCount:   pages.PageCount,
 		stagingDir:  pages.StagingDir,
 	}, nil
+}
+
+func (d *Dispatcher) finishUnstartedUpgrade(ctx context.Context, chapterID uuid.UUID) error {
+	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
+		return fmt.Errorf("download.Dispatcher.Upgrade: resolve unstarted upgrade %s: %w", chapterID, err)
+	}
+	d.broadcast("download.done", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloaded)})
+	return nil
 }
 
 // persistUpgradeSuccess writes the new provenance to the Chapter row, resets the

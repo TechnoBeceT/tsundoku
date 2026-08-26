@@ -154,22 +154,11 @@ func roundRobinBySeries(items []resolvedChapter) []resolvedChapter {
 // nil, so a cancellation never masquerades as a work error; the first real error is
 // returned by Wait.
 //
-// globalSem, when non-nil, is a GLOBAL concurrency semaphore shared across EVERY
-// source's goroutine: an item acquires one slot immediately before run and releases
-// it immediately after, so the TOTAL number of concurrent run executions across all
-// sources never exceeds the semaphore's weight — the aggregate cap the per-source
-// SetLimit cannot express (with N sources the per-source caps alone permit
-// concurrency×N in flight). A nil semaphore means "no global cap": behaviour is
-// exactly the historical per-source-only scheduling (the standalone RunOnce path).
-//
-// Deadlock safety: a global slot is acquired ONLY around run and holds no per-source
-// resource that another item needs in order to reach its own Release. Every item that
-// acquires a global slot therefore runs to completion and releases it, so slots are
-// always freed and forward progress is guaranteed — there is no circular wait between
-// the global semaphore and the per-source SetLimit. Acquire is ctx-aware, so a
-// cancelled context returns promptly (treated as a skip → nil) instead of parking on
-// a slot that a cancelled sibling will never grant.
-func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error, globalSem *semaphore.Weighted) error {
+// The global fetch cap is intentionally NOT held here: one scheduled item can
+// wait in the source-politeness gate before it makes an engine call. The actual
+// fetch boundary acquires the global semaphore after that wait, so a delayed
+// source cannot consume global capacity needed by a healthy source.
+func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error) error {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -179,7 +168,7 @@ func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concu
 			continue
 		}
 		sources.Go(func() error {
-			return drainSourceQueue(sctx, items, concurrency, run, globalSem)
+			return drainSourceQueue(sctx, items, concurrency, run)
 		})
 	}
 	return sources.Wait()
@@ -195,7 +184,6 @@ func drainSourceQueue[T any](
 	items []T,
 	concurrency int,
 	run func(context.Context, T) error,
-	globalSem *semaphore.Weighted,
 ) error {
 	queue, qctx := errgroup.WithContext(ctx)
 	queue.SetLimit(concurrency) // the per-source cap: ordered, blocking hand-out of start slots
@@ -204,35 +192,21 @@ func drainSourceQueue[T any](
 			break
 		}
 		queue.Go(func() error {
-			return runQueuedItem(qctx, it, run, globalSem)
+			return runQueuedItem(qctx, it, run)
 		})
 	}
 	return queue.Wait()
 }
 
-// runQueuedItem executes a single already-slotted item under the optional GLOBAL
-// concurrency cap. Split out of drainSourceQueue's queue.Go closure so the
-// scheduler's three nesting levels each read on their own; the semantics are
-// unchanged — in particular the global slot is still held for the WHOLE run and
-// released by defer on every exit path.
-func runQueuedItem[T any](
-	ctx context.Context,
-	it T,
-	run func(context.Context, T) error,
-	globalSem *semaphore.Weighted,
-) error {
+// runQueuedItem executes one already-slotted item. Split out of
+// drainSourceQueue's queue.Go closure so the scheduler's three nesting levels
+// each read on their own. Global admission is intentionally lower, at the
+// actual engine-fetch boundary after source politeness has completed.
+func runQueuedItem[T any](ctx context.Context, it T, run func(context.Context, T) error) error {
 	// The queue.Go call blocks on the per-source semaphore, so this may have been
 	// queued before the cancel landed — re-check before doing work.
 	if ctx.Err() != nil {
 		return nil
-	}
-	// Global cap: hold one all-sources slot for the WHOLE run. Acquire is
-	// ctx-aware, so a cancellation returns nil (a skip) rather than blocking.
-	if globalSem != nil {
-		if err := globalSem.Acquire(ctx, 1); err != nil {
-			return nil
-		}
-		defer globalSem.Release(1)
 	}
 	return run(ctx, it)
 }
@@ -248,17 +222,17 @@ func runQueuedItem[T any](
 // cancellation is inert on this path: only a cancelled parent context stops it —
 // hence the discarded error.
 //
-// globalSem is the cycle-shared GLOBAL cap (nil ⇒ per-source only), forwarded to the
-// scheduler so this pass's fetches count against the same all-sources budget as every
-// other pass and the upgrade pass.
+// globalSem is the cycle-shared GLOBAL cap (nil ⇒ per-source only), passed to
+// downloadResolved so only an actual engine call acquires it after the source
+// politeness wait.
 func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem *semaphore.Weighted) {
 	_ = runPerSourceQueues(ctx, groups, concurrency,
 		func(ctx context.Context, it resolvedChapter) error {
-			if d.downloadResolved(ctx, it, maxRetries, now, limiter) {
+			if d.downloadResolved(ctx, it, maxRetries, now, limiter, globalSem) {
 				progressed.Add(1)
 			}
 			return nil
-		}, globalSem)
+		})
 }
 
 // downloadResolved loads the full chapter (with its series + category edges for
@@ -270,7 +244,7 @@ func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]
 // It returns claimed=true only when the chapter successfully transitioned
 // wanted/failed→downloading (forward progress); false if the chapter could not be
 // loaded or the claim write itself failed. runSourceQueue counts the claimed ones.
-func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, maxRetries int, now time.Time, limiter *providerLimiter) (claimed bool) {
+func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool) {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(it.chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -282,7 +256,7 @@ func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, m
 		)
 		return false
 	}
-	claimed, err = d.runCandidates(ctx, ch, it.chapterID, it.cands, maxRetries, now, limiter)
+	claimed, err = d.runCandidates(ctx, ch, it.chapterID, it.cands, maxRetries, now, limiter, globalSem)
 	if err != nil {
 		slog.WarnContext(ctx, "download.RunOnce: chapter download did not complete cleanly",
 			"chapter_id", it.chapterID,

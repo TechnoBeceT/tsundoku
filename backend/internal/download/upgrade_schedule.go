@@ -126,12 +126,12 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	// returned nil, read after all goroutines have joined.
 	var upgraded atomic.Int64
 	err = runPerSourceQueues(ctx, groups, concurrency, func(ctx context.Context, chapterID uuid.UUID) error {
-		if err := d.upgradeWith(ctx, chapterID, limiter, disabled); err != nil {
+		if err := d.upgradeWith(ctx, chapterID, limiter, disabled, globalSem); err != nil {
 			return fmt.Errorf("download.Dispatcher.UpgradeAll: upgrade chapter %s: %w", chapterID, err)
 		}
 		upgraded.Add(1)
 		return nil
-	}, globalSem)
+	})
 	return int(upgraded.Load()), err
 }
 
