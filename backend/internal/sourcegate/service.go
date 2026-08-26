@@ -26,8 +26,6 @@ import (
 	"sync"
 	"time"
 
-	entsql "entgo.io/ent/dialect/sql"
-
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
@@ -240,32 +238,39 @@ func (s *Service) Clear(ctx context.Context, key string) (int, error) {
 }
 
 // RecordSuccess resets key's consecutive-failure counter and clears any
-// cooldown, upserting the row if it does not yet exist. Its single PostgreSQL
-// ON CONFLICT DO UPDATE statement orders a simultaneous failure before or after
-// this complete reset rather than interleaving its fields. This is database
-// coordination, not a process-local lock: separate binaries share the same
-// unique source_key constraint. Best-effort: a DB failure is logged and swallowed.
+// cooldown, upserting the row if it does not yet exist. The row stays locked
+// through the transition and its notification verdict, so a simultaneous
+// failure is ordered before or after this complete reset rather than
+// interleaving its fields. This is database coordination, not a process-local
+// lock: separate binaries share PostgreSQL's unique source_key row. Best-effort:
+// a DB failure is logged and swallowed.
 func (s *Service) RecordSuccess(ctx context.Context, key string) {
-	row, err := s.client.SourceCircuitState.Query().Where(entsourcecircuitstate.SourceKeyEQ(key)).Only(ctx)
-	wasTripped := err == nil && row.CooldownUntil != nil
-	if err != nil && !ent.IsNotFound(err) {
+	tx, row, err := s.lockCircuitState(ctx, key)
+	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordSuccess failed (best-effort, skipping)",
 			"source_key", key, "err", err)
 		return
 	}
-	err = s.client.SourceCircuitState.Create().
-		SetSourceKey(key).
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	// The verdict comes from the row protected by this transaction's write lock,
+	// so it is the same serial transition that the update below commits.
+	wasTripped := row.CooldownUntil != nil
+	err = tx.SourceCircuitState.UpdateOne(row).
 		SetConsecutiveFailures(0).
 		SetLastError("").
-		OnConflictColumns(entsourcecircuitstate.FieldSourceKey).
-		Update(func(u *ent.SourceCircuitStateUpsert) {
-			u.SetConsecutiveFailures(0)
-			u.SetLastError("")
-			u.ClearCooldownUntil()
-			u.ClearFailingSince()
-			u.SetUpdatedAt(time.Now().UTC())
-		}).
+		ClearCooldownUntil().
+		ClearFailingSince().
 		Exec(ctx)
+	if err == nil {
+		err = tx.Commit()
+		committed = err == nil
+	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordSuccess failed (best-effort, skipping)",
 			"source_key", key, "err", err)
@@ -280,49 +285,47 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 // RecordFailure bumps key's consecutive-failure counter and stores cause as
 // last_error, upserting the row if it does not yet exist. Once the counter
 // reaches the runtime-tunable failure threshold, it trips the breaker:
-// cooldown_until = now + the runtime-tunable cooldown. One PostgreSQL ON
-// CONFLICT DO UPDATE statement makes the increment, threshold decision, and
-// cooldown one database transition across processes. Best-effort: a DB failure
-// is logged and swallowed.
+// cooldown_until = now + the runtime-tunable cooldown. A PostgreSQL row lock
+// makes the increment, threshold decision, cooldown, and notification verdict
+// one database transition across processes. Best-effort: a DB failure is logged
+// and swallowed.
 func (s *Service) RecordFailure(ctx context.Context, key string, cause error, now time.Time) {
 	threshold := s.t.SourcesFailureThreshold(ctx)
-	cooldownUntil := now.Add(s.t.SourcesCooldown(ctx))
 	msg := truncateError(cause)
-	row, err := s.client.SourceCircuitState.Query().Where(entsourcecircuitstate.SourceKeyEQ(key)).Only(ctx)
-	tripped := (ent.IsNotFound(err) && 1 >= threshold) ||
-		(err == nil && row.CooldownUntil == nil && row.ConsecutiveFailures+1 >= threshold)
-	if err != nil && !ent.IsNotFound(err) {
+	tx, row, err := s.lockCircuitState(ctx, key)
+	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
 			"source_key", key, "err", err)
 		return
 	}
-	create := s.client.SourceCircuitState.Create().
-		SetSourceKey(key).
-		SetConsecutiveFailures(1).
-		SetLastError(msg).
-		SetFailingSince(now)
-	if 1 >= threshold {
-		create.SetCooldownUntil(cooldownUntil)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	newFailures := row.ConsecutiveFailures + 1
+	// CooldownUntil != nil remains the true pre-failure tripped state even when
+	// expired: only RecordSuccess clears it, and an expired cooldown can still
+	// produce the natural-recovery reset notification on that success.
+	wasTripped := row.CooldownUntil != nil
+	u := tx.SourceCircuitState.UpdateOne(row).
+		SetConsecutiveFailures(newFailures).
+		SetLastError(msg)
+	if row.ConsecutiveFailures == 0 {
+		u = u.SetFailingSince(now)
 	}
-	err = create.OnConflictColumns(entsourcecircuitstate.FieldSourceKey).
-		Update(func(u *ent.SourceCircuitStateUpsert) {
-			table := u.Table()
-			failures := table.C(entsourcecircuitstate.FieldConsecutiveFailures)
-			failingSince := table.C(entsourcecircuitstate.FieldFailingSince)
-			cooldown := table.C(entsourcecircuitstate.FieldCooldownUntil)
-			u.Set(entsourcecircuitstate.FieldConsecutiveFailures, entsql.Expr(failures+" + 1"))
-			u.SetLastError(msg)
-			u.Set(entsourcecircuitstate.FieldFailingSince, entsql.ExprFunc(func(b *entsql.Builder) {
-				b.WriteString("CASE WHEN ").WriteString(failures).WriteString(" = 0 THEN ").Arg(now).
-					WriteString(" ELSE ").WriteString(failingSince).WriteString(" END")
-			}))
-			u.Set(entsourcecircuitstate.FieldCooldownUntil, entsql.ExprFunc(func(b *entsql.Builder) {
-				b.WriteString("CASE WHEN ").WriteString(failures).WriteString(" + 1 >= ").Arg(threshold).
-					WriteString(" THEN ").Arg(cooldownUntil).WriteString(" ELSE ").WriteString(cooldown).WriteString(" END")
-			}))
-			u.SetUpdatedAt(time.Now().UTC())
-		}).
-		Exec(ctx)
+	tripped := false
+	if newFailures >= threshold {
+		u = u.SetCooldownUntil(now.Add(s.t.SourcesCooldown(ctx)))
+		tripped = !wasTripped
+	}
+	err = u.Exec(ctx)
+	if err == nil {
+		err = tx.Commit()
+		committed = err == nil
+	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
 			"source_key", key, "err", err)
@@ -332,6 +335,49 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerTrip, sourceevents.StatusFailed, cause)
 		s.fireTransition()
 	}
+}
+
+// lockCircuitState ensures one row exists, takes its PostgreSQL write lock, and
+// returns its current state while the transaction remains open. The initial
+// conflict-safe insert handles concurrent first failures; the following update
+// is deliberately a no-semantic-change lock write (updated_at is refreshed by
+// every successful record operation anyway). Callers must commit or roll back
+// the returned transaction.
+func (s *Service) lockCircuitState(ctx context.Context, key string) (*ent.Tx, *ent.SourceCircuitState, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	abort := func(cause error) (*ent.Tx, *ent.SourceCircuitState, error) {
+		_ = tx.Rollback()
+		return nil, nil, cause
+	}
+	if err := tx.SourceCircuitState.Create().
+		SetSourceKey(key).
+		OnConflictColumns(entsourcecircuitstate.FieldSourceKey).
+		Update(func(u *ent.SourceCircuitStateUpsert) {
+			u.SetSourceKey(key)
+		}).
+		Exec(ctx); err != nil {
+		return abort(err)
+	}
+	locked, err := tx.SourceCircuitState.Update().
+		Where(entsourcecircuitstate.SourceKeyEQ(key)).
+		SetUpdatedAt(time.Now().UTC()).
+		Save(ctx)
+	if err != nil {
+		return abort(err)
+	}
+	if locked != 1 {
+		return abort(fmt.Errorf("sourcegate: lock breaker %q updated %d rows", key, locked))
+	}
+	row, err := tx.SourceCircuitState.Query().
+		Where(entsourcecircuitstate.SourceKeyEQ(key)).
+		Only(ctx)
+	if err != nil {
+		return abort(err)
+	}
+	return tx, row, nil
 }
 
 // Wait blocks, if necessary, until the runtime-tunable politeness delay has

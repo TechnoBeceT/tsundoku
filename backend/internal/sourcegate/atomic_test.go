@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
@@ -140,6 +141,11 @@ func TestRecordFailureAndSuccess_ConcurrentCallsResolveAsOneWholeTransition(t *t
 	if err != nil {
 		t.Fatalf("load breaker row: %v", err)
 	}
+	assertConcurrentSuccessFailureOutcome(t, row, failureAt)
+}
+
+func assertConcurrentSuccessFailureOutcome(t *testing.T, row *ent.SourceCircuitState, failureAt time.Time) {
+	t.Helper()
 	if row.CooldownUntil != nil {
 		t.Fatalf("cooldown_until = %v, want no cooldown in either serial outcome", row.CooldownUntil)
 	}
