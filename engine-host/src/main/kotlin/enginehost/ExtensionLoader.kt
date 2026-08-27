@@ -24,7 +24,7 @@ import suwayomi.tachidesk.manga.impl.util.PackageTools.getPackageInfo
 import suwayomi.tachidesk.manga.impl.util.PackageTools.loadExtensionSources
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URI
+import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -39,6 +39,20 @@ data class LoadedExtension(
     val jarFile: File,
     val sources: List<Source>,
 )
+
+/** Verified APK metadata and its derived jar, prepared without mutating the active source registry. */
+internal data class PreparedExtension(
+    val pkgName: String,
+    val versionName: String,
+    val versionCode: Long,
+    val mainClass: String,
+    val apkFile: Path,
+    val jarFile: Path,
+)
+
+internal fun interface ExtensionPreparer {
+    fun prepare(apk: Path): PreparedExtension
+}
 
 /**
  * ExtensionLoader installs a Mihon extension APK on a plain JVM and instantiates its
@@ -63,42 +77,67 @@ class ExtensionLoader(
         sourceIds.forEach { sources.remove(it) }
     }
 
+    /** Load and register an extension from an existing local APK. */
+    fun loadFromApk(apkPath: String): LoadedExtension {
+        val prepared = prepareFromApk(Path.of(apkPath))
+        return instantiatePrepared(prepared).also { registerReplacement(emptyList(), it.sources) }
+    }
+
     /**
-     * Load an extension from a local APK path or an http(s) URL and return its full descriptor.
-     * Mirrors Suwayomi's install path minus the DB; registers each instantiated source by id.
+     * Validate and transform an existing local APK without changing the active source registry.
+     * Callers may run this outside the extension mutation lock, then instantiate the verified jar
+     * under the lock immediately before committing local state.
      */
-    fun loadFromApk(apkPathOrUrl: String): LoadedExtension {
-        val apkFile = resolveApk(apkPathOrUrl)
+    internal fun prepareFromApk(apkPath: Path): PreparedExtension {
+        val apkFile = apkPath.toFile()
+        require(apkFile.exists()) { "APK not found: $apkPath" }
         val fileNameWithoutType = apkFile.name.substringBefore(".apk")
         val jarFile = File(workDir, "$fileNameWithoutType.jar")
 
-        val packageInfo = getPackageInfo(apkFile.absolutePath)
+        try {
+            val packageInfo = getPackageInfo(apkFile.absolutePath)
 
-        // Validate the extension lib version (same guard Suwayomi enforces).
-        val libVersion = packageInfo.versionName.substringBeforeLast('.').toDouble()
-        require(libVersion in LIB_VERSION_MIN..LIB_VERSION_MAX) {
-            "Lib version $libVersion outside supported $LIB_VERSION_MIN..$LIB_VERSION_MAX"
+            // Validate the extension lib version (same guard Suwayomi enforces).
+            val libVersion = packageInfo.versionName.substringBeforeLast('.').toDouble()
+            require(libVersion in LIB_VERSION_MIN..LIB_VERSION_MAX) {
+                "Lib version $libVersion outside supported $LIB_VERSION_MIN..$LIB_VERSION_MAX"
+            }
+
+            val sourceClass =
+                packageInfo.applicationInfo.metaData
+                    .getString(METADATA_SOURCE_CLASS)!!
+                    .trim()
+            val className =
+                if (sourceClass.startsWith(".")) packageInfo.packageName + sourceClass else sourceClass
+
+            logger.info { "Extension ${packageInfo.packageName} main class: $className" }
+
+            // dex -> jar (+ Suwayomi's android-class bytecode fixups), then strip META-INF / merge assets.
+            dex2jar(apkFile.absolutePath, jarFile.absolutePath, fileNameWithoutType)
+            extractAssetsFromApk(apkFile, jarFile)
+
+            // Repair the StackMapTable dex2jar (+ Suwayomi's BytecodeEditor) leaves broken on newer
+            // extension APKs, which otherwise fails class verification with "Expecting a stackmap frame
+            // at branch target N" (GAP-100 — e.g. Asura Scans 1.6.66). See DexStackFrameRewriter.
+            DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
+
+            return PreparedExtension(
+                pkgName = packageInfo.packageName,
+                versionName = packageInfo.versionName,
+                versionCode = packageInfo.versionCode.toLong(),
+                mainClass = className,
+                apkFile = apkFile.toPath(),
+                jarFile = jarFile.toPath(),
+            )
+        } catch (failure: Throwable) {
+            jarFile.delete()
+            throw failure
         }
+    }
 
-        val sourceClass =
-            packageInfo.applicationInfo.metaData
-                .getString(METADATA_SOURCE_CLASS)!!
-                .trim()
-        val className =
-            if (sourceClass.startsWith(".")) packageInfo.packageName + sourceClass else sourceClass
-
-        logger.info { "Extension ${packageInfo.packageName} main class: $className" }
-
-        // dex -> jar (+ Suwayomi's android-class bytecode fixups), then strip META-INF / merge assets.
-        dex2jar(apkFile.absolutePath, jarFile.absolutePath, fileNameWithoutType)
-        extractAssetsFromApk(apkFile, jarFile)
-
-        // Repair the StackMapTable dex2jar (+ Suwayomi's BytecodeEditor) leaves broken on newer
-        // extension APKs, which otherwise fails class verification with "Expecting a stackmap frame
-        // at branch target N" (GAP-100 — e.g. Asura Scans 1.6.66). See DexStackFrameRewriter.
-        DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
-
-        val instance = loadExtensionSources(jarFile.absolutePath, className)
+    /** Instantiate a prepared jar without changing the active registry. */
+    internal fun instantiatePrepared(prepared: PreparedExtension): LoadedExtension {
+        val instance = loadExtensionSources(prepared.jarFile.toString(), prepared.mainClass)
         val loaded: List<Source> =
             when (instance) {
                 is Source -> listOf(instance)
@@ -107,18 +146,38 @@ class ExtensionLoader(
             }
 
         loaded.forEach { source ->
-            sources[source.id] = source
             logger.info { "Loaded source id=${source.id} name='${source.name}' lang='${source.lang}'" }
         }
 
         return LoadedExtension(
-            pkgName = packageInfo.packageName,
-            versionName = packageInfo.versionName,
-            versionCode = packageInfo.versionCode.toLong(),
-            mainClass = className,
-            jarFile = jarFile,
+            pkgName = prepared.pkgName,
+            versionName = prepared.versionName,
+            versionCode = prepared.versionCode,
+            mainClass = prepared.mainClass,
+            jarFile = prepared.jarFile.toFile(),
             sources = loaded,
         )
+    }
+
+    /** Expose a complete replacement source set after every fallible preparation step has passed. */
+    internal fun registerReplacement(
+        previousSourceIds: Collection<Long>,
+        replacement: List<Source>,
+    ) {
+        val replacementIds = replacement.mapTo(HashSet()) { it.id }
+        replacement.forEach { sources[it.id] = it }
+        previousSourceIds.filterNot { it in replacementIds }.forEach { sources.remove(it) }
+    }
+
+    internal fun snapshotSources(sourceIds: Collection<Long>): Map<Long, Source> =
+        sourceIds.mapNotNull { sourceId -> sources[sourceId]?.let { sourceId to it } }.toMap()
+
+    internal fun restoreSources(
+        affectedSourceIds: Collection<Long>,
+        snapshot: Map<Long, Source>,
+    ) {
+        affectedSourceIds.forEach { sources.remove(it) }
+        snapshot.forEach { (sourceId, source) -> sources[sourceId] = source }
     }
 
     /**
@@ -148,26 +207,8 @@ class ExtensionLoader(
      * Convenience for the CLI bootstrap path (Main.kt's optional APK arg): load and return the
      * source descriptors only.
      */
-    fun loadExtension(apkPathOrUrl: String): List<LoadedSourceDto> =
-        loadFromApk(apkPathOrUrl).sources.map { LoadedSourceDto(it.id, it.name, it.lang) }
-
-    /** Download (if a URL) or reference (if a local path) the APK into the work dir. */
-    private fun resolveApk(apkPathOrUrl: String): File {
-        if (!apkPathOrUrl.startsWith("http")) {
-            val local = File(apkPathOrUrl)
-            require(local.exists()) { "APK not found: $apkPathOrUrl" }
-            return local
-        }
-        val name = apkPathOrUrl.substringAfterLast('/')
-        val dest = File(workDir, name)
-        if (!dest.exists()) {
-            logger.info { "Downloading APK $apkPathOrUrl" }
-            URI(apkPathOrUrl).toURL().openStream().use { input ->
-                FileOutputStream(dest).use { output -> input.copyTo(output) }
-            }
-        }
-        return dest
-    }
+    fun loadExtension(apkPath: String): List<LoadedSourceDto> =
+        loadFromApk(apkPath).sources.map { LoadedSourceDto(it.id, it.name, it.lang) }
 
     /**
      * Adapted from Suwayomi's Extension.extractAssetsFromApk: copy the APK's `assets/` into the
@@ -178,44 +219,56 @@ class ExtensionLoader(
         jarFile: File,
     ) {
         val assetsFolder = File(workDir, "${apkFile.nameWithoutExtension}_assets")
-        assetsFolder.mkdirs()
-        ZipInputStream(apkFile.inputStream()).use { zin ->
-            var entry = zin.nextEntry
-            while (entry != null) {
-                if (entry.name.startsWith("assets/") && !entry.isDirectory) {
-                    val assetFile = File(assetsFolder, entry.name)
-                    assetFile.parentFile.mkdirs()
-                    FileOutputStream(assetFile).use { out -> zin.copyTo(out) }
-                }
-                entry = zin.nextEntry
-            }
-        }
-
         val tempJar = File(workDir, "${jarFile.nameWithoutExtension}_temp.jar")
-        ZipInputStream(jarFile.inputStream()).use { jin ->
-            ZipOutputStream(FileOutputStream(tempJar)).use { jout ->
-                var entry = jin.nextEntry
+        try {
+            assetsFolder.mkdirs()
+            ZipInputStream(apkFile.inputStream()).use { zin ->
+                var entry = zin.nextEntry
                 while (entry != null) {
-                    if (!entry.name.startsWith("META-INF/")) {
-                        jout.putNextEntry(ZipEntry(entry.name))
-                        jin.copyTo(jout)
+                    if (entry.name.startsWith("assets/") && !entry.isDirectory) {
+                        val assetFile = File(assetsFolder, entry.name)
+                        assetFile.parentFile.mkdirs()
+                        FileOutputStream(assetFile).use { out -> zin.copyTo(out) }
                     }
-                    entry = jin.nextEntry
+                    entry = zin.nextEntry
                 }
-                assetsFolder.walkTopDown().forEach { file ->
-                    if (file.isFile) {
-                        jout.putNextEntry(
-                            ZipEntry(file.relativeTo(assetsFolder).toString().replace("\\", "/")),
-                        )
-                        file.inputStream().use { it.copyTo(jout) }
-                        jout.closeEntry()
+            }
+
+            ZipInputStream(jarFile.inputStream()).use { jin ->
+                ZipOutputStream(FileOutputStream(tempJar)).use { jout ->
+                    var entry = jin.nextEntry
+                    while (entry != null) {
+                        if (!entry.name.startsWith("META-INF/")) {
+                            jout.putNextEntry(ZipEntry(entry.name))
+                            jin.copyTo(jout)
+                        }
+                        entry = jin.nextEntry
+                    }
+                    assetsFolder.walkTopDown().forEach { file ->
+                        if (file.isFile) {
+                            jout.putNextEntry(
+                                ZipEntry(file.relativeTo(assetsFolder).toString().replace("\\", "/")),
+                            )
+                            file.inputStream().use { it.copyTo(jout) }
+                            jout.closeEntry()
+                        }
                     }
                 }
             }
-        }
 
-        jarFile.delete()
-        tempJar.renameTo(jarFile)
-        assetsFolder.deleteRecursively()
+            try {
+                java.nio.file.Files.move(
+                    tempJar.toPath(),
+                    jarFile.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                java.nio.file.Files.move(tempJar.toPath(), jarFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            tempJar.delete()
+            assetsFolder.deleteRecursively()
+        }
     }
 }

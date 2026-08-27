@@ -21,6 +21,11 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 import java.net.URI
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -47,10 +52,21 @@ data class InstalledExtension(
  * URLs, the installed APKs, and a JSON install-manifest — and drives install/update/uninstall
  * through [ExtensionLoader]. It is DB-free and stateless re: library.
  */
-class ExtensionManager(
+class ExtensionManager internal constructor(
     private val loader: ExtensionLoader,
     private val extensionsRoot: File,
+    private val downloadClient: ExtensionDownloadClient,
+    private val preparer: ExtensionPreparer,
 ) {
+    constructor(loader: ExtensionLoader, extensionsRoot: File) :
+        this(loader, extensionsRoot, BoundedDownloadClient(), ExtensionPreparer { loader.prepareFromApk(it) })
+
+    internal constructor(
+        loader: ExtensionLoader,
+        extensionsRoot: File,
+        downloadClient: ExtensionDownloadClient,
+    ) : this(loader, extensionsRoot, downloadClient, ExtensionPreparer { loader.prepareFromApk(it) })
+
     private val logger = KotlinLogging.logger {}
     private val mapper: ObjectMapper = jacksonObjectMapper()
 
@@ -68,15 +84,25 @@ class ExtensionManager(
      * mutableMapOf) and the `installed`/`sources` maps. Read calls stay concurrent (they're stateless).
      */
     private val mutationLock = ReentrantLock()
+    private var mutationSequence = 0L
 
     /** Run [block] under the mutation lock — used by the RPC layer for the preference write+reload path. */
-    fun <T> underLock(block: () -> T): T = mutationLock.withLock(block)
+    fun <T> underLock(block: () -> T): T =
+        mutationLock.withLock {
+            try {
+                block()
+            } finally {
+                mutationSequence++
+            }
+        }
 
     /** pkgName -> installed record. */
     private val installed = ConcurrentHashMap<String, InstalledExtension>()
 
     @Volatile
     private var repos: List<String> = DEFAULT_REPOS
+    @Volatile
+    private var repoCacheGeneration = 0L
 
     /** repoUrl -> parsed index (cleared by [refresh]; fetched lazily). */
     private val repoCache = ConcurrentHashMap<String, List<RepoIndexEntry>>()
@@ -101,6 +127,7 @@ class ExtensionManager(
                 .onFailure { logger.error(it) { "Failed to reload installed extension ${record.pkgName}" } }
                 .onSuccess { logger.info { "Reloaded ${record.pkgName} (${it.sources.size} source(s))" } }
         }
+        mutationSequence++
     }
 
     /** The installed record owning a source id (null if the source came from the CLI bootstrap arg). */
@@ -129,6 +156,8 @@ class ExtensionManager(
     fun setRepos(newRepos: List<String>) = mutationLock.withLock {
         repos = newRepos.map { it.trim() }.filter { it.isNotBlank() }.distinct()
         repoCache.clear()
+        repoCacheGeneration++
+        mutationSequence++
         reposFile.writeText(mapper.writeValueAsString(repos))
         logger.info { "Repos updated: $repos" }
     }
@@ -136,6 +165,8 @@ class ExtensionManager(
     /** Drop the cached repo indexes so the next [list] re-fetches them. */
     fun refresh() = mutationLock.withLock {
         repoCache.clear()
+        repoCacheGeneration++
+        mutationSequence++
         logger.info { "Repo index cache cleared (will re-fetch on next list)" }
     }
 
@@ -175,71 +206,63 @@ class ExtensionManager(
     fun install(
         pkgName: String? = null,
         apkUrl: String? = null,
-    ): List<ExtensionDto> = mutationLock.withLock {
+    ): List<ExtensionDto> {
         require(pkgName != null || apkUrl != null) { "install requires pkgName or apkUrl" }
 
+        val stateSnapshot = mutationLock.withLock { InstallState(mutationSequence, repos, pkgName?.let { installed[it] }) }
         val (url, repoUrl, repoEntry) =
             if (apkUrl != null) {
                 Triple(apkUrl, null, null)
             } else {
-                val (rUrl, entry) = findInRepos(pkgName!!) ?: throw IllegalArgumentException("pkgName '$pkgName' not found in configured repos")
+                val (rUrl, entry) =
+                    findInRepos(pkgName!!, stateSnapshot.repos)
+                        ?: throw IllegalArgumentException("pkgName '$pkgName' not found in configured repos")
                 // The repo entry carries a fully-resolved absolute apk URL (see [RepoIndexEntry]).
                 Triple(entry.apkUrl, rUrl, entry)
             }
 
-        // Ensure the APK bytes live on the volume so the extension survives a restart. A local
-        // path is copied in; an http URL is downloaded by the loader into extensionsRoot.
-        val volumeUrl = ensureOnVolume(url)
-        val ext = loader.loadFromApk(volumeUrl)
-
-        // Reinstall/update: clean up the previous version of this pkg (its now-superseded APK/jar
-        // and any source ids the new version dropped). loadFromApk already re-registered the new
-        // sources, so we only tidy the delta.
-        installed[ext.pkgName]?.let { old ->
-            val newApk = File(volumeUrl).name
-            if (old.apkFileName != newApk) {
-                File(extensionsRoot, old.apkFileName).delete()
-                File(extensionsRoot, old.apkFileName.substringBefore(".apk") + ".jar").delete()
-            }
-            loader.unload(old.sourceIds - ext.sources.map { it.id }.toSet())
-        }
-        val record =
-            InstalledExtension(
-                pkgName = ext.pkgName,
-                name = repoEntry?.name ?: ext.sources.firstOrNull()?.name ?: ext.pkgName,
-                versionName = ext.versionName,
-                versionCode = ext.versionCode,
-                lang = repoEntry?.lang ?: (ext.sources.map { it.lang }.toSet().singleOrNull() ?: "all"),
-                apkFileName = File(volumeUrl).name,
-                mainClass = ext.mainClass,
-                isNsfw = repoEntry?.nsfw == 1,
-                iconUrl = repoEntry?.iconUrl,
-                repoUrl = repoUrl,
-                sourceIds = ext.sources.map { it.id },
-                sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
-            )
-        installed[ext.pkgName] = record
-        persistManifest()
-        logger.info { "Installed ${ext.pkgName} v${ext.versionName} (${ext.sources.size} source(s))" }
-        list()
+        return prepareAndInstall(
+            url = url,
+            repoUrl = repoUrl,
+            repoEntry = repoEntry,
+            expectedRepos = if (apkUrl == null) stateSnapshot.repos else null,
+            expectedMutationSequence = stateSnapshot.mutationSequence,
+        )
     }
 
-    fun uninstall(pkgName: String): List<ExtensionDto> = mutationLock.withLock {
-        val record = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
-        uninstallRecord(record)
-        persistManifest()
-        logger.info { "Uninstalled $pkgName" }
-        list()
+    fun uninstall(pkgName: String): List<ExtensionDto> {
+        mutationLock.withLock {
+            val record = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
+            uninstallRecord(record)
+            mutationSequence++
+            persistManifest()
+            logger.info { "Uninstalled $pkgName" }
+        }
+        return list()
     }
 
     /** Update = reinstall the latest repo version (fails if no newer version is advertised). */
-    fun update(pkgName: String): List<ExtensionDto> = mutationLock.withLock {
-        val record = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
-        val (repoUrl, entry) = findInRepos(pkgName) ?: throw IllegalArgumentException("no repo advertises '$pkgName'")
+    fun update(pkgName: String): List<ExtensionDto> {
+        val stateSnapshot =
+            mutationLock.withLock {
+                InstallState(
+                    mutationSequence = mutationSequence,
+                    repos = repos,
+                    installed = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed"),
+                )
+            }
+        val record = requireNotNull(stateSnapshot.installed)
+        val (repoUrl, entry) =
+            findInRepos(pkgName, stateSnapshot.repos) ?: throw IllegalArgumentException("no repo advertises '$pkgName'")
         require(entry.code > record.versionCode) { "'$pkgName' is already up to date (installed ${record.versionCode}, repo ${entry.code})" }
         logger.info { "Updating $pkgName ${record.versionCode} -> ${entry.code} from $repoUrl" }
-        // install() re-acquires the (reentrant) lock.
-        install(pkgName, null)
+        return prepareAndInstall(
+            url = entry.apkUrl,
+            repoUrl = repoUrl,
+            repoEntry = entry,
+            expectedRepos = stateSnapshot.repos,
+            expectedMutationSequence = stateSnapshot.mutationSequence,
+        )
     }
 
     // ---- internals ----
@@ -256,18 +279,162 @@ class ExtensionManager(
         record.sourceIds.forEach { id -> File(settingsRoot, "source_$id.xml").delete() }
     }
 
-    /** Guarantee the APK is inside [extensionsRoot]: copy a local file in; leave an http URL for the loader. */
-    private fun ensureOnVolume(url: String): String {
-        if (url.startsWith("http")) return url
-        val src = File(url)
-        require(src.exists()) { "APK not found: $url" }
-        val dest = File(extensionsRoot, src.name)
-        if (src.absolutePath != dest.absolutePath) src.copyTo(dest, overwrite = true)
-        return dest.absolutePath
+    private fun prepareAndInstall(
+        url: String,
+        repoUrl: String?,
+        repoEntry: RepoIndexEntry?,
+        expectedRepos: List<String>?,
+        expectedMutationSequence: Long,
+    ): List<ExtensionDto> {
+        val stagedApk = stageApk(url)
+        var prepared: PreparedExtension? = null
+        try {
+            prepared = preparer.prepare(stagedApk)
+            mutationLock.withLock {
+                require(mutationSequence == expectedMutationSequence) {
+                    "extension state changed while preparing the install"
+                }
+                require(expectedRepos == null || repos == expectedRepos) {
+                    "extension repositories changed while preparing the install"
+                }
+                applyPrepared(prepared, apkFileNameFor(url), repoUrl, repoEntry)
+                mutationSequence++
+            }
+        } finally {
+            runCatching { Files.deleteIfExists(prepared?.jarFile) }
+            runCatching { Files.deleteIfExists(stagedApk) }
+        }
+        return list()
     }
 
-    private fun persistManifest() {
-        manifestFile.writeText(mapper.writeValueAsString(installed.values.toList()))
+    private fun stageApk(url: String): Path {
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            return downloadClient.downloadApk(url, extensionsRoot.toPath())
+        }
+        val source = Path.of(url)
+        require(Files.exists(source)) { "APK not found: $url" }
+        val temporary = Files.createTempFile(extensionsRoot.toPath(), ".extension-local-", ".apk.tmp")
+        try {
+            Files.copy(source, temporary, StandardCopyOption.REPLACE_EXISTING)
+            return temporary
+        } catch (failure: Throwable) {
+            runCatching { Files.deleteIfExists(temporary) }
+            throw failure
+        }
+    }
+
+    private fun applyPrepared(
+        prepared: PreparedExtension,
+        requestedApkFileName: String,
+        repoUrl: String?,
+        repoEntry: RepoIndexEntry?,
+    ) {
+        val old = installed[prepared.pkgName]
+        val apkTarget = unusedTarget(requestedApkFileName)
+        val jarTarget = apkTarget.resolveSibling(apkTarget.fileName.toString().substringBeforeLast('.') + ".jar")
+        var apkMoved = false
+        var jarMoved = false
+        try {
+            moveIntoPlace(prepared.apkFile, apkTarget)
+            apkMoved = true
+            moveIntoPlace(prepared.jarFile, jarTarget)
+            jarMoved = true
+            val installedPrepared = prepared.copy(apkFile = apkTarget, jarFile = jarTarget)
+            val ext = loader.instantiatePrepared(installedPrepared)
+            val record =
+                InstalledExtension(
+                    pkgName = ext.pkgName,
+                    name = repoEntry?.name ?: ext.sources.firstOrNull()?.name ?: ext.pkgName,
+                    versionName = ext.versionName,
+                    versionCode = ext.versionCode,
+                    lang = repoEntry?.lang ?: (ext.sources.map { it.lang }.toSet().singleOrNull() ?: "all"),
+                    apkFileName = apkTarget.fileName.toString(),
+                    mainClass = ext.mainClass,
+                    isNsfw = repoEntry?.nsfw == 1,
+                    iconUrl = repoEntry?.iconUrl,
+                    repoUrl = repoUrl,
+                    sourceIds = ext.sources.map { it.id },
+                    sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
+                )
+            val nextInstalled = installed.toMutableMap().apply { put(record.pkgName, record) }
+            val affectedSourceIds = (old?.sourceIds.orEmpty() + ext.sources.map { it.id }).toSet()
+            val sourceSnapshot = loader.snapshotSources(affectedSourceIds)
+            try {
+                loader.registerReplacement(old?.sourceIds.orEmpty(), ext.sources)
+                installed[record.pkgName] = record
+                persistManifest(nextInstalled.values)
+            } catch (failure: Throwable) {
+                loader.restoreSources(affectedSourceIds, sourceSnapshot)
+                if (old == null) installed.remove(record.pkgName) else installed[record.pkgName] = old
+                throw failure
+            }
+            old?.let { removeSupersededFiles(it, record) }
+            logger.info { "Installed ${ext.pkgName} v${ext.versionName} (${ext.sources.size} source(s))" }
+        } catch (failure: Throwable) {
+            if (jarMoved) runCatching { Files.deleteIfExists(jarTarget) }
+            if (apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
+            throw failure
+        }
+    }
+
+    private fun removeSupersededFiles(
+        old: InstalledExtension,
+        replacement: InstalledExtension,
+    ) {
+        if (old.apkFileName == replacement.apkFileName) return
+        File(extensionsRoot, old.apkFileName).delete()
+        File(extensionsRoot, old.apkFileName.substringBefore(".apk") + ".jar").delete()
+    }
+
+    private fun apkFileNameFor(url: String): String {
+        val raw =
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                URI(url).path.substringAfterLast('/')
+            } else {
+                Path.of(url).fileName.toString()
+            }
+        return raw.takeIf { it.endsWith(".apk", ignoreCase = true) } ?: "extension.apk"
+    }
+
+    private fun unusedTarget(requestedName: String): Path {
+        val root = extensionsRoot.toPath()
+        val requested = root.resolve(Path.of(requestedName).fileName.toString())
+        if (!Files.exists(requested) && !Files.exists(requested.resolveSibling(requested.fileName.toString().substringBeforeLast('.') + ".jar"))) {
+            return requested
+        }
+        val stem = requested.fileName.toString().substringBeforeLast('.')
+        return root.resolve("$stem-${UUID.randomUUID()}.apk")
+    }
+
+    private fun moveIntoPlace(
+        source: Path,
+        target: Path,
+    ) {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source, target)
+        }
+    }
+
+    private data class InstallState(
+        val mutationSequence: Long,
+        val repos: List<String>,
+        val installed: InstalledExtension?,
+    )
+
+    private fun persistManifest(records: Collection<InstalledExtension> = installed.values) {
+        val temporary = Files.createTempFile(extensionsRoot.toPath(), ".installed-", ".json.tmp")
+        try {
+            Files.writeString(temporary, mapper.writeValueAsString(records.toList()))
+            try {
+                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
     }
 
     private fun loadManifestFromDisk() {
@@ -285,9 +452,9 @@ class ExtensionManager(
     }
 
     /** pkg -> (repoUrl, best repo entry across all repos). */
-    private fun availableByPkg(): Map<String, Pair<String, RepoIndexEntry>> {
+    private fun availableByPkg(repoUrls: List<String> = repos): Map<String, Pair<String, RepoIndexEntry>> {
         val best = HashMap<String, Pair<String, RepoIndexEntry>>()
-        repos.forEach { repoUrl ->
+        repoUrls.forEach { repoUrl ->
             fetchIndex(repoUrl).forEach { entry ->
                 val existing = best[entry.pkg]
                 if (existing == null || entry.code > existing.second.code) {
@@ -298,16 +465,25 @@ class ExtensionManager(
         return best
     }
 
-    private fun findInRepos(pkgName: String): Pair<String, RepoIndexEntry>? = availableByPkg()[pkgName]
+    private fun findInRepos(
+        pkgName: String,
+        repoUrls: List<String> = repos,
+    ): Pair<String, RepoIndexEntry>? = availableByPkg(repoUrls)[pkgName]
 
-    private fun fetchIndex(repoUrl: String): List<RepoIndexEntry> =
-        repoCache.getOrPut(repoUrl) {
-            val indexUrl = indexUrlFor(repoUrl)
+    private fun fetchIndex(repoUrl: String): List<RepoIndexEntry> {
+        repoCache[repoUrl]?.let { return it }
+        val generation = repoCacheGeneration
+        val indexUrl = indexUrlFor(repoUrl)
+        val parsed =
             runCatching {
-                URI(indexUrl).toURL().openStream().use { RepoIndexParser.parse(it.readBytes(), indexUrl, repoBaseFor(repoUrl), mapper) }
+                RepoIndexParser.parse(downloadClient.downloadRepoIndex(indexUrl), indexUrl, repoBaseFor(repoUrl), mapper)
             }.onFailure { logger.warn(it) { "Failed to fetch repo index $indexUrl" } }
                 .getOrDefault(emptyList())
+        mutationLock.withLock {
+            if (generation == repoCacheGeneration && repoUrl in repos) repoCache.putIfAbsent(repoUrl, parsed)
         }
+        return parsed
+    }
 
     /** A repo URL that already names an index file (`.json`/`.pb`) is fetched verbatim; a bare base gets the default. */
     private fun indexUrlFor(repoUrl: String): String =
