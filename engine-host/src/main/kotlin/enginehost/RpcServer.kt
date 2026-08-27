@@ -16,9 +16,13 @@ import com.sun.net.httpserver.HttpServer
 import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.InetSocketAddress
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Exposes loaded sources, extension management, per-source preferences, and configuration over
@@ -34,6 +38,11 @@ class RpcServer(
     private val logger = KotlinLogging.logger {}
     private val ownsExecutors = executors == null
     private val rpcExecutors = executors ?: RpcExecutors()
+    private val lifecycleLock = Any()
+    private val activeResponses = ConcurrentHashMap.newKeySet<ResponseGuard>()
+    private val submissions = ConcurrentHashMap.newKeySet<SubmittedExchange>()
+    private val stopped = CountDownLatch(1)
+    private var stopping = false
 
     // A malformed body or an unknown field is a client error (400), never an upstream 502. Ignoring
     // unknown properties also lets the contract carry forward-compatible request fields.
@@ -46,55 +55,69 @@ class RpcServer(
         server.executor = rpcExecutors.frontDoorExecutor
 
         // Direct, bounded control handlers never wait on source or extension capacity.
-        server.createContext("/health") { exchange ->
-            ResponseGuard(exchange).respondJson(200, mapOf("status" to "ok", "sources" to loader.loaded().size))
+        registerContext("/health") { _, response ->
+            response.respondJson(200, mapOf("status" to "ok", "sources" to loader.loaded().size))
+            false
         }
-        server.createContext("/config", ::handleConfig)
+        registerContext("/config") { exchange, response ->
+            handleConfig(exchange, response)
+            false
+        }
 
         // Source calls are submitted and the callback returns without executing extension code.
-        server.createContext("/search") { exchange ->
-            submitSource(exchange) { request: SearchRequest -> SourceCalls.search(request.source(), request.query, request.page) }
+        registerContext("/search") { exchange, response ->
+            submitSource(exchange, response) { request: SearchRequest -> SourceCalls.search(request.source(), request.query, request.page) }
+            true
         }
-        server.createContext("/popular") { exchange ->
-            submitSource(exchange) { request: BrowseRequest -> SourceCalls.popular(request.source(), request.page) }
+        registerContext("/popular") { exchange, response ->
+            submitSource(exchange, response) { request: BrowseRequest -> SourceCalls.popular(request.source(), request.page) }
+            true
         }
-        server.createContext("/latest") { exchange ->
-            submitSource(exchange) { request: BrowseRequest -> SourceCalls.latest(request.source(), request.page) }
+        registerContext("/latest") { exchange, response ->
+            submitSource(exchange, response) { request: BrowseRequest -> SourceCalls.latest(request.source(), request.page) }
+            true
         }
-        server.createContext("/manga") { exchange ->
-            submitSource(exchange) { request: MangaRequest -> SourceCalls.mangaDetails(request.source(), request.url) }
+        registerContext("/manga") { exchange, response ->
+            submitSource(exchange, response) { request: MangaRequest -> SourceCalls.mangaDetails(request.source(), request.url) }
+            true
         }
-        server.createContext("/chapters") { exchange ->
-            submitSource(exchange) { request: ChaptersRequest ->
+        registerContext("/chapters") { exchange, response ->
+            submitSource(exchange, response) { request: ChaptersRequest ->
                 SourceCalls.chapters(request.source(), request.url, request.mangaTitle)
             }
+            true
         }
-        server.createContext("/pages") { exchange ->
-            submitSource(exchange) { request: PagesRequest ->
+        registerContext("/pages") { exchange, response ->
+            submitSource(exchange, response) { request: PagesRequest ->
                 SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl)
             }
+            true
         }
-        server.createContext("/image") { exchange ->
-            submit(rpcExecutors.sourceExecutor, exchange, "image request") { response ->
+        registerContext("/image") { exchange, response ->
+            submit(rpcExecutors.sourceExecutor, response, "image request") {
                 handleImage(exchange, response)
             }
+            true
         }
 
         // Registry, preferences, and extension mutations share the single-writer domain.
-        server.createContext("/sources") { exchange ->
-            submit(rpcExecutors.extensionExecutor, exchange, "sources request") { response ->
+        registerContext("/sources") { exchange, response ->
+            submit(rpcExecutors.extensionExecutor, response, "sources request") {
                 handleSources(exchange, response)
             }
+            true
         }
-        server.createContext("/extensions") { exchange ->
-            submit(rpcExecutors.extensionExecutor, exchange, "extensions request") { response ->
+        registerContext("/extensions") { exchange, response ->
+            submit(rpcExecutors.extensionExecutor, response, "extensions request") {
                 handleExtensions(exchange, response)
             }
+            true
         }
-        server.createContext("/repos") { exchange ->
-            submit(rpcExecutors.extensionExecutor, exchange, "repos request") { response ->
+        registerContext("/repos") { exchange, response ->
+            submit(rpcExecutors.extensionExecutor, response, "repos request") {
                 handleRepos(exchange, response)
             }
+            true
         }
 
         server.start()
@@ -102,8 +125,70 @@ class RpcServer(
     }
 
     fun stop() {
-        if (::server.isInitialized) server.stop(0)
-        if (ownsExecutors) rpcExecutors.close()
+        val owner: Boolean
+        val acceptedTasks: List<SubmittedExchange>
+        val acceptedResponses: List<ResponseGuard>
+        synchronized(lifecycleLock) {
+            owner = !stopping
+            if (owner) {
+                stopping = true
+                acceptedTasks = submissions.toList()
+                acceptedResponses = activeResponses.toList()
+            } else {
+                acceptedTasks = emptyList()
+                acceptedResponses = emptyList()
+            }
+        }
+        if (!owner) {
+            awaitStopped()
+            return
+        }
+
+        try {
+            acceptedTasks.forEach(SubmittedExchange::shutdown)
+            acceptedResponses.forEach(ResponseGuard::respondShutdown)
+            if (ownsExecutors) rpcExecutors.close()
+            acceptedResponses.forEach(ResponseGuard::awaitCompletion)
+            if (::server.isInitialized) server.stop(0)
+        } finally {
+            stopped.countDown()
+        }
+    }
+
+    private fun registerContext(
+        path: String,
+        handler: (HttpExchange, ResponseGuard) -> Boolean,
+    ) {
+        server.createContext(path) { exchange ->
+            val response = ResponseGuard(exchange)
+            val accepted =
+                synchronized(lifecycleLock) {
+                    if (stopping) false else activeResponses.add(response)
+                }
+            if (!accepted) return@createContext response.respondShutdown()
+
+            var transferred = false
+            try {
+                when (rpcExecutors.currentFrontDoorRejection()) {
+                    RpcRejection.CAPACITY -> response.respondBusy()
+                    RpcRejection.SHUTDOWN -> response.respondShutdown()
+                    null -> transferred = handler(exchange, response)
+                }
+            } catch (failure: Throwable) {
+                logger.warn(failure) { "front-door request failed" }
+                response.respondJson(502, ErrorResponse("${failure.javaClass.simpleName}: ${failure.message}"))
+            } finally {
+                if (!transferred) activeResponses.remove(response)
+            }
+        }
+    }
+
+    private fun awaitStopped() {
+        try {
+            stopped.await(STOP_WAIT_SECONDS, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     // ================= source registry + preferences =================
@@ -221,8 +306,10 @@ class RpcServer(
 
     // ================= config passthrough =================
 
-    private fun handleConfig(exchange: HttpExchange) {
-        val response = ResponseGuard(exchange)
+    private fun handleConfig(
+        exchange: HttpExchange,
+        response: ResponseGuard,
+    ) {
         val path = exchange.requestURI.path
         try {
             if (exchange.requestMethod != "PUT") return response.respondJson(405, ErrorResponse("PUT only"))
@@ -277,9 +364,10 @@ class RpcServer(
 
     private inline fun <reified T : Any> submitSource(
         exchange: HttpExchange,
+        response: ResponseGuard,
         crossinline call: (T) -> Any,
     ) {
-        submit(rpcExecutors.sourceExecutor, exchange, "source request") { response ->
+        submit(rpcExecutors.sourceExecutor, response, "source request") {
             try {
                 if (exchange.requestMethod != "POST") return@submit response.respondJson(405, ErrorResponse("POST only"))
                 val request: T = mapper.readValue(exchange.requestBody.readBytes())
@@ -302,23 +390,67 @@ class RpcServer(
     /** Submit without waiting; only the accepted task completes the guarded exchange. */
     private fun submit(
         executor: ExecutorService,
-        exchange: HttpExchange,
+        response: ResponseGuard,
         operation: String,
-        work: (ResponseGuard) -> Unit,
+        work: () -> Unit,
     ) {
-        val response = ResponseGuard(exchange)
-        try {
-            executor.execute {
+        val task = SubmittedExchange(response, operation, work)
+        val rejection =
+            synchronized(lifecycleLock) {
+                if (stopping) {
+                    RpcRejection.SHUTDOWN
+                } else {
+                    submissions.add(task)
+                    try {
+                        executor.execute(task)
+                        null
+                    } catch (_: RejectedExecutionException) {
+                        submissions.remove(task)
+                        if (executor.isShutdown) RpcRejection.SHUTDOWN else RpcRejection.CAPACITY
+                    }
+                }
+            }
+        if (rejection != null) task.reject(rejection)
+    }
+
+    private inner class SubmittedExchange(
+        private val response: ResponseGuard,
+        private val operation: String,
+        private val work: () -> Unit,
+    ) : ShutdownAwareTask {
+        private val state = AtomicInteger(SUBMISSION_QUEUED)
+
+        override fun run() {
+            if (!state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_RUNNING)) return
+            try {
                 try {
-                    work(response)
+                    work()
                 } catch (failure: Throwable) {
                     logger.warn(failure) { "$operation failed outside its route containment" }
                     response.respondJson(502, ErrorResponse("${failure.javaClass.simpleName}: ${failure.message}"))
                 }
+            } finally {
+                state.set(SUBMISSION_COMPLETED)
+                submissions.remove(this)
+                activeResponses.remove(response)
             }
-        } catch (rejected: RejectedExecutionException) {
-            logger.warn(rejected) { "$operation rejected" }
-            response.respondJson(503, ErrorResponse("engine is stopping"))
+        }
+
+        fun reject(rejection: RpcRejection) {
+            if (state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_STOPPED)) {
+                if (rejection == RpcRejection.CAPACITY) response.respondBusy() else response.respondShutdown()
+                submissions.remove(this)
+                activeResponses.remove(response)
+            }
+            response.awaitCompletion()
+        }
+
+        override fun shutdown() {
+            state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_STOPPED)
+            response.respondShutdown()
+            activeResponses.remove(response)
+            if (state.get() == SUBMISSION_STOPPED) submissions.remove(this)
+            response.awaitCompletion()
         }
     }
 
@@ -354,6 +486,7 @@ class RpcServer(
         private val exchange: HttpExchange,
     ) {
         private val completed = AtomicBoolean(false)
+        private val completion = CountDownLatch(1)
 
         fun respondJson(
             status: Int,
@@ -369,9 +502,44 @@ class RpcServer(
             contentType: String,
         ) {
             if (!completed.compareAndSet(false, true)) return
-            exchange.responseHeaders.add("Content-Type", contentType)
-            exchange.sendResponseHeaders(status, bytes.size.toLong())
-            exchange.responseBody.use { it.write(bytes) }
+            try {
+                exchange.responseHeaders.add("Content-Type", contentType)
+                exchange.sendResponseHeaders(status, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            } finally {
+                completion.countDown()
+            }
         }
+
+        fun respondBusy() = respondLifecycle(BUSY_MESSAGE)
+
+        fun respondShutdown() = respondLifecycle(SHUTDOWN_MESSAGE)
+
+        private fun respondLifecycle(message: String) {
+            try {
+                respondJson(503, ErrorResponse(message))
+            } catch (failure: Throwable) {
+                logger.debug(failure) { "client disconnected before lifecycle response completed" }
+            }
+        }
+
+        fun awaitCompletion() {
+            try {
+                completion.await(RESPONSE_WAIT_SECONDS, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+    }
+
+    private companion object {
+        const val BUSY_MESSAGE = "server busy"
+        const val SHUTDOWN_MESSAGE = "server shutting down"
+        const val RESPONSE_WAIT_SECONDS = 5L
+        const val STOP_WAIT_SECONDS = 5L
+        const val SUBMISSION_QUEUED = 0
+        const val SUBMISSION_RUNNING = 1
+        const val SUBMISSION_STOPPED = 2
+        const val SUBMISSION_COMPLETED = 3
     }
 }
