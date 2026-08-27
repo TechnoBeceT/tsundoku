@@ -19,13 +19,47 @@ internal data class ClientConnection(
     val remotePort: Int,
 )
 
+internal enum class ResponsePathDisposition {
+    LIVE,
+    PEER_FIN,
+    UNUSABLE,
+    AMBIGUOUS,
+}
+
+internal enum class TcpConnectionState(
+    val code: String,
+    val responsePath: ResponsePathDisposition,
+) {
+    ESTABLISHED("01", ResponsePathDisposition.LIVE),
+    SYN_SENT("02", ResponsePathDisposition.AMBIGUOUS),
+    SYN_RECV("03", ResponsePathDisposition.AMBIGUOUS),
+    FIN_WAIT_1("04", ResponsePathDisposition.UNUSABLE),
+    FIN_WAIT_2("05", ResponsePathDisposition.UNUSABLE),
+    TIME_WAIT("06", ResponsePathDisposition.AMBIGUOUS),
+    CLOSE("07", ResponsePathDisposition.AMBIGUOUS),
+    CLOSE_WAIT("08", ResponsePathDisposition.PEER_FIN),
+    LAST_ACK("09", ResponsePathDisposition.UNUSABLE),
+    LISTEN("0A", ResponsePathDisposition.AMBIGUOUS),
+    CLOSING("0B", ResponsePathDisposition.UNUSABLE),
+    NEW_SYN_RECV("0C", ResponsePathDisposition.AMBIGUOUS),
+    UNKNOWN("", ResponsePathDisposition.AMBIGUOUS),
+    ;
+
+    companion object {
+        fun fromCode(code: String): TcpConnectionState = entries.firstOrNull { it.code == code } ?: UNKNOWN
+    }
+}
+
+internal fun responsePathDisposition(states: Set<TcpConnectionState>): ResponsePathDisposition =
+    if (states.size == 1) states.single().responsePath else ResponsePathDisposition.AMBIGUOUS
+
 internal fun interface ConnectionStateReader {
-    /** Returns null when this platform cannot expose TCP state safely. */
-    fun establishedConnections(): Set<ClientConnection>?
+    /** Returns null when a complete IPv4 and IPv6 TCP snapshot is unavailable. */
+    fun connectionStates(): Map<ClientConnection, Set<TcpConnectionState>>?
 }
 
 /**
- * Observes accepted client sockets with one bounded, fixed-rate monitor. JDK HttpServer exposes no
+ * Observes accepted client sockets with one bounded, fixed-delay monitor. JDK HttpServer exposes no
  * disconnect callback before the first response write, while the Linux engine runtime exposes the
  * same connection state through procfs. Unsupported or unreadable state fails open: the normal host
  * deadline remains authoritative and no disconnect is invented.
@@ -33,7 +67,7 @@ internal fun interface ConnectionStateReader {
 internal class ClientConnectionObserver(
     private val capacity: Int = MAX_CONNECTIONS,
     private val pollInterval: Duration = DEFAULT_POLL_INTERVAL,
-    private val stateReader: ConnectionStateReader = ProcConnectionStateReader,
+    private val stateReader: ConnectionStateReader = ProcConnectionStateReader(),
 ) : AutoCloseable {
     private val lock = ReentrantLock()
     private val observations = mutableMapOf<Long, Observation>()
@@ -59,6 +93,7 @@ internal class ClientConnectionObserver(
     fun observe(
         local: InetSocketAddress,
         remote: InetSocketAddress,
+        responseExpectedAfterPeerFin: Boolean = false,
         onDisconnect: () -> Unit,
     ): AutoCloseable? {
         val connection =
@@ -71,7 +106,14 @@ internal class ClientConnectionObserver(
         val id =
             lock.withLock {
                 if (closed.get() || observations.size >= capacity) return null
-                nextId++.also { observations[it] = Observation(connection, onDisconnect) }
+                nextId++.also {
+                    observations[it] =
+                        Observation(
+                            connection = connection,
+                            responseExpectedAfterPeerFin = responseExpectedAfterPeerFin,
+                            onDisconnect = onDisconnect,
+                        )
+                }
             }
         return Registration(id)
     }
@@ -88,12 +130,21 @@ internal class ClientConnectionObserver(
     }
 
     private fun scan() {
-        val established = stateReader.establishedConnections() ?: return
+        val states = stateReader.connectionStates() ?: return
         val callbacks =
             lock.withLock {
-                val disconnected = observations.filterValues { it.connection !in established }
-                disconnected.keys.forEach(observations::remove)
-                disconnected.values.map(Observation::onDisconnect)
+                buildList {
+                    val iterator = observations.iterator()
+                    while (iterator.hasNext()) {
+                        val observation = iterator.next().value
+                        val disposition = states[observation.connection]?.let(::responsePathDisposition)
+                        val disconnected = observation.observe(disposition)
+                        if (disconnected) {
+                            iterator.remove()
+                            add(observation.onDisconnect)
+                        }
+                    }
+                }
             }
         callbacks.forEach { callback -> runCatching(callback) }
     }
@@ -111,46 +162,72 @@ internal class ClientConnectionObserver(
 
     private data class Observation(
         val connection: ClientConnection,
+        val responseExpectedAfterPeerFin: Boolean,
         val onDisconnect: () -> Unit,
-    )
+        var missingSnapshots: Int = 0,
+        var failOpen: Boolean = false,
+    ) {
+        fun observe(disposition: ResponsePathDisposition?): Boolean {
+            when (disposition) {
+                ResponsePathDisposition.LIVE -> missingSnapshots = 0
+                ResponsePathDisposition.PEER_FIN -> {
+                    // CLOSE_WAIT proves only that the peer finished writing. An announced
+                    // close-after-response can still read, while an unannounced FIN on the
+                    // outstanding exchange is the Java client's cancellation signal.
+                    if (!responseExpectedAfterPeerFin) return true
+                    missingSnapshots = 0
+                }
+                ResponsePathDisposition.UNUSABLE -> return true
+                ResponsePathDisposition.AMBIGUOUS -> {
+                    missingSnapshots = 0
+                    failOpen = true
+                }
+                null -> if (!failOpen) missingSnapshots++
+            }
+            return !failOpen && missingSnapshots >= MISSING_SNAPSHOT_CONFIRMATIONS
+        }
+    }
 
     private companion object {
         const val MAX_CONNECTIONS = 136
         val DEFAULT_POLL_INTERVAL: Duration = Duration.ofMillis(50)
         const val CONNECTION_THREAD_PREFIX = "engine-connection-"
         const val TERMINATION_SECONDS = 5L
+        const val MISSING_SNAPSHOT_CONFIRMATIONS = 3
     }
 }
 
-private object ProcConnectionStateReader : ConnectionStateReader {
-    private val tables = listOf(Path.of("/proc/self/net/tcp"), Path.of("/proc/self/net/tcp6"))
-
-    override fun establishedConnections(): Set<ClientConnection>? {
-        val connections = mutableSetOf<ClientConnection>()
-        var readable = false
-        tables.forEach { table ->
-            if (!Files.isReadable(table)) return@forEach
-            val read = runCatching { readTable(table, connections) }.isSuccess
-            readable = readable || read
-        }
-        return if (readable) connections else null
+internal class ProcConnectionStateReader(
+    private val tables: List<Path> = DEFAULT_TABLES,
+) : ConnectionStateReader {
+    override fun connectionStates(): Map<ClientConnection, Set<TcpConnectionState>>? {
+        if (tables.any { !Files.isReadable(it) }) return null
+        return runCatching {
+            val connections = mutableMapOf<ClientConnection, MutableSet<TcpConnectionState>>()
+            tables.forEach { table -> readTable(table, connections) }
+            connections.mapValues { (_, states) -> states.toSet() }
+        }.getOrNull()
     }
 
     private fun readTable(
         table: Path,
-        connections: MutableSet<ClientConnection>,
+        connections: MutableMap<ClientConnection, MutableSet<TcpConnectionState>>,
     ) {
         Files.newBufferedReader(table).useLines { lines ->
-            lines.drop(1).forEach { line -> parseEstablished(line)?.let(connections::add) }
+            lines.drop(1).filter(String::isNotBlank).forEach { line ->
+                val (connection, state) = parseConnection(line)
+                connections.getOrPut(connection, ::mutableSetOf).add(state)
+            }
         }
     }
 
-    private fun parseEstablished(line: String): ClientConnection? {
+    private fun parseConnection(line: String): Pair<ClientConnection, TcpConnectionState> {
         val fields = line.trim().split(WHITESPACE)
-        if (fields.size < 4 || fields[3] != ESTABLISHED_STATE) return null
-        val local = parseEndpoint(fields[1]) ?: return null
-        val remote = parseEndpoint(fields[2]) ?: return null
-        return ClientConnection(local.first, local.second, remote.first, remote.second)
+        require(fields.size >= 4) { "malformed procfs TCP row" }
+        val local = requireNotNull(parseEndpoint(fields[1])) { "malformed procfs local endpoint" }
+        val remote = requireNotNull(parseEndpoint(fields[2])) { "malformed procfs remote endpoint" }
+        val connection = ClientConnection(local.first, local.second, remote.first, remote.second)
+        return connection to TcpConnectionState.fromCode(fields[3])
     }
 
     private fun parseEndpoint(value: String): Pair<String, Int>? {
@@ -174,10 +251,12 @@ private object ProcConnectionStateReader : ConnectionStateReader {
         return canonicalAddress(networkOrder)
     }
 
-    private const val ESTABLISHED_STATE = "01"
-    private const val IPV4_HEX_LENGTH = 8
-    private const val IPV6_HEX_LENGTH = 32
-    private val WHITESPACE = Regex("\\s+")
+    private companion object {
+        const val IPV4_HEX_LENGTH = 8
+        const val IPV6_HEX_LENGTH = 32
+        val WHITESPACE = Regex("\\s+")
+        val DEFAULT_TABLES = listOf(Path.of("/proc/self/net/tcp"), Path.of("/proc/self/net/tcp6"))
+    }
 }
 
 private fun canonicalAddress(address: InetAddress): String = canonicalAddress(address.address)

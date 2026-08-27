@@ -684,7 +684,11 @@ class RpcServer(
         ) {
             disconnectCancellation.set(cancel)
             val observation =
-                observer.observe(exchange.localAddress, exchange.remoteAddress) {
+                observer.observe(
+                    local = exchange.localAddress,
+                    remote = exchange.remoteAddress,
+                    responseExpectedAfterPeerFin = exchange.requestsConnectionClose(),
+                ) {
                     if (!completed.get()) disconnectCancellation.getAndSet(null)?.invoke()
                 }
             disconnectObservation.set(observation)
@@ -696,6 +700,12 @@ class RpcServer(
                 }
             }
         }
+
+        private fun HttpExchange.requestsConnectionClose(): Boolean =
+            requestHeaders["Connection"]
+                .orEmpty()
+                .flatMap { value -> value.split(',') }
+                .any { token -> token.trim().equals("close", ignoreCase = true) }
 
         private fun respondMessage(
             status: Int,
