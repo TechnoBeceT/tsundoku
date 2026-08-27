@@ -1,0 +1,83 @@
+NOTE: every named execution domain appears together with legacy and generic fallback pools.
+Named domains must be counted separately. The blocked legacy and JDK pools must not inflate
+or replace any authoritative named-domain count.
+
+Full thread dump OpenJDK 64-Bit Server VM:
+
+"engine-http-1" #31 prio=5 os_prio=0 tid=0x1 nid=0x1 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-http-2" #32 prio=5 os_prio=0 tid=0x2 nid=0x2 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-http-3" #33 prio=5 os_prio=0 tid=0x3 nid=0x3 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-http-4" #34 prio=5 os_prio=0 tid=0x4 nid=0x4 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-1" #41 prio=5 os_prio=0 tid=0x11 nid=0x11 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-2" #42 prio=5 os_prio=0 tid=0x12 nid=0x12 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-3" #43 prio=5 os_prio=0 tid=0x13 nid=0x13 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-4" #44 prio=5 os_prio=0 tid=0x14 nid=0x14 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-5" #45 prio=5 os_prio=0 tid=0x15 nid=0x15 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-6" #46 prio=5 os_prio=0 tid=0x16 nid=0x16 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-7" #47 prio=5 os_prio=0 tid=0x17 nid=0x17 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-source-8" #48 prio=5 os_prio=0 tid=0x18 nid=0x18 runnable
+   java.lang.Thread.State: RUNNABLE
+
+"engine-extension-1" #51 prio=5 os_prio=0 tid=0x21 nid=0x21 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-deadline-1" #52 prio=5 os_prio=0 tid=0x22 nid=0x22 waiting on condition
+   java.lang.Thread.State: TIMED_WAITING (parking)
+
+"engine-network-1" #53 prio=5 os_prio=0 tid=0x23 nid=0x23 runnable
+   java.lang.Thread.State: RUNNABLE
+
+"engine-network-2" #54 prio=5 os_prio=0 tid=0x24 nid=0x24 runnable
+   java.lang.Thread.State: RUNNABLE
+
+"engine-rpc-1" #61 prio=5 os_prio=0 tid=0x31 nid=0x31 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"engine-rpc-2" #62 prio=5 os_prio=0 tid=0x32 nid=0x32 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-9-thread-1" #71 prio=5 os_prio=0 tid=0x41 nid=0x41 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+"pool-9-thread-2" #72 prio=5 os_prio=0 tid=0x42 nid=0x42 waiting for monitor entry
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        - waiting to lock <0x0000000084271758> (a eu.kanade.tachiyomi.extension.en.comix.ExtensionGenerated)
+
+JNI global refs: 23, weak refs: 0

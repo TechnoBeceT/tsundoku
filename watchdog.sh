@@ -1,11 +1,11 @@
 #!/bin/sh
-# watchdog.sh — detect and recover the engine-host request-pool deadlock (GAP-137).
+# watchdog.sh — detect and recover engine-host execution-domain deadlocks (GAP-137).
 #
-# The engine-host serves /health from the SAME fixed 8-thread pool as every source
-# call. A source extension that synchronises on itself can park one thread in a
-# network wait forever; every other request for that source then piles up behind the
-# monitor, the pool drains, and the engine answers NOTHING — every source dies, not
-# just the one that wedged. Only a restart clears it.
+# Current images isolate the HTTP front door, source scheduler, extension mutations,
+# deadlines, and extension networking. Legacy images used one fixed eight-thread RPC
+# pool, and both layouts can still be observed during rollout. A non-cooperative
+# extension can permanently occupy an execution domain; only process recovery clears
+# monitor deadlock after bounded evidence proves it.
 #
 # So "/health is silent" means "the engine cannot serve requests". It does NOT mean
 # "the engine is deadlocked": a single legitimate long call (a large series' chapter
@@ -31,18 +31,19 @@
 # therefore `blocked == seen` — every RPC pool thread we can see is blocked — which
 # excludes saturation structurally rather than by choosing a luckier number.
 #
-# It is expressed against the threads actually SEEN, never a literal 8, so resizing
-# the pool cannot silently turn it back into a majority rule.
+# It is expressed against the threads actually SEEN in one domain, never a literal 8,
+# so resizing a pool cannot silently turn it back into a majority rule.
 #
 # Accepted cost, stated rather than hidden: a wedge whose monitor holder is itself a
 # pool thread leaves seen-1 blocked and will NOT fire. The verdict is logged either
 # way, so that case is visible in the container log instead of being a mystery.
 #
-# ── Identifying the RPC pool ─────────────────────────────────────────────────
-# Two accepted thread-name shapes, in STRICT precedence order:
+# ── Identifying execution domains ───────────────────────────────────────────
+# Three accepted thread-name tiers, in STRICT precedence order:
 #
-#   1. "engine-rpc-<n>"        the engine-host's named ThreadFactory. AUTHORITATIVE.
-#   2. "pool-<n>-thread-<m>"   the JDK default. FALLBACK ONLY.
+#   1. "engine-<domain>-<n>"   the current domain factories. AUTHORITATIVE.
+#   2. "engine-rpc-<n>"        the legacy engine-host factory. FALLBACK ONLY.
+#   3. "pool-<n>-thread-<m>"   the JDK default. LAST FALLBACK ONLY.
 #
 # The fallback exists because `Executors.newFixedThreadPool(8)` with no factory names
 # its threads from a PROCESS-GLOBAL counter in the JDK: any library that creates a
@@ -50,9 +51,11 @@
 # then counts zero for a genuine permanent deadlock and never recovers it. That was
 # reproduced end to end, so the fallback must not be anchored to pool-1 either.
 #
-# But the fallback is UNOWNED — it would just as happily count some other library's
-# pool. So as soon as ANY engine-rpc-* thread appears in the dump, only those are
-# considered and every pool-* thread is ignored. The two sets are never merged.
+# The current domains are http, source, extension, deadline, and network. They are
+# emitted and judged separately: four blocked HTTP threads plus eight running source
+# threads is never reported as one twelve-thread pool. If any current domain appears,
+# both fallback tiers are ignored. Otherwise engine-rpc wins over the unowned JDK
+# fallback. No tier and no domain is ever merged with another.
 #
 # ── Known limitation (no silent failure) ─────────────────────────────────────
 # A JVM started with -Xrs ignores SIGQUIT and prints no dump at all, and the Gradle
@@ -73,9 +76,10 @@ WATCHDOG_DUMP_FILE=${WATCHDOG_DUMP_FILE:-/tmp/engine-host.dump}
 # wedge_scan FILE
 # The whole predicate, in ONE pass. Prints three space-separated fields:
 #
-#     <seen> <blocked> <monitor>
+#     <domain> <seen> <blocked> <monitor>
 #
-#   seen     RPC pool threads found (see the precedence rule in the header)
+#   domain   http/source/extension/deadline/network, legacy, jdk, or none
+#   seen     threads found for that one domain (see the precedence rule above)
 #   blocked  how many of those are BLOCKED (on object monitor)
 #   monitor  "<address> <class>" of the first monitor an RPC pool thread is waiting
 #            on — the single most useful line of evidence in a dump, because it names
@@ -106,7 +110,7 @@ WATCHDOG_DUMP_FILE=${WATCHDOG_DUMP_FILE:-/tmp/engine-host.dump}
 # A missing or unreadable file prints "0 0 unknown".
 wedge_scan() {
     if [ ! -r "$1" ]; then
-        echo "0 0 unknown"
+        echo "none 0 0 unknown"
         return 0
     fi
     # The header match requires the closing quote to be followed by a SPACE, so only
@@ -118,39 +122,66 @@ wedge_scan() {
     # fallback path below, where a JVM whose epilogue line we do not recognise leaves
     # the counts uncommitted.
     awk '
-        function pick() {
-            if (rpc_seen > 0) {
-                out_seen = rpc_seen; out_blocked = rpc_blocked; out_monitor = rpc_monitor
+        function monitor_or_unknown(value) { return value == "" ? "unknown" : value }
+        function named_total() { return http_seen + source_seen + extension_seen + deadline_seen + network_seen }
+        function build(    output) {
+            if (named_total() > 0) {
+                output = "http " http_seen " " http_blocked " " monitor_or_unknown(http_monitor)
+                output = output "\nsource " source_seen " " source_blocked " " monitor_or_unknown(source_monitor)
+                output = output "\nextension " extension_seen " " extension_blocked " " monitor_or_unknown(extension_monitor)
+                output = output "\ndeadline " deadline_seen " " deadline_blocked " " monitor_or_unknown(deadline_monitor)
+                output = output "\nnetwork " network_seen " " network_blocked " " monitor_or_unknown(network_monitor)
+            } else if (legacy_seen > 0) {
+                output = "legacy " legacy_seen " " legacy_blocked " " monitor_or_unknown(legacy_monitor)
+            } else if (pool_seen > 0) {
+                output = "jdk " pool_seen " " pool_blocked " " monitor_or_unknown(pool_monitor)
             } else {
-                out_seen = pool_seen; out_blocked = pool_blocked; out_monitor = pool_monitor
+                output = "none 0 0 unknown"
             }
+            return output
+        }
+        function reset() {
+            http_seen = 0; http_blocked = 0; http_monitor = ""
+            source_seen = 0; source_blocked = 0; source_monitor = ""
+            extension_seen = 0; extension_blocked = 0; extension_monitor = ""
+            deadline_seen = 0; deadline_blocked = 0; deadline_monitor = ""
+            network_seen = 0; network_blocked = 0; network_monitor = ""
+            legacy_seen = 0; legacy_blocked = 0; legacy_monitor = ""
+            pool_seen = 0; pool_blocked = 0; pool_monitor = ""
         }
         /^Full thread dump/ {
             started = 1
-            rpc_seen = 0; rpc_blocked = 0; rpc_monitor = ""
-            pool_seen = 0; pool_blocked = 0; pool_monitor = ""
+            reset()
             kind = ""; pending = 0
             next
         }
         /^JNI global ref/ {
             if (started) {
-                pick()
-                complete_seen = out_seen
-                complete_blocked = out_blocked
-                complete_monitor = out_monitor
+                complete_output = build()
                 have_complete = 1
             }
             next
         }
         /^"/ {
             pending = 0; kind = ""
-            if ($0 ~ /^"engine-rpc-[0-9]+" /) { kind = "rpc"; rpc_seen++; pending = 1 }
+            if ($0 ~ /^"engine-http-[0-9]+" /) { kind = "http"; http_seen++; pending = 1 }
+            else if ($0 ~ /^"engine-source-[0-9]+" /) { kind = "source"; source_seen++; pending = 1 }
+            else if ($0 ~ /^"engine-extension-[0-9]+" /) { kind = "extension"; extension_seen++; pending = 1 }
+            else if ($0 ~ /^"engine-deadline-[0-9]+" /) { kind = "deadline"; deadline_seen++; pending = 1 }
+            else if ($0 ~ /^"engine-network-[0-9]+" /) { kind = "network"; network_seen++; pending = 1 }
+            else if ($0 ~ /^"engine-rpc-[0-9]+" /) { kind = "legacy"; legacy_seen++; pending = 1 }
             else if ($0 ~ /^"pool-[0-9]+-thread-[0-9]+" /) { kind = "pool"; pool_seen++; pending = 1 }
             next
         }
         pending == 1 {
             if ($0 ~ /java\.lang\.Thread\.State: BLOCKED \(on object monitor\)/) {
-                if (kind == "rpc") { rpc_blocked++ } else { pool_blocked++ }
+                if (kind == "http") { http_blocked++ }
+                else if (kind == "source") { source_blocked++ }
+                else if (kind == "extension") { extension_blocked++ }
+                else if (kind == "deadline") { deadline_blocked++ }
+                else if (kind == "network") { network_blocked++ }
+                else if (kind == "legacy") { legacy_blocked++ }
+                else { pool_blocked++ }
             }
             pending = 0
             next
@@ -162,26 +193,24 @@ wedge_scan() {
                 addr = substr(tok, 2, index(tok, ">") - 2)
                 cls = substr(tok, index(tok, "(a ") + 3)
                 cls = substr(cls, 1, length(cls) - 1)
-                if (kind == "rpc") {
-                    if (rpc_monitor == "") { rpc_monitor = addr " " cls }
-                } else {
-                    if (pool_monitor == "") { pool_monitor = addr " " cls }
-                }
+                if (kind == "http" && http_monitor == "") { http_monitor = addr " " cls }
+                else if (kind == "source" && source_monitor == "") { source_monitor = addr " " cls }
+                else if (kind == "extension" && extension_monitor == "") { extension_monitor = addr " " cls }
+                else if (kind == "deadline" && deadline_monitor == "") { deadline_monitor = addr " " cls }
+                else if (kind == "network" && network_monitor == "") { network_monitor = addr " " cls }
+                else if (kind == "legacy" && legacy_monitor == "") { legacy_monitor = addr " " cls }
+                else if (kind == "pool" && pool_monitor == "") { pool_monitor = addr " " cls }
             }
             next
         }
         END {
             if (have_complete) {
-                out_seen = complete_seen
-                out_blocked = complete_blocked
-                out_monitor = complete_monitor
+                print complete_output
             } else if (started) {
-                pick()
+                print build()
             } else {
-                out_seen = 0; out_blocked = 0; out_monitor = ""
+                print "none 0 0 unknown"
             }
-            if (out_monitor == "") { out_monitor = "unknown" }
-            print (out_seen + 0) " " (out_blocked + 0) " " out_monitor
         }
     ' "$1"
 }
@@ -191,7 +220,8 @@ wedge_scan() {
 # all three fields out of its single wedge_scan pass, because a wedged JVM's dump can
 # be megabytes and reading it twice buys nothing.
 wedge_held_monitor() {
-    monitor=$(wedge_scan "$1")
+    monitor=$(wedge_scan "$1" | awk -v wanted="${2:-}" 'wanted == "" || $1 == wanted { print; exit }')
+    monitor=${monitor#* }
     monitor=${monitor#* }
     monitor=${monitor#* }
     echo "$monitor"
@@ -316,6 +346,7 @@ watchdog_stop_engine() {
 # `[ test ] && command` whose test is false returns non-zero and would kill the loop
 # the first time the engine is healthy.
 watchdog_health_loop() {
+    armed=0
     fails=0
     # Cooldown state lives in globals initialised only when unset, so a loop that
     # dies and is re-entered by supervise_engine_health does not forget when it last
@@ -329,6 +360,17 @@ watchdog_health_loop() {
         watchdog_trim_log
 
         if curl -fsS --max-time "$WATCHDOG_PROBE_TIMEOUT" "$WATCHDOG_HEALTH_URL" >/dev/null 2>&1; then
+            if [ "$armed" -eq 0 ]; then
+                armed=1
+                watchdog_log "wedge watchdog armed: health supervision armed after first successful response"
+            fi
+            fails=0
+            continue
+        fi
+
+        # Startup grace is state, not a one-time launch gate. Until this process has
+        # answered at least one bounded health probe, silence is boot evidence only.
+        if [ "$armed" -eq 0 ]; then
             fails=0
             continue
         fi
@@ -367,34 +409,51 @@ watchdog_health_loop() {
         sleep "$WATCHDOG_DUMP_SETTLE"
 
         tail -c "+$((offset + 1))" "$WATCHDOG_LOG_FILE" > "$WATCHDOG_DUMP_FILE" 2>/dev/null || true
-        scan=$(wedge_scan "$WATCHDOG_DUMP_FILE" 2>/dev/null || echo "0 0 unknown")
-        scan=${scan:-0 0 unknown}
-        seen=${scan%% *}
-        scan_rest=${scan#* }
-        blocked=${scan_rest%% *}
-        monitor=${scan_rest#* }
-        seen=${seen:-0}
-        blocked=${blocked:-0}
-
-        verdict=$(wedge_verdict "$seen" "$blocked" || echo "insufficient")
-        # Three distinct verdicts, never one reassuring line covering all of them.
-        # The shipped single message ("engine is SATURATED, not deadlocked") was
-        # emitted even when the dump had been parsed into nothing at all, which made
-        # a blind watchdog read as a healthy one in the logs.
-        if [ "$verdict" = "insufficient" ]; then
+        scan=$(wedge_scan "$WATCHDOG_DUMP_FILE" 2>/dev/null || echo "none 0 0 unknown")
+        scan=${scan:-none 0 0 unknown}
+        wedge_domain=""
+        wedge_seen=0
+        wedge_monitor=unknown
+        while read -r domain seen blocked monitor; do
+            seen=${seen:-0}
+            blocked=${blocked:-0}
+            case "$seen:$blocked" in
+                *[!0-9:]*|:*)
+                    watchdog_log "WARNING: malformed ${domain:-unknown} pool evidence; not restarting (GAP-137)"
+                    continue
+                    ;;
+            esac
             if [ "$seen" -eq 0 ]; then
-                watchdog_log "WARNING: no RPC pool threads found in the dump region — the watchdog cannot tell wedged from busy. The thread names may have changed, the dump may not have landed within ${WATCHDOG_DUMP_SETTLE}s, or the JVM may be running with -Xrs (which ignores SIGQUIT). Not restarting (GAP-137)"
-            else
-                watchdog_log "WARNING: only ${seen} RPC pool thread(s) in the dump region (need ${WATCHDOG_POOL_MIN_SEEN} to judge); the dump looks truncated. Not restarting (GAP-137)"
+                continue
             fi
-            continue
-        fi
-        if [ "$verdict" = "saturated" ]; then
-            watchdog_log "${blocked} of ${seen} RPC pool threads BLOCKED; the rest are running — engine is SATURATED, not deadlocked — not restarting"
+            verdict=$(wedge_verdict "$seen" "$blocked" || echo "insufficient")
+            if [ "$verdict" = "wedge" ] && [ -z "$wedge_domain" ]; then
+                wedge_domain=$domain
+                wedge_seen=$seen
+                wedge_monitor=${monitor:-unknown}
+            elif [ "$verdict" = "insufficient" ]; then
+                watchdog_log "WARNING: only ${seen} ${domain} pool thread(s) in the dump region (need ${WATCHDOG_POOL_MIN_SEEN} to judge); the dump looks truncated. Not restarting (GAP-137)"
+            elif [ "$verdict" = "saturated" ]; then
+                watchdog_log "${blocked} of ${seen} ${domain} pool threads BLOCKED; the rest are running — engine is SATURATED, not deadlocked — not restarting"
+            fi
+        done <<EOF
+$scan
+EOF
+
+        if [ -z "$wedge_domain" ]; then
+            case "$scan" in
+                none\ *)
+                    watchdog_log "WARNING: no engine execution-pool threads found in the dump region — the watchdog cannot tell wedged from busy. The thread names may have changed, the dump may not have landed within ${WATCHDOG_DUMP_SETTLE}s, or the JVM may be running with -Xrs (which ignores SIGQUIT). Not restarting (GAP-137)"
+                    ;;
+            esac
             continue
         fi
 
-        watchdog_log "WEDGE CONFIRMED: all ${seen} RPC pool threads BLOCKED on ${monitor} (GAP-137)"
+        if [ "$wedge_domain" = "legacy" ]; then
+            watchdog_log "WEDGE CONFIRMED: all ${wedge_seen} RPC pool threads BLOCKED on ${wedge_monitor} (GAP-137)"
+        else
+            watchdog_log "WEDGE CONFIRMED: all ${wedge_seen} ${wedge_domain} pool threads BLOCKED on ${wedge_monitor} (GAP-137)"
+        fi
 
         if [ $((now - watchdog_last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
             watchdog_log "last restart was $((now - watchdog_last_kill))s ago; holding off (thrash guard)"
@@ -417,8 +476,9 @@ watchdog_health_loop() {
 # is a second reason a stray non-zero status cannot end it. The re-entry is still
 # logged, because a loop that keeps restarting is a fault worth seeing.
 #
-# Intended to be started AFTER the engine's first successful /health, so it can never
-# fire against an engine that is still booting.
+# Starts with the engine supervisor and arms only after the first successful bounded
+# health response, so a late-ready engine gains supervision without treating boot as
+# failure evidence.
 supervise_engine_health() {
     restarts=0
     while true; do

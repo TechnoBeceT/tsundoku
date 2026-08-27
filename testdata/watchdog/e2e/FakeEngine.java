@@ -38,8 +38,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>Configuration is by environment variable so one image covers every case:
  * <ul>
  *   <li>{@code TSUNDOKU_ENGINE_PORT} — listen port (default 7777, as in the image).</li>
- *   <li>{@code FAKE_ENGINE_THREAD_NAMES} — {@code engine-rpc} (default) names the pool threads
- *       {@code engine-rpc-<n>} exactly as the production {@code RpcThreadFactory} does;
+ *   <li>{@code FAKE_ENGINE_THREAD_NAMES} — {@code engine-http} (default) names the pool threads
+ *       {@code engine-http-<n>} like the production front door; {@code engine-rpc} exercises the
+ *       legacy named fallback;
  *       {@code jdk-default} leaves the JDK to name them {@code pool-<n>-thread-<m>}, which is the
  *       watchdog's FALLBACK path and what the image emitted before the factory was named. Both
  *       shapes must keep working, so both are tested.</li>
@@ -68,7 +69,8 @@ public final class FakeEngine {
 
     public static void main(String[] args) throws IOException {
         final int port = Integer.parseInt(env("TSUNDOKU_ENGINE_PORT", "7777"));
-        final boolean namedThreads = !"jdk-default".equals(env("FAKE_ENGINE_THREAD_NAMES", "engine-rpc"));
+        final String threadNames = env("FAKE_ENGINE_THREAD_NAMES", "engine-http");
+        final boolean namedThreads = !"jdk-default".equals(threadNames);
 
         advanceGlobalPoolCounter(namedThreads);
 
@@ -79,7 +81,7 @@ public final class FakeEngine {
         // we can SEE is blocked" — it is size-independent, but a fake with a different size would
         // stop reproducing how many requests it takes to drain the pool.
         pool = namedThreads
-                ? Executors.newFixedThreadPool(8, rpcThreadFactory())
+                ? Executors.newFixedThreadPool(8, rpcThreadFactory(threadNames))
                 : Executors.newFixedThreadPool(8);
         server.setExecutor(pool);
 
@@ -139,7 +141,7 @@ public final class FakeEngine {
         server.start();
         System.out.println("fake-engine: listening on " + port
                 + " pid=" + ProcessHandle.current().pid()
-                + " threadNames=" + (namedThreads ? "engine-rpc" : "jdk-default"));
+                + " threadNames=" + threadNames);
         System.out.flush();
 
         // Wedge AFTER the listener is up, so the port is bound and connections are accepted, but
@@ -204,8 +206,8 @@ public final class FakeEngine {
      * a coincidence, not a contract, which is why the shipped predicate matches any pool number.
      *
      * @param keepAlive when true the decoy pool's thread is parked and therefore APPEARS in the
-     *     thread dump. That is used in {@code engine-rpc} mode on purpose: it puts an unrelated
-     *     {@code pool-1-thread-1} in the dump alongside the {@code engine-rpc-*} threads and so
+     *     thread dump. That is used in named mode on purpose: it puts an unrelated
+     *     {@code pool-1-thread-1} in the dump alongside the authoritative domain threads and so
      *     exercises the watchdog's precedence rule (named threads win outright, {@code pool-*} is
      *     ignored entirely) against a live JVM.
      *     <p>In {@code jdk-default} mode it MUST be false. The fallback path counts every
@@ -230,15 +232,14 @@ public final class FakeEngine {
     }
 
     /**
-     * The production {@code enginehost.RpcThreadFactory}, reproduced: a PER-POOL counter and the
-     * {@code engine-rpc-} prefix that {@code watchdog.sh} anchors its predicate on
-     * ({@code ^"engine-rpc-[0-9]+" }). If the prefix here and the one in {@code RpcThreadFactory}
-     * ever disagree, this test stops testing the shape the image actually ships.
+     * The production {@code enginehost.RpcThreadFactory}, reproduced with a per-pool counter and
+     * the selected diagnostic prefix. If the current prefix here and in the production factory
+     * disagree, the named case stops testing the shape the image ships.
      */
-    private static ThreadFactory rpcThreadFactory() {
+    private static ThreadFactory rpcThreadFactory(String prefix) {
         final AtomicInteger next = new AtomicInteger(1);
         return r -> {
-            final Thread t = new Thread(r, "engine-rpc-" + next.getAndIncrement());
+            final Thread t = new Thread(r, prefix + "-" + next.getAndIncrement());
             t.setDaemon(false);
             t.setPriority(Thread.NORM_PRIORITY);
             return t;

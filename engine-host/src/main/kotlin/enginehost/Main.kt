@@ -284,7 +284,12 @@ fun main(args: Array<String>) {
 
     val server = RpcServer(loader, extensions, port)
     server.start()
-    Runtime.getRuntime().addShutdownHook(Thread { server.stop() })
+    Runtime.getRuntime().addShutdownHook(
+        Thread {
+            server.stop()
+            extensions.close()
+        },
+    )
 
     logger.info { "Engine-host up. curl http://localhost:$port/health" }
     Thread.currentThread().join()

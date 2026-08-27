@@ -2,6 +2,7 @@ package enginehost
 
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -12,26 +13,33 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 class DownloadTooLargeException(message: String) : IOException(message)
 
-interface ExtensionDownloadClient {
+interface ExtensionDownloadClient : AutoCloseable {
     fun downloadRepoIndex(url: String): ByteArray
 
     fun downloadApk(
         url: String,
         targetDir: Path,
     ): Path
+
+    override fun close() {}
 }
 
 /** Applies fixed transport and response-size bounds to extension repository and APK downloads. */
 class BoundedDownloadClient internal constructor(
-    private val client: OkHttpClient = defaultHttpClient(),
+    client: OkHttpClient? = null,
     private val repoBodyLimitBytes: Long = REPO_BODY_LIMIT_BYTES,
     private val apkBodyLimitBytes: Long = APK_BODY_LIMIT_BYTES,
 ) : ExtensionDownloadClient {
+    private val ownsClient = client == null
+    private val client: OkHttpClient = client ?: defaultHttpClient()
     override fun downloadRepoIndex(url: String): ByteArray {
         val output = ByteArrayOutputStream()
         download(url, repoBodyLimitBytes, "repository index", output)
@@ -124,18 +132,52 @@ class BoundedDownloadClient internal constructor(
         limitBytes: Long,
     ) = DownloadTooLargeException("$label exceeds the $limitBytes bytes response limit")
 
+    override fun close() {
+        if (!ownsClient) return
+        client.dispatcher.cancelAll()
+        client.connectionPool.evictAll()
+        client.cache?.close()
+        val executor = client.dispatcher.executorService
+        executor.shutdownNow()
+        try {
+            executor.awaitTermination(TERMINATION_SECONDS, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     companion object {
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(10)
         val READ_TIMEOUT: Duration = Duration.ofSeconds(60)
         val CALL_TIMEOUT: Duration = Duration.ofSeconds(120)
         const val REPO_BODY_LIMIT_BYTES: Long = 16L * 1024 * 1024
         const val APK_BODY_LIMIT_BYTES: Long = 128L * 1024 * 1024
+        private const val NETWORK_THREADS = 2
+        private const val NETWORK_QUEUE_CAPACITY = 32
+        private const val TERMINATION_SECONDS = 5L
+        private const val NETWORK_THREAD_PREFIX = "engine-network-"
 
-        private fun defaultHttpClient(): OkHttpClient =
-            OkHttpClient.Builder()
+        private fun defaultHttpClient(): OkHttpClient {
+            val executor =
+                ThreadPoolExecutor(
+                    NETWORK_THREADS,
+                    NETWORK_THREADS,
+                    0L,
+                    TimeUnit.MILLISECONDS,
+                    ArrayBlockingQueue(NETWORK_QUEUE_CAPACITY),
+                    RpcThreadFactory(NETWORK_THREAD_PREFIX),
+                )
+            val dispatcher =
+                Dispatcher(executor).apply {
+                    maxRequests = NETWORK_THREADS
+                    maxRequestsPerHost = NETWORK_THREADS
+                }
+            return OkHttpClient.Builder()
+                .dispatcher(dispatcher)
                 .connectTimeout(CONNECT_TIMEOUT)
                 .readTimeout(READ_TIMEOUT)
                 .callTimeout(CALL_TIMEOUT)
                 .build()
+        }
     }
 }

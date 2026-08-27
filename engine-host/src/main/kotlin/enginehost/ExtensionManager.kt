@@ -57,7 +57,7 @@ class ExtensionManager internal constructor(
     private val extensionsRoot: File,
     private val downloadClient: ExtensionDownloadClient,
     private val preparer: ExtensionPreparer,
-) {
+) : AutoCloseable {
     constructor(loader: ExtensionLoader, extensionsRoot: File) :
         this(loader, extensionsRoot, BoundedDownloadClient(), ExtensionPreparer { loader.prepareFromApk(it) })
 
@@ -112,6 +112,8 @@ class ExtensionManager internal constructor(
         loadReposFromDisk()
         loadManifestFromDisk()
     }
+
+    override fun close() = downloadClient.close()
 
     // ---- boot ----
 

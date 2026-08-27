@@ -89,6 +89,11 @@ class SourceCallDeadline internal constructor(
 
         fun close() {
             executor.shutdownNow()
+            try {
+                executor.awaitTermination(TERMINATION_SECONDS, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
     }
 
@@ -101,6 +106,7 @@ class SourceCallDeadline internal constructor(
         val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(150)
         const val TIMEOUT_MESSAGE = "source call timed out"
         const val DEADLINE_THREAD_PREFIX = "engine-deadline-"
+        const val TERMINATION_SECONDS = 5L
     }
 }
 

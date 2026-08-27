@@ -21,7 +21,7 @@
 # real JVM, and asserts what the watchdog DID.
 #
 # ── The cases ────────────────────────────────────────────────────────────────────────────────
-#   wedge-named    a true deadlock, pool threads named engine-rpc-* (what the image ships today)
+#   wedge-named    a true deadlock, pool threads named engine-http-* (the current front door)
 #                  -> WEDGE CONFIRMED -> the engine is restarted -> /health answers again
 #   wedge-jdk      the same deadlock with JDK-default pool-<n>-thread-<m> names, and the RPC pool
 #                  deliberately NOT pool-1 -> the fallback path must reach the same verdict. This is
@@ -30,7 +30,7 @@
 #                  -> SATURATED verdict -> the engine is NOT killed -> the long call completes
 #   boot-wedge     the same deadlock, but wedged the instant the listener binds — BEFORE the
 #                  entrypoint's boot health probe has ever succeeded -> the probe must time out per
-#                  attempt, give up on its deadline, log that the watchdog was NOT started, and
+#                  attempt, give up on its deadline, leave supervision unarmed and waiting, and
 #                  still hand off to the foreground server
 #
 # The busy case is the important one. It is the regression test for the rule that killed a healthy
@@ -278,8 +278,8 @@ log_has() {
 # watchdog that does not exist yet and every assertion about what it did is vacuous.
 #
 # The boot probe now bounds each attempt and gives up on a deadline, so injecting first no longer
-# HANGS the container — it just produces the other outcome, "the watchdog was NOT started". That
-# outcome is a case in its own right; see case_boot_wedge.
+# HANGS the container. Supervision remains alive but unarmed until a response succeeds; that outcome
+# is a case in its own right, see case_boot_wedge.
 wait_log() {
     _left=$3
     while [ "$_left" -gt 0 ]; do
@@ -370,7 +370,7 @@ case_wedge() {  # case_wedge LABEL THREAD_NAMES
 case_busy() {
     log "case busy: a saturated engine must be left alone"
     register busy
-    start_engine "$_cid" engine-rpc
+    start_engine "$_cid" engine-http
 
     if ! _body=$(wait_health "$_cid" "$BUDGET_BOOT"); then
         dump_container_log "$_cid"
@@ -438,13 +438,13 @@ case_busy() {
 case_boot_wedge() {
     log "case boot-wedge: an engine that stalls before the first health poll must not block boot"
     register boot-wedge
-    start_engine "$_cid" engine-rpc 1
+    start_engine "$_cid" engine-http 1
 
     # Nothing here waits for health — there will never be any. The budget covers the container's
     # cold start plus the whole compressed boot deadline, with room to spare; a hang shows up as
     # this timing out rather than as the script blocking.
-    if wait_log "$_cid" "the wedge watchdog was NOT started" $((E2E_BOOT_WAIT + 60)); then
-        pass "boot-wedge: the boot probe gave up on its deadline and said the watchdog was not armed"
+    if wait_log "$_cid" "supervision waiting for first healthy response" $((E2E_BOOT_WAIT + 60)); then
+        pass "boot-wedge: the boot probe gave up while supervision stayed unarmed and waiting"
     else
         dump_container_log "$_cid"
         fail "boot-wedge: the entrypoint never got past its boot health probe"
@@ -460,6 +460,13 @@ case_boot_wedge() {
         dump_container_log "$_cid"
         fail "boot-wedge: the foreground server was never started — the container serves nothing"
         return 0
+    fi
+
+    if log_has "$_cid" "stopping engine-host pid"; then
+        dump_container_log "$_cid"
+        fail "boot-wedge: unarmed supervision stopped an engine before its first healthy response"
+    else
+        pass "boot-wedge: failures before first readiness did not trigger recovery"
     fi
 
     # The engine really is still wedged, so the case proved what it claims rather than passing
@@ -481,7 +488,7 @@ build_image
 
 for c in $cases; do
     case "$c" in
-        wedge-named) case_wedge wedge-named engine-rpc ;;
+        wedge-named) case_wedge wedge-named engine-http ;;
         wedge-jdk)   case_wedge wedge-jdk jdk-default ;;
         busy)        case_busy ;;
         boot-wedge)  case_boot_wedge ;;

@@ -1,12 +1,17 @@
 package enginehost
 
 import com.sun.net.httpserver.HttpServer
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
+import java.time.Duration
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -76,6 +81,38 @@ class RpcThreadNamingTest {
         }
     }
 
+    /** Deadline supervision must be distinguishable from source execution in thread dumps. */
+    @Test
+    fun `deadline timer uses its exact domain name and closes cleanly`() {
+        val deadline = SourceCallDeadline(Duration.ofHours(1))
+        try {
+            deadline.supervise(FutureTask<Unit> {}, CompletableFuture(), {})
+            assertEquals("engine-deadline-1", awaitThreadName("engine-deadline-"))
+        } finally {
+            deadline.close()
+        }
+
+        awaitNoThread("engine-deadline-")
+    }
+
+    /** The owned async transport is bounded, named, and leaves no non-daemon thread after close. */
+    @Test
+    fun `extension network pool uses its exact domain name and closes cleanly`() {
+        val upstream = MockWebServer()
+        upstream.enqueue(MockResponse().setBody("[]"))
+        upstream.start()
+        val downloadClient = BoundedDownloadClient()
+        try {
+            assertEquals("[]", downloadClient.downloadRepoIndex(upstream.url("/index.json").toString()).decodeToString())
+            assertEquals("engine-network-1", awaitThreadName("engine-network-"))
+        } finally {
+            downloadClient.close()
+            upstream.shutdown()
+        }
+
+        awaitNoThread("engine-network-")
+    }
+
     /** Named threads retain the safety properties of the JDK fixed-pool factory. */
     @Test
     fun `domain threads are non-daemon and normal priority`() {
@@ -97,6 +134,24 @@ class RpcThreadNamingTest {
     private fun sourceThreadNameFrom(scheduler: SourceScheduler): String =
         (scheduler.submit(1L) { Thread.currentThread().name } as Submission.Accepted)
             .future.get(5, TimeUnit.SECONDS)
+
+    private fun awaitThreadName(prefix: String): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        do {
+            Thread.getAllStackTraces().keys.firstOrNull { it.isAlive && it.name.startsWith(prefix) }?.let { return it.name }
+            Thread.sleep(10)
+        } while (System.nanoTime() < deadline)
+        error("no live $prefix<n> thread appeared")
+    }
+
+    private fun awaitNoThread(prefix: String) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        do {
+            if (Thread.getAllStackTraces().keys.none { it.isAlive && it.name.startsWith(prefix) }) return
+            Thread.sleep(10)
+        } while (System.nanoTime() < deadline)
+        error("a live $prefix<n> thread remained after close")
+    }
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }

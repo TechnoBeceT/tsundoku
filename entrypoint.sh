@@ -206,6 +206,8 @@ supervise_engine() {
 : > "$WATCHDOG_LOG_FILE"
 tail -n +1 -F "$WATCHDOG_LOG_FILE" &
 supervise_engine &
+supervise_engine_health &
+echo "entrypoint: wedge watchdog supervision started; waiting for first healthy response (GAP-137)"
 
 # ── Wait for the host's first /health ────────────────────────────────────────
 # EVERY attempt MUST be bounded, and `curl` has no default timeout. A wedged
@@ -254,20 +256,13 @@ while [ "$i" -lt 60 ]; do
     sleep 2
 done
 
-# The wedge watchdog is armed ONLY inside the success branch, so a slow first boot
-# (CEF init can take a while) can never be mistaken for a wedge. That promise used to
-# be a comment only: the wait above fell through after the cap with nothing but a
-# warning and started the watchdog regardless.
-#
-# Both outcomes are logged, because the failure mode of a watchdog is SILENCE and the
-# two silences are indistinguishable otherwise: "armed, nothing has wedged" and "never
-# armed at all" produce exactly the same empty log. An operator greps for one of these
-# two lines to tell them apart.
+# The startup window remains a readiness grace period for the Go process. Watchdog
+# supervision is already running independently and stays unarmed until its own first
+# successful bounded probe, including when readiness arrives after this window.
 if [ "$engine_up" -eq 1 ]; then
-    supervise_engine_health &
-    echo "entrypoint: wedge watchdog armed (GAP-137)"
+    echo "entrypoint: engine-host startup readiness confirmed; watchdog supervision is active (GAP-137)"
 else
-    echo "entrypoint: WARNING: engine-host /health did not answer within ~${ENGINE_BOOT_WAIT}s; the wedge watchdog was NOT started (GAP-137). supervise_engine still restarts the host if it DIES, but a deadlock will not be detected or recovered until the container is restarted." >&2
+    echo "entrypoint: WARNING: engine-host /health did not answer within ~${ENGINE_BOOT_WAIT}s; supervision waiting for first healthy response (GAP-137)." >&2
 fi
 
 # ── Hand off to the Go server (PID for signals via tini) ─────────────────────
