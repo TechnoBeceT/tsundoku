@@ -190,7 +190,7 @@ build_image() {
 
 # ── Container helpers ────────────────────────────────────────────────────────────────────────
 
-# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT] [EXHAUST_AT_BOOT] [HEALTH_DELAY_MS]
+# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT] [EXHAUST_AT_BOOT] [HEALTH_DELAY_MS] [DIAGNOSTIC_PRESSURE]
 #
 # WEDGE_AT_BOOT defaults to 0, so the three cases that want a HEALTHY engine to start with are
 # unchanged and do not have to pass it.
@@ -208,6 +208,7 @@ start_engine() {
         -e "FAKE_WEDGE_AT_BOOT=${3:-0}" \
         -e "FAKE_EXHAUST_AT_BOOT=${4:-0}" \
         -e "FAKE_HEALTH_DELAY_MS=${5:-0}" \
+        -e "FAKE_DIAGNOSTIC_PRESSURE=${6:-0}" \
         -e "FAKE_BUSY_HOLD_MS=$E2E_BUSY_HOLD_MS" \
         -e "ENGINE_BOOT_PROBE_TIMEOUT=$E2E_BOOT_PROBE_TIMEOUT" \
         -e "ENGINE_BOOT_WAIT=$E2E_BOOT_WAIT" \
@@ -491,9 +492,11 @@ case_boot_wedge() {
 case_exhaustion() {
     _label=${1:-exhaustion}
     _health_delay=${2:-0}
+    _pressure=${3:-0}
+    _exhaust_at_boot=1
     log "case $_label: stable source exhaustion must restart once and respect cooldown"
     register "$_label"
-    start_engine "$_cid" engine-http 0 1 "$_health_delay"
+    start_engine "$_cid" engine-http 0 "$_exhaust_at_boot" "$_health_delay" "$_pressure"
 
     if [ "$_health_delay" -gt 0 ]; then
         if wait_log "$_cid" "supervision waiting for first healthy response" $((E2E_BOOT_WAIT + 20)) &&
@@ -506,6 +509,26 @@ case_exhaustion() {
         fi
         if log_has "$_cid" "stopping engine-host pid"; then
             fail "$_label: unarmed supervision restarted before first readiness"
+            return 0
+        fi
+    fi
+
+    if [ "$_pressure" -eq 1 ]; then
+        if ! docker exec "$_cid" sh -c \
+            'curl -fsS --max-time 5 http://127.0.0.1:7777/diagnostic-pressure/status > /tmp/status-pressure.raw &&
+             curl -fsS --max-time 5 http://127.0.0.1:7777/diagnostic-pressure/thread-name > /tmp/thread-pressure.raw'; then
+            dump_container_log "$_cid"
+            fail "$_label: could not read diagnostic pressure fixtures"
+            return 0
+        fi
+        _status_pressure_bytes=$(docker exec "$_cid" wc -c /tmp/status-pressure.raw | awk '{ print $1 }')
+        _thread_pressure_bytes=$(docker exec "$_cid" wc -c /tmp/thread-pressure.raw | awk '{ print $1 }')
+        if [ "$_status_pressure_bytes" -gt 32768 ] && [ "$_thread_pressure_bytes" -gt 262144 ] &&
+           docker exec "$_cid" grep -q 'TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A' /tmp/status-pressure.raw &&
+           docker exec "$_cid" grep -q 'TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A' /tmp/thread-pressure.raw; then
+            pass "$_label: raw pressure fixtures exceed both diagnostic caps and carry the sentinel"
+        else
+            fail "$_label: diagnostic pressure fixture is not oversized or lacks the sentinel (status=$_status_pressure_bytes threads=$_thread_pressure_bytes)"
             return 0
         fi
     fi
@@ -523,6 +546,14 @@ case_exhaustion() {
         fail "$_label: late readiness never armed supervision"
         return 0
     fi
+    if [ "$_pressure" -eq 1 ]; then
+        if wait_log "$_cid" "/status evidence was unreadable or oversized" 20; then
+            pass "$_label: the oversized status sample was rejected before the stable episode"
+        else
+            fail "$_label: the oversized status sample did not reach the watchdog boundary"
+            return 0
+        fi
+    fi
 
     if ! wait_log "$_cid" "SOURCE EXHAUSTION CONFIRMED" "$BUDGET_VERDICT"; then
         dump_container_log "$_cid"
@@ -534,6 +565,18 @@ case_exhaustion() {
         pass "$_label: stable exhaustion stopped the engine exactly once at sample six"
     else
         fail "$_label: expected one stop after the first proof, got $_stops"
+    fi
+
+    if [ "$_pressure" -eq 1 ]; then
+        _first_raw_bytes=$(docker exec "$_cid" wc -c /tmp/engine-host.exhaustion-first.dump | awk '{ print $1 }')
+        _sixth_raw_bytes=$(docker exec "$_cid" wc -c /tmp/engine-host.exhaustion-sixth.dump | awk '{ print $1 }')
+        if [ "$_first_raw_bytes" -gt 262144 ] && [ "$_sixth_raw_bytes" -gt 262144 ] &&
+           docker exec "$_cid" grep -q 'TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A' /tmp/engine-host.exhaustion-first.dump &&
+           docker exec "$_cid" grep -q 'TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A' /tmp/engine-host.exhaustion-sixth.dump; then
+            pass "$_label: both raw restart-path dumps exceed the cap and contain the sentinel"
+        else
+            fail "$_label: restart-path dump pressure was not present (first=$_first_raw_bytes sixth=$_sixth_raw_bytes)"
+        fi
     fi
 
     if ! _body=$(wait_health "$_cid" "$BUDGET_RECOVER"); then
@@ -549,8 +592,15 @@ case_exhaustion() {
     fi
 
     _diag=/tmp/engine-host.watchdog-diagnostic
-    _status_bytes=$(docker exec "$_cid" sh -c "sed -n 's/^status=//p' $_diag | wc -c" 2>/dev/null || echo 999999)
-    _thread_bytes=$(docker exec "$_cid" sh -c "sed -n '/^first_dump=/p;/^sixth_dump=/p' $_diag | wc -c" 2>/dev/null || echo 999999)
+    _status_bytes=$(docker exec "$_cid" sh -c \
+        "awk '/^status=/{ sub(/^status=/, \"\"); printf \"%s\", \$0; exit }' $_diag | wc -c" \
+        2>/dev/null || echo 999999)
+    _thread_bytes=$(docker exec "$_cid" sh -c \
+        "awk 'BEGIN { capture=0; emitted=0 }
+              /^first_dump=/ { capture=1; sub(/^first_dump=/, \"\") }
+              /^sixth_dump=/ { sub(/^sixth_dump=/, \"\") }
+              capture { if (emitted) printf \"\\n\"; printf \"%s\", \$0; emitted=1 }' $_diag | wc -c" \
+        2>/dev/null || echo 999999)
     _diag_body=$(docker exec "$_cid" cat "$_diag" 2>/dev/null || true)
     if [ "${_status_bytes:-999999}" -le 32768 ] && [ "${_thread_bytes:-999999}" -le 262144 ]; then
         pass "$_label: diagnostics obey status and thread-excerpt caps"
@@ -563,6 +613,14 @@ case_exhaustion() {
             ;;
         *) fail "$_label: diagnostics are missing the approved evidence fields" ;;
     esac
+    if [ "$_pressure" -eq 1 ]; then
+        case "$_diag_body" in
+            *TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A*)
+                fail "$_label: diagnostics leaked the injected sentinel"
+                ;;
+            *) pass "$_label: diagnostics removed the injected sentinel" ;;
+        esac
+    fi
     case "$_diag_body" in
         *token*|*cookie*|*header*|*http://*|*https://*)
             fail "$_label: diagnostics leaked an unapproved field"
@@ -597,7 +655,7 @@ for c in $cases; do
         busy)        case_busy ;;
         boot-wedge)  case_boot_wedge ;;
         exhaustion)  case_exhaustion ;;
-        containment) case_exhaustion containment "$E2E_LATE_READY_MS" ;;
+        containment) case_exhaustion containment "$E2E_LATE_READY_MS" 1 ;;
         *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy, boot-wedge, exhaustion or containment)" ;;
     esac
 done

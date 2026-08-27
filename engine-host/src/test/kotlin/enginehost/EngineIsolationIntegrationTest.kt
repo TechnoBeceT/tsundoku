@@ -1,7 +1,12 @@
 package enginehost
 
+import androidx.preference.PreferenceScreen
+import androidx.preference.SwitchPreferenceCompat
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.sun.net.httpserver.HttpServer
+import eu.kanade.tachiyomi.App
+import eu.kanade.tachiyomi.createAppModule
+import eu.kanade.tachiyomi.source.ConfigurableSource
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -11,7 +16,16 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import org.koin.core.context.startKoin
+import org.koin.dsl.module
 import org.junit.jupiter.api.RepeatedTest
+import suwayomi.tachidesk.server.ApplicationDirs
+import xyz.nulldev.androidcompat.AndroidCompat
+import xyz.nulldev.androidcompat.AndroidCompatInitializer
+import xyz.nulldev.androidcompat.androidCompatModule
+import xyz.nulldev.androidcompat.webkit.KcefWebViewProvider
+import xyz.nulldev.ts.config.CONFIG_PREFIX
+import xyz.nulldev.ts.config.configManagerModule
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -103,6 +117,70 @@ private class HealthyDetailsSource : Source {
     override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
 }
 
+private class MutablePreferenceSource : Source, ConfigurableSource {
+    override val id: Long = 303L
+    override val name: String = "Preference source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override fun setupPreferenceScreen(screen: PreferenceScreen) {
+        screen.addPreference(
+            SwitchPreferenceCompat(screen.context).apply {
+                key = "enabled"
+                title = "Isolation switch"
+                defaultValue = false
+            },
+        )
+    }
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = error("unused")
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+private object PreferenceIntegrationTestSetup {
+    init {
+        val dataRoot = Files.createTempDirectory("preference-integration-runtime")
+        System.setProperty("$CONFIG_PREFIX.server.rootDir", dataRoot.toString())
+        ServerConfigTestSetup.ensureRegistered()
+        AndroidCompatInitializer().init()
+        val app = App()
+        startKoin {
+            modules(
+                createAppModule(app),
+                androidCompatModule(),
+                configManagerModule(),
+                module {
+                    single { ApplicationDirs(dataRoot = dataRoot.toString()) }
+                    single<KcefWebViewProvider.InitBrowserHandler> {
+                        object : KcefWebViewProvider.InitBrowserHandler {
+                            override fun init(provider: KcefWebViewProvider) = Unit
+                        }
+                    }
+                },
+            )
+        }
+        AndroidCompat().startApp(app)
+    }
+
+    fun ensureReady() = Unit
+}
+
 class EngineIsolationIntegrationTest {
     private val client = HttpClient.newHttpClient()
     private val mapper = jacksonObjectMapper()
@@ -183,38 +261,46 @@ class EngineIsolationIntegrationTest {
         assertFalse(blockedRequests.any(CompletableFuture<HttpResponse<String>>::isDone))
     }
 
-    /** A real bounded HTTP transfer stays outside the extension mutation lock. */
+    /** A real bounded HTTP transfer stays outside the public preference write path. */
     @RepeatedTest(20)
     fun `slow repository transfer does not delay preference mutation`() {
+        PreferenceIntegrationTestSetup.ensureReady()
         MockWebServer().use { upstream ->
             upstream.enqueue(
                 MockResponse.Builder()
                     .body("[]")
-                    .throttleBody(1, 5, TimeUnit.SECONDS)
+                    .bodyDelay(1, TimeUnit.SECONDS)
                     .build(),
             )
             upstream.start()
             val root = Files.createTempDirectory("extension-transfer-integration")
             val loader = ExtensionLoader(root.toFile())
+            injectSource(loader, MutablePreferenceSource())
             val downloader = BoundedDownloadClient()
             val manager = ExtensionManager(loader, root.toFile(), downloader)
             manager.setRepos(listOf(upstream.url("/index.json").toString()))
+            val runningServer = RpcServer(loader, manager, port = 0)
+            server = runningServer
+            runningServer.start()
+            val baseUrl = "http://127.0.0.1:${boundPort(runningServer)}"
+            assertEquals(200, putPreference(baseUrl, false).statusCode())
             val executor = Executors.newFixedThreadPool(2)
             try {
                 val listing = executor.submit<List<ExtensionDto>> { manager.list() }
                 assertTrue(upstream.takeRequest(5, TimeUnit.SECONDS) != null, "repository request did not start")
                 assertFalse(listing.isDone, "slow repository transfer completed before the mutation")
 
-                val preferenceMutation =
-                    executor.submit<Boolean> {
-                        manager.underLock {
-                            // This is the exact lock domain used by RpcServer's preference PUT.
-                            true
-                        }
-                    }
+                val preferenceMutation = putPreferenceAsync(baseUrl, true)
 
-                assertTrue(preferenceMutation.get(500, TimeUnit.MILLISECONDS))
+                val mutationResponse = preferenceMutation.get(500, TimeUnit.MILLISECONDS)
+                assertEquals(200, mutationResponse.statusCode())
+                assertEquals(true, preferenceValue(mutationResponse.body()))
                 assertFalse(listing.isDone, "preference mutation waited for repository transfer")
+
+                assertEquals(emptyList(), listing.get(3, TimeUnit.SECONDS))
+                val persisted = getAsync(baseUrl, "/sources/303/preferences").get(500, TimeUnit.MILLISECONDS)
+                assertEquals(200, persisted.statusCode())
+                assertEquals(true, preferenceValue(persisted.body()))
             } finally {
                 executor.shutdownNow()
                 manager.close()
@@ -246,6 +332,29 @@ class EngineIsolationIntegrationTest {
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
         )
+
+    private fun putPreference(
+        baseUrl: String,
+        enabled: Boolean,
+    ): HttpResponse<String> = putPreferenceAsync(baseUrl, enabled).get(1, TimeUnit.SECONDS)
+
+    private fun putPreferenceAsync(
+        baseUrl: String,
+        enabled: Boolean,
+    ): CompletableFuture<HttpResponse<String>> =
+        client.sendAsync(
+            HttpRequest.newBuilder(URI("$baseUrl/sources/303/preferences"))
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString("""{"enabled":$enabled}"""))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+
+    private fun preferenceValue(body: String): Boolean {
+        val preferences = mapper.readTree(body)["preferences"]
+        val enabled = preferences.first { it["key"].textValue() == "enabled" }
+        return enabled["currentValue"].booleanValue()
+    }
 
     private fun injectSource(
         loader: ExtensionLoader,

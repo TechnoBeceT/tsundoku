@@ -49,9 +49,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       BEFORE anything has ever answered /health. See {@code wedgePool}.</li>
  *   <li>{@code FAKE_EXHAUST_AT_BOOT} — {@code 1} occupies all eight isolated source workers while
  *       leaving health and status responsive.</li>
+ *   <li>{@code FAKE_DIAGNOSTIC_PRESSURE} — {@code 1} exposes and injects oversized status and
+ *       thread-dump noise carrying a distinctive sentinel for the diagnostic-boundary proof.</li>
  * </ul>
  */
 public final class FakeEngine {
+
+    private static final String DIAGNOSTIC_SENTINEL = "TSUNDOKU_E2E_FORBIDDEN_SENTINEL_9F4C2A";
 
     /**
      * Stands in for a source extension that synchronises on itself — the object every request for
@@ -64,7 +68,10 @@ public final class FakeEngine {
     private static final AtomicInteger BUSY_STARTED = new AtomicInteger();
     private static final AtomicInteger BUSY_DONE = new AtomicInteger();
     private static final AtomicInteger SOURCE_EXHAUSTED = new AtomicInteger();
+    private static final AtomicInteger PRESSURED_STATUS_REMAINING = new AtomicInteger();
     private static long healthReadyAtNanos;
+    private static String pressuredStatus = "";
+    private static String pressuredThreadName = "";
 
     private static ExecutorService pool;
     private static ExecutorService sourcePool;
@@ -76,8 +83,19 @@ public final class FakeEngine {
         final int port = Integer.parseInt(env("TSUNDOKU_ENGINE_PORT", "7777"));
         final String threadNames = env("FAKE_ENGINE_THREAD_NAMES", "engine-http");
         final boolean namedThreads = !"jdk-default".equals(threadNames);
+        final boolean diagnosticPressure = "1".equals(env("FAKE_DIAGNOSTIC_PRESSURE", "0"));
         healthReadyAtNanos = System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(Long.parseLong(env("FAKE_HEALTH_DELAY_MS", "0")));
+
+        if (diagnosticPressure) {
+            pressuredStatus = "{\"forbidden\":\"" + DIAGNOSTIC_SENTINEL + "\",\"noise\":\""
+                    + "s".repeat(40000) + "\"}";
+            pressuredThreadName = DIAGNOSTIC_SENTINEL + "-" + "t".repeat(270000);
+            PRESSURED_STATUS_REMAINING.set(1);
+            final Thread diagnosticNoise = new Thread(() -> sleepMs(Long.MAX_VALUE), pressuredThreadName);
+            diagnosticNoise.setDaemon(true);
+            diagnosticNoise.start();
+        }
 
         advanceGlobalPoolCounter(namedThreads);
 
@@ -113,6 +131,10 @@ public final class FakeEngine {
         // constant: the end-to-end test controls elapsed wall time through the watchdog cadence,
         // while the status age starts beyond the production 180-second safety boundary.
         server.createContext("/status", ex -> {
+            if (PRESSURED_STATUS_REMAINING.compareAndSet(1, 0)) {
+                respond(ex, pressuredStatus);
+                return;
+            }
             final boolean exhausted = SOURCE_EXHAUSTED.get() == 1;
             final String sources = exhausted
                     ? "[{\"source_id\":11,\"queued\":0,\"running\":2},"
@@ -132,6 +154,8 @@ public final class FakeEngine {
             exhaustSourcePool();
             respond(ex, "exhausted");
         });
+        server.createContext("/diagnostic-pressure/status", ex -> respond(ex, pressuredStatus));
+        server.createContext("/diagnostic-pressure/thread-name", ex -> respond(ex, pressuredThreadName));
 
         // ── A TRUE DEADLOCK ──────────────────────────────────────────────────────────────────
         // The GAP-137 shape, on demand: a healthy engine that has already answered /health, and
