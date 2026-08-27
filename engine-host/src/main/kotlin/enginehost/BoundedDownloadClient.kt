@@ -107,7 +107,9 @@ class BoundedDownloadClient internal constructor(
             return result.get()
         } catch (interrupted: InterruptedException) {
             call.cancel()
-            result.cancel(false)
+            if (!result.cancel(false)) {
+                runCatching { result.getNow(null) }.getOrNull()?.close()
+            }
             Thread.currentThread().interrupt()
             throw InterruptedIOException("extension download cancelled").apply { initCause(interrupted) }
         } catch (failed: ExecutionException) {
