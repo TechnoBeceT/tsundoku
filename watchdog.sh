@@ -315,6 +315,10 @@ _status_parse() {
             sub(/^.*:/, "", token)
             return token
         }
+        function decimal_less(left, right) {
+            if (length(left) != length(right)) return length(left) < length(right)
+            return ("x" left) < ("x" right)
+        }
         {
             input = input $0
         }
@@ -368,17 +372,37 @@ _status_parse() {
                     source_id = object_number(object, "source_id")
                     source_queued = object_number(object, "queued")
                     source_running = object_number(object, "running")
+                    source_key = "x" source_id
+                    if (source_key in seen_source_ids) fail()
+                    seen_source_ids[source_key] = 1
                     if (source_json != "") source_json = source_json ","
                     source_json = source_json "{\"source_id\":" source_id ",\"queued\":" source_queued ",\"running\":" source_running "}"
                     if (source_running > 0) {
-                        if (source_count > 0) fingerprint = fingerprint ","
-                        fingerprint = fingerprint source_id ":" source_running
                         source_count++
+                        running_source_ids[source_count] = source_id
+                        running_source_counts[source_count] = source_running
                         running_sum += source_running
                     }
                 }
             }
             if (running_sum != running) fail()
+
+            for (i = 1; i < source_count; i++) {
+                for (j = i + 1; j <= source_count; j++) {
+                    if (decimal_less(running_source_ids[j], running_source_ids[i])) {
+                        swap = running_source_ids[i]
+                        running_source_ids[i] = running_source_ids[j]
+                        running_source_ids[j] = swap
+                        swap = running_source_counts[i]
+                        running_source_counts[i] = running_source_counts[j]
+                        running_source_counts[j] = swap
+                    }
+                }
+            }
+            for (i = 1; i <= source_count; i++) {
+                if (i > 1) fingerprint = fingerprint ","
+                fingerprint = fingerprint running_source_ids[i] ":" running_source_counts[i]
+            }
 
             approved = "{\"ready\":" ready ",\"source_workers\":" workers ",\"per_source_limit\":" per_source ",\"queued\":" queued ",\"running\":" running ",\"completion_sequence\":" sequence ",\"oldest_running_millis\":" oldest ",\"completed\":" completed ",\"cancelled\":" cancelled ",\"timed_out\":" timed_out ",\"rejected\":" rejected ",\"busiest_sources\":[" source_json "],\"extension_running\":" extension_running ",\"extension_queued\":" extension_queued "}"
             if (input != approved) fail()
@@ -746,9 +770,38 @@ EOF
     if [ "$ee_dump_fingerprint" = "$exhaustion_first_dump_fingerprint" ]; then
         ee_dump_same=1
     fi
-    ee_verdict=$(exhaustion_verdict "$exhaustion_consecutive" "$ee_oldest" "$ee_running" "$ee_workers" 1 "$ee_dump_same")
+
+    # The dump settle window is part of the proof, not a blind spot. A physical call
+    # can complete while SIGQUIT is being written and be replaced by queued work on
+    # the same named workers, so re-fetch bounded status after the dump and compare it
+    # with the episode baseline before diagnostics or process control.
+    if ! watchdog_fetch_status "$WATCHDOG_STATUS_FILE"; then
+        watchdog_log "WARNING: post-dump /status evidence was unreadable or oversized; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    ee_final_status=$(_status_parse "$WATCHDOG_STATUS_FILE") || ee_final_status=""
+    if [ -z "$ee_final_status" ]; then
+        watchdog_log "WARNING: post-dump /status evidence was malformed or contained unapproved fields; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    IFS="$ee_tab" read -r ee_final_sequence ee_final_oldest ee_final_running ee_final_workers ee_final_fingerprint ee_final_approved <<EOF
+$ee_final_status
+EOF
+    ee_final_pid=$(watchdog_engine_pid)
+    case "$ee_final_pid" in
+        ''|*[!0-9]*) ee_final_pid="" ;;
+    esac
+    ee_progress_same=0
+    if [ "$ee_final_sequence" = "$exhaustion_sequence" ] &&
+       [ "$ee_final_fingerprint" = "$exhaustion_fingerprint" ] &&
+       [ "$ee_final_pid" = "$ee_pid" ]; then
+        ee_progress_same=1
+    fi
+    ee_verdict=$(exhaustion_verdict "$exhaustion_consecutive" "$ee_final_oldest" "$ee_final_running" "$ee_final_workers" "$ee_progress_same" "$ee_dump_same")
     if [ "$ee_verdict" != "restart" ]; then
-        watchdog_log "sixth source-exhaustion dump did not match the first source-worker population; evidence reset, not restarting"
+        watchdog_log "post-dump status, engine identity, or source-worker population changed; evidence reset, not restarting"
         watchdog_reset_exhaustion
         return 0
     fi
@@ -766,6 +819,12 @@ EOF
     ee_now=${ee_now:-0}
     if [ $((ee_now - watchdog_last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
         watchdog_log "last restart was $((ee_now - watchdog_last_kill))s ago; holding off (thrash guard)"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    ee_stop_pid=$(watchdog_engine_pid)
+    if [ "$ee_stop_pid" != "$ee_pid" ]; then
+        watchdog_log "engine pid changed after source-exhaustion diagnostics; evidence reset, not restarting"
         watchdog_reset_exhaustion
         return 0
     fi

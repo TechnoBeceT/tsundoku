@@ -188,6 +188,8 @@ expect_eq "status fingerprint contains approved physical-work fields only" \
     "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-exhausted.json")"
 expect_eq "completion progress does not alter the running-work fingerprint" \
     "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-progressed.json")"
+expect_eq "queue-driven order and queue-only sources do not alter the running-work fingerprint" \
+    "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-queue-reordered.json")"
 expect_eq "a changed running source population changes the fingerprint" \
     "8|8|11:2,22:2,33:2,55:2" "$(status_fingerprint "$FIXTURES/status-fingerprint-changed.json")"
 
@@ -300,22 +302,23 @@ stable_loop_result=$(
         WATCHDOG_COOLDOWN=600
         tick=0
         sample_count=0
+        status_count=0
         dump_count=0
         curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || exit 0; }
         watchdog_trim_log() { :; }
-        watchdog_probe_health() { return 0; }
-        watchdog_fetch_status() { sample_count=$((sample_count + 1)); cp "$FIXTURES/status-exhausted.json" "$1"; }
+        watchdog_probe_health() { sample_count=$((sample_count + 1)); return 0; }
+        watchdog_fetch_status() { status_count=$((status_count + 1)); cp "$FIXTURES/status-exhausted.json" "$1"; }
         watchdog_capture_dump() { dump_count=$((dump_count + 1)); cp "$FIXTURES/dump-source-first.txt" "$2"; }
         watchdog_engine_pid() { echo 12345; }
         date() { echo 1000; }
         watchdog_write_exhaustion_diagnostics() { echo "diagnostic-at=$sample_count"; }
-        watchdog_stop_engine() { echo "stopped-at-sample=$sample_count dumps=$dump_count"; exit 0; }
+        watchdog_stop_engine() { echo "stopped-at-sample=$sample_count statuses=$status_count dumps=$dump_count"; exit 0; }
         watchdog_health_loop
     ) 2>&1
 )
-expect_contains "stopped-at-sample=6 dumps=2" "$stable_loop_result" \
-    "stable exhaustion stops exactly at sample six after first/sixth dumps"
+expect_contains "stopped-at-sample=6 statuses=7 dumps=2" "$stable_loop_result" \
+    "stable exhaustion stops at sample six after final status confirmation"
 
 progressing_loop_result=$(
     (
@@ -369,6 +372,46 @@ cooldown_loop_result=$(
 )
 expect_contains "cooldown-ended stops=1" "$cooldown_loop_result" \
     "restart cooldown suppresses a second stable-exhaustion stop"
+
+post_dump_progress_result=$(
+    (
+        WATCHDOG_PROBE_INTERVAL=0
+        WATCHDOG_COOLDOWN=600
+        tick=0
+        status_count=0
+        dump_count=0
+        curl() { return 0; }
+        sleep() {
+            if [ "$status_count" -ge 7 ]; then
+                echo "post-dump-progress-ended statuses=$status_count dumps=$dump_count"
+                exit 0
+            fi
+            tick=$((tick + 1))
+        }
+        watchdog_trim_log() { :; }
+        watchdog_probe_health() { return 0; }
+        watchdog_fetch_status() {
+            status_count=$((status_count + 1))
+            if [ "$status_count" -eq 7 ]; then
+                cp "$FIXTURES/status-progressed.json" "$1"
+            else
+                cp "$FIXTURES/status-exhausted.json" "$1"
+            fi
+        }
+        watchdog_capture_dump() { dump_count=$((dump_count + 1)); cp "$FIXTURES/dump-source-first.txt" "$2"; }
+        watchdog_engine_pid() { echo 12345; }
+        date() { echo 1000; }
+        watchdog_write_exhaustion_diagnostics() { echo "unexpected-progress-diagnostic"; }
+        watchdog_stop_engine() { echo "unexpected-post-dump-progress-stop"; exit 0; }
+        watchdog_health_loop
+    ) 2>&1
+)
+expect_contains "post-dump-progress-ended statuses=7 dumps=2" "$post_dump_progress_result" \
+    "sixth-dump recovery re-fetches status and observes final progress"
+expect_not_contains "unexpected-post-dump-progress-stop" "$post_dump_progress_result" \
+    "progress during the sixth dump window resets evidence and declines restart"
+expect_not_contains "unexpected-progress-diagnostic" "$post_dump_progress_result" \
+    "progress during the sixth dump window cannot produce restart diagnostics"
 
 reset_loop_result=$(
     (
