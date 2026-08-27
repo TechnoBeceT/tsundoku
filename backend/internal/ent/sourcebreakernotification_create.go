@@ -152,6 +152,76 @@ func (_c *SourceBreakerNotificationCreate) SetNillableLastError(v *string) *Sour
 	return _c
 }
 
+// SetEventPublishedAt sets the "event_published_at" field.
+func (_c *SourceBreakerNotificationCreate) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationCreate {
+	_c.mutation.SetEventPublishedAt(v)
+	return _c
+}
+
+// SetNillableEventPublishedAt sets the "event_published_at" field if the given value is not nil.
+func (_c *SourceBreakerNotificationCreate) SetNillableEventPublishedAt(v *time.Time) *SourceBreakerNotificationCreate {
+	if v != nil {
+		_c.SetEventPublishedAt(*v)
+	}
+	return _c
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (_c *SourceBreakerNotificationCreate) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationCreate {
+	_c.mutation.SetHookPublishedAt(v)
+	return _c
+}
+
+// SetNillableHookPublishedAt sets the "hook_published_at" field if the given value is not nil.
+func (_c *SourceBreakerNotificationCreate) SetNillableHookPublishedAt(v *time.Time) *SourceBreakerNotificationCreate {
+	if v != nil {
+		_c.SetHookPublishedAt(*v)
+	}
+	return _c
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (_c *SourceBreakerNotificationCreate) SetPublicationAttempts(v int) *SourceBreakerNotificationCreate {
+	_c.mutation.SetPublicationAttempts(v)
+	return _c
+}
+
+// SetNillablePublicationAttempts sets the "publication_attempts" field if the given value is not nil.
+func (_c *SourceBreakerNotificationCreate) SetNillablePublicationAttempts(v *int) *SourceBreakerNotificationCreate {
+	if v != nil {
+		_c.SetPublicationAttempts(*v)
+	}
+	return _c
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_c *SourceBreakerNotificationCreate) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationCreate {
+	_c.mutation.SetNextAttemptAt(v)
+	return _c
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_c *SourceBreakerNotificationCreate) SetNillableNextAttemptAt(v *time.Time) *SourceBreakerNotificationCreate {
+	if v != nil {
+		_c.SetNextAttemptAt(*v)
+	}
+	return _c
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (_c *SourceBreakerNotificationCreate) SetPublicationError(v string) *SourceBreakerNotificationCreate {
+	_c.mutation.SetPublicationError(v)
+	return _c
+}
+
+// SetNillablePublicationError sets the "publication_error" field if the given value is not nil.
+func (_c *SourceBreakerNotificationCreate) SetNillablePublicationError(v *string) *SourceBreakerNotificationCreate {
+	if v != nil {
+		_c.SetPublicationError(*v)
+	}
+	return _c
+}
+
 // SetPublishedAt sets the "published_at" field.
 func (_c *SourceBreakerNotificationCreate) SetPublishedAt(v time.Time) *SourceBreakerNotificationCreate {
 	_c.mutation.SetPublishedAt(v)
@@ -235,6 +305,10 @@ func (_c *SourceBreakerNotificationCreate) defaults() {
 		v := sourcebreakernotification.DefaultLastError
 		_c.mutation.SetLastError(v)
 	}
+	if _, ok := _c.mutation.PublicationAttempts(); !ok {
+		v := sourcebreakernotification.DefaultPublicationAttempts
+		_c.mutation.SetPublicationAttempts(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := sourcebreakernotification.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -266,6 +340,9 @@ func (_c *SourceBreakerNotificationCreate) check() error {
 	}
 	if _, ok := _c.mutation.LastError(); !ok {
 		return &ValidationError{Name: "last_error", err: errors.New(`ent: missing required field "SourceBreakerNotification.last_error"`)}
+	}
+	if _, ok := _c.mutation.PublicationAttempts(); !ok {
+		return &ValidationError{Name: "publication_attempts", err: errors.New(`ent: missing required field "SourceBreakerNotification.publication_attempts"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "SourceBreakerNotification.created_at"`)}
@@ -340,6 +417,26 @@ func (_c *SourceBreakerNotificationCreate) createSpec() (*SourceBreakerNotificat
 	if value, ok := _c.mutation.LastError(); ok {
 		_spec.SetField(sourcebreakernotification.FieldLastError, field.TypeString, value)
 		_node.LastError = value
+	}
+	if value, ok := _c.mutation.EventPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldEventPublishedAt, field.TypeTime, value)
+		_node.EventPublishedAt = &value
+	}
+	if value, ok := _c.mutation.HookPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldHookPublishedAt, field.TypeTime, value)
+		_node.HookPublishedAt = &value
+	}
+	if value, ok := _c.mutation.PublicationAttempts(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationAttempts, field.TypeInt, value)
+		_node.PublicationAttempts = value
+	}
+	if value, ok := _c.mutation.NextAttemptAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldNextAttemptAt, field.TypeTime, value)
+		_node.NextAttemptAt = &value
+	}
+	if value, ok := _c.mutation.PublicationError(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationError, field.TypeString, value)
+		_node.PublicationError = &value
 	}
 	if value, ok := _c.mutation.PublishedAt(); ok {
 		_spec.SetField(sourcebreakernotification.FieldPublishedAt, field.TypeTime, value)
@@ -554,6 +651,96 @@ func (u *SourceBreakerNotificationUpsert) SetLastError(v string) *SourceBreakerN
 // UpdateLastError sets the "last_error" field to the value that was provided on create.
 func (u *SourceBreakerNotificationUpsert) UpdateLastError() *SourceBreakerNotificationUpsert {
 	u.SetExcluded(sourcebreakernotification.FieldLastError)
+	return u
+}
+
+// SetEventPublishedAt sets the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsert) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationUpsert {
+	u.Set(sourcebreakernotification.FieldEventPublishedAt, v)
+	return u
+}
+
+// UpdateEventPublishedAt sets the "event_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsert) UpdateEventPublishedAt() *SourceBreakerNotificationUpsert {
+	u.SetExcluded(sourcebreakernotification.FieldEventPublishedAt)
+	return u
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsert) ClearEventPublishedAt() *SourceBreakerNotificationUpsert {
+	u.SetNull(sourcebreakernotification.FieldEventPublishedAt)
+	return u
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsert) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationUpsert {
+	u.Set(sourcebreakernotification.FieldHookPublishedAt, v)
+	return u
+}
+
+// UpdateHookPublishedAt sets the "hook_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsert) UpdateHookPublishedAt() *SourceBreakerNotificationUpsert {
+	u.SetExcluded(sourcebreakernotification.FieldHookPublishedAt)
+	return u
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsert) ClearHookPublishedAt() *SourceBreakerNotificationUpsert {
+	u.SetNull(sourcebreakernotification.FieldHookPublishedAt)
+	return u
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsert) SetPublicationAttempts(v int) *SourceBreakerNotificationUpsert {
+	u.Set(sourcebreakernotification.FieldPublicationAttempts, v)
+	return u
+}
+
+// UpdatePublicationAttempts sets the "publication_attempts" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsert) UpdatePublicationAttempts() *SourceBreakerNotificationUpsert {
+	u.SetExcluded(sourcebreakernotification.FieldPublicationAttempts)
+	return u
+}
+
+// AddPublicationAttempts adds v to the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsert) AddPublicationAttempts(v int) *SourceBreakerNotificationUpsert {
+	u.Add(sourcebreakernotification.FieldPublicationAttempts, v)
+	return u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsert) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationUpsert {
+	u.Set(sourcebreakernotification.FieldNextAttemptAt, v)
+	return u
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsert) UpdateNextAttemptAt() *SourceBreakerNotificationUpsert {
+	u.SetExcluded(sourcebreakernotification.FieldNextAttemptAt)
+	return u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsert) ClearNextAttemptAt() *SourceBreakerNotificationUpsert {
+	u.SetNull(sourcebreakernotification.FieldNextAttemptAt)
+	return u
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (u *SourceBreakerNotificationUpsert) SetPublicationError(v string) *SourceBreakerNotificationUpsert {
+	u.Set(sourcebreakernotification.FieldPublicationError, v)
+	return u
+}
+
+// UpdatePublicationError sets the "publication_error" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsert) UpdatePublicationError() *SourceBreakerNotificationUpsert {
+	u.SetExcluded(sourcebreakernotification.FieldPublicationError)
+	return u
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (u *SourceBreakerNotificationUpsert) ClearPublicationError() *SourceBreakerNotificationUpsert {
+	u.SetNull(sourcebreakernotification.FieldPublicationError)
 	return u
 }
 
@@ -799,6 +986,111 @@ func (u *SourceBreakerNotificationUpsertOne) SetLastError(v string) *SourceBreak
 func (u *SourceBreakerNotificationUpsertOne) UpdateLastError() *SourceBreakerNotificationUpsertOne {
 	return u.Update(func(s *SourceBreakerNotificationUpsert) {
 		s.UpdateLastError()
+	})
+}
+
+// SetEventPublishedAt sets the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsertOne) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetEventPublishedAt(v)
+	})
+}
+
+// UpdateEventPublishedAt sets the "event_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertOne) UpdateEventPublishedAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateEventPublishedAt()
+	})
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsertOne) ClearEventPublishedAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearEventPublishedAt()
+	})
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsertOne) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetHookPublishedAt(v)
+	})
+}
+
+// UpdateHookPublishedAt sets the "hook_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertOne) UpdateHookPublishedAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateHookPublishedAt()
+	})
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsertOne) ClearHookPublishedAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearHookPublishedAt()
+	})
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsertOne) SetPublicationAttempts(v int) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetPublicationAttempts(v)
+	})
+}
+
+// AddPublicationAttempts adds v to the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsertOne) AddPublicationAttempts(v int) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.AddPublicationAttempts(v)
+	})
+}
+
+// UpdatePublicationAttempts sets the "publication_attempts" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertOne) UpdatePublicationAttempts() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdatePublicationAttempts()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsertOne) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertOne) UpdateNextAttemptAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsertOne) ClearNextAttemptAt() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (u *SourceBreakerNotificationUpsertOne) SetPublicationError(v string) *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetPublicationError(v)
+	})
+}
+
+// UpdatePublicationError sets the "publication_error" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertOne) UpdatePublicationError() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdatePublicationError()
+	})
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (u *SourceBreakerNotificationUpsertOne) ClearPublicationError() *SourceBreakerNotificationUpsertOne {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearPublicationError()
 	})
 }
 
@@ -1213,6 +1505,111 @@ func (u *SourceBreakerNotificationUpsertBulk) SetLastError(v string) *SourceBrea
 func (u *SourceBreakerNotificationUpsertBulk) UpdateLastError() *SourceBreakerNotificationUpsertBulk {
 	return u.Update(func(s *SourceBreakerNotificationUpsert) {
 		s.UpdateLastError()
+	})
+}
+
+// SetEventPublishedAt sets the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetEventPublishedAt(v)
+	})
+}
+
+// UpdateEventPublishedAt sets the "event_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertBulk) UpdateEventPublishedAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateEventPublishedAt()
+	})
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) ClearEventPublishedAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearEventPublishedAt()
+	})
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetHookPublishedAt(v)
+	})
+}
+
+// UpdateHookPublishedAt sets the "hook_published_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertBulk) UpdateHookPublishedAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateHookPublishedAt()
+	})
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) ClearHookPublishedAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearHookPublishedAt()
+	})
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsertBulk) SetPublicationAttempts(v int) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetPublicationAttempts(v)
+	})
+}
+
+// AddPublicationAttempts adds v to the "publication_attempts" field.
+func (u *SourceBreakerNotificationUpsertBulk) AddPublicationAttempts(v int) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.AddPublicationAttempts(v)
+	})
+}
+
+// UpdatePublicationAttempts sets the "publication_attempts" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertBulk) UpdatePublicationAttempts() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdatePublicationAttempts()
+	})
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetNextAttemptAt(v)
+	})
+}
+
+// UpdateNextAttemptAt sets the "next_attempt_at" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertBulk) UpdateNextAttemptAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdateNextAttemptAt()
+	})
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (u *SourceBreakerNotificationUpsertBulk) ClearNextAttemptAt() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearNextAttemptAt()
+	})
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (u *SourceBreakerNotificationUpsertBulk) SetPublicationError(v string) *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.SetPublicationError(v)
+	})
+}
+
+// UpdatePublicationError sets the "publication_error" field to the value that was provided on create.
+func (u *SourceBreakerNotificationUpsertBulk) UpdatePublicationError() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.UpdatePublicationError()
+	})
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (u *SourceBreakerNotificationUpsertBulk) ClearPublicationError() *SourceBreakerNotificationUpsertBulk {
+	return u.Update(func(s *SourceBreakerNotificationUpsert) {
+		s.ClearPublicationError()
 	})
 }
 

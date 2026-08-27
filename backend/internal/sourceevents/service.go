@@ -16,9 +16,10 @@ import (
 // useful part) — mirrors internal/metrics + internal/sourcegate.
 const maxErrorLen = 512
 
-// Service is the concrete Recorder plus the retention side of the audit log. It
-// owns the Ent client (safe for concurrent use, so the methods are goroutine-
-// safe). Writes are best-effort (log + swallow); PurgeOld returns its error.
+// Service is the concrete Recorder, BreakerRecorder, and retention side of the
+// audit log. It owns the Ent client (safe for concurrent use, so the methods are
+// goroutine-safe). Ordinary writes are best-effort (log + swallow); durable
+// breaker writes and PurgeOld return their errors.
 type Service struct {
 	client *ent.Client
 }
@@ -32,6 +33,22 @@ func NewService(client *ent.Client) *Service {
 // like it, a DB failure is logged and swallowed.
 func (s *Service) Log(ctx context.Context, event Event) {
 	s.LogBatch(ctx, []Event{event})
+}
+
+// LogBreakerTransition records one durable breaker event exactly once for its
+// notification identity. It returns storage failures to the outbox publisher;
+// an existing identity is success because it means an earlier attempt committed
+// before its publication receipt was durably recorded.
+func (s *Service) LogBreakerTransition(ctx context.Context, notificationID int, event Event) error {
+	err := s.build(event).
+		SetBreakerNotificationID(notificationID).
+		OnConflictColumns(entsourceevent.FieldBreakerNotificationID).
+		Ignore().
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("sourceevents.LogBreakerTransition notification %d: %w", notificationID, err)
+	}
+	return nil
 }
 
 // LogBatch inserts a slice of events in one bulk create. Best-effort: an empty

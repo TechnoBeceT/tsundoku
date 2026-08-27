@@ -24,6 +24,8 @@ const (
 	FieldLastError = "last_error"
 	// FieldFailingSince holds the string denoting the failing_since field in the database.
 	FieldFailingSince = "failing_since"
+	// FieldNotificationGap holds the string denoting the notification_gap field in the database.
+	FieldNotificationGap = "notification_gap"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// Table holds the table name of the sourcecircuitstate in the database.
@@ -38,6 +40,7 @@ var Columns = []string{
 	FieldCooldownUntil,
 	FieldLastError,
 	FieldFailingSince,
+	FieldNotificationGap,
 	FieldUpdatedAt,
 }
 
@@ -56,6 +59,8 @@ var (
 	DefaultConsecutiveFailures int
 	// DefaultLastError holds the default value on creation for the "last_error" field.
 	DefaultLastError string
+	// DefaultNotificationGap holds the default value on creation for the "notification_gap" field.
+	DefaultNotificationGap bool
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
@@ -95,6 +100,11 @@ func ByLastError(opts ...sql.OrderTermOption) OrderOption {
 // ByFailingSince orders the results by the failing_since field.
 func ByFailingSince(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFailingSince, opts...).ToFunc()
+}
+
+// ByNotificationGap orders the results by the notification_gap field.
+func ByNotificationGap(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNotificationGap, opts...).ToFunc()
 }
 
 // ByUpdatedAt orders the results by the updated_at field.

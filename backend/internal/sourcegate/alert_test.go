@@ -52,7 +52,10 @@ func TestTransitionHook_FiresOnTripRecoveryAndReset(t *testing.T) {
 	db := testdb.New(t)
 	var fired atomic.Int64
 	svc := sourcegate.NewService(db, thresholds()).
-		WithTransitionHook(func(sourcegate.BreakerTransition) { fired.Add(1) })
+		WithTransitionHook(func(context.Context, sourcegate.BreakerTransition) error {
+			fired.Add(1)
+			return nil
+		})
 	ctx := context.Background()
 	past := time.Now().Add(-time.Hour) // trip so the resulting cooldown is already expired (gated-flow shape)
 	const key = "Comix"
@@ -105,7 +108,7 @@ func TestTransitionHook_NilAndPanicNeverBreakBreaker(t *testing.T) {
 
 	// A panicking hook must be recovered and must NOT stop the breaker tripping.
 	panicHook := sourcegate.NewService(db, thresholds()).
-		WithTransitionHook(func(sourcegate.BreakerTransition) { panic("boom") })
+		WithTransitionHook(func(context.Context, sourcegate.BreakerTransition) error { panic("boom") })
 	const k2 = "PanicHookSource"
 	panicHook.RecordFailure(ctx, k2, errors.New("e"), now)
 	panicHook.RecordFailure(ctx, k2, errors.New("e"), now)

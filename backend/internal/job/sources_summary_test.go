@@ -182,7 +182,9 @@ func TestSourcesSummaryTransitionHook_UsesCommittedTransitionState(t *testing.T)
 			defer unsubscribe()
 			runner := newSummaryRunner(t, hub, fakeSnapshotter{snap: tt.current})
 
-			runner.SourcesSummaryTransitionHook(tt.transition)
+			if err := runner.SourcesSummaryTransitionHook(context.Background(), tt.transition); err != nil {
+				t.Fatalf("SourcesSummaryTransitionHook: %v", err)
+			}
 
 			got, ok := awaitSourcesSummary(events, 2*time.Second)
 			if !ok {
@@ -192,5 +194,20 @@ func TestSourcesSummaryTransitionHook_UsesCommittedTransitionState(t *testing.T)
 				t.Fatalf("payload = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSourcesSummaryTransitionHook_ReturnsSnapshotFailure(t *testing.T) {
+	hub := sse.NewHub()
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	runner := newSummaryRunner(t, hub, fakeSnapshotter{err: errors.New("forced snapshot failure")})
+
+	err := runner.SourcesSummaryTransitionHook(context.Background(), sourcegate.BreakerTransition{SourceKey: "Comix"})
+	if err == nil {
+		t.Fatal("SourcesSummaryTransitionHook error = nil, want snapshot failure retained for retry")
+	}
+	if _, ok := awaitSourcesSummary(events, 200*time.Millisecond); ok {
+		t.Fatal("sources.summary emitted despite the failed snapshot")
 	}
 }

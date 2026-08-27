@@ -15226,6 +15226,12 @@ type SourceBreakerNotificationMutation struct {
 	cooldown_until          *time.Time
 	failing_since           *time.Time
 	last_error              *string
+	event_published_at      *time.Time
+	hook_published_at       *time.Time
+	publication_attempts    *int
+	addpublication_attempts *int
+	next_attempt_at         *time.Time
+	publication_error       *string
 	published_at            *time.Time
 	created_at              *time.Time
 	clearedFields           map[string]struct{}
@@ -15787,6 +15793,258 @@ func (m *SourceBreakerNotificationMutation) ResetLastError() {
 	m.last_error = nil
 }
 
+// SetEventPublishedAt sets the "event_published_at" field.
+func (m *SourceBreakerNotificationMutation) SetEventPublishedAt(t time.Time) {
+	m.event_published_at = &t
+}
+
+// EventPublishedAt returns the value of the "event_published_at" field in the mutation.
+func (m *SourceBreakerNotificationMutation) EventPublishedAt() (r time.Time, exists bool) {
+	v := m.event_published_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEventPublishedAt returns the old "event_published_at" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldEventPublishedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEventPublishedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEventPublishedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEventPublishedAt: %w", err)
+	}
+	return oldValue.EventPublishedAt, nil
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (m *SourceBreakerNotificationMutation) ClearEventPublishedAt() {
+	m.event_published_at = nil
+	m.clearedFields[sourcebreakernotification.FieldEventPublishedAt] = struct{}{}
+}
+
+// EventPublishedAtCleared returns if the "event_published_at" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) EventPublishedAtCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldEventPublishedAt]
+	return ok
+}
+
+// ResetEventPublishedAt resets all changes to the "event_published_at" field.
+func (m *SourceBreakerNotificationMutation) ResetEventPublishedAt() {
+	m.event_published_at = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldEventPublishedAt)
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (m *SourceBreakerNotificationMutation) SetHookPublishedAt(t time.Time) {
+	m.hook_published_at = &t
+}
+
+// HookPublishedAt returns the value of the "hook_published_at" field in the mutation.
+func (m *SourceBreakerNotificationMutation) HookPublishedAt() (r time.Time, exists bool) {
+	v := m.hook_published_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHookPublishedAt returns the old "hook_published_at" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldHookPublishedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHookPublishedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHookPublishedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHookPublishedAt: %w", err)
+	}
+	return oldValue.HookPublishedAt, nil
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (m *SourceBreakerNotificationMutation) ClearHookPublishedAt() {
+	m.hook_published_at = nil
+	m.clearedFields[sourcebreakernotification.FieldHookPublishedAt] = struct{}{}
+}
+
+// HookPublishedAtCleared returns if the "hook_published_at" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) HookPublishedAtCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldHookPublishedAt]
+	return ok
+}
+
+// ResetHookPublishedAt resets all changes to the "hook_published_at" field.
+func (m *SourceBreakerNotificationMutation) ResetHookPublishedAt() {
+	m.hook_published_at = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldHookPublishedAt)
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (m *SourceBreakerNotificationMutation) SetPublicationAttempts(i int) {
+	m.publication_attempts = &i
+	m.addpublication_attempts = nil
+}
+
+// PublicationAttempts returns the value of the "publication_attempts" field in the mutation.
+func (m *SourceBreakerNotificationMutation) PublicationAttempts() (r int, exists bool) {
+	v := m.publication_attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublicationAttempts returns the old "publication_attempts" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldPublicationAttempts(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublicationAttempts is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublicationAttempts requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublicationAttempts: %w", err)
+	}
+	return oldValue.PublicationAttempts, nil
+}
+
+// AddPublicationAttempts adds i to the "publication_attempts" field.
+func (m *SourceBreakerNotificationMutation) AddPublicationAttempts(i int) {
+	if m.addpublication_attempts != nil {
+		*m.addpublication_attempts += i
+	} else {
+		m.addpublication_attempts = &i
+	}
+}
+
+// AddedPublicationAttempts returns the value that was added to the "publication_attempts" field in this mutation.
+func (m *SourceBreakerNotificationMutation) AddedPublicationAttempts() (r int, exists bool) {
+	v := m.addpublication_attempts
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetPublicationAttempts resets all changes to the "publication_attempts" field.
+func (m *SourceBreakerNotificationMutation) ResetPublicationAttempts() {
+	m.publication_attempts = nil
+	m.addpublication_attempts = nil
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (m *SourceBreakerNotificationMutation) SetNextAttemptAt(t time.Time) {
+	m.next_attempt_at = &t
+}
+
+// NextAttemptAt returns the value of the "next_attempt_at" field in the mutation.
+func (m *SourceBreakerNotificationMutation) NextAttemptAt() (r time.Time, exists bool) {
+	v := m.next_attempt_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNextAttemptAt returns the old "next_attempt_at" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldNextAttemptAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNextAttemptAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNextAttemptAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNextAttemptAt: %w", err)
+	}
+	return oldValue.NextAttemptAt, nil
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (m *SourceBreakerNotificationMutation) ClearNextAttemptAt() {
+	m.next_attempt_at = nil
+	m.clearedFields[sourcebreakernotification.FieldNextAttemptAt] = struct{}{}
+}
+
+// NextAttemptAtCleared returns if the "next_attempt_at" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) NextAttemptAtCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldNextAttemptAt]
+	return ok
+}
+
+// ResetNextAttemptAt resets all changes to the "next_attempt_at" field.
+func (m *SourceBreakerNotificationMutation) ResetNextAttemptAt() {
+	m.next_attempt_at = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldNextAttemptAt)
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (m *SourceBreakerNotificationMutation) SetPublicationError(s string) {
+	m.publication_error = &s
+}
+
+// PublicationError returns the value of the "publication_error" field in the mutation.
+func (m *SourceBreakerNotificationMutation) PublicationError() (r string, exists bool) {
+	v := m.publication_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublicationError returns the old "publication_error" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldPublicationError(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublicationError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublicationError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublicationError: %w", err)
+	}
+	return oldValue.PublicationError, nil
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (m *SourceBreakerNotificationMutation) ClearPublicationError() {
+	m.publication_error = nil
+	m.clearedFields[sourcebreakernotification.FieldPublicationError] = struct{}{}
+}
+
+// PublicationErrorCleared returns if the "publication_error" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) PublicationErrorCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldPublicationError]
+	return ok
+}
+
+// ResetPublicationError resets all changes to the "publication_error" field.
+func (m *SourceBreakerNotificationMutation) ResetPublicationError() {
+	m.publication_error = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldPublicationError)
+}
+
 // SetPublishedAt sets the "published_at" field.
 func (m *SourceBreakerNotificationMutation) SetPublishedAt(t time.Time) {
 	m.published_at = &t
@@ -15906,7 +16164,7 @@ func (m *SourceBreakerNotificationMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceBreakerNotificationMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 18)
 	if m.source_key != nil {
 		fields = append(fields, sourcebreakernotification.FieldSourceKey)
 	}
@@ -15939,6 +16197,21 @@ func (m *SourceBreakerNotificationMutation) Fields() []string {
 	}
 	if m.last_error != nil {
 		fields = append(fields, sourcebreakernotification.FieldLastError)
+	}
+	if m.event_published_at != nil {
+		fields = append(fields, sourcebreakernotification.FieldEventPublishedAt)
+	}
+	if m.hook_published_at != nil {
+		fields = append(fields, sourcebreakernotification.FieldHookPublishedAt)
+	}
+	if m.publication_attempts != nil {
+		fields = append(fields, sourcebreakernotification.FieldPublicationAttempts)
+	}
+	if m.next_attempt_at != nil {
+		fields = append(fields, sourcebreakernotification.FieldNextAttemptAt)
+	}
+	if m.publication_error != nil {
+		fields = append(fields, sourcebreakernotification.FieldPublicationError)
 	}
 	if m.published_at != nil {
 		fields = append(fields, sourcebreakernotification.FieldPublishedAt)
@@ -15976,6 +16249,16 @@ func (m *SourceBreakerNotificationMutation) Field(name string) (ent.Value, bool)
 		return m.FailingSince()
 	case sourcebreakernotification.FieldLastError:
 		return m.LastError()
+	case sourcebreakernotification.FieldEventPublishedAt:
+		return m.EventPublishedAt()
+	case sourcebreakernotification.FieldHookPublishedAt:
+		return m.HookPublishedAt()
+	case sourcebreakernotification.FieldPublicationAttempts:
+		return m.PublicationAttempts()
+	case sourcebreakernotification.FieldNextAttemptAt:
+		return m.NextAttemptAt()
+	case sourcebreakernotification.FieldPublicationError:
+		return m.PublicationError()
 	case sourcebreakernotification.FieldPublishedAt:
 		return m.PublishedAt()
 	case sourcebreakernotification.FieldCreatedAt:
@@ -16011,6 +16294,16 @@ func (m *SourceBreakerNotificationMutation) OldField(ctx context.Context, name s
 		return m.OldFailingSince(ctx)
 	case sourcebreakernotification.FieldLastError:
 		return m.OldLastError(ctx)
+	case sourcebreakernotification.FieldEventPublishedAt:
+		return m.OldEventPublishedAt(ctx)
+	case sourcebreakernotification.FieldHookPublishedAt:
+		return m.OldHookPublishedAt(ctx)
+	case sourcebreakernotification.FieldPublicationAttempts:
+		return m.OldPublicationAttempts(ctx)
+	case sourcebreakernotification.FieldNextAttemptAt:
+		return m.OldNextAttemptAt(ctx)
+	case sourcebreakernotification.FieldPublicationError:
+		return m.OldPublicationError(ctx)
 	case sourcebreakernotification.FieldPublishedAt:
 		return m.OldPublishedAt(ctx)
 	case sourcebreakernotification.FieldCreatedAt:
@@ -16101,6 +16394,41 @@ func (m *SourceBreakerNotificationMutation) SetField(name string, value ent.Valu
 		}
 		m.SetLastError(v)
 		return nil
+	case sourcebreakernotification.FieldEventPublishedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEventPublishedAt(v)
+		return nil
+	case sourcebreakernotification.FieldHookPublishedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHookPublishedAt(v)
+		return nil
+	case sourcebreakernotification.FieldPublicationAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublicationAttempts(v)
+		return nil
+	case sourcebreakernotification.FieldNextAttemptAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNextAttemptAt(v)
+		return nil
+	case sourcebreakernotification.FieldPublicationError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublicationError(v)
+		return nil
 	case sourcebreakernotification.FieldPublishedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -16126,6 +16454,9 @@ func (m *SourceBreakerNotificationMutation) AddedFields() []string {
 	if m.addconsecutive_failures != nil {
 		fields = append(fields, sourcebreakernotification.FieldConsecutiveFailures)
 	}
+	if m.addpublication_attempts != nil {
+		fields = append(fields, sourcebreakernotification.FieldPublicationAttempts)
+	}
 	return fields
 }
 
@@ -16136,6 +16467,8 @@ func (m *SourceBreakerNotificationMutation) AddedField(name string) (ent.Value, 
 	switch name {
 	case sourcebreakernotification.FieldConsecutiveFailures:
 		return m.AddedConsecutiveFailures()
+	case sourcebreakernotification.FieldPublicationAttempts:
+		return m.AddedPublicationAttempts()
 	}
 	return nil, false
 }
@@ -16151,6 +16484,13 @@ func (m *SourceBreakerNotificationMutation) AddField(name string, value ent.Valu
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddConsecutiveFailures(v)
+		return nil
+	case sourcebreakernotification.FieldPublicationAttempts:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddPublicationAttempts(v)
 		return nil
 	}
 	return fmt.Errorf("unknown SourceBreakerNotification numeric field %s", name)
@@ -16168,6 +16508,18 @@ func (m *SourceBreakerNotificationMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(sourcebreakernotification.FieldFailingSince) {
 		fields = append(fields, sourcebreakernotification.FieldFailingSince)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldEventPublishedAt) {
+		fields = append(fields, sourcebreakernotification.FieldEventPublishedAt)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldHookPublishedAt) {
+		fields = append(fields, sourcebreakernotification.FieldHookPublishedAt)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldNextAttemptAt) {
+		fields = append(fields, sourcebreakernotification.FieldNextAttemptAt)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldPublicationError) {
+		fields = append(fields, sourcebreakernotification.FieldPublicationError)
 	}
 	if m.FieldCleared(sourcebreakernotification.FieldPublishedAt) {
 		fields = append(fields, sourcebreakernotification.FieldPublishedAt)
@@ -16194,6 +16546,18 @@ func (m *SourceBreakerNotificationMutation) ClearField(name string) error {
 		return nil
 	case sourcebreakernotification.FieldFailingSince:
 		m.ClearFailingSince()
+		return nil
+	case sourcebreakernotification.FieldEventPublishedAt:
+		m.ClearEventPublishedAt()
+		return nil
+	case sourcebreakernotification.FieldHookPublishedAt:
+		m.ClearHookPublishedAt()
+		return nil
+	case sourcebreakernotification.FieldNextAttemptAt:
+		m.ClearNextAttemptAt()
+		return nil
+	case sourcebreakernotification.FieldPublicationError:
+		m.ClearPublicationError()
 		return nil
 	case sourcebreakernotification.FieldPublishedAt:
 		m.ClearPublishedAt()
@@ -16238,6 +16602,21 @@ func (m *SourceBreakerNotificationMutation) ResetField(name string) error {
 		return nil
 	case sourcebreakernotification.FieldLastError:
 		m.ResetLastError()
+		return nil
+	case sourcebreakernotification.FieldEventPublishedAt:
+		m.ResetEventPublishedAt()
+		return nil
+	case sourcebreakernotification.FieldHookPublishedAt:
+		m.ResetHookPublishedAt()
+		return nil
+	case sourcebreakernotification.FieldPublicationAttempts:
+		m.ResetPublicationAttempts()
+		return nil
+	case sourcebreakernotification.FieldNextAttemptAt:
+		m.ResetNextAttemptAt()
+		return nil
+	case sourcebreakernotification.FieldPublicationError:
+		m.ResetPublicationError()
 		return nil
 	case sourcebreakernotification.FieldPublishedAt:
 		m.ResetPublishedAt()
@@ -16695,6 +17074,7 @@ type SourceCircuitStateMutation struct {
 	cooldown_until          *time.Time
 	last_error              *string
 	failing_since           *time.Time
+	notification_gap        *bool
 	updated_at              *time.Time
 	clearedFields           map[string]struct{}
 	done                    bool
@@ -17032,6 +17412,42 @@ func (m *SourceCircuitStateMutation) ResetFailingSince() {
 	delete(m.clearedFields, sourcecircuitstate.FieldFailingSince)
 }
 
+// SetNotificationGap sets the "notification_gap" field.
+func (m *SourceCircuitStateMutation) SetNotificationGap(b bool) {
+	m.notification_gap = &b
+}
+
+// NotificationGap returns the value of the "notification_gap" field in the mutation.
+func (m *SourceCircuitStateMutation) NotificationGap() (r bool, exists bool) {
+	v := m.notification_gap
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldNotificationGap returns the old "notification_gap" field's value of the SourceCircuitState entity.
+// If the SourceCircuitState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceCircuitStateMutation) OldNotificationGap(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldNotificationGap is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldNotificationGap requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldNotificationGap: %w", err)
+	}
+	return oldValue.NotificationGap, nil
+}
+
+// ResetNotificationGap resets all changes to the "notification_gap" field.
+func (m *SourceCircuitStateMutation) ResetNotificationGap() {
+	m.notification_gap = nil
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (m *SourceCircuitStateMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -17102,7 +17518,7 @@ func (m *SourceCircuitStateMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceCircuitStateMutation) Fields() []string {
-	fields := make([]string, 0, 6)
+	fields := make([]string, 0, 7)
 	if m.source_key != nil {
 		fields = append(fields, sourcecircuitstate.FieldSourceKey)
 	}
@@ -17117,6 +17533,9 @@ func (m *SourceCircuitStateMutation) Fields() []string {
 	}
 	if m.failing_since != nil {
 		fields = append(fields, sourcecircuitstate.FieldFailingSince)
+	}
+	if m.notification_gap != nil {
+		fields = append(fields, sourcecircuitstate.FieldNotificationGap)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, sourcecircuitstate.FieldUpdatedAt)
@@ -17139,6 +17558,8 @@ func (m *SourceCircuitStateMutation) Field(name string) (ent.Value, bool) {
 		return m.LastError()
 	case sourcecircuitstate.FieldFailingSince:
 		return m.FailingSince()
+	case sourcecircuitstate.FieldNotificationGap:
+		return m.NotificationGap()
 	case sourcecircuitstate.FieldUpdatedAt:
 		return m.UpdatedAt()
 	}
@@ -17160,6 +17581,8 @@ func (m *SourceCircuitStateMutation) OldField(ctx context.Context, name string) 
 		return m.OldLastError(ctx)
 	case sourcecircuitstate.FieldFailingSince:
 		return m.OldFailingSince(ctx)
+	case sourcecircuitstate.FieldNotificationGap:
+		return m.OldNotificationGap(ctx)
 	case sourcecircuitstate.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	}
@@ -17205,6 +17628,13 @@ func (m *SourceCircuitStateMutation) SetField(name string, value ent.Value) erro
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFailingSince(v)
+		return nil
+	case sourcecircuitstate.FieldNotificationGap:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetNotificationGap(v)
 		return nil
 	case sourcecircuitstate.FieldUpdatedAt:
 		v, ok := value.(time.Time)
@@ -17306,6 +17736,9 @@ func (m *SourceCircuitStateMutation) ResetField(name string) error {
 		return nil
 	case sourcecircuitstate.FieldFailingSince:
 		m.ResetFailingSince()
+		return nil
+	case sourcecircuitstate.FieldNotificationGap:
+		m.ResetNotificationGap()
 		return nil
 	case sourcecircuitstate.FieldUpdatedAt:
 		m.ResetUpdatedAt()
@@ -18043,27 +18476,29 @@ func (m *SourceCoverageMutation) ResetEdge(name string) error {
 // SourceEventMutation represents an operation that mutates the SourceEvent nodes in the graph.
 type SourceEventMutation struct {
 	config
-	op             Op
-	typ            string
-	id             *uuid.UUID
-	source_key     *string
-	source_id      *string
-	source_name    *string
-	language       *string
-	event_type     *sourceevent.EventType
-	status         *sourceevent.Status
-	duration_ms    *int64
-	addduration_ms *int64
-	error_message  *string
-	error_category *string
-	items_count    *int
-	additems_count *int
-	metadata       *map[string]string
-	created_at     *time.Time
-	clearedFields  map[string]struct{}
-	done           bool
-	oldValue       func(context.Context) (*SourceEvent, error)
-	predicates     []predicate.SourceEvent
+	op                         Op
+	typ                        string
+	id                         *uuid.UUID
+	source_key                 *string
+	source_id                  *string
+	source_name                *string
+	language                   *string
+	event_type                 *sourceevent.EventType
+	status                     *sourceevent.Status
+	duration_ms                *int64
+	addduration_ms             *int64
+	error_message              *string
+	error_category             *string
+	items_count                *int
+	additems_count             *int
+	metadata                   *map[string]string
+	breaker_notification_id    *int
+	addbreaker_notification_id *int
+	created_at                 *time.Time
+	clearedFields              map[string]struct{}
+	done                       bool
+	oldValue                   func(context.Context) (*SourceEvent, error)
+	predicates                 []predicate.SourceEvent
 }
 
 var _ ent.Mutation = (*SourceEventMutation)(nil)
@@ -18659,6 +19094,76 @@ func (m *SourceEventMutation) ResetMetadata() {
 	delete(m.clearedFields, sourceevent.FieldMetadata)
 }
 
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (m *SourceEventMutation) SetBreakerNotificationID(i int) {
+	m.breaker_notification_id = &i
+	m.addbreaker_notification_id = nil
+}
+
+// BreakerNotificationID returns the value of the "breaker_notification_id" field in the mutation.
+func (m *SourceEventMutation) BreakerNotificationID() (r int, exists bool) {
+	v := m.breaker_notification_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldBreakerNotificationID returns the old "breaker_notification_id" field's value of the SourceEvent entity.
+// If the SourceEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceEventMutation) OldBreakerNotificationID(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldBreakerNotificationID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldBreakerNotificationID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldBreakerNotificationID: %w", err)
+	}
+	return oldValue.BreakerNotificationID, nil
+}
+
+// AddBreakerNotificationID adds i to the "breaker_notification_id" field.
+func (m *SourceEventMutation) AddBreakerNotificationID(i int) {
+	if m.addbreaker_notification_id != nil {
+		*m.addbreaker_notification_id += i
+	} else {
+		m.addbreaker_notification_id = &i
+	}
+}
+
+// AddedBreakerNotificationID returns the value that was added to the "breaker_notification_id" field in this mutation.
+func (m *SourceEventMutation) AddedBreakerNotificationID() (r int, exists bool) {
+	v := m.addbreaker_notification_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (m *SourceEventMutation) ClearBreakerNotificationID() {
+	m.breaker_notification_id = nil
+	m.addbreaker_notification_id = nil
+	m.clearedFields[sourceevent.FieldBreakerNotificationID] = struct{}{}
+}
+
+// BreakerNotificationIDCleared returns if the "breaker_notification_id" field was cleared in this mutation.
+func (m *SourceEventMutation) BreakerNotificationIDCleared() bool {
+	_, ok := m.clearedFields[sourceevent.FieldBreakerNotificationID]
+	return ok
+}
+
+// ResetBreakerNotificationID resets all changes to the "breaker_notification_id" field.
+func (m *SourceEventMutation) ResetBreakerNotificationID() {
+	m.breaker_notification_id = nil
+	m.addbreaker_notification_id = nil
+	delete(m.clearedFields, sourceevent.FieldBreakerNotificationID)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SourceEventMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -18729,7 +19234,7 @@ func (m *SourceEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceEventMutation) Fields() []string {
-	fields := make([]string, 0, 12)
+	fields := make([]string, 0, 13)
 	if m.source_key != nil {
 		fields = append(fields, sourceevent.FieldSourceKey)
 	}
@@ -18762,6 +19267,9 @@ func (m *SourceEventMutation) Fields() []string {
 	}
 	if m.metadata != nil {
 		fields = append(fields, sourceevent.FieldMetadata)
+	}
+	if m.breaker_notification_id != nil {
+		fields = append(fields, sourceevent.FieldBreakerNotificationID)
 	}
 	if m.created_at != nil {
 		fields = append(fields, sourceevent.FieldCreatedAt)
@@ -18796,6 +19304,8 @@ func (m *SourceEventMutation) Field(name string) (ent.Value, bool) {
 		return m.ItemsCount()
 	case sourceevent.FieldMetadata:
 		return m.Metadata()
+	case sourceevent.FieldBreakerNotificationID:
+		return m.BreakerNotificationID()
 	case sourceevent.FieldCreatedAt:
 		return m.CreatedAt()
 	}
@@ -18829,6 +19339,8 @@ func (m *SourceEventMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldItemsCount(ctx)
 	case sourceevent.FieldMetadata:
 		return m.OldMetadata(ctx)
+	case sourceevent.FieldBreakerNotificationID:
+		return m.OldBreakerNotificationID(ctx)
 	case sourceevent.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	}
@@ -18917,6 +19429,13 @@ func (m *SourceEventMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetMetadata(v)
 		return nil
+	case sourceevent.FieldBreakerNotificationID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetBreakerNotificationID(v)
+		return nil
 	case sourceevent.FieldCreatedAt:
 		v, ok := value.(time.Time)
 		if !ok {
@@ -18938,6 +19457,9 @@ func (m *SourceEventMutation) AddedFields() []string {
 	if m.additems_count != nil {
 		fields = append(fields, sourceevent.FieldItemsCount)
 	}
+	if m.addbreaker_notification_id != nil {
+		fields = append(fields, sourceevent.FieldBreakerNotificationID)
+	}
 	return fields
 }
 
@@ -18950,6 +19472,8 @@ func (m *SourceEventMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDurationMs()
 	case sourceevent.FieldItemsCount:
 		return m.AddedItemsCount()
+	case sourceevent.FieldBreakerNotificationID:
+		return m.AddedBreakerNotificationID()
 	}
 	return nil, false
 }
@@ -18973,6 +19497,13 @@ func (m *SourceEventMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddItemsCount(v)
 		return nil
+	case sourceevent.FieldBreakerNotificationID:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddBreakerNotificationID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown SourceEvent numeric field %s", name)
 }
@@ -18992,6 +19523,9 @@ func (m *SourceEventMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(sourceevent.FieldMetadata) {
 		fields = append(fields, sourceevent.FieldMetadata)
+	}
+	if m.FieldCleared(sourceevent.FieldBreakerNotificationID) {
+		fields = append(fields, sourceevent.FieldBreakerNotificationID)
 	}
 	return fields
 }
@@ -19018,6 +19552,9 @@ func (m *SourceEventMutation) ClearField(name string) error {
 		return nil
 	case sourceevent.FieldMetadata:
 		m.ClearMetadata()
+		return nil
+	case sourceevent.FieldBreakerNotificationID:
+		m.ClearBreakerNotificationID()
 		return nil
 	}
 	return fmt.Errorf("unknown SourceEvent nullable field %s", name)
@@ -19059,6 +19596,9 @@ func (m *SourceEventMutation) ResetField(name string) error {
 		return nil
 	case sourceevent.FieldMetadata:
 		m.ResetMetadata()
+		return nil
+	case sourceevent.FieldBreakerNotificationID:
+		m.ResetBreakerNotificationID()
 		return nil
 	case sourceevent.FieldCreatedAt:
 		m.ResetCreatedAt()

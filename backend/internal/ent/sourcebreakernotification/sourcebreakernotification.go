@@ -35,6 +35,16 @@ const (
 	FieldFailingSince = "failing_since"
 	// FieldLastError holds the string denoting the last_error field in the database.
 	FieldLastError = "last_error"
+	// FieldEventPublishedAt holds the string denoting the event_published_at field in the database.
+	FieldEventPublishedAt = "event_published_at"
+	// FieldHookPublishedAt holds the string denoting the hook_published_at field in the database.
+	FieldHookPublishedAt = "hook_published_at"
+	// FieldPublicationAttempts holds the string denoting the publication_attempts field in the database.
+	FieldPublicationAttempts = "publication_attempts"
+	// FieldNextAttemptAt holds the string denoting the next_attempt_at field in the database.
+	FieldNextAttemptAt = "next_attempt_at"
+	// FieldPublicationError holds the string denoting the publication_error field in the database.
+	FieldPublicationError = "publication_error"
 	// FieldPublishedAt holds the string denoting the published_at field in the database.
 	FieldPublishedAt = "published_at"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
@@ -57,6 +67,11 @@ var Columns = []string{
 	FieldCooldownUntil,
 	FieldFailingSince,
 	FieldLastError,
+	FieldEventPublishedAt,
+	FieldHookPublishedAt,
+	FieldPublicationAttempts,
+	FieldNextAttemptAt,
+	FieldPublicationError,
 	FieldPublishedAt,
 	FieldCreatedAt,
 }
@@ -82,6 +97,8 @@ var (
 	DefaultConsecutiveFailures int
 	// DefaultLastError holds the default value on creation for the "last_error" field.
 	DefaultLastError string
+	// DefaultPublicationAttempts holds the default value on creation for the "publication_attempts" field.
+	DefaultPublicationAttempts int
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -147,6 +164,31 @@ func ByFailingSince(opts ...sql.OrderTermOption) OrderOption {
 // ByLastError orders the results by the last_error field.
 func ByLastError(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastError, opts...).ToFunc()
+}
+
+// ByEventPublishedAt orders the results by the event_published_at field.
+func ByEventPublishedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldEventPublishedAt, opts...).ToFunc()
+}
+
+// ByHookPublishedAt orders the results by the hook_published_at field.
+func ByHookPublishedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldHookPublishedAt, opts...).ToFunc()
+}
+
+// ByPublicationAttempts orders the results by the publication_attempts field.
+func ByPublicationAttempts(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPublicationAttempts, opts...).ToFunc()
+}
+
+// ByNextAttemptAt orders the results by the next_attempt_at field.
+func ByNextAttemptAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldNextAttemptAt, opts...).ToFunc()
+}
+
+// ByPublicationError orders the results by the publication_error field.
+func ByPublicationError(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldPublicationError, opts...).ToFunc()
 }
 
 // ByPublishedAt orders the results by the published_at field.

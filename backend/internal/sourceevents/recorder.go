@@ -3,11 +3,12 @@
 // Health Console substrate; the read/aggregation side lives with the reporting
 // API (a later slice).
 //
-// Recording is BEST-EFFORT and fire-and-forget: a DB failure is logged and
-// swallowed, never returned, so audit bookkeeping can never break or slow a
-// search, download, refresh, or warm — the exact posture of internal/metrics'
-// Recorder. Retention (PurgeOld) is a maintenance operation and DOES return its
-// error so a scheduled caller can log the outcome.
+// Ordinary operation recording is BEST-EFFORT and fire-and-forget: a DB failure
+// is logged and swallowed, never returned, so audit bookkeeping can never break
+// a search, download, refresh, or warm. Circuit-breaker transitions are the
+// exception: BreakerRecorder returns storage errors to their durable outbox so
+// they remain ordered and retryable. Retention (PurgeOld) is a maintenance
+// operation and DOES return its error so a scheduled caller can log the outcome.
 package sourceevents
 
 import (
@@ -92,4 +93,13 @@ type Recorder interface {
 	// LogBatch records a slice of events in one insert. It is the form the search
 	// fan-out and the per-cycle download outcomes use.
 	LogBatch(ctx context.Context, events []Event)
+}
+
+// BreakerRecorder is the durable circuit-breaker transition consumer. Unlike
+// the ordinary best-effort Recorder, it reports an insert failure so the
+// sourcegate outbox can retain the notification for retry. notificationID is
+// the stable idempotency identity across a consumer commit followed by a lost
+// publication receipt.
+type BreakerRecorder interface {
+	LogBreakerTransition(ctx context.Context, notificationID int, event Event) error
 }

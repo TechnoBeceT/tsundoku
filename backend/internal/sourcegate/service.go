@@ -58,11 +58,15 @@ type Thresholds interface {
 //
 // The breaker (SourceCircuitState) is PERSISTED — it must survive a restart, or
 // a redeploy would immediately re-hammer a still-blocked source. The
-// transition notifications are persisted beside their breaker mutation and
-// replayed through a per-source database cursor, so concurrent processes cannot
-// publish a reset ahead of the trip it follows. The politeness last-access map
-// is in-memory and ephemeral — a restart merely skips one delay, which is an
-// acceptable, non-safety-critical reset.
+// transition notifications are normally persisted beside their breaker
+// mutation and replayed through a per-source database cursor, so concurrent
+// processes cannot publish a reset ahead of the trip it follows. If only that
+// optional storage fails, the breaker mutation is retried state-only with a
+// durable notification gap that suppresses later publications for the source;
+// containment therefore wins without allowing an event to overtake a missing
+// predecessor. The politeness last-access map is in-memory and ephemeral — a
+// restart merely skips one delay, which is an acceptable, non-safety-critical
+// reset.
 type Service struct {
 	client *ent.Client
 	t      Thresholds
@@ -72,14 +76,14 @@ type Service struct {
 	// or an owner Reset) — transition-only, never on every failure/success. Nil
 	// (the default) means no audit events are emitted, so existing call sites and
 	// tests are unaffected.
-	events sourceevents.Recorder
+	events sourceevents.BreakerRecorder
 
 	// onTransition is the nil-guarded breaker-transition hook (see
 	// WithTransitionHook / alert.go). It records each breaker STATE TRANSITION — a
 	// trip and a clear — so an owner (the job.Runner) can push an immediate
 	// sources.summary alert. sourcegate stays SSE-free: this is an opaque callback,
 	// never the hub. Nil (the default) fires nothing.
-	onTransition func(BreakerTransition)
+	onTransition func(context.Context, BreakerTransition) error
 
 	mu         sync.Mutex
 	lastAccess map[string]time.Time
@@ -98,28 +102,29 @@ func NewService(client *ent.Client, t Thresholds) *Service {
 // WithEventRecorder attaches the source-operation audit-log recorder so the
 // breaker emits breaker_trip / breaker_reset events on its state transitions. It
 // returns the receiver for chaining off NewService. A nil recorder emits nothing
-// (the default). The recorder is best-effort, so a logging failure never affects
-// the breaker's own bookkeeping.
-func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
+// (the default). Consumer failures retain the durable notification for ordered
+// retry and never affect the already-committed breaker state.
+func (s *Service) WithEventRecorder(r sourceevents.BreakerRecorder) *Service {
 	s.events = r
 	return s
 }
 
-// logBreakerEvent records a breaker transition (best-effort, nil-guarded). It
+// logBreakerEvent records a breaker transition (error-returning, nil-guarded). It
 // carries only the source_key (which IS the trimmed source name — the breaker
 // has no numeric id or language), so both source_key and source_name are the key.
 func (s *Service) logBreakerEvent(
 	ctx context.Context,
+	notificationID int,
 	key string,
 	eventType sourceevents.EventType,
 	status sourceevents.Status,
 	cause error,
 	errorCategory string,
-) {
+) error {
 	if s.events == nil {
-		return
+		return nil
 	}
-	s.events.Log(ctx, sourceevents.Event{
+	return s.events.LogBreakerTransition(ctx, notificationID, sourceevents.Event{
 		SourceKey:     key,
 		SourceName:    key,
 		Type:          eventType,
@@ -206,20 +211,42 @@ func (s *Service) Snapshot(ctx context.Context) (map[string]BreakerState, error)
 	return out, nil
 }
 
-// Reset clears key's tripped circuit-breaker: it DELETES the breaker row, so the
-// source is immediately available again (consecutive_failures back to 0, no
-// cooldown, no residual last_error). This is the owner "reset source" action — a
-// deliberate override of the anti-ban cooldown for one source. It is:
-//   - idempotent: deleting zero rows is not an error, so it is a safe no-op when
-//     the source has no breaker row;
+// Reset clears key's tripped circuit-breaker, so the source is immediately
+// available again (consecutive_failures back to 0, no cooldown, no residual
+// last_error). It normally DELETES the breaker row. After an unrecoverable
+// notification enqueue failure it instead retains a healthy tombstone carrying
+// NotificationGap, because deleting that ordering guard would let a later event
+// overtake the missing predecessor. This owner action is:
+//   - idempotent: an absent or already-healthy source remains healthy;
 //   - scoped to exactly key: no other source's breaker and no global gating
 //     behaviour is affected (gating stays fully in force for every other source);
 //   - error-RETURNING (unlike the best-effort recorders) so the handler can
 //     surface a failure to the owner (§16).
 func (s *Service) Reset(ctx context.Context, key string) error {
-	tx, _, err := s.lockCircuitState(ctx, key)
+	queued, err := s.reset(ctx, key, true)
+	if isNotificationEnqueueError(err) {
+		slog.WarnContext(ctx, "sourcegate: reset notification storage failed; preserving reset with a notification gap",
+			"source_key", key, "err", err)
+		queued, err = s.reset(ctx, key, false)
+	}
 	if err != nil {
-		return fmt.Errorf("sourcegate.Reset: lock breaker %q: %w", key, err)
+		return fmt.Errorf("sourcegate.Reset: %w", err)
+	}
+	if queued {
+		s.publishSourceTransitions(ctx, key)
+	}
+	return nil
+}
+
+// reset applies the owner reset in one serialized transaction. When
+// enqueueNotification is false, it is the containment-safe retry after a
+// notification-only failure: the breaker becomes healthy, but its row remains
+// as a tombstone carrying NotificationGap so no later transition can overtake
+// the missing reset notification.
+func (s *Service) reset(ctx context.Context, key string, enqueueNotification bool) (bool, error) {
+	tx, row, err := s.lockCircuitState(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("lock breaker %q: %w", key, err)
 	}
 	committed := false
 	defer func() {
@@ -227,26 +254,38 @@ func (s *Service) Reset(ctx context.Context, key string) error {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.SourceCircuitState.Delete().
-		Where(entsourcecircuitstate.SourceKeyEQ(key)).
-		Exec(ctx); err != nil {
-		return fmt.Errorf("sourcegate.Reset: delete breaker %q: %w", key, err)
-	}
-	queued, err := s.enqueueTransition(ctx, tx, BreakerTransition{
-		SourceKey: key,
-		EventType: sourceevents.EventBreakerReset,
-	}, sourceevents.StatusSuccess, nil)
-	if err != nil {
-		return fmt.Errorf("sourcegate.Reset: enqueue reset for %q: %w", key, err)
+	queued := false
+	if row.NotificationGap || !enqueueNotification {
+		u := tx.SourceCircuitState.UpdateOne(row).
+			SetConsecutiveFailures(0).
+			SetLastError("").
+			ClearCooldownUntil().
+			ClearFailingSince()
+		if !enqueueNotification {
+			u = u.SetNotificationGap(true)
+		}
+		if err := u.Exec(ctx); err != nil {
+			return false, fmt.Errorf("clear breaker %q: %w", key, err)
+		}
+	} else {
+		if _, err := tx.SourceCircuitState.Delete().
+			Where(entsourcecircuitstate.SourceKeyEQ(key)).
+			Exec(ctx); err != nil {
+			return false, fmt.Errorf("delete breaker %q: %w", key, err)
+		}
+		queued, err = s.enqueueTransition(ctx, tx, BreakerTransition{
+			SourceKey: key,
+			EventType: sourceevents.EventBreakerReset,
+		}, sourceevents.StatusSuccess, nil)
+		if err != nil {
+			return false, newNotificationEnqueueError(err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sourcegate.Reset: commit reset for %q: %w", key, err)
+		return false, fmt.Errorf("commit reset for %q: %w", key, err)
 	}
 	committed = true
-	if queued {
-		s.publishSourceTransitions(ctx, key)
-	}
-	return nil
+	return queued, nil
 }
 
 // Clear DELETES key's breaker row and returns how many rows were removed (0 or
@@ -271,43 +310,17 @@ func (s *Service) Clear(ctx context.Context, key string) (int, error) {
 // cooldown, upserting the row if it does not yet exist. The row stays locked
 // through the state change and durable notification enqueue, so a simultaneous
 // failure is ordered before or after this complete reset rather than
-// interleaving its fields. Publication is separately serialized by the durable
-// per-source cursor. This is database coordination, not a process-local lock:
-// separate binaries share both rows. Best-effort: a DB failure is logged and
-// swallowed.
+// interleaving its fields. If enqueue alone fails, a second locked transaction
+// commits the reset with NotificationGap. Publication is separately serialized
+// by the durable per-source cursor. This is database coordination, not a
+// process-local lock: separate binaries share both rows. Other DB failures are
+// logged and swallowed.
 func (s *Service) RecordSuccess(ctx context.Context, key string) {
-	tx, row, err := s.lockCircuitState(ctx, key)
-	if err != nil {
-		slog.WarnContext(ctx, "sourcegate: RecordSuccess failed (best-effort, skipping)",
+	queued, err := s.recordSuccess(ctx, key, true)
+	if isNotificationEnqueueError(err) {
+		slog.WarnContext(ctx, "sourcegate: recovery notification storage failed; preserving reset with a notification gap",
 			"source_key", key, "err", err)
-		return
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// The verdict comes from the row protected by this transaction's write lock,
-	// so it is the same serial transition that the update below commits.
-	wasTripped := row.CooldownUntil != nil
-	err = tx.SourceCircuitState.UpdateOne(row).
-		SetConsecutiveFailures(0).
-		SetLastError("").
-		ClearCooldownUntil().
-		ClearFailingSince().
-		Exec(ctx)
-	queued := false
-	if err == nil && wasTripped {
-		queued, err = s.enqueueTransition(ctx, tx, BreakerTransition{
-			SourceKey: key,
-			EventType: sourceevents.EventBreakerReset,
-		}, sourceevents.StatusSuccess, nil)
-	}
-	if err == nil {
-		err = tx.Commit()
-		committed = err == nil
+		queued, err = s.recordSuccess(ctx, key, false)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordSuccess failed (best-effort, skipping)",
@@ -319,57 +332,72 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 	}
 }
 
+func (s *Service) recordSuccess(ctx context.Context, key string, enqueueNotification bool) (bool, error) {
+	tx, row, err := s.lockCircuitState(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	committed := false
+	defer rollbackUnlessCommitted(tx, &committed)
+
+	// The verdict comes from the row protected by this transaction's write lock,
+	// so it is the same serial transition that the update below commits.
+	u, shouldEnqueue := recoveryMutation(tx, row, enqueueNotification)
+	if err := u.Exec(ctx); err != nil {
+		return false, err
+	}
+	queued := false
+	if shouldEnqueue {
+		queued, err = s.enqueueTransition(ctx, tx, BreakerTransition{
+			SourceKey: key,
+			EventType: sourceevents.EventBreakerReset,
+		}, sourceevents.StatusSuccess, nil)
+		if err != nil {
+			return false, newNotificationEnqueueError(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	committed = true
+	return queued, nil
+}
+
+func recoveryMutation(
+	tx *ent.Tx,
+	row *ent.SourceCircuitState,
+	enqueueNotification bool,
+) (*ent.SourceCircuitStateUpdateOne, bool) {
+	u := tx.SourceCircuitState.UpdateOne(row).
+		SetConsecutiveFailures(0).
+		SetLastError("").
+		ClearCooldownUntil().
+		ClearFailingSince()
+	transitionNeeded := row.CooldownUntil != nil && !row.NotificationGap
+	if !transitionNeeded {
+		return u, false
+	}
+	if enqueueNotification {
+		return u, true
+	}
+	return u.SetNotificationGap(true), false
+}
+
 // RecordFailure bumps key's consecutive-failure counter and stores cause as
 // last_error, upserting the row if it does not yet exist. Once the counter
 // reaches the runtime-tunable failure threshold, it trips the breaker:
 // cooldown_until = now + the runtime-tunable cooldown. A PostgreSQL row lock
 // makes the increment, threshold decision, cooldown, and durable notification
-// enqueue one database transition across processes. The publication cursor then
-// preserves that transition order across processes. Best-effort: a DB failure is
-// logged and swallowed.
+// enqueue one database transition across processes. If enqueue alone fails, a
+// second locked transaction still commits the exact increment/cooldown and sets
+// NotificationGap. The publication cursor preserves the order of stored
+// transitions across processes. Other DB failures are logged and swallowed.
 func (s *Service) RecordFailure(ctx context.Context, key string, cause error, now time.Time) {
-	threshold := s.t.SourcesFailureThreshold(ctx)
-	msg := truncateError(cause)
-	tx, row, err := s.lockCircuitState(ctx, key)
-	if err != nil {
-		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
+	queued, err := s.recordFailure(ctx, key, cause, now, true)
+	if isNotificationEnqueueError(err) {
+		slog.WarnContext(ctx, "sourcegate: trip notification storage failed; preserving containment with a notification gap",
 			"source_key", key, "err", err)
-		return
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	newFailures := row.ConsecutiveFailures + 1
-	// CooldownUntil != nil remains the true pre-failure tripped state even when
-	// expired: only RecordSuccess clears it, and an expired cooldown can still
-	// produce the natural-recovery reset notification on that success.
-	wasTripped := row.CooldownUntil != nil
-	u := tx.SourceCircuitState.UpdateOne(row).
-		SetConsecutiveFailures(newFailures).
-		SetLastError(msg)
-	if row.ConsecutiveFailures == 0 {
-		u = u.SetFailingSince(now)
-	}
-	tripped := false
-	var cooldownUntil *time.Time
-	if newFailures >= threshold {
-		until := now.Add(s.t.SourcesCooldown(ctx))
-		cooldownUntil = &until
-		u = u.SetCooldownUntil(until)
-		tripped = !wasTripped
-	}
-	err = u.Exec(ctx)
-	queued := false
-	if err == nil && tripped {
-		queued, err = s.enqueueTripTransition(ctx, tx, key, row, newFailures, cooldownUntil, msg, cause, now)
-	}
-	if err == nil {
-		err = tx.Commit()
-		committed = err == nil
+		queued, err = s.recordFailure(ctx, key, cause, now, false)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
@@ -378,6 +406,95 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 	}
 	if queued {
 		s.publishSourceTransitions(ctx, key)
+	}
+}
+
+func (s *Service) recordFailure(
+	ctx context.Context,
+	key string,
+	cause error,
+	now time.Time,
+	enqueueNotification bool,
+) (bool, error) {
+	threshold := s.t.SourcesFailureThreshold(ctx)
+	msg := truncateError(cause)
+	tx, row, err := s.lockCircuitState(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	committed := false
+	defer rollbackUnlessCommitted(tx, &committed)
+
+	mutation := s.failureMutation(ctx, tx, row, msg, now, threshold, enqueueNotification)
+	if err := mutation.update.Exec(ctx); err != nil {
+		return false, err
+	}
+	queued := false
+	if mutation.shouldEnqueue {
+		queued, err = s.enqueueTripTransition(
+			ctx, tx, key, row, mutation.newFailures, mutation.cooldownUntil, msg, cause, now,
+		)
+		if err != nil {
+			return false, newNotificationEnqueueError(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	committed = true
+	return queued, nil
+}
+
+type failureStateMutation struct {
+	update        *ent.SourceCircuitStateUpdateOne
+	newFailures   int
+	cooldownUntil *time.Time
+	shouldEnqueue bool
+}
+
+func (s *Service) failureMutation(
+	ctx context.Context,
+	tx *ent.Tx,
+	row *ent.SourceCircuitState,
+	message string,
+	now time.Time,
+	threshold int,
+	enqueueNotification bool,
+) failureStateMutation {
+	newFailures := row.ConsecutiveFailures + 1
+	u := tx.SourceCircuitState.UpdateOne(row).
+		SetConsecutiveFailures(newFailures).
+		SetLastError(message)
+	if row.ConsecutiveFailures == 0 {
+		u = u.SetFailingSince(now)
+	}
+
+	// CooldownUntil != nil remains the true pre-failure tripped state even when
+	// expired: only RecordSuccess clears it, and an expired cooldown can still
+	// produce the natural-recovery reset notification on that success.
+	tripped := false
+	var cooldownUntil *time.Time
+	if newFailures >= threshold {
+		until := now.Add(s.t.SourcesCooldown(ctx))
+		cooldownUntil = &until
+		u = u.SetCooldownUntil(until)
+		tripped = row.CooldownUntil == nil
+	}
+	transitionNeeded := tripped && !row.NotificationGap
+	if transitionNeeded && !enqueueNotification {
+		u = u.SetNotificationGap(true)
+	}
+	return failureStateMutation{
+		update:        u,
+		newFailures:   newFailures,
+		cooldownUntil: cooldownUntil,
+		shouldEnqueue: transitionNeeded && enqueueNotification,
+	}
+}
+
+func rollbackUnlessCommitted(tx *ent.Tx, committed *bool) {
+	if !*committed {
+		_ = tx.Rollback()
 	}
 }
 

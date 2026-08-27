@@ -536,8 +536,12 @@ func init() {
 	sourcebreakernotificationDescLastError := sourcebreakernotificationFields[10].Descriptor()
 	// sourcebreakernotification.DefaultLastError holds the default value on creation for the last_error field.
 	sourcebreakernotification.DefaultLastError = sourcebreakernotificationDescLastError.Default.(string)
+	// sourcebreakernotificationDescPublicationAttempts is the schema descriptor for publication_attempts field.
+	sourcebreakernotificationDescPublicationAttempts := sourcebreakernotificationFields[13].Descriptor()
+	// sourcebreakernotification.DefaultPublicationAttempts holds the default value on creation for the publication_attempts field.
+	sourcebreakernotification.DefaultPublicationAttempts = sourcebreakernotificationDescPublicationAttempts.Default.(int)
 	// sourcebreakernotificationDescCreatedAt is the schema descriptor for created_at field.
-	sourcebreakernotificationDescCreatedAt := sourcebreakernotificationFields[12].Descriptor()
+	sourcebreakernotificationDescCreatedAt := sourcebreakernotificationFields[17].Descriptor()
 	// sourcebreakernotification.DefaultCreatedAt holds the default value on creation for the created_at field.
 	sourcebreakernotification.DefaultCreatedAt = sourcebreakernotificationDescCreatedAt.Default.(func() time.Time)
 	sourcebreakernotificationcursorFields := schema.SourceBreakerNotificationCursor{}.Fields()
@@ -562,8 +566,12 @@ func init() {
 	sourcecircuitstateDescLastError := sourcecircuitstateFields[4].Descriptor()
 	// sourcecircuitstate.DefaultLastError holds the default value on creation for the last_error field.
 	sourcecircuitstate.DefaultLastError = sourcecircuitstateDescLastError.Default.(string)
+	// sourcecircuitstateDescNotificationGap is the schema descriptor for notification_gap field.
+	sourcecircuitstateDescNotificationGap := sourcecircuitstateFields[6].Descriptor()
+	// sourcecircuitstate.DefaultNotificationGap holds the default value on creation for the notification_gap field.
+	sourcecircuitstate.DefaultNotificationGap = sourcecircuitstateDescNotificationGap.Default.(bool)
 	// sourcecircuitstateDescUpdatedAt is the schema descriptor for updated_at field.
-	sourcecircuitstateDescUpdatedAt := sourcecircuitstateFields[6].Descriptor()
+	sourcecircuitstateDescUpdatedAt := sourcecircuitstateFields[7].Descriptor()
 	// sourcecircuitstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	sourcecircuitstate.DefaultUpdatedAt = sourcecircuitstateDescUpdatedAt.Default.(func() time.Time)
 	// sourcecircuitstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
@@ -615,7 +623,7 @@ func init() {
 	// sourceevent.DefaultDurationMs holds the default value on creation for the duration_ms field.
 	sourceevent.DefaultDurationMs = sourceeventDescDurationMs.Default.(int64)
 	// sourceeventDescCreatedAt is the schema descriptor for created_at field.
-	sourceeventDescCreatedAt := sourceeventFields[12].Descriptor()
+	sourceeventDescCreatedAt := sourceeventFields[13].Descriptor()
 	// sourceevent.DefaultCreatedAt holds the default value on creation for the created_at field.
 	sourceevent.DefaultCreatedAt = sourceeventDescCreatedAt.Default.(func() time.Time)
 	// sourceeventDescID is the schema descriptor for id field.

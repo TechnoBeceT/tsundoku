@@ -109,6 +109,31 @@ func LastError(v string) predicate.SourceBreakerNotification {
 	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldLastError, v))
 }
 
+// EventPublishedAt applies equality check predicate on the "event_published_at" field. It's identical to EventPublishedAtEQ.
+func EventPublishedAt(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldEventPublishedAt, v))
+}
+
+// HookPublishedAt applies equality check predicate on the "hook_published_at" field. It's identical to HookPublishedAtEQ.
+func HookPublishedAt(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldHookPublishedAt, v))
+}
+
+// PublicationAttempts applies equality check predicate on the "publication_attempts" field. It's identical to PublicationAttemptsEQ.
+func PublicationAttempts(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldPublicationAttempts, v))
+}
+
+// NextAttemptAt applies equality check predicate on the "next_attempt_at" field. It's identical to NextAttemptAtEQ.
+func NextAttemptAt(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldNextAttemptAt, v))
+}
+
+// PublicationError applies equality check predicate on the "publication_error" field. It's identical to PublicationErrorEQ.
+func PublicationError(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldPublicationError, v))
+}
+
 // PublishedAt applies equality check predicate on the "published_at" field. It's identical to PublishedAtEQ.
 func PublishedAt(v time.Time) predicate.SourceBreakerNotification {
 	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldPublishedAt, v))
@@ -677,6 +702,271 @@ func LastErrorEqualFold(v string) predicate.SourceBreakerNotification {
 // LastErrorContainsFold applies the ContainsFold predicate on the "last_error" field.
 func LastErrorContainsFold(v string) predicate.SourceBreakerNotification {
 	return predicate.SourceBreakerNotification(sql.FieldContainsFold(FieldLastError, v))
+}
+
+// EventPublishedAtEQ applies the EQ predicate on the "event_published_at" field.
+func EventPublishedAtEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtNEQ applies the NEQ predicate on the "event_published_at" field.
+func EventPublishedAtNEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNEQ(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtIn applies the In predicate on the "event_published_at" field.
+func EventPublishedAtIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIn(FieldEventPublishedAt, vs...))
+}
+
+// EventPublishedAtNotIn applies the NotIn predicate on the "event_published_at" field.
+func EventPublishedAtNotIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotIn(FieldEventPublishedAt, vs...))
+}
+
+// EventPublishedAtGT applies the GT predicate on the "event_published_at" field.
+func EventPublishedAtGT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGT(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtGTE applies the GTE predicate on the "event_published_at" field.
+func EventPublishedAtGTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGTE(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtLT applies the LT predicate on the "event_published_at" field.
+func EventPublishedAtLT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLT(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtLTE applies the LTE predicate on the "event_published_at" field.
+func EventPublishedAtLTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLTE(FieldEventPublishedAt, v))
+}
+
+// EventPublishedAtIsNil applies the IsNil predicate on the "event_published_at" field.
+func EventPublishedAtIsNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIsNull(FieldEventPublishedAt))
+}
+
+// EventPublishedAtNotNil applies the NotNil predicate on the "event_published_at" field.
+func EventPublishedAtNotNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotNull(FieldEventPublishedAt))
+}
+
+// HookPublishedAtEQ applies the EQ predicate on the "hook_published_at" field.
+func HookPublishedAtEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtNEQ applies the NEQ predicate on the "hook_published_at" field.
+func HookPublishedAtNEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNEQ(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtIn applies the In predicate on the "hook_published_at" field.
+func HookPublishedAtIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIn(FieldHookPublishedAt, vs...))
+}
+
+// HookPublishedAtNotIn applies the NotIn predicate on the "hook_published_at" field.
+func HookPublishedAtNotIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotIn(FieldHookPublishedAt, vs...))
+}
+
+// HookPublishedAtGT applies the GT predicate on the "hook_published_at" field.
+func HookPublishedAtGT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGT(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtGTE applies the GTE predicate on the "hook_published_at" field.
+func HookPublishedAtGTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGTE(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtLT applies the LT predicate on the "hook_published_at" field.
+func HookPublishedAtLT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLT(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtLTE applies the LTE predicate on the "hook_published_at" field.
+func HookPublishedAtLTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLTE(FieldHookPublishedAt, v))
+}
+
+// HookPublishedAtIsNil applies the IsNil predicate on the "hook_published_at" field.
+func HookPublishedAtIsNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIsNull(FieldHookPublishedAt))
+}
+
+// HookPublishedAtNotNil applies the NotNil predicate on the "hook_published_at" field.
+func HookPublishedAtNotNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotNull(FieldHookPublishedAt))
+}
+
+// PublicationAttemptsEQ applies the EQ predicate on the "publication_attempts" field.
+func PublicationAttemptsEQ(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldPublicationAttempts, v))
+}
+
+// PublicationAttemptsNEQ applies the NEQ predicate on the "publication_attempts" field.
+func PublicationAttemptsNEQ(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNEQ(FieldPublicationAttempts, v))
+}
+
+// PublicationAttemptsIn applies the In predicate on the "publication_attempts" field.
+func PublicationAttemptsIn(vs ...int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIn(FieldPublicationAttempts, vs...))
+}
+
+// PublicationAttemptsNotIn applies the NotIn predicate on the "publication_attempts" field.
+func PublicationAttemptsNotIn(vs ...int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotIn(FieldPublicationAttempts, vs...))
+}
+
+// PublicationAttemptsGT applies the GT predicate on the "publication_attempts" field.
+func PublicationAttemptsGT(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGT(FieldPublicationAttempts, v))
+}
+
+// PublicationAttemptsGTE applies the GTE predicate on the "publication_attempts" field.
+func PublicationAttemptsGTE(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGTE(FieldPublicationAttempts, v))
+}
+
+// PublicationAttemptsLT applies the LT predicate on the "publication_attempts" field.
+func PublicationAttemptsLT(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLT(FieldPublicationAttempts, v))
+}
+
+// PublicationAttemptsLTE applies the LTE predicate on the "publication_attempts" field.
+func PublicationAttemptsLTE(v int) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLTE(FieldPublicationAttempts, v))
+}
+
+// NextAttemptAtEQ applies the EQ predicate on the "next_attempt_at" field.
+func NextAttemptAtEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtNEQ applies the NEQ predicate on the "next_attempt_at" field.
+func NextAttemptAtNEQ(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNEQ(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtIn applies the In predicate on the "next_attempt_at" field.
+func NextAttemptAtIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIn(FieldNextAttemptAt, vs...))
+}
+
+// NextAttemptAtNotIn applies the NotIn predicate on the "next_attempt_at" field.
+func NextAttemptAtNotIn(vs ...time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotIn(FieldNextAttemptAt, vs...))
+}
+
+// NextAttemptAtGT applies the GT predicate on the "next_attempt_at" field.
+func NextAttemptAtGT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGT(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtGTE applies the GTE predicate on the "next_attempt_at" field.
+func NextAttemptAtGTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGTE(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtLT applies the LT predicate on the "next_attempt_at" field.
+func NextAttemptAtLT(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLT(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtLTE applies the LTE predicate on the "next_attempt_at" field.
+func NextAttemptAtLTE(v time.Time) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLTE(FieldNextAttemptAt, v))
+}
+
+// NextAttemptAtIsNil applies the IsNil predicate on the "next_attempt_at" field.
+func NextAttemptAtIsNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIsNull(FieldNextAttemptAt))
+}
+
+// NextAttemptAtNotNil applies the NotNil predicate on the "next_attempt_at" field.
+func NextAttemptAtNotNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotNull(FieldNextAttemptAt))
+}
+
+// PublicationErrorEQ applies the EQ predicate on the "publication_error" field.
+func PublicationErrorEQ(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEQ(FieldPublicationError, v))
+}
+
+// PublicationErrorNEQ applies the NEQ predicate on the "publication_error" field.
+func PublicationErrorNEQ(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNEQ(FieldPublicationError, v))
+}
+
+// PublicationErrorIn applies the In predicate on the "publication_error" field.
+func PublicationErrorIn(vs ...string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIn(FieldPublicationError, vs...))
+}
+
+// PublicationErrorNotIn applies the NotIn predicate on the "publication_error" field.
+func PublicationErrorNotIn(vs ...string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotIn(FieldPublicationError, vs...))
+}
+
+// PublicationErrorGT applies the GT predicate on the "publication_error" field.
+func PublicationErrorGT(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGT(FieldPublicationError, v))
+}
+
+// PublicationErrorGTE applies the GTE predicate on the "publication_error" field.
+func PublicationErrorGTE(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldGTE(FieldPublicationError, v))
+}
+
+// PublicationErrorLT applies the LT predicate on the "publication_error" field.
+func PublicationErrorLT(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLT(FieldPublicationError, v))
+}
+
+// PublicationErrorLTE applies the LTE predicate on the "publication_error" field.
+func PublicationErrorLTE(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldLTE(FieldPublicationError, v))
+}
+
+// PublicationErrorContains applies the Contains predicate on the "publication_error" field.
+func PublicationErrorContains(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldContains(FieldPublicationError, v))
+}
+
+// PublicationErrorHasPrefix applies the HasPrefix predicate on the "publication_error" field.
+func PublicationErrorHasPrefix(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldHasPrefix(FieldPublicationError, v))
+}
+
+// PublicationErrorHasSuffix applies the HasSuffix predicate on the "publication_error" field.
+func PublicationErrorHasSuffix(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldHasSuffix(FieldPublicationError, v))
+}
+
+// PublicationErrorIsNil applies the IsNil predicate on the "publication_error" field.
+func PublicationErrorIsNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldIsNull(FieldPublicationError))
+}
+
+// PublicationErrorNotNil applies the NotNil predicate on the "publication_error" field.
+func PublicationErrorNotNil() predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldNotNull(FieldPublicationError))
+}
+
+// PublicationErrorEqualFold applies the EqualFold predicate on the "publication_error" field.
+func PublicationErrorEqualFold(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldEqualFold(FieldPublicationError, v))
+}
+
+// PublicationErrorContainsFold applies the ContainsFold predicate on the "publication_error" field.
+func PublicationErrorContainsFold(v string) predicate.SourceBreakerNotification {
+	return predicate.SourceBreakerNotification(sql.FieldContainsFold(FieldPublicationError, v))
 }
 
 // PublishedAtEQ applies the EQ predicate on the "published_at" field.

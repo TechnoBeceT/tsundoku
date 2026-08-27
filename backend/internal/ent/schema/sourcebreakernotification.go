@@ -34,6 +34,17 @@ func (SourceBreakerNotification) Fields() []ent.Field {
 		field.Time("cooldown_until").Optional().Nillable(),
 		field.Time("failing_since").Optional().Nillable(),
 		field.String("last_error").Default(""),
+		// Each requested effect has its own receipt. A successful audit insert is
+		// never repeated merely because the later summary hook failed, and neither
+		// effect can make the aggregate receipt true before both are complete.
+		field.Time("event_published_at").Optional().Nillable(),
+		field.Time("hook_published_at").Optional().Nillable(),
+		// Failed delivery attempts remain ordered at the head of this source's
+		// stream. next_attempt_at supplies bounded exponential retry backoff;
+		// publication_error is cleared after all requested effects succeed.
+		field.Int("publication_attempts").Default(0),
+		field.Time("next_attempt_at").Optional().Nillable(),
+		field.String("publication_error").Optional().Nillable(),
 		field.Time("published_at").Optional().Nillable(),
 		field.Time("created_at").Default(time.Now).Immutable(),
 	}

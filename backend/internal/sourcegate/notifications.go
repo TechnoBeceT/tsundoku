@@ -16,6 +16,40 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
+const (
+	// notificationScanInterval is the idle cadence of the lifetime dispatcher.
+	// Transition callers still make an immediate publication attempt; this scan
+	// closes the no-new-transition/no-restart retry gap.
+	notificationScanInterval = time.Second
+	// Consumer failures back off per ordered stream head. The dispatcher keeps
+	// scanning other sources, so one poison event cannot stop independent streams.
+	notificationRetryBase = 250 * time.Millisecond
+	notificationRetryMax  = 30 * time.Second
+)
+
+// notificationEnqueueError identifies the one optional-storage failure for
+// which breaker mutations have a state-only fallback. Other transaction errors
+// retain their existing handling because retrying an ambiguous commit could
+// apply a failure increment twice.
+type notificationEnqueueError struct {
+	cause error
+}
+
+func newNotificationEnqueueError(cause error) error {
+	return &notificationEnqueueError{cause: cause}
+}
+
+func (e *notificationEnqueueError) Error() string {
+	return "enqueue transition notification: " + e.cause.Error()
+}
+
+func (e *notificationEnqueueError) Unwrap() error { return e.cause }
+
+func isNotificationEnqueueError(err error) bool {
+	var target *notificationEnqueueError
+	return errors.As(err, &target)
+}
+
 // enqueueTransition persists one notification in the same transaction as its
 // breaker mutation. The cursor insert is conflict-safe and does not update an
 // existing row, so a later transition may commit while an earlier publisher
@@ -73,10 +107,10 @@ func (s *Service) enqueueTransition(
 	return true, nil
 }
 
-// PublishPending publishes every committed transition left by an interrupted
-// process. Each source is drained independently under its database cursor, so
-// startup replay cannot race a live publisher or reverse that source's order.
-// Failures are best-effort: the pending row remains durable for a later replay.
+// PublishPending publishes every due committed transition. Each source is
+// drained independently under its database cursor, so replay cannot race a live
+// publisher or reverse that source's order. A failed stream head remains pending
+// with retry backoff and blocks later rows for only that source.
 func (s *Service) PublishPending(ctx context.Context) {
 	var keys []struct {
 		SourceKey string `json:"source_key"`
@@ -92,6 +126,31 @@ func (s *Service) PublishPending(ctx context.Context) {
 	for _, key := range keys {
 		s.publishSourceTransitions(ctx, key.SourceKey)
 	}
+}
+
+// StartPublisher performs the startup replay synchronously, then scans for new
+// or retryable notifications for the lifetime of ctx. The returned channel
+// closes after cancellation stops the goroutine, allowing shutdown tests and
+// callers that need a join point to observe termination.
+func (s *Service) StartPublisher(ctx context.Context) <-chan struct{} {
+	s.PublishPending(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		timer := time.NewTimer(notificationScanInterval)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				slog.InfoContext(ctx, "sourcegate: notification publisher stopped (context cancelled)")
+				return
+			case <-timer.C:
+				s.PublishPending(ctx)
+				timer.Reset(notificationScanInterval)
+			}
+		}
+	}()
+	return done
 }
 
 // publishSourceTransitions drains one physical source in committed transition
@@ -111,21 +170,37 @@ func (s *Service) publishSourceTransitionsTx(ctx context.Context, sourceKey stri
 		return err
 	}
 	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
+	defer rollbackUnlessCommitted(tx, &committed)
 
+	rows, err := lockPendingNotifications(ctx, tx, sourceKey)
+	if err != nil {
+		return err
+	}
+	deliveryErr, err := s.publishTransitionRows(ctx, tx, rows, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	return deliveryErr
+}
+
+func lockPendingNotifications(
+	ctx context.Context,
+	tx *ent.Tx,
+	sourceKey string,
+) ([]*ent.SourceBreakerNotification, error) {
 	locked, err := tx.SourceBreakerNotificationCursor.Update().
 		Where(entsourcebreakernotificationcursor.SourceKeyEQ(sourceKey)).
 		SetUpdatedAt(time.Now().UTC()).
 		Save(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if locked != 1 {
-		return fmt.Errorf("notification cursor %q updated %d rows", sourceKey, locked)
+		return nil, fmt.Errorf("notification cursor %q updated %d rows", sourceKey, locked)
 	}
 	rows, err := tx.SourceBreakerNotification.Query().
 		Where(
@@ -135,26 +210,74 @@ func (s *Service) publishSourceTransitionsTx(ctx context.Context, sourceKey stri
 		Order(entsourcebreakernotification.ByID(sql.OrderAsc())).
 		All(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, row := range rows {
-		if err := s.publishTransition(ctx, row); err != nil {
-			return err
-		}
-		if err := tx.SourceBreakerNotification.UpdateOneID(row.ID).
-			SetPublishedAt(time.Now().UTC()).
-			Exec(ctx); err != nil {
-			return err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return rows, nil
 }
 
-func (s *Service) publishTransition(ctx context.Context, row *ent.SourceBreakerNotification) error {
+func (s *Service) publishTransitionRows(
+	ctx context.Context,
+	tx *ent.Tx,
+	rows []*ent.SourceBreakerNotification,
+	now time.Time,
+) (error, error) {
+	for _, row := range rows {
+		// Never select only "due" rows: a later row can be due while the stream
+		// head is backing off. Inspecting in ID order and stopping here is the
+		// poison-event rule that prevents overtaking.
+		if row.NextAttemptAt != nil && row.NextAttemptAt.After(now) {
+			return nil, nil
+		}
+		if err := s.publishTransition(ctx, tx, row); err != nil {
+			var consumerErr *notificationConsumerError
+			if !errors.As(err, &consumerErr) {
+				return nil, err
+			}
+			if err := retainFailedNotification(ctx, tx, row, consumerErr, now); err != nil {
+				return nil, err
+			}
+			return fmt.Errorf("notification %d: %w", row.ID, consumerErr), nil
+		}
+	}
+	return nil, nil
+}
+
+func retainFailedNotification(
+	ctx context.Context,
+	tx *ent.Tx,
+	row *ent.SourceBreakerNotification,
+	cause error,
+	now time.Time,
+) error {
+	attempts := row.PublicationAttempts + 1
+	return tx.SourceBreakerNotification.UpdateOneID(row.ID).
+		SetPublicationAttempts(attempts).
+		SetNextAttemptAt(now.Add(notificationRetryDelay(attempts))).
+		SetPublicationError(truncateError(cause)).
+		Exec(ctx)
+}
+
+func (s *Service) publishTransition(ctx context.Context, tx *ent.Tx, row *ent.SourceBreakerNotification) error {
+	transition := transitionFromNotification(row)
+	eventDone, err := s.publishAuditEvent(ctx, tx, row, transition.EventType)
+	if err != nil {
+		return err
+	}
+	hookDone, err := s.publishTransitionHook(ctx, tx, row, transition)
+	if err != nil {
+		return err
+	}
+	if !eventDone || !hookDone {
+		return nil
+	}
+	return tx.SourceBreakerNotification.UpdateOneID(row.ID).
+		SetPublishedAt(time.Now().UTC()).
+		ClearNextAttemptAt().
+		ClearPublicationError().
+		Exec(ctx)
+}
+
+func transitionFromNotification(row *ent.SourceBreakerNotification) BreakerTransition {
 	transition := BreakerTransition{
 		SourceKey: row.SourceKey,
 		EventType: sourceevents.EventType(row.EventType),
@@ -169,28 +292,101 @@ func (s *Service) publishTransition(ctx context.Context, row *ent.SourceBreakerN
 			UpdatedAt:           row.CreatedAt,
 		}
 	}
-	if row.EventRequested {
-		if s.events == nil {
-			return errors.New("event recorder requested but not attached")
-		}
-		var cause error
-		if row.ErrorMessage != nil {
-			cause = errors.New(*row.ErrorMessage)
-		}
-		s.logBreakerEvent(
+	return transition
+}
+
+func (s *Service) publishAuditEvent(
+	ctx context.Context,
+	tx *ent.Tx,
+	row *ent.SourceBreakerNotification,
+	eventType sourceevents.EventType,
+) (bool, error) {
+	if !row.EventRequested || row.EventPublishedAt != nil {
+		return true, nil
+	}
+	if s.events == nil {
+		return false, newNotificationConsumerError(errors.New("event recorder requested but not attached"))
+	}
+	var cause error
+	if row.ErrorMessage != nil {
+		cause = errors.New(*row.ErrorMessage)
+	}
+	err := callBreakerRecorder(func() error {
+		return s.logBreakerEvent(
 			ctx,
+			row.ID,
 			row.SourceKey,
-			transition.EventType,
+			eventType,
 			sourceevents.Status(row.Status),
 			cause,
 			row.ErrorCategory,
 		)
+	})
+	if err != nil {
+		return false, newNotificationConsumerError(fmt.Errorf("audit event: %w", err))
 	}
-	if row.HookRequested {
-		if s.onTransition == nil {
-			return errors.New("transition hook requested but not attached")
+	if err := tx.SourceBreakerNotification.UpdateOneID(row.ID).
+		SetEventPublishedAt(time.Now().UTC()).
+		Exec(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Service) publishTransitionHook(
+	ctx context.Context,
+	tx *ent.Tx,
+	row *ent.SourceBreakerNotification,
+	transition BreakerTransition,
+) (bool, error) {
+	if !row.HookRequested || row.HookPublishedAt != nil {
+		return true, nil
+	}
+	if s.onTransition == nil {
+		return false, newNotificationConsumerError(errors.New("transition hook requested but not attached"))
+	}
+	if err := s.fireTransition(ctx, transition); err != nil {
+		return false, newNotificationConsumerError(fmt.Errorf("transition hook: %w", err))
+	}
+	if err := tx.SourceBreakerNotification.UpdateOneID(row.ID).
+		SetHookPublishedAt(time.Now().UTC()).
+		Exec(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+type notificationConsumerError struct {
+	cause error
+}
+
+func newNotificationConsumerError(cause error) error {
+	return &notificationConsumerError{cause: cause}
+}
+
+func (e *notificationConsumerError) Error() string { return e.cause.Error() }
+
+func (e *notificationConsumerError) Unwrap() error { return e.cause }
+
+func callBreakerRecorder(call func() error) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panic: %v", p)
 		}
-		s.fireTransition(transition)
+	}()
+	return call()
+}
+
+func notificationRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
 	}
-	return nil
+	delay := notificationRetryBase
+	for i := 1; i < attempt && delay < notificationRetryMax; i++ {
+		delay *= 2
+		if delay > notificationRetryMax {
+			return notificationRetryMax
+		}
+	}
+	return delay
 }

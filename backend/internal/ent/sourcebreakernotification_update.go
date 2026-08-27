@@ -207,6 +207,107 @@ func (_u *SourceBreakerNotificationUpdate) SetNillableLastError(v *string) *Sour
 	return _u
 }
 
+// SetEventPublishedAt sets the "event_published_at" field.
+func (_u *SourceBreakerNotificationUpdate) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationUpdate {
+	_u.mutation.SetEventPublishedAt(v)
+	return _u
+}
+
+// SetNillableEventPublishedAt sets the "event_published_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdate) SetNillableEventPublishedAt(v *time.Time) *SourceBreakerNotificationUpdate {
+	if v != nil {
+		_u.SetEventPublishedAt(*v)
+	}
+	return _u
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (_u *SourceBreakerNotificationUpdate) ClearEventPublishedAt() *SourceBreakerNotificationUpdate {
+	_u.mutation.ClearEventPublishedAt()
+	return _u
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (_u *SourceBreakerNotificationUpdate) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationUpdate {
+	_u.mutation.SetHookPublishedAt(v)
+	return _u
+}
+
+// SetNillableHookPublishedAt sets the "hook_published_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdate) SetNillableHookPublishedAt(v *time.Time) *SourceBreakerNotificationUpdate {
+	if v != nil {
+		_u.SetHookPublishedAt(*v)
+	}
+	return _u
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (_u *SourceBreakerNotificationUpdate) ClearHookPublishedAt() *SourceBreakerNotificationUpdate {
+	_u.mutation.ClearHookPublishedAt()
+	return _u
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (_u *SourceBreakerNotificationUpdate) SetPublicationAttempts(v int) *SourceBreakerNotificationUpdate {
+	_u.mutation.ResetPublicationAttempts()
+	_u.mutation.SetPublicationAttempts(v)
+	return _u
+}
+
+// SetNillablePublicationAttempts sets the "publication_attempts" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdate) SetNillablePublicationAttempts(v *int) *SourceBreakerNotificationUpdate {
+	if v != nil {
+		_u.SetPublicationAttempts(*v)
+	}
+	return _u
+}
+
+// AddPublicationAttempts adds value to the "publication_attempts" field.
+func (_u *SourceBreakerNotificationUpdate) AddPublicationAttempts(v int) *SourceBreakerNotificationUpdate {
+	_u.mutation.AddPublicationAttempts(v)
+	return _u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_u *SourceBreakerNotificationUpdate) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationUpdate {
+	_u.mutation.SetNextAttemptAt(v)
+	return _u
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdate) SetNillableNextAttemptAt(v *time.Time) *SourceBreakerNotificationUpdate {
+	if v != nil {
+		_u.SetNextAttemptAt(*v)
+	}
+	return _u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (_u *SourceBreakerNotificationUpdate) ClearNextAttemptAt() *SourceBreakerNotificationUpdate {
+	_u.mutation.ClearNextAttemptAt()
+	return _u
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (_u *SourceBreakerNotificationUpdate) SetPublicationError(v string) *SourceBreakerNotificationUpdate {
+	_u.mutation.SetPublicationError(v)
+	return _u
+}
+
+// SetNillablePublicationError sets the "publication_error" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdate) SetNillablePublicationError(v *string) *SourceBreakerNotificationUpdate {
+	if v != nil {
+		_u.SetPublicationError(*v)
+	}
+	return _u
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (_u *SourceBreakerNotificationUpdate) ClearPublicationError() *SourceBreakerNotificationUpdate {
+	_u.mutation.ClearPublicationError()
+	return _u
+}
+
 // SetPublishedAt sets the "published_at" field.
 func (_u *SourceBreakerNotificationUpdate) SetPublishedAt(v time.Time) *SourceBreakerNotificationUpdate {
 	_u.mutation.SetPublishedAt(v)
@@ -312,6 +413,36 @@ func (_u *SourceBreakerNotificationUpdate) sqlSave(ctx context.Context) (_node i
 	}
 	if value, ok := _u.mutation.LastError(); ok {
 		_spec.SetField(sourcebreakernotification.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.EventPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldEventPublishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.EventPublishedAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldEventPublishedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.HookPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldHookPublishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.HookPublishedAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldHookPublishedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PublicationAttempts(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPublicationAttempts(); ok {
+		_spec.AddField(sourcebreakernotification.FieldPublicationAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.NextAttemptAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldNextAttemptAt, field.TypeTime, value)
+	}
+	if _u.mutation.NextAttemptAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldNextAttemptAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PublicationError(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationError, field.TypeString, value)
+	}
+	if _u.mutation.PublicationErrorCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldPublicationError, field.TypeString)
 	}
 	if value, ok := _u.mutation.PublishedAt(); ok {
 		_spec.SetField(sourcebreakernotification.FieldPublishedAt, field.TypeTime, value)
@@ -518,6 +649,107 @@ func (_u *SourceBreakerNotificationUpdateOne) SetNillableLastError(v *string) *S
 	return _u
 }
 
+// SetEventPublishedAt sets the "event_published_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) SetEventPublishedAt(v time.Time) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.SetEventPublishedAt(v)
+	return _u
+}
+
+// SetNillableEventPublishedAt sets the "event_published_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdateOne) SetNillableEventPublishedAt(v *time.Time) *SourceBreakerNotificationUpdateOne {
+	if v != nil {
+		_u.SetEventPublishedAt(*v)
+	}
+	return _u
+}
+
+// ClearEventPublishedAt clears the value of the "event_published_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) ClearEventPublishedAt() *SourceBreakerNotificationUpdateOne {
+	_u.mutation.ClearEventPublishedAt()
+	return _u
+}
+
+// SetHookPublishedAt sets the "hook_published_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) SetHookPublishedAt(v time.Time) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.SetHookPublishedAt(v)
+	return _u
+}
+
+// SetNillableHookPublishedAt sets the "hook_published_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdateOne) SetNillableHookPublishedAt(v *time.Time) *SourceBreakerNotificationUpdateOne {
+	if v != nil {
+		_u.SetHookPublishedAt(*v)
+	}
+	return _u
+}
+
+// ClearHookPublishedAt clears the value of the "hook_published_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) ClearHookPublishedAt() *SourceBreakerNotificationUpdateOne {
+	_u.mutation.ClearHookPublishedAt()
+	return _u
+}
+
+// SetPublicationAttempts sets the "publication_attempts" field.
+func (_u *SourceBreakerNotificationUpdateOne) SetPublicationAttempts(v int) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.ResetPublicationAttempts()
+	_u.mutation.SetPublicationAttempts(v)
+	return _u
+}
+
+// SetNillablePublicationAttempts sets the "publication_attempts" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdateOne) SetNillablePublicationAttempts(v *int) *SourceBreakerNotificationUpdateOne {
+	if v != nil {
+		_u.SetPublicationAttempts(*v)
+	}
+	return _u
+}
+
+// AddPublicationAttempts adds value to the "publication_attempts" field.
+func (_u *SourceBreakerNotificationUpdateOne) AddPublicationAttempts(v int) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.AddPublicationAttempts(v)
+	return _u
+}
+
+// SetNextAttemptAt sets the "next_attempt_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) SetNextAttemptAt(v time.Time) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.SetNextAttemptAt(v)
+	return _u
+}
+
+// SetNillableNextAttemptAt sets the "next_attempt_at" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdateOne) SetNillableNextAttemptAt(v *time.Time) *SourceBreakerNotificationUpdateOne {
+	if v != nil {
+		_u.SetNextAttemptAt(*v)
+	}
+	return _u
+}
+
+// ClearNextAttemptAt clears the value of the "next_attempt_at" field.
+func (_u *SourceBreakerNotificationUpdateOne) ClearNextAttemptAt() *SourceBreakerNotificationUpdateOne {
+	_u.mutation.ClearNextAttemptAt()
+	return _u
+}
+
+// SetPublicationError sets the "publication_error" field.
+func (_u *SourceBreakerNotificationUpdateOne) SetPublicationError(v string) *SourceBreakerNotificationUpdateOne {
+	_u.mutation.SetPublicationError(v)
+	return _u
+}
+
+// SetNillablePublicationError sets the "publication_error" field if the given value is not nil.
+func (_u *SourceBreakerNotificationUpdateOne) SetNillablePublicationError(v *string) *SourceBreakerNotificationUpdateOne {
+	if v != nil {
+		_u.SetPublicationError(*v)
+	}
+	return _u
+}
+
+// ClearPublicationError clears the value of the "publication_error" field.
+func (_u *SourceBreakerNotificationUpdateOne) ClearPublicationError() *SourceBreakerNotificationUpdateOne {
+	_u.mutation.ClearPublicationError()
+	return _u
+}
+
 // SetPublishedAt sets the "published_at" field.
 func (_u *SourceBreakerNotificationUpdateOne) SetPublishedAt(v time.Time) *SourceBreakerNotificationUpdateOne {
 	_u.mutation.SetPublishedAt(v)
@@ -653,6 +885,36 @@ func (_u *SourceBreakerNotificationUpdateOne) sqlSave(ctx context.Context) (_nod
 	}
 	if value, ok := _u.mutation.LastError(); ok {
 		_spec.SetField(sourcebreakernotification.FieldLastError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.EventPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldEventPublishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.EventPublishedAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldEventPublishedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.HookPublishedAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldHookPublishedAt, field.TypeTime, value)
+	}
+	if _u.mutation.HookPublishedAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldHookPublishedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PublicationAttempts(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedPublicationAttempts(); ok {
+		_spec.AddField(sourcebreakernotification.FieldPublicationAttempts, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.NextAttemptAt(); ok {
+		_spec.SetField(sourcebreakernotification.FieldNextAttemptAt, field.TypeTime, value)
+	}
+	if _u.mutation.NextAttemptAtCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldNextAttemptAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.PublicationError(); ok {
+		_spec.SetField(sourcebreakernotification.FieldPublicationError, field.TypeString, value)
+	}
+	if _u.mutation.PublicationErrorCleared() {
+		_spec.ClearField(sourcebreakernotification.FieldPublicationError, field.TypeString)
 	}
 	if value, ok := _u.mutation.PublishedAt(); ok {
 		_spec.SetField(sourcebreakernotification.FieldPublishedAt, field.TypeTime, value)

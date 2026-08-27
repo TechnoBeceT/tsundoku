@@ -211,6 +211,33 @@ func (_u *SourceEventUpdate) ClearMetadata() *SourceEventUpdate {
 	return _u
 }
 
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (_u *SourceEventUpdate) SetBreakerNotificationID(v int) *SourceEventUpdate {
+	_u.mutation.ResetBreakerNotificationID()
+	_u.mutation.SetBreakerNotificationID(v)
+	return _u
+}
+
+// SetNillableBreakerNotificationID sets the "breaker_notification_id" field if the given value is not nil.
+func (_u *SourceEventUpdate) SetNillableBreakerNotificationID(v *int) *SourceEventUpdate {
+	if v != nil {
+		_u.SetBreakerNotificationID(*v)
+	}
+	return _u
+}
+
+// AddBreakerNotificationID adds value to the "breaker_notification_id" field.
+func (_u *SourceEventUpdate) AddBreakerNotificationID(v int) *SourceEventUpdate {
+	_u.mutation.AddBreakerNotificationID(v)
+	return _u
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (_u *SourceEventUpdate) ClearBreakerNotificationID() *SourceEventUpdate {
+	_u.mutation.ClearBreakerNotificationID()
+	return _u
+}
+
 // Mutation returns the SourceEventMutation object of the builder.
 func (_u *SourceEventUpdate) Mutation() *SourceEventMutation {
 	return _u.mutation
@@ -320,6 +347,15 @@ func (_u *SourceEventUpdate) sqlSave(ctx context.Context) (_node int, err error)
 	}
 	if _u.mutation.MetadataCleared() {
 		_spec.ClearField(sourceevent.FieldMetadata, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.BreakerNotificationID(); ok {
+		_spec.SetField(sourceevent.FieldBreakerNotificationID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedBreakerNotificationID(); ok {
+		_spec.AddField(sourceevent.FieldBreakerNotificationID, field.TypeInt, value)
+	}
+	if _u.mutation.BreakerNotificationIDCleared() {
+		_spec.ClearField(sourceevent.FieldBreakerNotificationID, field.TypeInt)
 	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
@@ -525,6 +561,33 @@ func (_u *SourceEventUpdateOne) ClearMetadata() *SourceEventUpdateOne {
 	return _u
 }
 
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (_u *SourceEventUpdateOne) SetBreakerNotificationID(v int) *SourceEventUpdateOne {
+	_u.mutation.ResetBreakerNotificationID()
+	_u.mutation.SetBreakerNotificationID(v)
+	return _u
+}
+
+// SetNillableBreakerNotificationID sets the "breaker_notification_id" field if the given value is not nil.
+func (_u *SourceEventUpdateOne) SetNillableBreakerNotificationID(v *int) *SourceEventUpdateOne {
+	if v != nil {
+		_u.SetBreakerNotificationID(*v)
+	}
+	return _u
+}
+
+// AddBreakerNotificationID adds value to the "breaker_notification_id" field.
+func (_u *SourceEventUpdateOne) AddBreakerNotificationID(v int) *SourceEventUpdateOne {
+	_u.mutation.AddBreakerNotificationID(v)
+	return _u
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (_u *SourceEventUpdateOne) ClearBreakerNotificationID() *SourceEventUpdateOne {
+	_u.mutation.ClearBreakerNotificationID()
+	return _u
+}
+
 // Mutation returns the SourceEventMutation object of the builder.
 func (_u *SourceEventUpdateOne) Mutation() *SourceEventMutation {
 	return _u.mutation
@@ -664,6 +727,15 @@ func (_u *SourceEventUpdateOne) sqlSave(ctx context.Context) (_node *SourceEvent
 	}
 	if _u.mutation.MetadataCleared() {
 		_spec.ClearField(sourceevent.FieldMetadata, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.BreakerNotificationID(); ok {
+		_spec.SetField(sourceevent.FieldBreakerNotificationID, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedBreakerNotificationID(); ok {
+		_spec.AddField(sourceevent.FieldBreakerNotificationID, field.TypeInt, value)
+	}
+	if _u.mutation.BreakerNotificationIDCleared() {
+		_spec.ClearField(sourceevent.FieldBreakerNotificationID, field.TypeInt)
 	}
 	_node = &SourceEvent{config: _u.config}
 	_spec.Assign = _node.assignValues

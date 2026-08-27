@@ -39,6 +39,16 @@ type SourceBreakerNotification struct {
 	FailingSince *time.Time `json:"failing_since,omitempty"`
 	// LastError holds the value of the "last_error" field.
 	LastError string `json:"last_error,omitempty"`
+	// EventPublishedAt holds the value of the "event_published_at" field.
+	EventPublishedAt *time.Time `json:"event_published_at,omitempty"`
+	// HookPublishedAt holds the value of the "hook_published_at" field.
+	HookPublishedAt *time.Time `json:"hook_published_at,omitempty"`
+	// PublicationAttempts holds the value of the "publication_attempts" field.
+	PublicationAttempts int `json:"publication_attempts,omitempty"`
+	// NextAttemptAt holds the value of the "next_attempt_at" field.
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	// PublicationError holds the value of the "publication_error" field.
+	PublicationError *string `json:"publication_error,omitempty"`
 	// PublishedAt holds the value of the "published_at" field.
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
@@ -53,11 +63,11 @@ func (*SourceBreakerNotification) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case sourcebreakernotification.FieldEventRequested, sourcebreakernotification.FieldHookRequested:
 			values[i] = new(sql.NullBool)
-		case sourcebreakernotification.FieldID, sourcebreakernotification.FieldConsecutiveFailures:
+		case sourcebreakernotification.FieldID, sourcebreakernotification.FieldConsecutiveFailures, sourcebreakernotification.FieldPublicationAttempts:
 			values[i] = new(sql.NullInt64)
-		case sourcebreakernotification.FieldSourceKey, sourcebreakernotification.FieldEventType, sourcebreakernotification.FieldStatus, sourcebreakernotification.FieldErrorMessage, sourcebreakernotification.FieldErrorCategory, sourcebreakernotification.FieldLastError:
+		case sourcebreakernotification.FieldSourceKey, sourcebreakernotification.FieldEventType, sourcebreakernotification.FieldStatus, sourcebreakernotification.FieldErrorMessage, sourcebreakernotification.FieldErrorCategory, sourcebreakernotification.FieldLastError, sourcebreakernotification.FieldPublicationError:
 			values[i] = new(sql.NullString)
-		case sourcebreakernotification.FieldCooldownUntil, sourcebreakernotification.FieldFailingSince, sourcebreakernotification.FieldPublishedAt, sourcebreakernotification.FieldCreatedAt:
+		case sourcebreakernotification.FieldCooldownUntil, sourcebreakernotification.FieldFailingSince, sourcebreakernotification.FieldEventPublishedAt, sourcebreakernotification.FieldHookPublishedAt, sourcebreakernotification.FieldNextAttemptAt, sourcebreakernotification.FieldPublishedAt, sourcebreakernotification.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -149,6 +159,40 @@ func (_m *SourceBreakerNotification) assignValues(columns []string, values []any
 			} else if value.Valid {
 				_m.LastError = value.String
 			}
+		case sourcebreakernotification.FieldEventPublishedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field event_published_at", values[i])
+			} else if value.Valid {
+				_m.EventPublishedAt = new(time.Time)
+				*_m.EventPublishedAt = value.Time
+			}
+		case sourcebreakernotification.FieldHookPublishedAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field hook_published_at", values[i])
+			} else if value.Valid {
+				_m.HookPublishedAt = new(time.Time)
+				*_m.HookPublishedAt = value.Time
+			}
+		case sourcebreakernotification.FieldPublicationAttempts:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field publication_attempts", values[i])
+			} else if value.Valid {
+				_m.PublicationAttempts = int(value.Int64)
+			}
+		case sourcebreakernotification.FieldNextAttemptAt:
+			if value, ok := values[i].(*sql.NullTime); !ok {
+				return fmt.Errorf("unexpected type %T for field next_attempt_at", values[i])
+			} else if value.Valid {
+				_m.NextAttemptAt = new(time.Time)
+				*_m.NextAttemptAt = value.Time
+			}
+		case sourcebreakernotification.FieldPublicationError:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field publication_error", values[i])
+			} else if value.Valid {
+				_m.PublicationError = new(string)
+				*_m.PublicationError = value.String
+			}
 		case sourcebreakernotification.FieldPublishedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field published_at", values[i])
@@ -236,6 +280,29 @@ func (_m *SourceBreakerNotification) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("last_error=")
 	builder.WriteString(_m.LastError)
+	builder.WriteString(", ")
+	if v := _m.EventPublishedAt; v != nil {
+		builder.WriteString("event_published_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.HookPublishedAt; v != nil {
+		builder.WriteString("hook_published_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	builder.WriteString("publication_attempts=")
+	builder.WriteString(fmt.Sprintf("%v", _m.PublicationAttempts))
+	builder.WriteString(", ")
+	if v := _m.NextAttemptAt; v != nil {
+		builder.WriteString("next_attempt_at=")
+		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.PublicationError; v != nil {
+		builder.WriteString("publication_error=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.PublishedAt; v != nil {
 		builder.WriteString("published_at=")

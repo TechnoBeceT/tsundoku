@@ -80,6 +80,11 @@ func FailingSince(v time.Time) predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldEQ(FieldFailingSince, v))
 }
 
+// NotificationGap applies equality check predicate on the "notification_gap" field. It's identical to NotificationGapEQ.
+func NotificationGap(v bool) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldEQ(FieldNotificationGap, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldEQ(FieldUpdatedAt, v))
@@ -353,6 +358,16 @@ func FailingSinceIsNil() predicate.SourceCircuitState {
 // FailingSinceNotNil applies the NotNil predicate on the "failing_since" field.
 func FailingSinceNotNil() predicate.SourceCircuitState {
 	return predicate.SourceCircuitState(sql.FieldNotNull(FieldFailingSince))
+}
+
+// NotificationGapEQ applies the EQ predicate on the "notification_gap" field.
+func NotificationGapEQ(v bool) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldEQ(FieldNotificationGap, v))
+}
+
+// NotificationGapNEQ applies the NEQ predicate on the "notification_gap" field.
+func NotificationGapNEQ(v bool) predicate.SourceCircuitState {
+	return predicate.SourceCircuitState(sql.FieldNEQ(FieldNotificationGap, v))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

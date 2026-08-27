@@ -28,6 +28,8 @@ type SourceCircuitState struct {
 	LastError string `json:"last_error,omitempty"`
 	// FailingSince holds the value of the "failing_since" field.
 	FailingSince *time.Time `json:"failing_since,omitempty"`
+	// NotificationGap holds the value of the "notification_gap" field.
+	NotificationGap bool `json:"notification_gap,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 	selectValues sql.SelectValues
@@ -38,6 +40,8 @@ func (*SourceCircuitState) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case sourcecircuitstate.FieldNotificationGap:
+			values[i] = new(sql.NullBool)
 		case sourcecircuitstate.FieldConsecutiveFailures:
 			values[i] = new(sql.NullInt64)
 		case sourcecircuitstate.FieldSourceKey, sourcecircuitstate.FieldLastError:
@@ -99,6 +103,12 @@ func (_m *SourceCircuitState) assignValues(columns []string, values []any) error
 				_m.FailingSince = new(time.Time)
 				*_m.FailingSince = value.Time
 			}
+		case sourcecircuitstate.FieldNotificationGap:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field notification_gap", values[i])
+			} else if value.Valid {
+				_m.NotificationGap = value.Bool
+			}
 		case sourcecircuitstate.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
@@ -159,6 +169,9 @@ func (_m *SourceCircuitState) String() string {
 		builder.WriteString("failing_since=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("notification_gap=")
+	builder.WriteString(fmt.Sprintf("%v", _m.NotificationGap))
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))

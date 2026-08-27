@@ -31,6 +31,11 @@ func (c *captureRecorder) LogBatch(_ context.Context, events []sourceevents.Even
 	c.mu.Unlock()
 }
 
+func (c *captureRecorder) LogBreakerTransition(ctx context.Context, _ int, event sourceevents.Event) error {
+	c.Log(ctx, event)
+	return nil
+}
+
 // byType returns the recorded events of the given type.
 func (c *captureRecorder) byType(t sourceevents.EventType) []sourceevents.Event {
 	c.mu.Lock()

@@ -26,11 +26,12 @@ import (
 // sourceevents.DropLegacyColumns (migrate.go; Ent's additive Schema.Create never
 // drops a column).
 //
-// The row is written BEST-EFFORT and fire-and-forget by internal/sourceevents
-// (mirroring internal/metrics' Recorder posture): a write failure is logged and
-// swallowed so audit bookkeeping can never break or slow a download / search /
-// refresh. Retention is bounded — a daily purge deletes rows older than the
-// reporting.retention_days tunable (default 30).
+// Ordinary operation rows are written BEST-EFFORT and fire-and-forget by
+// internal/sourceevents. Breaker transitions use its error-returning,
+// notification-idempotent path so their durable publisher can retry a failed
+// insert without duplicating a committed one. Retention is bounded — a daily
+// purge deletes rows older than the reporting.retention_days tunable (default
+// 30).
 type SourceEvent struct {
 	ent.Schema
 }
@@ -77,6 +78,10 @@ func (SourceEvent) Fields() []ent.Field {
 		// as a small JSON string map — never used for aggregation, only forensic
 		// display in the single-event modal.
 		field.JSON("metadata", map[string]string{}).Optional(),
+		// breaker_notification_id makes a durably replayed breaker audit insert
+		// idempotent across the commit/receipt crash boundary. Ordinary operation
+		// events leave it nil; PostgreSQL permits multiple nils in the unique index.
+		field.Int("breaker_notification_id").Optional().Nillable(),
 		// created_at is the immutable event timestamp — the axis every aggregation
 		// buckets and sorts on.
 		field.Time("created_at").Default(time.Now).Immutable(),
@@ -100,5 +105,6 @@ func (SourceEvent) Indexes() []ent.Index {
 		index.Fields("event_type", "created_at"),
 		index.Fields("status", "created_at"),
 		index.Fields("created_at"),
+		index.Fields("breaker_notification_id").Unique(),
 	}
 }

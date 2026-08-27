@@ -1,6 +1,8 @@
 package sourcegate
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -17,7 +19,7 @@ type BreakerTransition struct {
 	State     *BreakerState
 }
 
-// WithTransitionHook attaches a best-effort callback backed by one durable record
+// WithTransitionHook attaches an error-reporting callback backed by one durable record
 // for each breaker STATE TRANSITION: a trip (RecordFailure crossing the failure
 // threshold) and a clear (RecordSuccess natural recovery + the owner Reset) —
 // never on a routine success or a sub-threshold failure. The job.Runner attaches
@@ -32,29 +34,30 @@ type BreakerTransition struct {
 // finish its observable notification before returning; otherwise a detached
 // effect could still reverse after ordered callbacks. It must also be bounded so
 // a broken downstream cannot indefinitely delay later publications. The Runner
-// uses a 10-second context bound. A nil fn (the default) fires nothing. Returns
-// the receiver for chaining off NewService.
-func (s *Service) WithTransitionHook(fn func(BreakerTransition)) *Service {
+// uses a 10-second context bound. Returning an error (or panicking) leaves the
+// hook receipt pending for ordered retry. A nil fn (the default) fires nothing.
+// Returns the receiver for chaining off NewService.
+func (s *Service) WithTransitionHook(fn func(context.Context, BreakerTransition) error) *Service {
 	s.onTransition = fn
 	return s
 }
 
 // fireTransition invokes the breaker-transition hook, if one is attached. It is
 // nil-safe and panic-safe: a breaker record must NEVER be broken by a downstream
-// alert push (best-effort posture, mirrors the metrics recorder), so a stray
-// panic in the hook is recovered here rather than unwinding RecordFailure /
-// RecordSuccess / Reset. Slowness is bounded by the WithTransitionHook contract,
-// not here.
-func (s *Service) fireTransition(transition BreakerTransition) {
+// alert push, so a stray panic becomes a delivery error rather than unwinding
+// RecordFailure / RecordSuccess / Reset or being falsely receipted. Slowness is
+// bounded by the WithTransitionHook contract, not here.
+func (s *Service) fireTransition(ctx context.Context, transition BreakerTransition) (err error) {
 	if s.onTransition == nil {
-		return
+		return nil
 	}
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Warn("sourcegate: transition hook panicked (recovered)", "panic", p)
+			err = fmt.Errorf("transition hook panic: %v", p)
 		}
 	}()
-	s.onTransition(transition)
+	return s.onTransition(ctx, transition)
 }
 
 // SummaryCounts folds a breaker snapshot into the two counts the sources.summary

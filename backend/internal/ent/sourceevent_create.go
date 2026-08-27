@@ -146,6 +146,20 @@ func (_c *SourceEventCreate) SetMetadata(v map[string]string) *SourceEventCreate
 	return _c
 }
 
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (_c *SourceEventCreate) SetBreakerNotificationID(v int) *SourceEventCreate {
+	_c.mutation.SetBreakerNotificationID(v)
+	return _c
+}
+
+// SetNillableBreakerNotificationID sets the "breaker_notification_id" field if the given value is not nil.
+func (_c *SourceEventCreate) SetNillableBreakerNotificationID(v *int) *SourceEventCreate {
+	if v != nil {
+		_c.SetBreakerNotificationID(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SourceEventCreate) SetCreatedAt(v time.Time) *SourceEventCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -350,6 +364,10 @@ func (_c *SourceEventCreate) createSpec() (*SourceEvent, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Metadata(); ok {
 		_spec.SetField(sourceevent.FieldMetadata, field.TypeJSON, value)
 		_node.Metadata = value
+	}
+	if value, ok := _c.mutation.BreakerNotificationID(); ok {
+		_spec.SetField(sourceevent.FieldBreakerNotificationID, field.TypeInt, value)
+		_node.BreakerNotificationID = &value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(sourceevent.FieldCreatedAt, field.TypeTime, value)
@@ -572,6 +590,30 @@ func (u *SourceEventUpsert) UpdateMetadata() *SourceEventUpsert {
 // ClearMetadata clears the value of the "metadata" field.
 func (u *SourceEventUpsert) ClearMetadata() *SourceEventUpsert {
 	u.SetNull(sourceevent.FieldMetadata)
+	return u
+}
+
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (u *SourceEventUpsert) SetBreakerNotificationID(v int) *SourceEventUpsert {
+	u.Set(sourceevent.FieldBreakerNotificationID, v)
+	return u
+}
+
+// UpdateBreakerNotificationID sets the "breaker_notification_id" field to the value that was provided on create.
+func (u *SourceEventUpsert) UpdateBreakerNotificationID() *SourceEventUpsert {
+	u.SetExcluded(sourceevent.FieldBreakerNotificationID)
+	return u
+}
+
+// AddBreakerNotificationID adds v to the "breaker_notification_id" field.
+func (u *SourceEventUpsert) AddBreakerNotificationID(v int) *SourceEventUpsert {
+	u.Add(sourceevent.FieldBreakerNotificationID, v)
+	return u
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (u *SourceEventUpsert) ClearBreakerNotificationID() *SourceEventUpsert {
+	u.SetNull(sourceevent.FieldBreakerNotificationID)
 	return u
 }
 
@@ -819,6 +861,34 @@ func (u *SourceEventUpsertOne) UpdateMetadata() *SourceEventUpsertOne {
 func (u *SourceEventUpsertOne) ClearMetadata() *SourceEventUpsertOne {
 	return u.Update(func(s *SourceEventUpsert) {
 		s.ClearMetadata()
+	})
+}
+
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (u *SourceEventUpsertOne) SetBreakerNotificationID(v int) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetBreakerNotificationID(v)
+	})
+}
+
+// AddBreakerNotificationID adds v to the "breaker_notification_id" field.
+func (u *SourceEventUpsertOne) AddBreakerNotificationID(v int) *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddBreakerNotificationID(v)
+	})
+}
+
+// UpdateBreakerNotificationID sets the "breaker_notification_id" field to the value that was provided on create.
+func (u *SourceEventUpsertOne) UpdateBreakerNotificationID() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateBreakerNotificationID()
+	})
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (u *SourceEventUpsertOne) ClearBreakerNotificationID() *SourceEventUpsertOne {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearBreakerNotificationID()
 	})
 }
 
@@ -1233,6 +1303,34 @@ func (u *SourceEventUpsertBulk) UpdateMetadata() *SourceEventUpsertBulk {
 func (u *SourceEventUpsertBulk) ClearMetadata() *SourceEventUpsertBulk {
 	return u.Update(func(s *SourceEventUpsert) {
 		s.ClearMetadata()
+	})
+}
+
+// SetBreakerNotificationID sets the "breaker_notification_id" field.
+func (u *SourceEventUpsertBulk) SetBreakerNotificationID(v int) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.SetBreakerNotificationID(v)
+	})
+}
+
+// AddBreakerNotificationID adds v to the "breaker_notification_id" field.
+func (u *SourceEventUpsertBulk) AddBreakerNotificationID(v int) *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.AddBreakerNotificationID(v)
+	})
+}
+
+// UpdateBreakerNotificationID sets the "breaker_notification_id" field to the value that was provided on create.
+func (u *SourceEventUpsertBulk) UpdateBreakerNotificationID() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.UpdateBreakerNotificationID()
+	})
+}
+
+// ClearBreakerNotificationID clears the value of the "breaker_notification_id" field.
+func (u *SourceEventUpsertBulk) ClearBreakerNotificationID() *SourceEventUpsertBulk {
+	return u.Update(func(s *SourceEventUpsert) {
+		s.ClearBreakerNotificationID()
 	})
 }
 

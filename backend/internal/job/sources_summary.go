@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -68,25 +69,26 @@ func (r *Runner) SourcesSummaryHook() {
 // and broadcast before returning because sourcegate holds the cross-process
 // publication cursor for the callback's lifetime; detaching here would allow
 // the observable SSE effects to reverse after the callbacks were ordered.
-func (r *Runner) SourcesSummaryTransitionHook(transition sourcegate.BreakerTransition) {
+func (r *Runner) SourcesSummaryTransitionHook(ctx context.Context, transition sourcegate.BreakerTransition) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			slog.Warn("job.Runner: sources.summary transition hook panicked (recovered)", "panic", p)
+			err = fmt.Errorf("sources.summary transition panic: %v", p)
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), sourcesSummaryTimeout)
+	ctx, cancel := context.WithTimeout(ctx, sourcesSummaryTimeout)
 	defer cancel()
-	r.broadcastTransitionSummary(ctx, transition)
+	return r.broadcastTransitionSummary(ctx, transition)
 }
 
-func (r *Runner) broadcastTransitionSummary(ctx context.Context, transition sourcegate.BreakerTransition) {
+func (r *Runner) broadcastTransitionSummary(ctx context.Context, transition sourcegate.BreakerTransition) error {
 	if r.breakers == nil {
-		return
+		return nil
 	}
 	snapshot, err := r.breakers.Snapshot(ctx)
 	if err != nil {
 		slog.WarnContext(ctx, "job.Runner: sources.summary snapshot failed (skipping)", "err", err)
-		return
+		return fmt.Errorf("sources.summary snapshot: %w", err)
 	}
 	if transition.State == nil {
 		delete(snapshot, transition.SourceKey)
@@ -95,6 +97,7 @@ func (r *Runner) broadcastTransitionSummary(ctx context.Context, transition sour
 	}
 	erroring, coolingDown := sourcegate.SummaryCounts(snapshot, time.Now())
 	r.broadcastSourcesSummaryCounts(erroring, coolingDown)
+	return nil
 }
 
 // broadcastSourcesSummary computes the current erroring / coolingDown source

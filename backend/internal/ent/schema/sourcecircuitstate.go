@@ -58,6 +58,13 @@ func (SourceCircuitState) Fields() []ent.Field {
 		// and drives proactive alerting. Nil means "not currently failing". Additive
 		// / optional / defaulted, so adding it is a zero-data migration.
 		field.Time("failing_since").Optional().Nillable(),
+		// notification_gap marks that one transition could not be stored in the
+		// durable notification stream. Once set, later transitions keep mutating
+		// breaker state but emit no notification: publishing a later reset/trip
+		// would overtake the missing predecessor and misstate source history.
+		// Reset preserves a healthy tombstone when this flag is set so the ordering
+		// guard survives the breaker's ordinary row deletion.
+		field.Bool("notification_gap").Default(false),
 		// updated_at is refreshed on every write.
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

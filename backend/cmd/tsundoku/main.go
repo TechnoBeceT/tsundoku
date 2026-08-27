@@ -360,9 +360,11 @@ func main() {
 	// ordered publication window, so observable alerts retain database commit order.
 	runner.SetBreakerSnapshotter(gateSvc)
 	gateSvc.WithTransitionHook(runner.SourcesSummaryTransitionHook)
-	// Replay a transition a prior process committed but could not publish. The
-	// durable cursor preserves per-source order against concurrent live records.
-	gateSvc.PublishPending(ctx)
+	// Replay transitions a prior process could not publish, then keep draining
+	// committed notifications for the process lifetime. The durable cursor
+	// preserves per-source order against concurrent live publishers; cancellation
+	// stops the dispatcher with the application context.
+	gateSvc.StartPublisher(ctx)
 
 	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
 	// gracefully — the notifier still broadcasts over SSE; only Web Push is off.

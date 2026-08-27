@@ -415,6 +415,11 @@ var (
 		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
 		{Name: "failing_since", Type: field.TypeTime, Nullable: true},
 		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "event_published_at", Type: field.TypeTime, Nullable: true},
+		{Name: "hook_published_at", Type: field.TypeTime, Nullable: true},
+		{Name: "publication_attempts", Type: field.TypeInt, Default: 0},
+		{Name: "next_attempt_at", Type: field.TypeTime, Nullable: true},
+		{Name: "publication_error", Type: field.TypeString, Nullable: true},
 		{Name: "published_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 	}
@@ -427,12 +432,12 @@ var (
 			{
 				Name:    "sourcebreakernotification_source_key_published_at",
 				Unique:  false,
-				Columns: []*schema.Column{SourceBreakerNotificationsColumns[1], SourceBreakerNotificationsColumns[12]},
+				Columns: []*schema.Column{SourceBreakerNotificationsColumns[1], SourceBreakerNotificationsColumns[17]},
 			},
 			{
 				Name:    "sourcebreakernotification_published_at",
 				Unique:  false,
-				Columns: []*schema.Column{SourceBreakerNotificationsColumns[12]},
+				Columns: []*schema.Column{SourceBreakerNotificationsColumns[17]},
 			},
 		},
 	}
@@ -456,6 +461,7 @@ var (
 		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
 		{Name: "last_error", Type: field.TypeString, Default: ""},
 		{Name: "failing_since", Type: field.TypeTime, Nullable: true},
+		{Name: "notification_gap", Type: field.TypeBool, Default: false},
 		{Name: "updated_at", Type: field.TypeTime},
 	}
 	// SourceCircuitStatesTable holds the schema information for the "source_circuit_states" table.
@@ -502,6 +508,7 @@ var (
 		{Name: "error_category", Type: field.TypeString, Nullable: true},
 		{Name: "items_count", Type: field.TypeInt, Nullable: true},
 		{Name: "metadata", Type: field.TypeJSON, Nullable: true},
+		{Name: "breaker_notification_id", Type: field.TypeInt, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// SourceEventsTable holds the schema information for the "source_events" table.
@@ -513,21 +520,26 @@ var (
 			{
 				Name:    "sourceevent_source_key_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{SourceEventsColumns[1], SourceEventsColumns[12]},
+				Columns: []*schema.Column{SourceEventsColumns[1], SourceEventsColumns[13]},
 			},
 			{
 				Name:    "sourceevent_event_type_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{SourceEventsColumns[5], SourceEventsColumns[12]},
+				Columns: []*schema.Column{SourceEventsColumns[5], SourceEventsColumns[13]},
 			},
 			{
 				Name:    "sourceevent_status_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{SourceEventsColumns[6], SourceEventsColumns[12]},
+				Columns: []*schema.Column{SourceEventsColumns[6], SourceEventsColumns[13]},
 			},
 			{
 				Name:    "sourceevent_created_at",
 				Unique:  false,
+				Columns: []*schema.Column{SourceEventsColumns[13]},
+			},
+			{
+				Name:    "sourceevent_breaker_notification_id",
+				Unique:  true,
 				Columns: []*schema.Column{SourceEventsColumns[12]},
 			},
 		},

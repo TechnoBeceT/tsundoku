@@ -37,6 +37,8 @@ const (
 	FieldItemsCount = "items_count"
 	// FieldMetadata holds the string denoting the metadata field in the database.
 	FieldMetadata = "metadata"
+	// FieldBreakerNotificationID holds the string denoting the breaker_notification_id field in the database.
+	FieldBreakerNotificationID = "breaker_notification_id"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the sourceevent in the database.
@@ -57,6 +59,7 @@ var Columns = []string{
 	FieldErrorCategory,
 	FieldItemsCount,
 	FieldMetadata,
+	FieldBreakerNotificationID,
 	FieldCreatedAt,
 }
 
@@ -191,6 +194,11 @@ func ByErrorCategory(opts ...sql.OrderTermOption) OrderOption {
 // ByItemsCount orders the results by the items_count field.
 func ByItemsCount(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldItemsCount, opts...).ToFunc()
+}
+
+// ByBreakerNotificationID orders the results by the breaker_notification_id field.
+func ByBreakerNotificationID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldBreakerNotificationID, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

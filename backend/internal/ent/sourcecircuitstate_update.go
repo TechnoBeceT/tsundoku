@@ -117,6 +117,20 @@ func (_u *SourceCircuitStateUpdate) ClearFailingSince() *SourceCircuitStateUpdat
 	return _u
 }
 
+// SetNotificationGap sets the "notification_gap" field.
+func (_u *SourceCircuitStateUpdate) SetNotificationGap(v bool) *SourceCircuitStateUpdate {
+	_u.mutation.SetNotificationGap(v)
+	return _u
+}
+
+// SetNillableNotificationGap sets the "notification_gap" field if the given value is not nil.
+func (_u *SourceCircuitStateUpdate) SetNillableNotificationGap(v *bool) *SourceCircuitStateUpdate {
+	if v != nil {
+		_u.SetNotificationGap(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SourceCircuitStateUpdate) SetUpdatedAt(v time.Time) *SourceCircuitStateUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -196,6 +210,9 @@ func (_u *SourceCircuitStateUpdate) sqlSave(ctx context.Context) (_node int, err
 	}
 	if _u.mutation.FailingSinceCleared() {
 		_spec.ClearField(sourcecircuitstate.FieldFailingSince, field.TypeTime)
+	}
+	if value, ok := _u.mutation.NotificationGap(); ok {
+		_spec.SetField(sourcecircuitstate.FieldNotificationGap, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)
@@ -309,6 +326,20 @@ func (_u *SourceCircuitStateUpdateOne) ClearFailingSince() *SourceCircuitStateUp
 	return _u
 }
 
+// SetNotificationGap sets the "notification_gap" field.
+func (_u *SourceCircuitStateUpdateOne) SetNotificationGap(v bool) *SourceCircuitStateUpdateOne {
+	_u.mutation.SetNotificationGap(v)
+	return _u
+}
+
+// SetNillableNotificationGap sets the "notification_gap" field if the given value is not nil.
+func (_u *SourceCircuitStateUpdateOne) SetNillableNotificationGap(v *bool) *SourceCircuitStateUpdateOne {
+	if v != nil {
+		_u.SetNotificationGap(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SourceCircuitStateUpdateOne) SetUpdatedAt(v time.Time) *SourceCircuitStateUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -418,6 +449,9 @@ func (_u *SourceCircuitStateUpdateOne) sqlSave(ctx context.Context) (_node *Sour
 	}
 	if _u.mutation.FailingSinceCleared() {
 		_spec.ClearField(sourcecircuitstate.FieldFailingSince, field.TypeTime)
+	}
+	if value, ok := _u.mutation.NotificationGap(); ok {
+		_spec.SetField(sourcecircuitstate.FieldNotificationGap, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)

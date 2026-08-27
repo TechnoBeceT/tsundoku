@@ -38,6 +38,11 @@ func (r *publicationBarrierRecorder) LogBatch(ctx context.Context, events []sour
 	}
 }
 
+func (r *publicationBarrierRecorder) LogBreakerTransition(ctx context.Context, _ int, event sourceevents.Event) error {
+	r.Log(ctx, event)
+	return nil
+}
+
 func (r *publicationBarrierRecorder) eventTypes() []sourceevents.EventType {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -54,7 +59,7 @@ type publicationHookCapture struct {
 	summaries []hookSummary
 }
 
-func (c *publicationHookCapture) record(transition sourcegate.BreakerTransition) {
+func (c *publicationHookCapture) record(_ context.Context, transition sourcegate.BreakerTransition) error {
 	snapshot := make(map[string]sourcegate.BreakerState)
 	if transition.State != nil {
 		snapshot[transition.SourceKey] = *transition.State
@@ -63,6 +68,7 @@ func (c *publicationHookCapture) record(transition sourcegate.BreakerTransition)
 	c.mu.Lock()
 	c.summaries = append(c.summaries, hookSummary{erroring: erroring, coolingDown: coolingDown})
 	c.mu.Unlock()
+	return nil
 }
 
 func (c *publicationHookCapture) all() []hookSummary {

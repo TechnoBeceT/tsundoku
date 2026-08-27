@@ -86,6 +86,20 @@ func (_c *SourceCircuitStateCreate) SetNillableFailingSince(v *time.Time) *Sourc
 	return _c
 }
 
+// SetNotificationGap sets the "notification_gap" field.
+func (_c *SourceCircuitStateCreate) SetNotificationGap(v bool) *SourceCircuitStateCreate {
+	_c.mutation.SetNotificationGap(v)
+	return _c
+}
+
+// SetNillableNotificationGap sets the "notification_gap" field if the given value is not nil.
+func (_c *SourceCircuitStateCreate) SetNillableNotificationGap(v *bool) *SourceCircuitStateCreate {
+	if v != nil {
+		_c.SetNotificationGap(*v)
+	}
+	return _c
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_c *SourceCircuitStateCreate) SetUpdatedAt(v time.Time) *SourceCircuitStateCreate {
 	_c.mutation.SetUpdatedAt(v)
@@ -157,6 +171,10 @@ func (_c *SourceCircuitStateCreate) defaults() {
 		v := sourcecircuitstate.DefaultLastError
 		_c.mutation.SetLastError(v)
 	}
+	if _, ok := _c.mutation.NotificationGap(); !ok {
+		v := sourcecircuitstate.DefaultNotificationGap
+		_c.mutation.SetNotificationGap(v)
+	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		v := sourcecircuitstate.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
@@ -177,6 +195,9 @@ func (_c *SourceCircuitStateCreate) check() error {
 	}
 	if _, ok := _c.mutation.LastError(); !ok {
 		return &ValidationError{Name: "last_error", err: errors.New(`ent: missing required field "SourceCircuitState.last_error"`)}
+	}
+	if _, ok := _c.mutation.NotificationGap(); !ok {
+		return &ValidationError{Name: "notification_gap", err: errors.New(`ent: missing required field "SourceCircuitState.notification_gap"`)}
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "SourceCircuitState.updated_at"`)}
@@ -236,6 +257,10 @@ func (_c *SourceCircuitStateCreate) createSpec() (*SourceCircuitState, *sqlgraph
 	if value, ok := _c.mutation.FailingSince(); ok {
 		_spec.SetField(sourcecircuitstate.FieldFailingSince, field.TypeTime, value)
 		_node.FailingSince = &value
+	}
+	if value, ok := _c.mutation.NotificationGap(); ok {
+		_spec.SetField(sourcecircuitstate.FieldNotificationGap, field.TypeBool, value)
+		_node.NotificationGap = value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcecircuitstate.FieldUpdatedAt, field.TypeTime, value)
@@ -368,6 +393,18 @@ func (u *SourceCircuitStateUpsert) UpdateFailingSince() *SourceCircuitStateUpser
 // ClearFailingSince clears the value of the "failing_since" field.
 func (u *SourceCircuitStateUpsert) ClearFailingSince() *SourceCircuitStateUpsert {
 	u.SetNull(sourcecircuitstate.FieldFailingSince)
+	return u
+}
+
+// SetNotificationGap sets the "notification_gap" field.
+func (u *SourceCircuitStateUpsert) SetNotificationGap(v bool) *SourceCircuitStateUpsert {
+	u.Set(sourcecircuitstate.FieldNotificationGap, v)
+	return u
+}
+
+// UpdateNotificationGap sets the "notification_gap" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsert) UpdateNotificationGap() *SourceCircuitStateUpsert {
+	u.SetExcluded(sourcecircuitstate.FieldNotificationGap)
 	return u
 }
 
@@ -519,6 +556,20 @@ func (u *SourceCircuitStateUpsertOne) UpdateFailingSince() *SourceCircuitStateUp
 func (u *SourceCircuitStateUpsertOne) ClearFailingSince() *SourceCircuitStateUpsertOne {
 	return u.Update(func(s *SourceCircuitStateUpsert) {
 		s.ClearFailingSince()
+	})
+}
+
+// SetNotificationGap sets the "notification_gap" field.
+func (u *SourceCircuitStateUpsertOne) SetNotificationGap(v bool) *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetNotificationGap(v)
+	})
+}
+
+// UpdateNotificationGap sets the "notification_gap" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertOne) UpdateNotificationGap() *SourceCircuitStateUpsertOne {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateNotificationGap()
 	})
 }
 
@@ -839,6 +890,20 @@ func (u *SourceCircuitStateUpsertBulk) UpdateFailingSince() *SourceCircuitStateU
 func (u *SourceCircuitStateUpsertBulk) ClearFailingSince() *SourceCircuitStateUpsertBulk {
 	return u.Update(func(s *SourceCircuitStateUpsert) {
 		s.ClearFailingSince()
+	})
+}
+
+// SetNotificationGap sets the "notification_gap" field.
+func (u *SourceCircuitStateUpsertBulk) SetNotificationGap(v bool) *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.SetNotificationGap(v)
+	})
+}
+
+// UpdateNotificationGap sets the "notification_gap" field to the value that was provided on create.
+func (u *SourceCircuitStateUpsertBulk) UpdateNotificationGap() *SourceCircuitStateUpsertBulk {
+	return u.Update(func(s *SourceCircuitStateUpsert) {
+		s.UpdateNotificationGap()
 	})
 }
 

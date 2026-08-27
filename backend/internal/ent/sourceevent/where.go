@@ -95,6 +95,11 @@ func ItemsCount(v int) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldEQ(FieldItemsCount, v))
 }
 
+// BreakerNotificationID applies equality check predicate on the "breaker_notification_id" field. It's identical to BreakerNotificationIDEQ.
+func BreakerNotificationID(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldBreakerNotificationID, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldEQ(FieldCreatedAt, v))
@@ -648,6 +653,56 @@ func MetadataIsNil() predicate.SourceEvent {
 // MetadataNotNil applies the NotNil predicate on the "metadata" field.
 func MetadataNotNil() predicate.SourceEvent {
 	return predicate.SourceEvent(sql.FieldNotNull(FieldMetadata))
+}
+
+// BreakerNotificationIDEQ applies the EQ predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDEQ(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldEQ(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDNEQ applies the NEQ predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDNEQ(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNEQ(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDIn applies the In predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDIn(vs ...int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIn(FieldBreakerNotificationID, vs...))
+}
+
+// BreakerNotificationIDNotIn applies the NotIn predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDNotIn(vs ...int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotIn(FieldBreakerNotificationID, vs...))
+}
+
+// BreakerNotificationIDGT applies the GT predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDGT(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGT(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDGTE applies the GTE predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDGTE(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldGTE(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDLT applies the LT predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDLT(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLT(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDLTE applies the LTE predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDLTE(v int) predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldLTE(FieldBreakerNotificationID, v))
+}
+
+// BreakerNotificationIDIsNil applies the IsNil predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDIsNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldIsNull(FieldBreakerNotificationID))
+}
+
+// BreakerNotificationIDNotNil applies the NotNil predicate on the "breaker_notification_id" field.
+func BreakerNotificationIDNotNil() predicate.SourceEvent {
+	return predicate.SourceEvent(sql.FieldNotNull(FieldBreakerNotificationID))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
