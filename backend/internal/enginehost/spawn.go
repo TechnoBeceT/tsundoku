@@ -125,6 +125,7 @@ func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error
 	}
 	mi.proc = proc
 	mi.client = client
+	resetExhaustionEvidence(mi)
 	return nil
 }
 

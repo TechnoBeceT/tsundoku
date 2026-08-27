@@ -10,6 +10,11 @@ import (
 // (jobs.engine_supervise_interval) supplied by the caller; these bound the
 // restart policy and are launcher constants (test-overridable via With* options).
 const (
+	managedSourceWorkers      = 8
+	managedExhaustionOldest   = 180 * time.Second
+	managedExhaustionSamples  = 6
+	managedExhaustionCooldown = 10 * time.Minute
+
 	// defaultSuperviseMaxRestarts is how many restart attempts the supervisor makes
 	// PER COOLDOWN-WINDOW for one profile before giving up and entering the post-cap
 	// cooldown (staying degraded). It is measured over a rolling window (the cooldown
@@ -51,6 +56,11 @@ const (
 //     bounded exponential backoff and a max-consecutive-failure cap, and
 //   - RESTORES its sources to their own instance once a restart brings it back
 //     healthy.
+//
+// A health-responsive instance is also sampled through the bounded /status
+// contract. Six unchanged samples proving all eight physical source workers have
+// been occupied for longer than 180 seconds trigger the same process-control
+// restart path, with diagnostics first and a ten-minute recovery cooldown.
 //
 // It only ever touches instances the launcher SPAWNED (the non-default profiles).
 // The default instance (port 7777) is owned by the container entrypoint, is never
@@ -165,15 +175,124 @@ func (s *Supervisor) runPass(ctx context.Context, now time.Time) {
 }
 
 // superviseOnce probes every managed instance once and reconciles its health: a
-// healthy one is left alone (any stale degrade cleared), a down one is degraded
-// and, subject to backoff + the cap, restarted. Probing happens OUTSIDE the
-// launcher mutex (a /health call must not serialise behind a restart or block the
-// lock); the per-instance decision + any restart then run under mu.
+// down one follows the existing degrade/restart policy; a health-responsive one
+// contributes one bounded /status exhaustion sample. Probing happens OUTSIDE the
+// launcher mutex; identity checks, evidence updates, and restarts run under it.
 func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
 	for _, t := range s.launcher.supervisedSnapshot() {
+		if ctx.Err() != nil {
+			return
+		}
 		healthy := alive(t.proc) && s.launcher.prober(t.baseURL) == nil
-		s.launcher.superviseInstance(ctx, s, t, healthy, now)
+		if !healthy {
+			s.launcher.superviseInstance(ctx, s, t, false, now)
+			continue
+		}
+
+		status, statusErr := s.launcher.statusProber(ctx, t.baseURL)
+		if ctx.Err() != nil {
+			return
+		}
+		diagnostic := s.launcher.observeHealthyStatus(t, status, statusErr, now)
+		if diagnostic == nil {
+			continue
+		}
+		s.launcher.exhaustionDiagnostics(ctx, *diagnostic)
+		if ctx.Err() != nil {
+			return
+		}
+		s.launcher.restartExhausted(ctx, t, *diagnostic, now)
 	}
+}
+
+// observeHealthyStatus applies one status result under the launcher mutex after
+// rechecking the snapshot identity. It returns a bounded diagnostic only after
+// six unchanged qualifying samples and once the recovery cooldown is eligible.
+func (l *Launcher) observeHealthyStatus(t superviseTarget, status EngineStatus, statusErr error, now time.Time) *ExhaustionDiagnostic {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return nil
+	}
+	mi, ok := l.instances[t.key]
+	if !ok || mi != t.mi || mi.proc != t.proc {
+		return nil
+	}
+
+	// Health succeeded, so any stale health-failure degrade/backoff is cleared even
+	// when status is unavailable. Status failure can only decline exhaustion
+	// recovery; it never degrades or restarts a control-responsive process.
+	l.markHealthyLocked(mi)
+	fingerprint, valid := status.exhaustionFingerprint()
+	qualifies := statusErr == nil && valid && status.Ready &&
+		status.SourceWorkers == managedSourceWorkers &&
+		status.Running == managedSourceWorkers &&
+		status.OldestRunningMillis > managedExhaustionOldest.Milliseconds()
+	if !qualifies {
+		resetExhaustionEvidence(mi)
+		return nil
+	}
+
+	if fingerprint != mi.exhaustionFingerprint {
+		mi.exhaustionFingerprint = fingerprint
+		mi.exhaustionConsecutive = 1
+		mi.exhaustionFirstSampleAt = now
+	} else if mi.exhaustionConsecutive < managedExhaustionSamples {
+		mi.exhaustionConsecutive++
+	}
+	if mi.exhaustionConsecutive < managedExhaustionSamples || now.Before(mi.exhaustionNextEligibleAt) {
+		return nil
+	}
+
+	status.BusiestSources = append([]EngineSourceStatus(nil), status.BusiestSources...)
+	return &ExhaustionDiagnostic{
+		ProfileKey:   mi.key,
+		PID:          mi.proc.Pid(),
+		FirstSample:  mi.exhaustionFirstSampleAt,
+		LatestSample: now,
+		Fingerprint:  fingerprint,
+		Status:       status,
+	}
+}
+
+// restartExhausted rechecks both instance identity and evidence after the
+// diagnostic sink ran outside the mutex, then restarts through the launcher's
+// existing same-port process-control path. The cooldown is armed before the
+// attempt, so success, failure, or a later health-down observation cannot create
+// a restart loop.
+func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diagnostic ExhaustionDiagnostic, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || ctx.Err() != nil {
+		return
+	}
+	mi, ok := l.instances[t.key]
+	if !ok || mi != t.mi || mi.proc != t.proc ||
+		mi.exhaustionFingerprint != diagnostic.Fingerprint ||
+		mi.exhaustionConsecutive < managedExhaustionSamples ||
+		now.Before(mi.exhaustionNextEligibleAt) {
+		return
+	}
+
+	mi.exhaustionNextEligibleAt = now.Add(managedExhaustionCooldown)
+	resetExhaustionEvidence(mi)
+	l.degradeLocked(mi)
+	if err := l.restartLocked(ctx, mi); err != nil {
+		mi.restartFailures++
+		mi.nextRestartAt = mi.exhaustionNextEligibleAt
+		slog.WarnContext(ctx, "enginehost: exhausted managed instance restart failed",
+			"profile", mi.key, "err", err, "next_attempt_at", mi.exhaustionNextEligibleAt)
+		return
+	}
+	l.markHealthyLocked(mi)
+	slog.InfoContext(ctx, "enginehost: exhausted managed instance restarted and healthy",
+		"profile", mi.key, "port", mi.port, "next_exhaustion_restart_at", mi.exhaustionNextEligibleAt)
+}
+
+func resetExhaustionEvidence(mi *managedInstance) {
+	mi.exhaustionFingerprint = ""
+	mi.exhaustionConsecutive = 0
+	mi.exhaustionFirstSampleAt = time.Time{}
 }
 
 // pruneRestartTimes drops restart-attempt timestamps at or before cutoff (the
@@ -272,6 +391,9 @@ func (l *Launcher) superviseInstance(ctx context.Context, s *Supervisor, t super
 
 	if now.Before(mi.nextRestartAt) {
 		return // backoff / cooldown still active — stay degraded, do not attempt
+	}
+	if now.Before(mi.exhaustionNextEligibleAt) {
+		return // a recent exhaustion restart owns the stricter ten-minute cooldown
 	}
 	// Drop restart attempts that have aged out of the rolling window, then measure
 	// the cap against what remains. Counting every attempt — including ones that

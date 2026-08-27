@@ -34,6 +34,9 @@ func LinkSharedExtensions(l *Launcher, profileDataDir string) error {
 // HTTPHealthProber exposes the production HTTP prober constructor.
 func HTTPHealthProber(timeout time.Duration) HealthProber { return newHTTPHealthProber(timeout) }
 
+// HTTPStatusProber exposes the bounded production status prober constructor.
+func HTTPStatusProber(timeout time.Duration) StatusProber { return newHTTPStatusProber(timeout) }
+
 // AllocFreePort exposes the production free-port allocator.
 func AllocFreePort() (int, error) { return allocFreePort() }
 

@@ -61,6 +61,14 @@ type managedInstance struct {
 	// window with no restart empties it, which is the only thing that clears the
 	// cap — a transient post-restart health-pass deliberately does NOT (GAP-114).
 	restartTimes []time.Time
+
+	// Sustained-exhaustion evidence is intentionally bounded: one canonical
+	// progress+physical-running fingerprint, a capped consecutive count, the first
+	// sample time, and the next time an exhaustion recovery may be attempted.
+	exhaustionFingerprint    string
+	exhaustionConsecutive    int
+	exhaustionFirstSampleAt  time.Time
+	exhaustionNextEligibleAt time.Time
 }
 
 // instance projects a managedInstance into the engineroute.Instance the reconcile
@@ -83,10 +91,10 @@ func (m *managedInstance) instance() engineroute.Instance {
 // wait never blocks an EnsureProfile.
 //
 // SUPERVISION (GAP-114). The Supervisor (supervisor.go) keeps managed instances
-// alive after spawn. It PROBES /health outside mu, then takes any restart under
-// mu via superviseInstance — a restart holds mu across its own health wait
-// exactly as EnsureProfile does, so a supervisor restart and a concurrent
-// reconcile EnsureProfile serialise on mu and can never double-spawn one profile.
+// alive after spawn. It PROBES /health and bounded /status outside mu, then takes
+// any restart under mu — a restart holds mu across its own health wait exactly as
+// EnsureProfile does, so a supervisor restart and a concurrent reconcile
+// EnsureProfile serialise on mu and can never double-spawn one profile.
 // Route degrade/restore go through the optional Rerouter (a disjoint overlay on
 // engineroute.Router), never the base routing table, so supervision never clobbers
 // ReconcileNetwork's routing.
@@ -95,9 +103,11 @@ type Launcher struct {
 	factory engineroute.ClientFactory
 
 	// Injectable seams (production defaults set by New; overridden in tests).
-	starter   ProcessStarter
-	prober    HealthProber
-	allocPort PortAllocator
+	starter               ProcessStarter
+	prober                HealthProber
+	statusProber          StatusProber
+	exhaustionDiagnostics ExhaustionDiagnosticSink
+	allocPort             PortAllocator
 
 	// rerouter degrades a down profile's sources to the default engine and
 	// restores them on recovery (GAP-114). Optional: nil in deployments/tests
@@ -141,16 +151,18 @@ const (
 // client). Tests pass With* options to replace any seam or tunable.
 func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts ...Option) *Launcher {
 	l := &Launcher{
-		cfg:          cfg,
-		factory:      factory,
-		starter:      execStarter{hostBin: cfg.HostBin},
-		prober:       newHTTPHealthProber(defaultProbeTimeout),
-		allocPort:    allocFreePort,
-		startTimeout: defaultStartTimeout,
-		pollInterval: defaultPollInterval,
-		settleDelay:  defaultSettleDelay,
-		stopGrace:    defaultStopGrace,
-		instances:    map[string]*managedInstance{},
+		cfg:                   cfg,
+		factory:               factory,
+		starter:               execStarter{hostBin: cfg.HostBin},
+		prober:                newHTTPHealthProber(defaultProbeTimeout),
+		statusProber:          newHTTPStatusProber(defaultProbeTimeout),
+		exhaustionDiagnostics: logExhaustionDiagnostic,
+		allocPort:             allocFreePort,
+		startTimeout:          defaultStartTimeout,
+		pollInterval:          defaultPollInterval,
+		settleDelay:           defaultSettleDelay,
+		stopGrace:             defaultStopGrace,
+		instances:             map[string]*managedInstance{},
 	}
 	for _, opt := range opts {
 		opt(l)

@@ -25,12 +25,18 @@
 //
 // SEAMS. All OS/network touch points are injectable interfaces so the lifecycle
 // logic is unit-testable with no real process and no real network: ProcessStarter
-// (spawn), HealthProber (readiness), and PortAllocator (free-port pick). New
-// wires the production implementations (exec_process.go / health.go / port.go);
-// tests pass fakes via the With* options.
+// (spawn), HealthProber (readiness), StatusProber (bounded recovery evidence),
+// and PortAllocator (free-port pick). New
+// wires the production implementations (exec_process.go / health.go / status.go
+// / port.go); tests pass fakes via the With* options. The supervisor samples the
+// bounded /status contract only after /health succeeds, and requires six stable
+// full-pool samples before recovering an exhausted managed profile.
 package enginehost
 
-import "os"
+import (
+	"context"
+	"os"
+)
 
 // ProcessStarter spawns one engine-host process listening on port with its data
 // root at dataDir, returning a handle to the running process. It is the ONE seam
@@ -81,6 +87,17 @@ type RunningProcess interface {
 // production implementation (health.go) issues a short-timeout HTTP GET; tests
 // inject a deterministic function.
 type HealthProber func(baseURL string) error
+
+// StatusProber returns the bounded, typed operational snapshot served by
+// GET /status. The context must cancel an in-flight read promptly. Production
+// uses a short-timeout HTTP client; tests inject deterministic snapshots.
+type StatusProber func(context.Context, string) (EngineStatus, error)
+
+// ExhaustionDiagnosticSink receives approved-fields-only evidence immediately
+// before a managed profile exhaustion restart. It must remain bounded and must
+// not retain request payloads or secrets; the production sink emits structured
+// process/profile/status fields through slog.
+type ExhaustionDiagnosticSink func(context.Context, ExhaustionDiagnostic)
 
 // PortAllocator returns a free TCP port on the loopback interface for a new
 // instance to listen on. The production implementation (port.go) binds

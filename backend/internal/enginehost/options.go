@@ -17,6 +17,16 @@ func WithStarter(s ProcessStarter) Option { return func(l *Launcher) { l.starter
 // /health). Tests pass a deterministic function.
 func WithHealthProber(p HealthProber) Option { return func(l *Launcher) { l.prober = p } }
 
+// WithStatusProber replaces the bounded GET /status seam used by managed-profile
+// exhaustion recovery. Tests pass deterministic operational snapshots.
+func WithStatusProber(p StatusProber) Option { return func(l *Launcher) { l.statusProber = p } }
+
+// WithExhaustionDiagnosticSink replaces the bounded diagnostic sink invoked
+// immediately before an exhaustion restart.
+func WithExhaustionDiagnosticSink(s ExhaustionDiagnosticSink) Option {
+	return func(l *Launcher) { l.exhaustionDiagnostics = s }
+}
+
 // WithPortAllocator replaces the free-port allocator (default: bind 127.0.0.1:0).
 // Tests pass a deterministic allocator.
 func WithPortAllocator(a PortAllocator) Option { return func(l *Launcher) { l.allocPort = a } }
