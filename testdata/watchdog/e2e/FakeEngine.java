@@ -64,6 +64,7 @@ public final class FakeEngine {
     private static final AtomicInteger BUSY_STARTED = new AtomicInteger();
     private static final AtomicInteger BUSY_DONE = new AtomicInteger();
     private static final AtomicInteger SOURCE_EXHAUSTED = new AtomicInteger();
+    private static long healthReadyAtNanos;
 
     private static ExecutorService pool;
     private static ExecutorService sourcePool;
@@ -75,6 +76,8 @@ public final class FakeEngine {
         final int port = Integer.parseInt(env("TSUNDOKU_ENGINE_PORT", "7777"));
         final String threadNames = env("FAKE_ENGINE_THREAD_NAMES", "engine-http");
         final boolean namedThreads = !"jdk-default".equals(threadNames);
+        healthReadyAtNanos = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(Long.parseLong(env("FAKE_HEALTH_DELAY_MS", "0")));
 
         advanceGlobalPoolCounter(namedThreads);
 
@@ -95,10 +98,16 @@ public final class FakeEngine {
         // (same pid) and "the long call completed" (busyDone went up) rather than inferring both
         // from the fact that /health started answering again — which is also what a restart looks
         // like.
-        server.createContext("/health", ex -> respond(ex, "{\"status\":\"ok\",\"sources\":64"
-                + ",\"pid\":" + ProcessHandle.current().pid()
-                + ",\"busyStarted\":" + BUSY_STARTED.get()
-                + ",\"busyDone\":" + BUSY_DONE.get() + "}"));
+        server.createContext("/health", ex -> {
+            if (System.nanoTime() < healthReadyAtNanos) {
+                respond(ex, 503, "{\"status\":\"starting\"}");
+                return;
+            }
+            respond(ex, 200, "{\"status\":\"ok\",\"sources\":64"
+                    + ",\"pid\":" + ProcessHandle.current().pid()
+                    + ",\"busyStarted\":" + BUSY_STARTED.get()
+                    + ",\"busyDone\":" + BUSY_DONE.get() + "}");
+        });
 
         // Mirrors the bounded production status contract. The exhausted snapshot is intentionally
         // constant: the end-to-end test controls elapsed wall time through the watchdog cadence,
@@ -303,8 +312,12 @@ public final class FakeEngine {
     }
 
     private static void respond(HttpExchange ex, String body) throws IOException {
+        respond(ex, 200, body);
+    }
+
+    private static void respond(HttpExchange ex, int status, String body) throws IOException {
         final byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        ex.sendResponseHeaders(200, bytes.length);
+        ex.sendResponseHeaders(status, bytes.length);
         try (OutputStream os = ex.getResponseBody()) {
             os.write(bytes);
         }

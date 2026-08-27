@@ -32,6 +32,10 @@
 #                  entrypoint's boot health probe has ever succeeded -> the probe must time out per
 #                  attempt, give up on its deadline, leave supervision unarmed and waiting, and
 #                  still hand off to the foreground server
+#   exhaustion     all source slots stay occupied without completion progress -> bounded evidence
+#                  confirms the condition, restarts once, and suppresses another restart in cooldown
+#   containment    the exhaustion case after deliberately late health readiness; invoked separately
+#                  by containment-run.sh so the default watchdog settings remain under test
 #
 # The busy case is the important one. It is the regression test for the rule that killed a healthy
 # engine, and it asserts three separable things: the verdict, that the process was never restarted
@@ -67,7 +71,7 @@
 # ── Other knobs ──────────────────────────────────────────────────────────────────────────────
 #   WATCHDOG_E2E_IMAGE  image tag to build/use (default tsundoku-watchdog-e2e:local)
 #   WATCHDOG_E2E_KEEP   set to 1 to leave containers running for inspection
-#   $1..                cases to run; default is all four
+#   $1..                cases to run; default is the five cases above except containment
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -84,7 +88,7 @@ E2E_PROBE_INTERVAL=2
 E2E_PROBE_TIMEOUT=2
 E2E_FAIL_THRESHOLD=2
 E2E_DUMP_SETTLE=3
-E2E_COOLDOWN=30
+E2E_COOLDOWN=${WATCHDOG_E2E_COOLDOWN:-30}
 E2E_TERM_GRACE=5
 # The legitimate long call must outlast the watchdog's whole decision path (a few probes, then the
 # dump settle) so the verdict is reached while the call is still running — otherwise "not killed"
@@ -96,7 +100,8 @@ E2E_BUSY_HOLD_MS=45000
 # cases would fall through it and never arm the watchdog; 30s is that margin, and it is also how
 # long the boot-wedge case takes to give up.
 E2E_BOOT_PROBE_TIMEOUT=3
-E2E_BOOT_WAIT=30
+E2E_BOOT_WAIT=${WATCHDOG_E2E_BOOT_WAIT:-30}
+E2E_LATE_READY_MS=${WATCHDOG_E2E_LATE_READY_MS:-8000}
 
 # Budgets, in seconds. Generous: a cold container start on a loaded CI runner is not fast, and a
 # timeout here is reported as a failure with the container log attached rather than as a hang.
@@ -185,7 +190,7 @@ build_image() {
 
 # ── Container helpers ────────────────────────────────────────────────────────────────────────
 
-# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT] [EXHAUST_AT_BOOT]
+# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT] [EXHAUST_AT_BOOT] [HEALTH_DELAY_MS]
 #
 # WEDGE_AT_BOOT defaults to 0, so the three cases that want a HEALTHY engine to start with are
 # unchanged and do not have to pass it.
@@ -202,6 +207,7 @@ start_engine() {
         -e "FAKE_ENGINE_THREAD_NAMES=$2" \
         -e "FAKE_WEDGE_AT_BOOT=${3:-0}" \
         -e "FAKE_EXHAUST_AT_BOOT=${4:-0}" \
+        -e "FAKE_HEALTH_DELAY_MS=${5:-0}" \
         -e "FAKE_BUSY_HOLD_MS=$E2E_BUSY_HOLD_MS" \
         -e "ENGINE_BOOT_PROBE_TIMEOUT=$E2E_BOOT_PROBE_TIMEOUT" \
         -e "ENGINE_BOOT_WAIT=$E2E_BOOT_WAIT" \
@@ -483,39 +489,63 @@ case_boot_wedge() {
 # six stable status samples plus matching first/sixth dumps. The fake re-enters the
 # same state after restart so the compressed cooldown is also exercised.
 case_exhaustion() {
-    log "case exhaustion: stable source exhaustion must restart once and respect cooldown"
-    register exhaustion
-    start_engine "$_cid" engine-http 0 1
+    _label=${1:-exhaustion}
+    _health_delay=${2:-0}
+    log "case $_label: stable source exhaustion must restart once and respect cooldown"
+    register "$_label"
+    start_engine "$_cid" engine-http 0 1 "$_health_delay"
+
+    if [ "$_health_delay" -gt 0 ]; then
+        if wait_log "$_cid" "supervision waiting for first healthy response" $((E2E_BOOT_WAIT + 20)) &&
+           wait_log "$_cid" "foreground stand-in up" $((E2E_BOOT_WAIT + 20)); then
+            pass "$_label: missed startup readiness without disabling supervision or boot"
+        else
+            dump_container_log "$_cid"
+            fail "$_label: late readiness blocked boot or disabled supervision"
+            return 0
+        fi
+        if log_has "$_cid" "stopping engine-host pid"; then
+            fail "$_label: unarmed supervision restarted before first readiness"
+            return 0
+        fi
+    fi
 
     if ! _body=$(wait_health "$_cid" "$BUDGET_BOOT"); then
         dump_container_log "$_cid"
-        fail "exhaustion: the responsive control plane never became healthy"
+        fail "$_label: the responsive control plane never became healthy"
         return 0
     fi
     _pid_before=$(field "$_body" pid)
+    if [ "$_health_delay" -gt 0 ] && wait_log "$_cid" "wedge watchdog armed" 20; then
+        pass "$_label: a later successful health response armed supervision"
+    elif [ "$_health_delay" -gt 0 ]; then
+        dump_container_log "$_cid"
+        fail "$_label: late readiness never armed supervision"
+        return 0
+    fi
 
     if ! wait_log "$_cid" "SOURCE EXHAUSTION CONFIRMED" "$BUDGET_VERDICT"; then
         dump_container_log "$_cid"
-        fail "exhaustion: six stable samples did not confirm exhaustion"
+        fail "$_label: six stable samples did not confirm exhaustion"
         return 0
     fi
     _stops=$(docker logs "$_cid" 2>&1 | grep -c "stopping engine-host pid" || true)
     if [ "$_stops" -eq 1 ]; then
-        pass "exhaustion: stable exhaustion stopped the engine exactly once at sample six"
+        pass "$_label: stable exhaustion stopped the engine exactly once at sample six"
     else
-        fail "exhaustion: expected one stop after the first proof, got $_stops"
+        fail "$_label: expected one stop after the first proof, got $_stops"
     fi
 
     if ! _body=$(wait_health "$_cid" "$BUDGET_RECOVER"); then
         dump_container_log "$_cid"
-        fail "exhaustion: /health did not recover after restart"
+        fail "$_label: /health did not recover after restart"
         return 0
     fi
     _pid_after=$(field "$_body" pid)
     if [ -n "$_pid_after" ] && [ "$_pid_after" != "$_pid_before" ]; then
-        pass "exhaustion: recovery launched a new engine process ($_pid_before -> $_pid_after)"
+        pass "$_label: recovery launched a new engine process ($_pid_before -> $_pid_after)"
     else
-        fail "exhaustion: expected a new engine pid, got '$_pid_after'"
+        fail "$_label: expected a new engine pid, got '$_pid_after'"
     fi
 
     _diag=/tmp/engine-host.watchdog-diagnostic
@@ -523,32 +553,32 @@ case_exhaustion() {
     _thread_bytes=$(docker exec "$_cid" sh -c "sed -n '/^first_dump=/p;/^sixth_dump=/p' $_diag | wc -c" 2>/dev/null || echo 999999)
     _diag_body=$(docker exec "$_cid" cat "$_diag" 2>/dev/null || true)
     if [ "${_status_bytes:-999999}" -le 32768 ] && [ "${_thread_bytes:-999999}" -le 262144 ]; then
-        pass "exhaustion: diagnostics obey status and thread-excerpt caps"
+        pass "$_label: diagnostics obey status and thread-excerpt caps"
     else
-        fail "exhaustion: diagnostic caps exceeded (status=$_status_bytes threads=$_thread_bytes)"
+        fail "$_label: diagnostic caps exceeded (status=$_status_bytes threads=$_thread_bytes)"
     fi
     case "$_diag_body" in
         *"engine_pid="*"first_dump=engine-source-1"*"sixth_dump=engine-source-1"*)
-            pass "exhaustion: diagnostics contain only bounded operational evidence"
+            pass "$_label: diagnostics contain only bounded operational evidence"
             ;;
-        *) fail "exhaustion: diagnostics are missing the approved evidence fields" ;;
+        *) fail "$_label: diagnostics are missing the approved evidence fields" ;;
     esac
     case "$_diag_body" in
         *token*|*cookie*|*header*|*http://*|*https://*)
-            fail "exhaustion: diagnostics leaked an unapproved field"
+            fail "$_label: diagnostics leaked an unapproved field"
             ;;
-        *) pass "exhaustion: diagnostics contain no payload, URL, header, cookie, or token" ;;
+        *) pass "$_label: diagnostics contain no payload, URL, header, cookie, or token" ;;
     esac
 
     # A restarted fake exhausts again immediately. Its second six-sample proof lands
-    # inside the 30s test cooldown and must not produce another stop.
+    # inside the configured test cooldown and must not produce another stop.
     sleep 20
     _stops=$(docker logs "$_cid" 2>&1 | grep -c "stopping engine-host pid" || true)
     if [ "$_stops" -eq 1 ] && log_has "$_cid" "holding off (thrash guard)"; then
-        pass "exhaustion: cooldown suppressed the repeated restart"
+        pass "$_label: cooldown suppressed the repeated restart"
     else
         dump_container_log "$_cid"
-        fail "exhaustion: cooldown did not suppress the repeated restart (stops=$_stops)"
+        fail "$_label: cooldown did not suppress the repeated restart (stops=$_stops)"
     fi
 }
 
@@ -567,7 +597,8 @@ for c in $cases; do
         busy)        case_busy ;;
         boot-wedge)  case_boot_wedge ;;
         exhaustion)  case_exhaustion ;;
-        *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy, boot-wedge or exhaustion)" ;;
+        containment) case_exhaustion containment "$E2E_LATE_READY_MS" ;;
+        *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy, boot-wedge, exhaustion or containment)" ;;
     esac
 done
 
