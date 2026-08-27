@@ -369,6 +369,14 @@ func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
 	}
 }
 
+// fetchAdmissionResult distinguishes work that reached the engine from a local
+// admission failure. Callers may apply source retry/breaker/cache accounting only
+// when fetched is true.
+type fetchAdmissionResult struct {
+	pages   fetcher.ChapterPages
+	fetched bool
+}
+
 // fetchWithAdmission makes one engine call after all admission controls that
 // precede it. The source gate reserves and waits for the physical source's
 // politeness slot FIRST; only then does the call take its shared global and
@@ -377,9 +385,11 @@ func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
 // actual engine call across download and upgrade paths.
 //
 // Both acquired permits are released with defers, including when an engine
-// implementation panics. A cancelled context after the politeness wait never
-// reaches the engine or global admission; sourcegate deliberately retains the
-// reserved timestamp in that case, preserving its spacing contract.
+// implementation panics. A cancelled context before the admitted callback
+// completes never reaches the engine; sourcegate deliberately retains a
+// politeness reservation cancelled while waiting, preserving its spacing
+// contract. A successful callback transfers ownership to the engine, so there
+// is deliberately no cancellation check between it and Fetch.
 func (d *Dispatcher) fetchWithAdmission(
 	ctx context.Context,
 	sourceKey string,
@@ -387,29 +397,60 @@ func (d *Dispatcher) fetchWithAdmission(
 	limiter *providerLimiter,
 	globalSem *semaphore.Weighted,
 	onAdmitted func() error,
-) (fetcher.ChapterPages, error) {
+) (fetchAdmissionResult, error) {
 	d.gateWait(ctx, sourceKey)
 	if err := ctx.Err(); err != nil {
-		return fetcher.ChapterPages{}, err
+		return fetchAdmissionResult{}, err
 	}
 
 	if globalSem != nil {
 		if err := globalSem.Acquire(ctx, 1); err != nil {
-			return fetcher.ChapterPages{}, err
+			return fetchAdmissionResult{}, err
 		}
 		defer globalSem.Release(1)
 	}
 	releaseSource := limiter.acquire(sourceKey)
 	defer releaseSource()
+	if err := ctx.Err(); err != nil {
+		return fetchAdmissionResult{}, err
+	}
 	if onAdmitted != nil {
 		if err := onAdmitted(); err != nil {
-			return fetcher.ChapterPages{}, err
+			return fetchAdmissionResult{}, err
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return fetcher.ChapterPages{}, err
+	pages, err := d.f.Fetch(ctx, ref)
+	return fetchAdmissionResult{pages: pages, fetched: true}, err
+}
+
+// admitChapterFetch performs the eligible→in-flight state transition in a short
+// transaction and checks cancellation before committing it. The commit is the
+// engine-ownership boundary: cancellation before it rolls the transition back to
+// the exact prior state; after it, fetchWithAdmission always invokes the engine.
+// chapter.SetState remains the one state-machine gate inside the transaction.
+func (d *Dispatcher) admitChapterFetch(ctx context.Context, chapterID uuid.UUID, state entchapter.State) error {
+	tx, err := d.client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin admission transaction: %w", err)
 	}
-	return d.f.Fetch(ctx, ref)
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err := chapter.SetState(ctx, tx.Client(), chapterID, state); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit admission transaction: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // gateRecordSuccess reports a successful fetch from sourceKey to the breaker
@@ -649,10 +690,11 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
 // now passed here.
 //
 // globalSem is the cycle-shared GLOBAL concurrency semaphore (nil ⇒ no global
-// cap, per-source only). When non-nil it is threaded into the scheduler so total
-// concurrent fetches across ALL sources this pass never exceed the cap — the SAME
-// semaphore is reused across every pass of a cycle and by the upgrade pass, so the
-// aggregate budget spans the whole cycle (see job.Runner.RunDownloadCycle).
+// cap, per-source only). When non-nil it is threaded to the actual fetch boundary,
+// after source politeness, so total concurrent engine calls across ALL sources
+// never exceed the cap. The SAME semaphore is reused across every pass of a cycle
+// and by the upgrade pass, so the aggregate bound spans the whole cycle (see
+// job.Runner.RunDownloadCycle).
 func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[string]int, globalSem *semaphore.Weighted) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
 	concurrency := d.downloadConcurrency(ctx)
@@ -801,7 +843,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 		if claimed {
 			return nil
 		}
-		if setErr := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloading); setErr != nil {
+		if setErr := d.admitChapterFetch(ctx, chapterID, entchapter.StateDownloading); setErr != nil {
 			return fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
 		}
 		claimed = true
@@ -811,9 +853,12 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 
 	var lastErr error
 	for _, cand := range cands {
-		done, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now, globalSem, onAdmitted)
+		done, fetched, cause := d.tryCandidate(ctx, ch, chapterID, cand, limiter, now, globalSem, onAdmitted)
 		if done {
 			return true, nil
+		}
+		if !fetched {
+			return claimed, cause
 		}
 		if ctx.Err() != nil {
 			return claimed, ctx.Err()
@@ -863,7 +908,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
 //     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
-func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() error) (done bool, cause error) {
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() error) (done, fetched bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
 	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
@@ -874,8 +919,12 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// two cases indistinguishable afterwards (GAP-119; see fetchAttempt).
 	attempt := fetchAttempt{usedCachedLinks: len(cand.ProviderChapter.PageLinks) > 0}
 	fetchStart := time.Now()
-	pages, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, onAdmitted)
+	result, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, onAdmitted)
 	fetchDuration := time.Since(fetchStart)
+	if !result.fetched {
+		return false, false, fetchErr
+	}
+	pages := result.pages
 	attempt.stagingDir = pages.StagingDir
 
 	// Write-through the resolved page links the instant they are known (even on a
@@ -896,7 +945,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 		if shouldRecordGateFailure(ctx, fetchErr) {
 			d.gateRecordFailure(ctx, sourceKey, fetchErr, now)
 		}
-		return false, fetchErr
+		return false, true, fetchErr
 	}
 
 	if err := d.finishDownload(ctx, ch, chapterID, cand, pages); err != nil {
@@ -911,7 +960,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 			"chapter_id", chapterID,
 			"err", err,
 		)
-		return false, err
+		return false, true, err
 	}
 
 	// The staged bytes are now inside the CBZ — delete the staging dir so the byte
@@ -921,7 +970,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	pageCount := pages.PageCount
 	d.logDownloadEvent(ctx, ch, cand.SeriesProvider, sourceevents.StatusSuccess, fetchDuration, &pageCount, nil)
 	d.gateRecordSuccess(ctx, sourceKey)
-	return true, nil
+	return true, true, nil
 }
 
 // fetchAttempt carries what ONE completed fetch attempt left behind, so its

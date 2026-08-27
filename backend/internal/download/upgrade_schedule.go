@@ -74,11 +74,12 @@ const unresolvedTargetKey = ""
 //     at grouping time via bestUpgradeCandidate and again inside fetchAndRender).
 //     Rate per source is gate-bound, not pool-bound.
 //
-// Failure semantics are unchanged: an individual upgrade failure is handled inside
-// Upgrade (working CBZ + provenance kept, chapter returns to downloaded, source
-// cooled down without spending retry budget) and does NOT abort the pass. Only a
-// hard infrastructure error propagates — it cancels the pass (no further upgrade is
-// STARTED) and is returned along with the count of upgrades that did complete.
+// An engine-owned upgrade failure is handled inside Upgrade (working CBZ +
+// provenance kept, chapter returns to downloaded) and does NOT abort the pass.
+// A local admission/state-transition failure before engine ownership propagates as
+// a hard error without touching source health or clearing the upgrade marker; it
+// cancels the pass (no further upgrade is STARTED) and is returned along with the
+// count of upgrades that did complete.
 //
 // globalSem is the cycle-shared GLOBAL concurrency cap (nil ⇒ per-source only). The
 // download drain already drew from this SAME semaphore earlier in the cycle, so

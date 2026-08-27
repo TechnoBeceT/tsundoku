@@ -28,10 +28,15 @@ import (
 // DetectUpgrades' self-churn guard.
 var errUpgradeNoLongerNeeded = errors.New("upgrade no longer needed: current satisfier is already the best source")
 
+// errUpgradeSourceUnavailable signals a stale upgrade marker whose previously
+// selected target is no longer live. It is a handled no-fetch outcome, distinct
+// from a local admission/state-transition error.
+var errUpgradeSourceUnavailable = errors.New("upgrade source is no longer available")
+
 // upgradeResult holds the artefacts produced by fetchAndRender so that
 // Upgrade can persist them in a single update call.
 type upgradeResult struct {
-	started     bool
+	fetched     bool
 	pc          *ent.ProviderChapter
 	sp          *ent.SeriesProvider
 	importance  int
@@ -385,11 +390,13 @@ func gateFilterCandidatesSnapshot(snap map[string]sourcegate.BreakerState, cands
 // Upgrade executes a non-destructive atomic upgrade for the given chapter.
 //
 // Flow (success path):
-//  1. Load the chapter; transition upgrade_available → upgrading; broadcast upgrade.start.
-//  2. Fetch pages from the best provider and render the new CBZ atomically.
-//  3. Persist updated provenance; clear last_error; transition upgrading → downloaded;
+//  1. Load the chapter and resolve its best live provider.
+//  2. Wait for source politeness, acquire fetch capacity, then transactionally
+//     transition upgrade_available → upgrading and transfer ownership to the engine.
+//  3. Fetch pages from the best provider and render the new CBZ atomically.
+//  4. Persist updated provenance; clear last_error; transition upgrading → downloaded;
 //     broadcast download.done.
-//  4. Best-effort delete the old CBZ if the filename changed (different provider/scanlator
+//  5. Best-effort delete the old CBZ if the filename changed (different provider/scanlator
 //     ⇒ different name); log on failure but do not fail the upgrade.
 //
 // Failure path (fetch or render error):
@@ -397,6 +404,9 @@ func gateFilterCandidatesSnapshot(snap map[string]sourcegate.BreakerState, cands
 //   - Transitions upgrading → downloaded (working copy retained).
 //   - Records last_error; broadcasts upgrade.fail.
 //   - Returns nil — an upgrade failure is a handled outcome, not a hard error.
+//
+// A cancellation or local state-write failure before engine ownership leaves the
+// upgrade_available marker intact and returns an error; it is not a source failure.
 func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	// Standalone single-chapter entry point: it owns its limiter, so nothing else
 	// contends for it. UpgradeAll drives upgradeWith with ONE limiter shared across
@@ -428,11 +438,13 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 	// per-source upgrade parallelism can never exceed that cap upstream.
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled, globalSem)
 	if err != nil {
-		if !res.started && ctx.Err() != nil {
-			return nil
-		}
-		if errors.Is(err, errUpgradeNoLongerNeeded) {
+		if !res.fetched && (errors.Is(err, errUpgradeNoLongerNeeded) || errors.Is(err, errUpgradeSourceUnavailable)) {
 			return d.finishUnstartedUpgrade(ctx, chapterID)
+		}
+		if !res.fetched {
+			// Admission and state-transition errors are local control failures: no
+			// engine call happened, so keep upgrade_available and surface the error.
+			return err
 		}
 		// A failed upgrade must NEVER reuse its partially-staged, index-keyed pages:
 		// the next attempt re-resolves the page list fresh, and a reordered list
@@ -442,9 +454,6 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// every failure path (fetch, render, or persist). res.stagingDir is populated
 		// on the fetch/render failure returns for exactly this.
 		d.cleanupStaging(ctx, res.stagingDir)
-		if !res.started {
-			return d.finishUnstartedUpgrade(ctx, chapterID)
-		}
 		return d.handleUpgradeFailure(ctx, chapterID, res.pc, fetchAttempt{
 			stagingDir:      res.stagingDir,
 			usedCachedLinks: res.usedCachedLinks,
@@ -497,10 +506,9 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	if len(cands) == 0 {
 		// Reachable when: DetectUpgrades flagged a chapter but the only better
 		// source was then tripped/cooled/removed before this fetch (or a concurrent
-		// owner action emptied it). Returning an error routes to handleUpgradeFailure
-		// with a nil failedPC — the chapter transitions back to downloaded (working
-		// copy intact), NOT stranded in upgrade_available.
-		return upgradeResult{}, fmt.Errorf("no live source available for chapter %s", chapterID)
+		// owner action emptied it). This handled no-fetch result resolves the stale
+		// marker back to downloaded without entering source-failure accounting.
+		return upgradeResult{}, fmt.Errorf("%w for chapter %s", errUpgradeSourceUnavailable, chapterID)
 	}
 	best := cands[0]
 
@@ -530,30 +538,23 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// makes stale, and only a pre-fetch read can distinguish "re-used" from
 	// "resolved this attempt" (GAP-119; see fetchAttempt).
 	usedCachedLinks := len(pc.PageLinks) > 0
-	started := false
-	pages, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() error {
-		if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateUpgrading); err != nil {
+	admission, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() error {
+		if err := d.admitChapterFetch(ctx, chapterID, entchapter.StateUpgrading); err != nil {
 			return fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)
 		}
-		started = true
 		d.broadcast("upgrade.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateUpgrading)})
 		return nil
 	})
 	if err != nil {
-		// Circuit-breaker: recorded ONLY for a SOURCE-WIDE/ban-class upgrade fetch
-		// failure (same rule as the download path — shouldRecordGateFailure gates on
-		// classifyFetchFailure == failureSourceWide), so neither a broken-chapter
-		// upgrade failure nor a withheld (locked) one ever pauses the whole source.
-		// Skipped on a shutdown-induced cancellation (parent ctx done).
-		if shouldRecordGateFailure(ctx, err) {
-			d.gateRecordFailure(ctx, sourceKey, err, time.Now())
-		}
+		d.recordUpgradeFetchFailure(ctx, sourceKey, admission, err)
 		// Carry pc so handleUpgradeFailure CHARGES this source's per-source retry state
 		// with the SAME classified rule as the download path (chapter-specific → bump,
 		// source-wide → cooldown), and stagingDir so the caller wipes the
-		// partially-staged pages — Fetch populates StagingDir even on error.
-		return upgradeResult{started: started, pc: pc, sp: sp, stagingDir: pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
+		// partially-staged pages — Fetch populates StagingDir even on error. The fetched
+		// flag keeps this metadata unreachable for a local admission error.
+		return upgradeResult{fetched: admission.fetched, pc: pc, sp: sp, stagingDir: admission.pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
 	}
+	pages := admission.pages
 	// The fetch succeeded → the source is reachable; clear its breaker state.
 	// (A later render/persist failure is not the source's fault, so it does not
 	// touch the breaker.)
@@ -569,11 +570,11 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// A render failure is a LOCAL fault (no pc → no cooldown), but the fetch
 		// already staged every page — carry stagingDir so the caller wipes it (a
 		// failed upgrade never resumes, unlike the download path).
-		return upgradeResult{stagingDir: pages.StagingDir}, err
+		return upgradeResult{fetched: true, stagingDir: pages.StagingDir}, err
 	}
 
 	return upgradeResult{
-		started:     started,
+		fetched:     true,
 		pc:          pc,
 		sp:          sp,
 		importance:  sp.Importance,
@@ -583,6 +584,20 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	}, nil
 }
 
+// recordUpgradeFetchFailure updates the breaker only when the engine owned the
+// attempt and returned a source-wide failure. Admission/state errors never reach
+// source health accounting, and cancellation still suppresses breaker writes.
+func (d *Dispatcher) recordUpgradeFetchFailure(ctx context.Context, sourceKey string, admission fetchAdmissionResult, cause error) {
+	if !admission.fetched || !shouldRecordGateFailure(ctx, cause) {
+		return
+	}
+	d.gateRecordFailure(ctx, sourceKey, cause, time.Now())
+}
+
+// finishUnstartedUpgrade resolves a stale upgrade marker when no engine fetch is
+// needed because the target disappeared or the current satisfier is still best.
+// It uses the legal upgrade_available→downloaded state-machine edge and reports a
+// handled success without touching source retry or breaker state.
 func (d *Dispatcher) finishUnstartedUpgrade(ctx context.Context, chapterID uuid.UUID) error {
 	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
 		return fmt.Errorf("download.Dispatcher.Upgrade: resolve unstarted upgrade %s: %w", chapterID, err)
@@ -686,30 +701,6 @@ func (d *Dispatcher) tryDeleteOldCBZ(ctx context.Context, chapterID uuid.UUID, c
 			"err", err,
 		)
 	}
-}
-
-// finishStaleUpgrade cleanly resolves a stale upgrade_available flag whose best
-// live source is the chapter's current satisfier (fetchAndRender returned
-// errUpgradeNoLongerNeeded after already refreshing the watermark). It transitions
-// upgrading → downloaded and broadcasts download.done — no fetch happened, the
-// working copy is untouched, and NO last_error / upgrade.fail is recorded (this is
-// not a failure). Always returns nil so callers treat it as a handled outcome.
-func (d *Dispatcher) finishStaleUpgrade(ctx context.Context, chapterID uuid.UUID) error {
-	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
-		// Defensive path: only reachable on a DB failure between the upgrading
-		// transition and here. Log but return nil so the chapter is not stranded in
-		// upgrading — the next DetectUpgrades run re-evaluates it.
-		slog.ErrorContext(ctx, "download.Dispatcher.finishStaleUpgrade: could not transition upgrading→downloaded",
-			"chapter_id", chapterID,
-			"set_state_err", err,
-		)
-		return nil
-	}
-	d.broadcast("download.done", DownloadEvent{
-		ChapterID: chapterID,
-		State:     string(entchapter.StateDownloaded),
-	})
-	return nil
 }
 
 // handleUpgradeFailure is the upgrade-specific failure handler.

@@ -37,6 +37,11 @@ type blockingWaiter struct {
 	release <-chan struct{}
 }
 
+type upgradeCall struct {
+	count int
+	err   error
+}
+
 func (w blockingWaiter) Wait(ctx context.Context, sourceKey string) {
 	if sourceKey != "delayed" {
 		return
@@ -263,7 +268,8 @@ func TestRunOnceAt_CancelledGlobalAdmissionLeavesChapterQueued(t *testing.T) {
 	if got.State != entchapter.StateWanted {
 		t.Fatalf("state = %s, want wanted", got.State)
 	}
-	if got.LastError != "" || pc.Attempts != 0 || len(pc.PageLinks) != 0 || f.calls.Load() != 0 {
+	gotPC := client.ProviderChapter.GetX(ctx, pc.ID)
+	if got.LastError != "" || gotPC.Attempts != 0 || len(gotPC.PageLinks) != 0 || f.calls.Load() != 0 {
 		t.Fatalf("cancelled admission mutated chapter/source state")
 	}
 }
@@ -282,23 +288,36 @@ func TestUpgradeAll_CancelledGlobalAdmissionLeavesChapterAvailable(t *testing.T)
 		t.Fatal("reserve global admission")
 	}
 	cctx, cancel := context.WithCancel(ctx)
-	done := make(chan error, 1)
-	go func() { _, err := d.UpgradeAll(cctx, nil, global); done <- err }()
+	done := make(chan upgradeCall, 1)
+	go func() {
+		count, err := d.UpgradeAll(cctx, nil, global)
+		done <- upgradeCall{count: count, err: err}
+	}()
 	select {
-	case err := <-done:
-		t.Fatalf("UpgradeAll returned before cancellation: %v", err)
+	case result := <-done:
+		t.Fatalf("UpgradeAll returned before cancellation: count=%d err=%v", result.count, result.err)
 	case <-time.After(50 * time.Millisecond):
 	}
 	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("UpgradeAll: %v", err)
-	}
+	result := <-done
+	assertCancelledUpgradeCall(t, result)
 	global.Release(1)
 	got := client.Chapter.GetX(ctx, ch.ID)
 	if got.State != entchapter.StateUpgradeAvailable {
 		t.Fatalf("state = %s, want upgrade_available", got.State)
 	}
-	if got.LastError != "" || pc.Attempts != 0 || len(pc.PageLinks) != 0 || f.calls.Load() != 0 {
+	gotPC := client.ProviderChapter.GetX(ctx, pc.ID)
+	if got.LastError != "" || gotPC.Attempts != 0 || len(gotPC.PageLinks) != 0 || f.calls.Load() != 0 {
 		t.Fatalf("cancelled admission mutated upgrade/source state")
+	}
+}
+
+func assertCancelledUpgradeCall(t *testing.T, result upgradeCall) {
+	t.Helper()
+	if !errors.Is(result.err, context.Canceled) {
+		t.Fatalf("UpgradeAll error = %v, want context canceled", result.err)
+	}
+	if result.count != 0 {
+		t.Fatalf("UpgradeAll count = %d, want 0 after cancelled admission", result.count)
 	}
 }
