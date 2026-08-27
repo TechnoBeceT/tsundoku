@@ -4,12 +4,25 @@ import (
 	"context"
 	"fmt"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 )
+
+// GenerationEQ matches the PostgreSQL MVCC version captured by
+// WantedSelections. Comparing xmin as text avoids timestamp precision gaps and
+// xid type-cast ambiguity while retaining exact equality, including across a
+// failed → downloading → failed ABA state cycle.
+func GenerationEQ(generation string) entpredicate.Chapter {
+	return entpredicate.Chapter(func(selector *sql.Selector) {
+		selector.Where(sql.P(func(builder *sql.Builder) {
+			builder.WriteString(selector.C("xmin")).WriteString("::text = ").Arg(generation)
+		}))
+	})
+}
 
 // legalTransitions encodes the pinned chapter state machine as an adjacency map.
 // Each key is a source state; its value is the set of legal target states.

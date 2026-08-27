@@ -15,16 +15,20 @@ import (
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 )
 
-// resolvedChapter is a wanted chapter paired with the live candidate sources
-// resolved for it at the start of a cycle. RunOnce resolves these once, groups
-// them by primary source, and hands each source's ordered list to a scheduler.
+// resolvedChapter is a wanted/failed chapter paired with both its PostgreSQL row
+// generation and the live candidate sources resolved for it at the start of a
+// pass. Admission requires that exact state/generation and revalidates the first
+// candidate's retry/cooldown plus breaker state in the claim statement. A queued
+// item can therefore never claim a later failed generation with this old slice.
 type resolvedChapter struct {
-	chapterID uuid.UUID
-	seriesID  uuid.UUID
-	cands     []chapter.Candidate
+	chapterID      uuid.UUID
+	seriesID       uuid.UUID
+	selectedState  entchapter.State
+	workGeneration string
+	cands          []chapter.Candidate
 }
 
-// groupBySource resolves each wanted chapter's live candidates and partitions the
+// groupBySource resolves each selected chapter's live candidates and partitions the
 // chapters by their PRIMARY source — the highest-importance live candidate,
 // which is cands[0] because RankedLiveCandidates is importance-DESC. Each
 // source's slice is then reordered ROUND-ROBIN ACROSS SERIES (roundRobinBySeries)
@@ -42,9 +46,10 @@ type resolvedChapter struct {
 // for the whole pass and passed in here rather than re-read per chapter — this
 // loop runs over every wanted chapter in the pass, so a per-chapter read would be
 // a straight N+1.
-func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]resolvedChapter {
+func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Selection, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]resolvedChapter {
 	groups := make(map[string][]resolvedChapter)
-	for _, ch := range chapters {
+	for _, selection := range selections {
+		ch := selection.Chapter
 		cands, err := chapter.RankedLiveCandidates(ctx, d.client, ch.ID, maxRetries, now, disabled)
 		if err != nil {
 			slog.WarnContext(ctx, "download.RunOnce: could not rank candidates — skipping chapter this cycle",
@@ -72,7 +77,13 @@ func (d *Dispatcher) groupBySource(ctx context.Context, chapters []*ent.Chapter,
 		// strings (Suwayomi numeric id vs disk-reconcile name), and keying by the raw
 		// string would give it two groups → two slot channels → 2x the per-source cap.
 		key := canonicalSourceKey(cands[0].SeriesProvider)
-		groups[key] = append(groups[key], resolvedChapter{chapterID: ch.ID, seriesID: ch.SeriesID, cands: cands})
+		groups[key] = append(groups[key], resolvedChapter{
+			chapterID:      ch.ID,
+			seriesID:       ch.SeriesID,
+			selectedState:  ch.State,
+			workGeneration: selection.Generation,
+			cands:          cands,
+		})
 	}
 	for key, items := range groups {
 		groups[key] = roundRobinBySeries(items)
@@ -241,9 +252,10 @@ func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]
 // runCandidates is correctly gated behind slot acquisition. A per-chapter error is
 // logged and swallowed so it cannot strand the source queue.
 //
-// It returns claimed=true only when the chapter successfully transitioned
-// wanted/failed→downloading (forward progress); false if the chapter could not be
-// loaded or the claim write itself failed. runSourceQueue counts the claimed ones.
+// It returns claimed=true only when the exact selected generation successfully
+// transitioned wanted/failed→downloading (forward progress); false if the chapter
+// could not be loaded, the claim write failed, or a newer chapter/candidate/breaker
+// state invalidated the queued selection. runSourceQueue counts only claimed work.
 func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool) {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(it.chapterID)).
@@ -256,7 +268,7 @@ func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, m
 		)
 		return false
 	}
-	claimed, err = d.runCandidates(ctx, ch, it.chapterID, it.cands, maxRetries, now, limiter, globalSem)
+	claimed, err = d.runCandidates(ctx, ch, it.chapterID, it.selectedState, it.workGeneration, it.cands, maxRetries, now, limiter, globalSem)
 	if err != nil {
 		slog.WarnContext(ctx, "download.RunOnce: chapter download did not complete cleanly",
 			"chapter_id", it.chapterID,

@@ -71,6 +71,42 @@ func TestWantedChapters_failed_included(t *testing.T) {
 	}
 }
 
+func TestWantedSelections_GenerationChangesAcrossFailedABA(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := client.Series.Create().SetTitle("Work Generation").SetSlug("work-generation").SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("generation").
+		SetState(entchapter.StateFailed).
+		SaveX(ctx)
+
+	first, err := chapter.WantedSelections(ctx, client, 100)
+	if err != nil {
+		t.Fatalf("first WantedSelections: %v", err)
+	}
+	if len(first) != 1 || first[0].Chapter.ID != ch.ID || first[0].Generation == "" {
+		t.Fatalf("first selection = %+v, want chapter %s with a generation", first, ch.ID)
+	}
+	if err := chapter.SetState(ctx, client, ch.ID, entchapter.StateDownloading); err != nil {
+		t.Fatalf("failed→downloading: %v", err)
+	}
+	if err := chapter.SetState(ctx, client, ch.ID, entchapter.StateFailed); err != nil {
+		t.Fatalf("downloading→failed: %v", err)
+	}
+
+	second, err := chapter.WantedSelections(ctx, client, 100)
+	if err != nil {
+		t.Fatalf("second WantedSelections: %v", err)
+	}
+	if len(second) != 1 {
+		t.Fatalf("second selection count = %d, want 1", len(second))
+	}
+	if second[0].Generation == first[0].Generation {
+		t.Fatalf("failed ABA reused generation %q", first[0].Generation)
+	}
+}
+
 // TestWantedChapters_terminal_states_excluded verifies that downloaded,
 // downloading, and permanently_failed chapters are NOT returned by WantedChapters
 // — only wanted and failed are actionable.

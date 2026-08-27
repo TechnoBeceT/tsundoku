@@ -19,6 +19,97 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 )
 
+const (
+	workGenerationColumn            = "work_generation"
+	providerChapterGenerationColumn = "provider_chapter_generation"
+)
+
+// Selection binds an eligible Chapter snapshot to PostgreSQL's MVCC row version.
+// Generation is the row's xmin value rendered as text. Unlike a timestamp, xmin
+// changes on every successful UPDATE without depending on clock precision, so an
+// eligible state that leaves and later returns (failed → downloading → failed)
+// cannot reuse the earlier selection's generation.
+type Selection struct {
+	Chapter    *ent.Chapter
+	Generation string
+}
+
+type selectionRow struct {
+	ID                    uuid.UUID        `json:"id"`
+	SeriesID              uuid.UUID        `json:"series_id"`
+	ChapterKey            string           `json:"chapter_key"`
+	Number                *float64         `json:"number"`
+	State                 entchapter.State `json:"state"`
+	SatisfiedByProviderID *uuid.UUID       `json:"satisfied_by_provider_id"`
+	SatisfiedImportance   *int             `json:"satisfied_importance"`
+	PageCount             *int             `json:"page_count"`
+	Filename              string           `json:"filename"`
+	DownloadDate          *time.Time       `json:"download_date"`
+	FirstDownloadedAt     *time.Time       `json:"first_downloaded_at"`
+	Retries               int              `json:"retries"`
+	NextAttemptAt         *time.Time       `json:"next_attempt_at"`
+	LastError             string           `json:"last_error"`
+	ErrorCategory         string           `json:"error_category"`
+	Read                  bool             `json:"read"`
+	LastReadPage          int              `json:"last_read_page"`
+	ReadAt                *time.Time       `json:"read_at"`
+	Generation            string           `json:"work_generation"`
+}
+
+func (r selectionRow) chapter() *ent.Chapter {
+	return &ent.Chapter{
+		ID:                    r.ID,
+		SeriesID:              r.SeriesID,
+		ChapterKey:            r.ChapterKey,
+		Number:                r.Number,
+		State:                 r.State,
+		SatisfiedByProviderID: r.SatisfiedByProviderID,
+		SatisfiedImportance:   r.SatisfiedImportance,
+		PageCount:             r.PageCount,
+		Filename:              r.Filename,
+		DownloadDate:          r.DownloadDate,
+		FirstDownloadedAt:     r.FirstDownloadedAt,
+		Retries:               r.Retries,
+		NextAttemptAt:         r.NextAttemptAt,
+		LastError:             r.LastError,
+		ErrorCategory:         r.ErrorCategory,
+		Read:                  r.Read,
+		LastReadPage:          r.LastReadPage,
+		ReadAt:                r.ReadAt,
+	}
+}
+
+// WantedSelections returns up to limit eligible Chapter snapshots together with
+// their database row generation. The state filter and ordering are identical to
+// WantedChapters; the generation is selected in the same SQL statement, so it
+// cannot describe a newer row than the accompanying state/candidate work item.
+func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Selection, error) {
+	var rows []selectionRow
+	err := client.Chapter.Query().
+		Where(entchapter.StateIn(
+			entchapter.StateWanted,
+			entchapter.StateFailed,
+		)).
+		Order(
+			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
+			entchapter.ByID(),
+		).
+		Limit(limit).
+		Select(entchapter.Columns...).
+		Aggregate(func(selector *sql.Selector) string {
+			return fmt.Sprintf("%s::text AS %s", selector.C("xmin"), workGenerationColumn)
+		}).
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, fmt.Errorf("chapter.WantedSelections: query: %w", err)
+	}
+	selections := make([]Selection, len(rows))
+	for i, row := range rows {
+		selections[i] = Selection{Chapter: row.chapter(), Generation: row.Generation}
+	}
+	return selections, nil
+}
+
 // WantedChapters returns up to limit Chapter rows the download dispatcher should
 // consider this cycle: every chapter in state wanted OR failed.
 //
@@ -42,19 +133,13 @@ import (
 // the effectively-random id order (id is a UUIDv4). A chapter with no parsed
 // number sorts last but stays reachable.
 func WantedChapters(ctx context.Context, client *ent.Client, limit int) ([]*ent.Chapter, error) {
-	chapters, err := client.Chapter.Query().
-		Where(entchapter.StateIn(
-			entchapter.StateWanted,
-			entchapter.StateFailed,
-		)).
-		Order(
-			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
-			entchapter.ByID(),
-		).
-		Limit(limit).
-		All(ctx)
+	selections, err := WantedSelections(ctx, client, limit)
 	if err != nil {
-		return nil, fmt.Errorf("chapter.WantedChapters: query: %w", err)
+		return nil, err
+	}
+	chapters := make([]*ent.Chapter, len(selections))
+	for i, selection := range selections {
+		chapters[i] = selection.Chapter
 	}
 	return chapters, nil
 }
@@ -67,6 +152,10 @@ type Candidate struct {
 	// ProviderChapter is the per-(source, chapter) row carrying the source's URL,
 	// suwayomi id, and per-source retry state (attempts / last_error / next_attempt_at).
 	ProviderChapter *ent.ProviderChapter
+	// Generation is ProviderChapter's PostgreSQL MVCC row version from the same
+	// query that populated ProviderChapter. A dispatcher claim can therefore
+	// reject a queued fetch snapshot after refresh or retry bookkeeping updates it.
+	Generation string
 	// SeriesProvider is the owning source (provider + scanlator + importance).
 	SeriesProvider *ent.SeriesProvider
 }
@@ -100,12 +189,38 @@ func rawProviderChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.
 				entseriesprovider.SeriesIDEQ(ch.SeriesID),
 			),
 		).
+		Order(selectProviderChapterGeneration).
 		WithSeriesProvider().
 		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("chapter: query provider chapters for chapter %s (key=%q): %w", ch.ID, ch.ChapterKey, err)
 	}
 	return pcs, nil
+}
+
+// selectProviderChapterGeneration appends xmin to the ordinary entity query as
+// a dynamic selected value. Ent's order hook is also its supported selector
+// modifier for entity-returning queries; this hook adds no ORDER BY term.
+func selectProviderChapterGeneration(selector *sql.Selector) {
+	selector.AppendSelectAs(fmt.Sprintf("%s::text", selector.C("xmin")), providerChapterGenerationColumn)
+}
+
+func providerChapterGeneration(pc *ent.ProviderChapter) string {
+	value, err := pc.Value(providerChapterGenerationColumn)
+	if err != nil {
+		return ""
+	}
+	switch value := value.(type) {
+	case string:
+		return value
+	case []byte:
+		return string(value)
+	case *sql.NullString:
+		if value.Valid {
+			return value.String
+		}
+	}
+	return ""
 }
 
 // IsIgnorableFractional reports whether ch is a FRACTIONAL chapter that has at
@@ -310,7 +425,11 @@ func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.T
 			continue
 		}
 		if isLiveCandidate(pc, maxRetries, now) {
-			out = append(out, Candidate{ProviderChapter: pc, SeriesProvider: sp})
+			out = append(out, Candidate{
+				ProviderChapter: pc,
+				Generation:      providerChapterGeneration(pc),
+				SeriesProvider:  sp,
+			})
 		}
 	}
 

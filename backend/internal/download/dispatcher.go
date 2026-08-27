@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 	"golang.org/x/sync/semaphore"
 
@@ -34,6 +35,7 @@ import (
 	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
@@ -464,6 +466,80 @@ func (d *Dispatcher) admitChapterFetch(
 	return true, nil
 }
 
+// currentDownloadCandidate guards a download claim with the retry/cooldown and
+// breaker state that exists in the SAME PostgreSQL statement as the chapter
+// transition. The exact selected attempts/next_attempt_at snapshot must still
+// match and remain live, the ProviderChapter must still carry this chapter in the
+// same series, and a wired breaker must not have a future cooldown. This removes
+// the application-level revalidation→claim gap without holding the transaction
+// across politeness or the engine call.
+func (d *Dispatcher) currentDownloadCandidate(cand chapter.Candidate, maxRetries int, now time.Time) entpredicate.Chapter {
+	return entpredicate.Chapter(func(selector *sql.Selector) {
+		pc := sql.Table(entproviderchapter.Table)
+		sp := sql.Table(entseriesprovider.Table)
+		candidateQuery := sql.Select().
+			From(pc).
+			Join(sp).On(pc.C(entproviderchapter.FieldSeriesProviderID), sp.C(entseriesprovider.FieldID))
+		candidateConditions := []*sql.Predicate{
+			sql.EQ(pc.C(entproviderchapter.FieldID), cand.ProviderChapter.ID),
+			sql.P(func(builder *sql.Builder) {
+				builder.WriteString(pc.C("xmin")).WriteString("::text = ").Arg(cand.Generation)
+			}),
+			sql.EQ(pc.C(entproviderchapter.FieldAttempts), cand.ProviderChapter.Attempts),
+			sql.LT(pc.C(entproviderchapter.FieldAttempts), maxRetries),
+			sql.EQ(sp.C(entseriesprovider.FieldID), cand.SeriesProvider.ID),
+			sql.ColumnsEQ(sp.C(entseriesprovider.FieldSeriesID), selector.C(entchapter.FieldSeriesID)),
+			sql.ColumnsEQ(pc.C(entproviderchapter.FieldChapterKey), selector.C(entchapter.FieldChapterKey)),
+		}
+		if cand.ProviderChapter.NextAttemptAt == nil {
+			candidateConditions = append(candidateConditions, sql.IsNull(pc.C(entproviderchapter.FieldNextAttemptAt)))
+		} else {
+			candidateConditions = append(candidateConditions, sql.EQ(pc.C(entproviderchapter.FieldNextAttemptAt), *cand.ProviderChapter.NextAttemptAt))
+		}
+		candidateConditions = append(candidateConditions, sql.Or(
+			sql.IsNull(pc.C(entproviderchapter.FieldNextAttemptAt)),
+			sql.LTE(pc.C(entproviderchapter.FieldNextAttemptAt), now),
+		))
+		selector.Where(sql.Exists(
+			candidateQuery.Where(sql.And(candidateConditions...)),
+		))
+
+		if d.gate == nil {
+			return
+		}
+		breaker := sql.Table(entsourcecircuitstate.Table)
+		selector.Where(sql.NotExists(
+			sql.Select().
+				From(breaker).
+				Where(sql.And(
+					sql.EQ(breaker.C(entsourcecircuitstate.FieldSourceKey), canonicalSourceKey(cand.SeriesProvider)),
+					sql.NotNull(breaker.C(entsourcecircuitstate.FieldCooldownUntil)),
+					sql.GT(breaker.C(entsourcecircuitstate.FieldCooldownUntil), now),
+				)),
+		))
+	})
+}
+
+// claimDownloadSelection composes the chapter generation (when the scheduler
+// supplied one) with the candidate/breaker guard and performs the one atomic
+// eligible→downloading transition. Process has no queued generation and passes
+// an empty token; its candidate guard remains identical.
+func (d *Dispatcher) claimDownloadSelection(
+	ctx context.Context,
+	chapterID uuid.UUID,
+	selectedState entchapter.State,
+	workGeneration string,
+	cand chapter.Candidate,
+	maxRetries int,
+	now time.Time,
+) (bool, error) {
+	guards := []entpredicate.Chapter{d.currentDownloadCandidate(cand, maxRetries, now)}
+	if workGeneration != "" {
+		guards = append(guards, chapter.GenerationEQ(workGeneration))
+	}
+	return d.admitChapterFetch(ctx, chapterID, selectedState, entchapter.StateDownloading, guards...)
+}
+
 // gateRecordSuccess reports a successful fetch from sourceKey to the breaker
 // (resets its consecutive-failure counter and clears any cooldown). A nil
 // gate is a no-op.
@@ -647,7 +723,7 @@ func BatchPerSource(concurrency int) int {
 // dispatched == selected and behaviour is unchanged.
 //
 // Being bounded (rather than draining every source's whole queue) is what lets
-// job.Runner.RunDownloadCycle's drain loop re-scan WantedChapters between
+// job.Runner.RunDownloadCycle's drain loop re-scans wanted selections between
 // passes, so a chapter that becomes wanted mid-cycle (e.g. a fresh adopt) is
 // picked up within one pass instead of waiting out the entire prior backlog.
 //
@@ -710,11 +786,11 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	maxRetries := d.retry.MaxRetries(ctx)
 	concurrency := d.downloadConcurrency(ctx)
 
-	chapters, err := chapter.WantedChapters(ctx, d.client, wantedScanLimit)
+	selections, err := chapter.WantedSelections(ctx, d.client, wantedScanLimit)
 	if err != nil {
 		return 0, fmt.Errorf("download.Dispatcher.RunOnceAt: load chapters: %w", err)
 	}
-	if len(chapters) == 0 {
+	if len(selections) == 0 {
 		return 0, nil
 	}
 
@@ -731,7 +807,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// within each source. No-candidate chapters are handled here and never
 	// occupy a start slot. The limiter is shared across the whole cycle so a
 	// provider's fetch cap holds even for fall-through candidates.
-	groups := d.groupBySource(ctx, chapters, maxRetries, now, disabled)
+	groups := d.groupBySource(ctx, selections, maxRetries, now, disabled)
 	limiter := newProviderLimiter(concurrency)
 	budget := BatchPerSource(concurrency)
 
@@ -825,7 +901,7 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 
 	// Process is the single-chapter entry point; the forward-progress claim flag is
 	// only meaningful for RunOnce's drain-loop accounting, so it is discarded here.
-	_, err = d.runCandidates(ctx, ch, chapterID, cands, maxRetries, now, limiter, nil)
+	_, err = d.runCandidates(ctx, ch, chapterID, ch.State, "", cands, maxRetries, now, limiter, nil)
 	return err
 }
 
@@ -835,26 +911,30 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // wins. If every candidate fails this cycle, finalizeAfterAllFailed decides failed
 // vs permanently_failed from the freshly-bumped per-source state.
 //
-// It returns claimed=true when the atomic wanted/failed→downloading transition
-// affects the row (before the fetch loop), and claimed=false when the transition
-// errors or another cycle won the conditional UPDATE. This is the FORWARD-PROGRESS
-// signal the drain loop relies on: a successful claim moves the chapter out of the
-// wanted/failed set (so it is not re-selected next pass), whereas an error or lost
-// claim made no progress here and — critically — must not be counted as dispatched,
-// or a write-failing DB (reads succeed, the claim write fails) would keep
-// re-selecting it forever and hot-spin drainDownloads.
+// It returns claimed=true when the atomic selected-state/generation→downloading
+// transition affects the row (before the fetch loop), and claimed=false when the
+// transition errors, another cycle changed the generation, or the selected
+// candidate's retry/cooldown/breaker state is no longer eligible at the claim
+// statement. This is the FORWARD-PROGRESS signal the drain loop relies on: a
+// successful claim moves the chapter out of the wanted/failed set, whereas an
+// error or stale selection made no progress here and must not be counted. In
+// particular, a failed→downloading→failed ABA cycle cannot authorize a second
+// engine call from the older candidate slice.
 //
 // The caller MUST already hold the source's start slot (RunOnce's per-source
 // scheduler acquires it; Process is single-chapter so contention cannot arise):
 // this is what keeps the wanted→downloading transition gated behind slot
 // acquisition, so a queued chapter stays wanted until it truly starts. ch must be
-// loaded WithSeries(WithCategory()) for the render step.
-func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
-	onAdmitted := func() (bool, error) {
+// loaded WithSeries(WithCategory()) for the render step. workGeneration is the
+// scheduler's MVCC selection token; Process passes an empty token because it does
+// not retain a queued selection, while still using the exact state and atomic
+// candidate eligibility guard.
+func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, selectedState entchapter.State, workGeneration string, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
+	onAdmitted := func(cand chapter.Candidate) (bool, error) {
 		if claimed {
 			return true, nil
 		}
-		won, setErr := d.admitChapterFetch(ctx, chapterID, ch.State, entchapter.StateDownloading)
+		won, setErr := d.claimDownloadSelection(ctx, chapterID, selectedState, workGeneration, cand, maxRetries, now)
 		if setErr != nil {
 			return false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
 		}
@@ -923,7 +1003,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
 //     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
-func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() (bool, error)) (done, fetched bool, cause error) {
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func(chapter.Candidate) (bool, error)) (done, fetched bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
 	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
@@ -934,7 +1014,9 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	// two cases indistinguishable afterwards (GAP-119; see fetchAttempt).
 	attempt := fetchAttempt{usedCachedLinks: len(cand.ProviderChapter.PageLinks) > 0}
 	fetchStart := time.Now()
-	result, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, onAdmitted)
+	result, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, func() (bool, error) {
+		return onAdmitted(cand)
+	})
 	fetchDuration := time.Since(fetchStart)
 	if !result.fetched {
 		return false, false, fetchErr
