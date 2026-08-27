@@ -62,3 +62,33 @@ func InstanceSupervisionState(l *Launcher, key string) (degraded bool, failures 
 	}
 	return mi.degraded, mi.restartFailures, true
 }
+
+// ExhaustionEvidenceState is the bounded managed-profile proof state exposed to
+// black-box tests.
+type ExhaustionEvidenceState struct {
+	Fingerprint        string
+	CompletionSequence int64
+	Consecutive        int
+	FirstSampleAt      time.Time
+	NextSampleAt       time.Time
+	NextEligibleAt     time.Time
+}
+
+// InstanceExhaustionEvidence reports one managed instance's bounded exhaustion
+// proof so cancellation and health-mode transitions can be asserted directly.
+func InstanceExhaustionEvidence(l *Launcher, key string) (ExhaustionEvidenceState, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	mi, present := l.instances[key]
+	if !present {
+		return ExhaustionEvidenceState{}, false
+	}
+	return ExhaustionEvidenceState{
+		Fingerprint:        mi.exhaustionFingerprint,
+		CompletionSequence: mi.exhaustionCompletionSequence,
+		Consecutive:        mi.exhaustionConsecutive,
+		FirstSampleAt:      mi.exhaustionFirstSampleAt,
+		NextSampleAt:       mi.exhaustionNextSampleAt,
+		NextEligibleAt:     mi.exhaustionNextEligibleAt,
+	}, true
+}

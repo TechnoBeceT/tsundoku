@@ -180,11 +180,17 @@ func (s *Supervisor) runPass(ctx context.Context, now time.Time) {
 // contributes one bounded /status exhaustion sample. Probing happens OUTSIDE the
 // launcher mutex; identity checks, evidence updates, and restarts run under it.
 func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
-	for _, t := range s.launcher.supervisedSnapshot() {
+	targets := s.launcher.supervisedSnapshot()
+	for _, t := range targets {
 		if ctx.Err() != nil {
+			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
 		healthy := alive(t.proc) && s.launcher.prober(t.baseURL) == nil
+		if ctx.Err() != nil {
+			s.launcher.invalidateExhaustionEvidence(targets)
+			return
+		}
 		if !healthy {
 			s.launcher.superviseInstance(ctx, s, t, false, now)
 			continue
@@ -192,24 +198,40 @@ func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
 
 		status, statusErr := s.launcher.statusProber(ctx, t.baseURL)
 		if ctx.Err() != nil {
+			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
-		diagnostic := s.launcher.observeHealthyStatus(t, status, statusErr, now)
+		diagnostic := s.launcher.observeHealthyStatus(ctx, t, status, statusErr, now)
 		if diagnostic == nil {
 			continue
 		}
 		s.launcher.exhaustionDiagnostics(ctx, *diagnostic)
 		if ctx.Err() != nil {
+			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
 		s.launcher.restartExhausted(ctx, t, *diagnostic, now)
 	}
 }
 
+// invalidateExhaustionEvidence clears bounded proof for snapshot targets whose
+// instance and process identities are still current. Cancellation invalidates
+// the whole interrupted pass; stale/replaced targets are left untouched.
+func (l *Launcher) invalidateExhaustionEvidence(targets []superviseTarget) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, target := range targets {
+		mi, ok := l.instances[target.key]
+		if ok && mi == target.mi && mi.proc == target.proc {
+			resetExhaustionEvidence(mi)
+		}
+	}
+}
+
 // observeHealthyStatus applies one status result under the launcher mutex after
 // rechecking the snapshot identity. It returns a bounded diagnostic only after
 // six unchanged qualifying samples and once the recovery cooldown is eligible.
-func (l *Launcher) observeHealthyStatus(t superviseTarget, status EngineStatus, statusErr error, now time.Time) *ExhaustionDiagnostic {
+func (l *Launcher) observeHealthyStatus(ctx context.Context, t superviseTarget, status EngineStatus, statusErr error, now time.Time) *ExhaustionDiagnostic {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed {
@@ -217,6 +239,10 @@ func (l *Launcher) observeHealthyStatus(t superviseTarget, status EngineStatus, 
 	}
 	mi, ok := l.instances[t.key]
 	if !ok || mi != t.mi || mi.proc != t.proc {
+		return nil
+	}
+	if ctx.Err() != nil {
+		resetExhaustionEvidence(mi)
 		return nil
 	}
 
@@ -268,12 +294,18 @@ func (l *Launcher) observeHealthyStatus(t superviseTarget, status EngineStatus, 
 func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diagnostic ExhaustionDiagnostic, now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.closed || ctx.Err() != nil {
+	if l.closed {
 		return
 	}
 	mi, ok := l.instances[t.key]
-	if !ok || mi != t.mi || mi.proc != t.proc ||
-		mi.exhaustionFingerprint != diagnostic.Fingerprint ||
+	if !ok || mi != t.mi || mi.proc != t.proc {
+		return
+	}
+	if ctx.Err() != nil {
+		resetExhaustionEvidence(mi)
+		return
+	}
+	if mi.exhaustionFingerprint != diagnostic.Fingerprint ||
 		mi.exhaustionCompletionSequence != diagnostic.Status.CompletionSequence ||
 		mi.exhaustionConsecutive < managedExhaustionSamples ||
 		now.Before(mi.exhaustionNextEligibleAt) {
@@ -377,8 +409,12 @@ func (l *Launcher) superviseInstance(ctx context.Context, s *Supervisor, t super
 		return
 	}
 	mi, ok := l.instances[t.key]
-	if !ok || mi != t.mi {
+	if !ok || mi != t.mi || mi.proc != t.proc {
 		return // retired or replaced since the snapshot — next pass handles the current one
+	}
+	if ctx.Err() != nil {
+		resetExhaustionEvidence(mi)
+		return
 	}
 
 	if healthy {
@@ -391,6 +427,7 @@ func (l *Launcher) superviseInstance(ctx context.Context, s *Supervisor, t super
 	}
 
 	// Down: keep its sources on the default engine while we try to bring it back.
+	resetExhaustionEvidence(mi)
 	if !mi.degraded {
 		slog.WarnContext(ctx, "enginehost: supervised instance is down, degrading its sources to the default engine",
 			"profile", mi.key, "port", mi.port, "sources", mi.profile.SourceIDs)

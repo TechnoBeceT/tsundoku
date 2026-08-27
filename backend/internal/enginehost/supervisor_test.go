@@ -345,6 +345,149 @@ func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	}
 }
 
+func TestSupervise_HealthDownDuringCooldownInvalidatesExhaustionProof(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	var healthDown atomic.Bool
+	prober := func(string) error {
+		if healthDown.Load() {
+			return errors.New("health down")
+		}
+		return nil
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return exhaustedStatus(41, 0, exhaustedSources...), nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 6; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
+	}
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts after first exhaustion recovery = %d, want 2", got)
+	}
+	for i := 6; i < 11; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
+	}
+	healthDown.Store(true)
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(11*30*time.Second))
+	healthDown.Store(false)
+
+	evidence, ok := enginehost.InstanceExhaustionEvidence(l, "k1")
+	if !ok {
+		t.Fatal("instance k1 not managed")
+	}
+	if evidence.Consecutive != 0 || evidence.Fingerprint != "" || !evidence.FirstSampleAt.IsZero() || !evidence.NextSampleAt.IsZero() {
+		t.Errorf("evidence after health-down = %+v, want reset proof", evidence)
+	}
+	wantEligible := now.Add(5*30*time.Second + 10*time.Minute)
+	if !evidence.NextEligibleAt.Equal(wantEligible) {
+		t.Errorf("cooldown eligibility = %s, want preserved %s", evidence.NextEligibleAt, wantEligible)
+	}
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts during cooldown health-down = %d, want 2", got)
+	}
+
+	enginehost.SuperviseOnce(sup, context.Background(), wantEligible)
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts from stale proof at cooldown boundary = %d, want 2", got)
+	}
+	if evidence, _ := enginehost.InstanceExhaustionEvidence(l, "k1"); evidence.Consecutive != 1 {
+		t.Errorf("evidence after first post-down sample = %+v, want a fresh one-sample proof", evidence)
+	}
+}
+
+func TestSupervise_CancellationAfterStatusInvalidatesPartialProof(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	var cancelOnProbe atomic.Bool
+	var cancel context.CancelFunc
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			if cancelOnProbe.Swap(false) {
+				cancel()
+			}
+			return exhaustedStatus(41, 0, exhaustedSources...), nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 5; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
+	}
+	ctx, cancelPass := context.WithCancel(context.Background())
+	cancel = cancelPass
+	cancelOnProbe.Store(true)
+	enginehost.SuperviseOnce(sup, ctx, now.Add(5*30*time.Second))
+
+	evidence, ok := enginehost.InstanceExhaustionEvidence(l, "k1")
+	if !ok || evidence.Consecutive != 0 || evidence.Fingerprint != "" || !evidence.FirstSampleAt.IsZero() {
+		t.Fatalf("evidence after status cancellation = %+v ok=%v, want reset proof", evidence, ok)
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts after status cancellation = %d, want 1", got)
+	}
+
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(6*30*time.Second))
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts from stale proof after cancellation = %d, want 1", got)
+	}
+	if evidence, _ := enginehost.InstanceExhaustionEvidence(l, "k1"); evidence.Consecutive != 1 {
+		t.Errorf("evidence after fresh context = %+v, want a fresh one-sample proof", evidence)
+	}
+}
+
+func TestSupervise_CancellationDuringHealthPreventsProcessMutation(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	rr := newFakeRerouter()
+	var cancelOnHealth atomic.Bool
+	var cancel context.CancelFunc
+	prober := func(string) error {
+		if cancelOnHealth.Swap(false) {
+			cancel()
+			return errors.New("cancelled health probe")
+		}
+		return nil
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
+		enginehost.WithRerouter(rr),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return exhaustedStatus(41, 0, exhaustedSources...), nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
+	if _, err := l.EnsureProfile(context.Background(), profileWithSources("k1", 10)); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 5; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
+	}
+
+	ctx, cancelPass := context.WithCancel(context.Background())
+	cancel = cancelPass
+	cancelOnHealth.Store(true)
+	enginehost.SuperviseOnce(sup, ctx, now.Add(5*30*time.Second))
+
+	if got := starter.attemptCount(); got != 1 {
+		t.Fatalf("start attempts after health cancellation = %d, want 1", got)
+	}
+	if starter.proc(0).wasSignalled() {
+		t.Error("process was signalled after health cancellation")
+	}
+	if rr.isDegraded(10) {
+		t.Error("source was degraded after health cancellation")
+	}
+	if evidence, ok := enginehost.InstanceExhaustionEvidence(l, "k1"); !ok || evidence.Consecutive != 0 || evidence.Fingerprint != "" {
+		t.Errorf("evidence after health cancellation = %+v ok=%v, want reset proof", evidence, ok)
+	}
+}
+
 // TestSupervise_RestartsDeadInstanceAndRestores proves the core supervision loop:
 // a managed instance that has died is degraded to the default engine, restarted
 // on its existing port via the launcher's spawn path, and — once the restart is
