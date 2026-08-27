@@ -69,7 +69,7 @@ class RpcThreadNamingTest {
         val executors = RpcExecutors()
         try {
             assertEquals("engine-http-1", threadNameFrom(executors.frontDoorExecutor))
-            assertEquals("engine-source-1", threadNameFrom(executors.sourceExecutor))
+            assertEquals("engine-source-1", sourceThreadNameFrom(executors.sourceScheduler))
             assertEquals("engine-extension-1", threadNameFrom(executors.extensionExecutor))
         } finally {
             executors.close()
@@ -93,6 +93,10 @@ class RpcThreadNamingTest {
 
     private fun threadNameFrom(executor: ExecutorService): String =
         executor.submit<String> { Thread.currentThread().name }.get(5, TimeUnit.SECONDS)
+
+    private fun sourceThreadNameFrom(scheduler: SourceScheduler): String =
+        (scheduler.submit(1L) { Thread.currentThread().name } as Submission.Accepted)
+            .future.get(5, TimeUnit.SECONDS)
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }

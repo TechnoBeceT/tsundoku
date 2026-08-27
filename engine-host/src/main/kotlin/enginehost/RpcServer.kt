@@ -24,6 +24,7 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Exposes loaded sources, extension management, per-source preferences, and configuration over
@@ -69,38 +70,40 @@ class RpcServer(
 
         // Source calls are submitted and the callback returns without executing extension code.
         registerContext("/search") { exchange, response ->
-            submitSource(exchange, response) { request: SearchRequest -> SourceCalls.search(request.source(), request.query, request.page) }
-            true
+            submitSource(exchange, response, SearchRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.search(request.source(), request.query, request.page))
+            }
         }
         registerContext("/popular") { exchange, response ->
-            submitSource(exchange, response) { request: BrowseRequest -> SourceCalls.popular(request.source(), request.page) }
-            true
+            submitSource(exchange, response, BrowseRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.popular(request.source(), request.page))
+            }
         }
         registerContext("/latest") { exchange, response ->
-            submitSource(exchange, response) { request: BrowseRequest -> SourceCalls.latest(request.source(), request.page) }
-            true
+            submitSource(exchange, response, BrowseRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.latest(request.source(), request.page))
+            }
         }
         registerContext("/manga") { exchange, response ->
-            submitSource(exchange, response) { request: MangaRequest -> SourceCalls.mangaDetails(request.source(), request.url) }
-            true
+            submitSource(exchange, response, MangaRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.mangaDetails(request.source(), request.url))
+            }
         }
         registerContext("/chapters") { exchange, response ->
-            submitSource(exchange, response) { request: ChaptersRequest ->
-                SourceCalls.chapters(request.source(), request.url, request.mangaTitle)
+            submitSource(exchange, response, ChaptersRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.chapters(request.source(), request.url, request.mangaTitle))
             }
-            true
         }
         registerContext("/pages") { exchange, response ->
-            submitSource(exchange, response) { request: PagesRequest ->
-                SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl)
+            submitSource(exchange, response, PagesRequest::sourceId) { request ->
+                response.respondJson(200, SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl))
             }
-            true
         }
         registerContext("/image") { exchange, response ->
-            submit(rpcExecutors.sourceExecutor, response, "image request") {
-                handleImage(exchange, response)
+            submitSource(exchange, response, ImageRequest::sourceId, "image request") { request ->
+                val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl)
+                response.respondBytes(200, bytes, contentType)
             }
-            true
         }
 
         // Registry, preferences, and extension mutations share the single-writer domain.
@@ -408,43 +411,38 @@ class RpcServer(
         }
     }
 
-    // ================= /image (raw bytes) =================
-
-    private fun handleImage(
-        exchange: HttpExchange,
-        response: ResponseGuard,
-    ) {
-        try {
-            if (exchange.requestMethod != "POST") return response.respondJson(405, ErrorResponse("POST only"))
-            val request: ImageRequest = mapper.readValue(exchange.requestBody.readBytes())
-            val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl)
-            response.respondBytes(200, bytes, contentType)
-        } catch (e: BadRequest) {
-            response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
-        } catch (e: JacksonException) {
-            response.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
-        } catch (e: Throwable) {
-            logger.warn(e) { "image request failed" }
-            response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
-        }
-    }
-
     // ================= submitted source handler =================
 
     private inline fun <reified T : Any> submitSource(
         exchange: HttpExchange,
         response: ResponseGuard,
-        crossinline call: (T) -> Any,
-    ) {
-        submit(rpcExecutors.sourceExecutor, response, "source request") {
+        crossinline sourceId: (T) -> Long,
+        operation: String = "source request",
+        crossinline call: (T) -> Unit,
+    ): Boolean {
+        if (exchange.requestMethod != "POST") {
+            response.respondJson(405, ErrorResponse("POST only"))
+            return false
+        }
+        val request: T =
             try {
-                if (exchange.requestMethod != "POST") return@submit response.respondJson(405, ErrorResponse("POST only"))
-                val request: T = mapper.readValue(exchange.requestBody.readBytes())
-                response.respondJson(200, call(request))
+                mapper.readValue(exchange.requestBody.readBytes())
             } catch (e: BadRequest) {
                 response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
+                return false
             } catch (e: JacksonException) {
                 response.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
+                return false
+            } catch (e: IllegalArgumentException) {
+                response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
+                return false
+            }
+
+        submitSourceWork(sourceId(request), response, operation) {
+            try {
+                call(request)
+            } catch (e: BadRequest) {
+                response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
             } catch (e: IllegalArgumentException) {
                 response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
             } catch (e: Throwable) {
@@ -453,6 +451,30 @@ class RpcServer(
                 logger.warn(e) { "request failed" }
                 response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
             }
+        }
+        return true
+    }
+
+    private fun submitSourceWork(
+        sourceId: Long,
+        response: ResponseGuard,
+        operation: String,
+        work: () -> Unit,
+    ) {
+        val task = SubmittedExchange(response, operation, work)
+        val submission =
+            synchronized(lifecycleLock) {
+                if (stopping) {
+                    null
+                } else {
+                    submissions.add(task)
+                    rpcExecutors.sourceScheduler.submit(sourceId, task::run)
+                }
+            }
+        when (submission) {
+            null -> task.reject(RpcRejection.SHUTDOWN)
+            Submission.Rejected -> task.reject(RpcRejection.CAPACITY)
+            is Submission.Accepted -> task.bind(submission.future)
         }
     }
 
@@ -488,6 +510,7 @@ class RpcServer(
         private val work: () -> Unit,
     ) : ShutdownAwareTask {
         private val state = AtomicInteger(SUBMISSION_QUEUED)
+        private val cancellation = AtomicReference<(() -> Unit)?>(null)
 
         override fun run() {
             if (!state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_RUNNING)) return
@@ -514,8 +537,15 @@ class RpcServer(
             response.awaitCompletion()
         }
 
+        fun bind(future: java.util.concurrent.CompletableFuture<Unit>) {
+            cancellation.set { future.cancel(false) }
+            future.whenComplete { _, _ -> if (future.isCancelled) shutdown() }
+            if (state.get() == SUBMISSION_STOPPED) future.cancel(false)
+        }
+
         override fun shutdown() {
             state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_STOPPED)
+            cancellation.get()?.invoke()
             response.respondShutdown()
             activeResponses.remove(response)
             if (state.get() == SUBMISSION_STOPPED) submissions.remove(this)

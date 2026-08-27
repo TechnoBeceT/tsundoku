@@ -20,13 +20,13 @@ internal interface ShutdownAwareTask : Runnable {
 }
 
 /**
- * Owns the independent, bounded execution domains used by the RPC server. Source work is
- * temporarily backed by a fixed pool, while extension work stays single-writer and the HTTP front
- * door remains free to dispatch control requests.
+ * Owns the independent, bounded execution domains used by the RPC server. Source work passes
+ * through a keyed scheduler, while extension work stays single-writer and the HTTP front door
+ * remains free to dispatch control requests.
  */
 class RpcExecutors(
     frontDoorThreads: Int = FRONT_DOOR_THREADS,
-    sourceExecutor: ExecutorService? = null,
+    sourceScheduler: SourceScheduler? = null,
     extensionExecutor: ExecutorService? = null,
     frontDoorQueueCapacity: Int = FRONT_DOOR_QUEUE_CAPACITY,
     sourceQueueCapacity: Int = SOURCE_QUEUE_CAPACITY,
@@ -42,8 +42,8 @@ class RpcExecutors(
         require(extensionQueueCapacity > 0) { "extensionQueueCapacity must be positive" }
     }
 
-    val sourceExecutor: ExecutorService =
-        sourceExecutor ?: boundedFixedPool(SOURCE_THREADS, sourceQueueCapacity, SOURCE_THREAD_PREFIX)
+    val sourceScheduler: SourceScheduler =
+        sourceScheduler ?: SourceScheduler(SourceSchedulerLimits(queueCapacity = sourceQueueCapacity))
     val extensionExecutor: ExecutorService =
         extensionExecutor ?: boundedFixedPool(EXTENSION_THREADS, extensionQueueCapacity, EXTENSION_THREAD_PREFIX)
 
@@ -67,13 +67,13 @@ class RpcExecutors(
 
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TERMINATION_SECONDS)
         val frontDoorQueued = frontDoorExecutor.shutdownNow()
-        val sourceQueued = sourceExecutor.shutdownNow()
         val extensionQueued = extensionExecutor.shutdownNow()
 
         frontDoorQueued.forEach { task -> runFrontDoorRejection(RpcRejection.SHUTDOWN, task) }
-        (sourceQueued + extensionQueued).forEach { task -> (task as? ShutdownAwareTask)?.shutdown() }
+        sourceScheduler.close()
+        extensionQueued.forEach { task -> (task as? ShutdownAwareTask)?.shutdown() }
 
-        listOf(frontDoorExecutor, sourceExecutor, extensionExecutor)
+        listOf(frontDoorExecutor, extensionExecutor)
             .distinct()
             .forEach { executor -> awaitTermination(executor, deadline) }
     }
@@ -107,14 +107,12 @@ class RpcExecutors(
     companion object {
         private const val FRONT_DOOR_THREADS = 4
         private const val FRONT_DOOR_QUEUE_CAPACITY = 32
-        private const val SOURCE_THREADS = 8
         private const val SOURCE_QUEUE_CAPACITY = 128
         private const val EXTENSION_THREADS = 1
         private const val EXTENSION_QUEUE_CAPACITY = 32
         private const val TERMINATION_SECONDS = 5L
 
         internal const val HTTP_THREAD_PREFIX = "engine-http-"
-        internal const val SOURCE_THREAD_PREFIX = "engine-source-"
         internal const val EXTENSION_THREAD_PREFIX = "engine-extension-"
 
         private fun boundedFixedPool(

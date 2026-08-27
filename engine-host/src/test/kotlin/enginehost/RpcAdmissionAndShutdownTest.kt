@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 private const val BUSY_BODY = """{"error":"server busy"}"""
@@ -71,13 +72,13 @@ class RpcAdmissionAndShutdownTest {
         val executors = RpcExecutors()
         try {
             assertEquals(32, remainingCapacity(executors.frontDoorExecutor))
-            assertEquals(128, remainingCapacity(executors.sourceExecutor))
+            assertEquals(128, executors.sourceScheduler.limits.queueCapacity)
             assertEquals(32, remainingCapacity(executors.extensionExecutor))
         } finally {
             executors.close()
         }
         assertTrue(executors.frontDoorExecutor.isTerminated)
-        assertTrue(executors.sourceExecutor.isTerminated)
+        assertTrue(executors.sourceScheduler.isTerminated)
         assertTrue(executors.extensionExecutor.isTerminated)
     }
 
@@ -109,21 +110,21 @@ class RpcAdmissionAndShutdownTest {
     @Test
     fun `source capacity rejection completes once without invoking rejected work`() {
         val executors = testExecutors(sourceQueueCapacity = 1)
-        val entered = CountDownLatch(8)
+        val entered = CountDownLatch(2)
         val release = CountDownLatch(1)
         val source = RecordingDetailsSource(entered, release)
         val rpc = startServer(executors, source)
         val running = mutableListOf<CompletableFuture<HttpResponse<String>>>()
         try {
-            repeat(8) { index -> running += postAsync(rpc.baseUrl, "/running-$index") }
-            assertTrue(entered.await(10, TimeUnit.SECONDS), "all source threads must be occupied")
+            repeat(2) { index -> running += postAsync(rpc.baseUrl, "/running-$index") }
+            assertTrue(entered.await(10, TimeUnit.SECONDS), "the source physical allowance must be occupied")
 
             val queued = postAsync(rpc.baseUrl, "/queued")
-            awaitQueueSize(executors.sourceExecutor, 1)
+            awaitQueueSize(executors.sourceScheduler, 1)
             val rejected = post(rpc.baseUrl, "/rejected", timeoutMillis = 1_000)
 
             assertBusy(rejected)
-            assertEquals(1, queueSize(executors.sourceExecutor), "source queue must stay at its configured bound")
+            assertEquals(1, queueSize(executors.sourceScheduler), "source queue must stay at its configured bound")
             release.countDown()
             assertEquals(200, queued.get(5, TimeUnit.SECONDS).statusCode())
             running.forEach { assertEquals(200, it.get(5, TimeUnit.SECONDS).statusCode()) }
@@ -168,9 +169,9 @@ class RpcAdmissionAndShutdownTest {
         val source = RecordingDetailsSource()
         val rpc = startServer(executors, source)
         try {
-            repeat(8) { occupy(executors.sourceExecutor, sourceBlockersRelease) }
+            repeat(2) { occupy(executors.sourceScheduler, 1L, sourceBlockersRelease) }
             val queued = postAsync(rpc.baseUrl, "/queued-at-stop")
-            awaitQueueSize(executors.sourceExecutor, 1)
+            awaitQueueSize(executors.sourceScheduler, 1)
 
             rpc.server.stop()
             rpc.server.stop()
@@ -178,7 +179,7 @@ class RpcAdmissionAndShutdownTest {
             val response = queued.get(5, TimeUnit.SECONDS)
             assertShutdown(response)
             assertTrue(source.invokedUrls.isEmpty(), "a queued exchange completed by stop must never invoke source work")
-            assertFalse(executors.sourceExecutor.isShutdown, "RpcServer must not close injected executors")
+            assertSchedulerOpen(executors.sourceScheduler)
         } finally {
             sourceBlockersRelease.countDown()
             executors.close()
@@ -201,7 +202,7 @@ class RpcAdmissionAndShutdownTest {
 
             assertShutdown(queued.get(5, TimeUnit.SECONDS))
             assertFalse(executors.frontDoorExecutor.isShutdown, "RpcServer must not close the injected front-door executor")
-            assertFalse(executors.sourceExecutor.isShutdown, "RpcServer must not close injected domain executors")
+            assertSchedulerOpen(executors.sourceScheduler)
 
             frontDoorRelease.countDown()
             awaitQueueSize(executors.frontDoorExecutor, 0)
@@ -242,15 +243,15 @@ class RpcAdmissionAndShutdownTest {
         val source = RecordingDetailsSource()
         val rpc = startServer(executors, source)
         try {
-            repeat(8) { occupy(executors.sourceExecutor, release) }
+            repeat(2) { occupy(executors.sourceScheduler, 1L, release) }
             val queued = postAsync(rpc.baseUrl, "/queued-at-executor-close")
-            awaitQueueSize(executors.sourceExecutor, 1)
+            awaitQueueSize(executors.sourceScheduler, 1)
 
             executors.close()
 
             assertShutdown(queued.get(5, TimeUnit.SECONDS))
             assertTrue(source.invokedUrls.isEmpty(), "a drained queued task must never invoke source work")
-            assertTrue(executors.sourceExecutor.isTerminated, "cooperative source work must terminate before close returns")
+            assertTrue(executors.sourceScheduler.isTerminated, "cooperative source work must terminate before close returns")
         } finally {
             release.countDown()
             executors.close()
@@ -275,7 +276,7 @@ class RpcAdmissionAndShutdownTest {
             release.countDown()
 
             assertShutdown(response)
-            assertFalse(executors.sourceExecutor.isShutdown, "RpcServer must preserve injected executor ownership")
+            assertSchedulerOpen(executors.sourceScheduler)
         } finally {
             release.countDown()
             executors.close()
@@ -323,6 +324,25 @@ class RpcAdmissionAndShutdownTest {
         assertTrue(entered.await(5, TimeUnit.SECONDS), "executor task did not start")
     }
 
+    private fun occupy(
+        scheduler: SourceScheduler,
+        sourceId: Long,
+        release: CountDownLatch,
+    ) {
+        val entered = CountDownLatch(1)
+        assertIs<Submission.Accepted<Unit>>(
+            scheduler.submit(sourceId) {
+                entered.countDown()
+                try {
+                    release.await()
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            },
+        )
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "scheduled source task did not start")
+    }
+
     private fun awaitQueueSize(
         executor: ExecutorService,
         expected: Int,
@@ -336,6 +356,21 @@ class RpcAdmissionAndShutdownTest {
     }
 
     private fun queueSize(executor: ExecutorService): Int = (executor as ThreadPoolExecutor).queue.size
+
+    private fun awaitQueueSize(
+        scheduler: SourceScheduler,
+        expected: Int,
+    ) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (queueSize(scheduler) != expected && System.nanoTime() < deadline) Thread.sleep(5)
+        assertEquals(expected, queueSize(scheduler), "source queue did not reach expected size")
+    }
+
+    private fun queueSize(scheduler: SourceScheduler): Int = scheduler.snapshot(java.time.Instant.now()).queued
+
+    private fun assertSchedulerOpen(scheduler: SourceScheduler) {
+        assertIs<Submission.Accepted<Unit>>(scheduler.submit(Long.MAX_VALUE) {})
+    }
 
     private fun remainingCapacity(executor: ExecutorService): Int =
         (executor as ThreadPoolExecutor).queue.remainingCapacity()
