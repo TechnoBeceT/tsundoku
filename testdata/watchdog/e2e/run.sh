@@ -84,7 +84,7 @@ E2E_PROBE_INTERVAL=2
 E2E_PROBE_TIMEOUT=2
 E2E_FAIL_THRESHOLD=2
 E2E_DUMP_SETTLE=3
-E2E_COOLDOWN=5
+E2E_COOLDOWN=30
 E2E_TERM_GRACE=5
 # The legitimate long call must outlast the watchdog's whole decision path (a few probes, then the
 # dump settle) so the verdict is reached while the call is still running — otherwise "not killed"
@@ -185,7 +185,7 @@ build_image() {
 
 # ── Container helpers ────────────────────────────────────────────────────────────────────────
 
-# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT]
+# start_engine CONTAINER_NAME THREAD_NAMES [WEDGE_AT_BOOT] [EXHAUST_AT_BOOT]
 #
 # WEDGE_AT_BOOT defaults to 0, so the three cases that want a HEALTHY engine to start with are
 # unchanged and do not have to pass it.
@@ -201,6 +201,7 @@ start_engine() {
     docker run -d --name "$_name" \
         -e "FAKE_ENGINE_THREAD_NAMES=$2" \
         -e "FAKE_WEDGE_AT_BOOT=${3:-0}" \
+        -e "FAKE_EXHAUST_AT_BOOT=${4:-0}" \
         -e "FAKE_BUSY_HOLD_MS=$E2E_BUSY_HOLD_MS" \
         -e "ENGINE_BOOT_PROBE_TIMEOUT=$E2E_BOOT_PROBE_TIMEOUT" \
         -e "ENGINE_BOOT_WAIT=$E2E_BOOT_WAIT" \
@@ -478,12 +479,85 @@ case_boot_wedge() {
     fi
 }
 
+# A responsive front door with all eight physical source workers stuck must require
+# six stable status samples plus matching first/sixth dumps. The fake re-enters the
+# same state after restart so the compressed cooldown is also exercised.
+case_exhaustion() {
+    log "case exhaustion: stable source exhaustion must restart once and respect cooldown"
+    register exhaustion
+    start_engine "$_cid" engine-http 0 1
+
+    if ! _body=$(wait_health "$_cid" "$BUDGET_BOOT"); then
+        dump_container_log "$_cid"
+        fail "exhaustion: the responsive control plane never became healthy"
+        return 0
+    fi
+    _pid_before=$(field "$_body" pid)
+
+    if ! wait_log "$_cid" "SOURCE EXHAUSTION CONFIRMED" "$BUDGET_VERDICT"; then
+        dump_container_log "$_cid"
+        fail "exhaustion: six stable samples did not confirm exhaustion"
+        return 0
+    fi
+    _stops=$(docker logs "$_cid" 2>&1 | grep -c "stopping engine-host pid" || true)
+    if [ "$_stops" -eq 1 ]; then
+        pass "exhaustion: stable exhaustion stopped the engine exactly once at sample six"
+    else
+        fail "exhaustion: expected one stop after the first proof, got $_stops"
+    fi
+
+    if ! _body=$(wait_health "$_cid" "$BUDGET_RECOVER"); then
+        dump_container_log "$_cid"
+        fail "exhaustion: /health did not recover after restart"
+        return 0
+    fi
+    _pid_after=$(field "$_body" pid)
+    if [ -n "$_pid_after" ] && [ "$_pid_after" != "$_pid_before" ]; then
+        pass "exhaustion: recovery launched a new engine process ($_pid_before -> $_pid_after)"
+    else
+        fail "exhaustion: expected a new engine pid, got '$_pid_after'"
+    fi
+
+    _diag=/tmp/engine-host.watchdog-diagnostic
+    _status_bytes=$(docker exec "$_cid" sh -c "sed -n 's/^status=//p' $_diag | wc -c" 2>/dev/null || echo 999999)
+    _thread_bytes=$(docker exec "$_cid" sh -c "sed -n '/^first_dump=/p;/^sixth_dump=/p' $_diag | wc -c" 2>/dev/null || echo 999999)
+    _diag_body=$(docker exec "$_cid" cat "$_diag" 2>/dev/null || true)
+    if [ "${_status_bytes:-999999}" -le 32768 ] && [ "${_thread_bytes:-999999}" -le 262144 ]; then
+        pass "exhaustion: diagnostics obey status and thread-excerpt caps"
+    else
+        fail "exhaustion: diagnostic caps exceeded (status=$_status_bytes threads=$_thread_bytes)"
+    fi
+    case "$_diag_body" in
+        *"engine_pid="*"first_dump=engine-source-1"*"sixth_dump=engine-source-1"*)
+            pass "exhaustion: diagnostics contain only bounded operational evidence"
+            ;;
+        *) fail "exhaustion: diagnostics are missing the approved evidence fields" ;;
+    esac
+    case "$_diag_body" in
+        *token*|*cookie*|*header*|*http://*|*https://*)
+            fail "exhaustion: diagnostics leaked an unapproved field"
+            ;;
+        *) pass "exhaustion: diagnostics contain no payload, URL, header, cookie, or token" ;;
+    esac
+
+    # A restarted fake exhausts again immediately. Its second six-sample proof lands
+    # inside the 30s test cooldown and must not produce another stop.
+    sleep 20
+    _stops=$(docker logs "$_cid" 2>&1 | grep -c "stopping engine-host pid" || true)
+    if [ "$_stops" -eq 1 ] && log_has "$_cid" "holding off (thrash guard)"; then
+        pass "exhaustion: cooldown suppressed the repeated restart"
+    else
+        dump_container_log "$_cid"
+        fail "exhaustion: cooldown did not suppress the repeated restart (stops=$_stops)"
+    fi
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────────────────────
 
 command -v docker >/dev/null 2>&1 || die "docker is required"
 docker info >/dev/null 2>&1 || die "docker is not usable by this user"
 
-cases=${*:-'wedge-named wedge-jdk busy boot-wedge'}
+cases=${*:-'wedge-named wedge-jdk busy boot-wedge exhaustion'}
 build_image
 
 for c in $cases; do
@@ -492,7 +566,8 @@ for c in $cases; do
         wedge-jdk)   case_wedge wedge-jdk jdk-default ;;
         busy)        case_busy ;;
         boot-wedge)  case_boot_wedge ;;
-        *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy or boot-wedge)" ;;
+        exhaustion)  case_exhaustion ;;
+        *)           die "unknown case: $c (expected wedge-named, wedge-jdk, busy, boot-wedge or exhaustion)" ;;
     esac
 done
 

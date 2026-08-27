@@ -179,6 +179,231 @@ expect_eq "verdict: none blocked is saturation" "saturated" "$(wedge_verdict 8 0
 expect_eq "verdict: one of one is not enough evidence" "insufficient" "$(wedge_verdict 1 1)"
 expect_eq "verdict: nothing seen is not enough evidence" "insufficient" "$(wedge_verdict 0 0)"
 
+# ── Sustained source-pool exhaustion evidence ───────────────────────────────
+# The fingerprint deliberately excludes age, counters, and queue depth. It describes
+# only physical running work, so an aging-but-identical population stays stable while
+# any source-worker replacement resets the episode.
+EXPECTED_STATUS_FINGERPRINT="8|8|11:2,22:2,33:2,44:2"
+expect_eq "status fingerprint contains approved physical-work fields only" \
+    "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-exhausted.json")"
+expect_eq "completion progress does not alter the running-work fingerprint" \
+    "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-progressed.json")"
+expect_eq "a changed running source population changes the fingerprint" \
+    "8|8|11:2,22:2,33:2,55:2" "$(status_fingerprint "$FIXTURES/status-fingerprint-changed.json")"
+
+sample=$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-first.txt")
+expect_eq "an exhaustion sample carries sequence, age, occupancy, fingerprint, and dump population" \
+    "41 181001 8 8 $EXPECTED_STATUS_FINGERPRINT engine-source-1,engine-source-2,engine-source-3,engine-source-4,engine-source-5,engine-source-6,engine-source-7,engine-source-8" \
+    "$sample"
+first_dump=${sample##* }
+sixth_sample=$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-sixth.txt")
+sixth_dump=${sixth_sample##* }
+expect_eq "first and sixth dumps match by source-worker population" "$first_dump" "$sixth_dump"
+expect_eq "unknown source-worker state declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-unknown.txt" 2>/dev/null || echo unknown)"
+expect_eq "truncated source-worker dump declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-truncated.txt" 2>/dev/null || echo unknown)"
+trailing_partial_dump=$(mktemp)
+{
+    cat "$FIXTURES/dump-source-first.txt"
+    cat "$FIXTURES/dump-source-truncated.txt"
+} > "$trailing_partial_dump"
+expect_eq "a partial latest dump cannot borrow an earlier complete dump" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$trailing_partial_dump" 2>/dev/null || echo unknown)"
+rm -f "$trailing_partial_dump"
+expect_eq "malformed status declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-malformed.json" "$FIXTURES/dump-source-first.txt" 2>/dev/null || echo unknown)"
+expect_eq "structurally malformed status with every field still declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-malformed-garbage.json" "$FIXTURES/dump-source-first.txt" 2>/dev/null || echo unknown)"
+expect_eq "unreadable status declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/does-not-exist.json" "$FIXTURES/dump-source-first.txt" 2>/dev/null || echo unknown)"
+expect_eq "status carrying an unapproved field declines evidence" \
+    "unknown" "$(exhaustion_sample "$FIXTURES/status-unapproved.json" "$FIXTURES/dump-source-first.txt" 2>/dev/null || echo unknown)"
+oversized_status=$(mktemp)
+cp "$FIXTURES/status-exhausted.json" "$oversized_status"
+dd if=/dev/zero bs=1024 count=33 2>/dev/null | tr '\000' ' ' >> "$oversized_status"
+expect_eq "status input above 32768 bytes declines evidence" \
+    "unknown" "$(exhaustion_sample "$oversized_status" "$FIXTURES/dump-source-first.txt" 2>/dev/null || echo unknown)"
+rm -f "$oversized_status"
+
+expect_eq "exhaustion verdict accepts the exact six-sample proof" \
+    "restart" "$(exhaustion_verdict 6 180001 8 8 1 1)"
+expect_eq "exhaustion verdict requires six consecutive samples" \
+    "decline" "$(exhaustion_verdict 5 180001 8 8 1 1)"
+expect_eq "exhaustion verdict requires oldest strictly above 180000ms" \
+    "decline" "$(exhaustion_verdict 6 180000 8 8 1 1)"
+expect_eq "exhaustion verdict requires all eight workers running" \
+    "decline" "$(exhaustion_verdict 6 180001 7 8 1 1)"
+expect_eq "exhaustion verdict rejects a non-eight worker configuration" \
+    "decline" "$(exhaustion_verdict 6 180001 7 7 1 1)"
+expect_eq "exhaustion verdict requires unchanged progress" \
+    "decline" "$(exhaustion_verdict 6 180001 8 8 0 1)"
+expect_eq "exhaustion verdict requires matching dump evidence" \
+    "decline" "$(exhaustion_verdict 6 180001 8 8 1 0)"
+expect_eq "exhaustion verdict fails closed on malformed evidence" \
+    "decline" "$(exhaustion_verdict six 180001 8 8 1 1)"
+
+# Diagnostics are reconstructed from approved status fields and redacted thread
+# classifications. The raw fixtures contain neither payloads nor local values, but the
+# unapproved status fixture proves an injected secret is rejected rather than copied.
+diagnostic_file=$(mktemp)
+if watchdog_write_exhaustion_diagnostics \
+    "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-first.txt" \
+    "$FIXTURES/dump-source-sixth.txt" 12345 "$diagnostic_file"; then
+    diagnostic=$(cat "$diagnostic_file")
+    expect_contains "decision=sustained-source-exhaustion" "$diagnostic" \
+        "diagnostics record the conservative decision"
+    expect_contains "status={\"ready\":true" "$diagnostic" \
+        "diagnostics contain a sanitized status snapshot"
+    expect_contains "first_dump=engine-source-1 state=" "$diagnostic" \
+        "diagnostics contain a redacted first-dump excerpt"
+    expect_contains "sixth_dump=engine-source-1 state=" "$diagnostic" \
+        "diagnostics contain a redacted sixth-dump excerpt"
+    expect_not_contains "must-not-escape" "$diagnostic" \
+        "diagnostics never contain unapproved status values"
+    diagnostic_status=$(sed -n 's/^status=//p' "$diagnostic_file")
+    diagnostic_threads=$(sed -n '/^first_dump=/p;/^sixth_dump=/p' "$diagnostic_file")
+    expect_eq "diagnostic status is capped at 32768 bytes" "yes" \
+        "$([ "$(printf '%s' "$diagnostic_status" | wc -c)" -le 32768 ] && echo yes || echo no)"
+    expect_eq "diagnostic thread excerpts are capped at 262144 bytes" "yes" \
+        "$([ "$(printf '%s' "$diagnostic_threads" | wc -c)" -le 262144 ] && echo yes || echo no)"
+else
+    expect_eq "diagnostics writer accepts complete approved evidence" "success" "failure"
+fi
+oversized_dump=$(mktemp)
+sed '$d' "$FIXTURES/dump-source-first.txt" > "$oversized_dump"
+dd if=/dev/zero bs=1024 count=300 2>/dev/null | tr '\000' 'X' >> "$oversized_dump"
+printf '\nJNI global refs: 41, weak refs: 0\n' >> "$oversized_dump"
+if watchdog_write_exhaustion_diagnostics \
+    "$FIXTURES/status-exhausted.json" "$oversized_dump" \
+    "$FIXTURES/dump-source-sixth.txt" 12345 "$diagnostic_file"; then
+    oversized_excerpt=$(sed -n '/^first_dump=/p;/^sixth_dump=/p' "$diagnostic_file" | wc -c)
+    expect_eq "oversized raw dumps still produce at most 262144 diagnostic bytes" "yes" \
+        "$([ "$oversized_excerpt" -le 262144 ] && echo yes || echo no)"
+else
+    expect_eq "oversized raw dumps are reduced to approved evidence" "success" "failure"
+fi
+rm -f "$oversized_dump"
+if watchdog_write_exhaustion_diagnostics \
+    "$FIXTURES/status-unapproved.json" "$FIXTURES/dump-source-first.txt" \
+    "$FIXTURES/dump-source-sixth.txt" 12345 "$diagnostic_file"; then
+    expect_eq "diagnostics reject unapproved status fields" "failure" "success"
+else
+    echo "ok   - diagnostics reject unapproved status fields"
+fi
+rm -f "$diagnostic_file"
+
+# ── Deterministic exhaustion loop ───────────────────────────────────────────
+stable_loop_result=$(
+    (
+        WATCHDOG_PROBE_INTERVAL=0
+        WATCHDOG_COOLDOWN=600
+        tick=0
+        sample_count=0
+        dump_count=0
+        curl() { return 0; }
+        sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || exit 0; }
+        watchdog_trim_log() { :; }
+        watchdog_probe_health() { return 0; }
+        watchdog_fetch_status() { sample_count=$((sample_count + 1)); cp "$FIXTURES/status-exhausted.json" "$1"; }
+        watchdog_capture_dump() { dump_count=$((dump_count + 1)); cp "$FIXTURES/dump-source-first.txt" "$2"; }
+        watchdog_engine_pid() { echo 12345; }
+        date() { echo 1000; }
+        watchdog_write_exhaustion_diagnostics() { echo "diagnostic-at=$sample_count"; }
+        watchdog_stop_engine() { echo "stopped-at-sample=$sample_count dumps=$dump_count"; exit 0; }
+        watchdog_health_loop
+    ) 2>&1
+)
+expect_contains "stopped-at-sample=6 dumps=2" "$stable_loop_result" \
+    "stable exhaustion stops exactly at sample six after first/sixth dumps"
+
+progressing_loop_result=$(
+    (
+        WATCHDOG_PROBE_INTERVAL=0
+        WATCHDOG_COOLDOWN=600
+        tick=0
+        sample_count=0
+        curl() { return 0; }
+        sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || { echo "progressing-ended samples=$sample_count"; exit 0; }; }
+        watchdog_trim_log() { :; }
+        watchdog_probe_health() { return 0; }
+        watchdog_fetch_status() {
+            sample_count=$((sample_count + 1))
+            if [ $((sample_count % 2)) -eq 0 ]; then
+                cp "$FIXTURES/status-progressed.json" "$1"
+            else
+                cp "$FIXTURES/status-exhausted.json" "$1"
+            fi
+        }
+        watchdog_capture_dump() { cp "$FIXTURES/dump-source-first.txt" "$2"; }
+        watchdog_engine_pid() { echo 12345; }
+        date() { echo 1000; }
+        watchdog_stop_engine() { echo "unexpected-progress-stop"; exit 1; }
+        watchdog_health_loop
+    ) 2>&1
+)
+expect_contains "progressing-ended" "$progressing_loop_result" \
+    "long progressing work leaves the watchdog loop alive"
+expect_not_contains "unexpected-progress-stop" "$progressing_loop_result" \
+    "long progressing work never stops the engine"
+
+cooldown_loop_result=$(
+    (
+        WATCHDOG_PROBE_INTERVAL=0
+        WATCHDOG_COOLDOWN=600
+        tick=0
+        sample_count=0
+        stop_count=0
+        curl() { return 0; }
+        sleep() { tick=$((tick + 1)); [ "$tick" -lt 15 ] || { echo "cooldown-ended stops=$stop_count"; exit 0; }; }
+        watchdog_trim_log() { :; }
+        watchdog_probe_health() { return 0; }
+        watchdog_fetch_status() { sample_count=$((sample_count + 1)); cp "$FIXTURES/status-exhausted.json" "$1"; }
+        watchdog_capture_dump() { cp "$FIXTURES/dump-source-first.txt" "$2"; }
+        watchdog_engine_pid() { echo 12345; }
+        date() { echo 1000; }
+        watchdog_write_exhaustion_diagnostics() { :; }
+        watchdog_stop_engine() { stop_count=$((stop_count + 1)); }
+        watchdog_health_loop
+    ) 2>&1
+)
+expect_contains "cooldown-ended stops=1" "$cooldown_loop_result" \
+    "restart cooldown suppresses a second stable-exhaustion stop"
+
+reset_loop_result=$(
+    (
+        WATCHDOG_PROBE_INTERVAL=0
+        WATCHDOG_COOLDOWN=600
+        tick=0
+        sample_count=0
+        curl() { return 0; }
+        sleep() { tick=$((tick + 1)); [ "$tick" -lt 12 ] || { echo "reset-ended samples=$sample_count"; exit 0; }; }
+        watchdog_trim_log() { :; }
+        watchdog_probe_health() { return 0; }
+        watchdog_fetch_status() {
+            sample_count=$((sample_count + 1))
+            case "$sample_count" in
+                1|3|5|7|9) cp "$FIXTURES/status-exhausted.json" "$1" ;;
+                2) cp "$FIXTURES/status-progressed.json" "$1" ;;
+                4) cp "$FIXTURES/status-fingerprint-changed.json" "$1" ;;
+                6) cp "$FIXTURES/status-not-full.json" "$1" ;;
+                8) cp "$FIXTURES/status-malformed.json" "$1" ;;
+                10) return 1 ;;
+                *) cp "$FIXTURES/status-exhausted.json" "$1" ;;
+            esac
+        }
+        watchdog_capture_dump() { cp "$FIXTURES/dump-source-first.txt" "$2"; }
+        watchdog_engine_pid() { echo 12345; }
+        date() { echo 1000; }
+        watchdog_stop_engine() { echo "unexpected-reset-stop"; exit 1; }
+        watchdog_health_loop
+    ) 2>&1
+)
+expect_contains "reset-ended" "$reset_loop_result" \
+    "progress, fingerprint, non-full, malformed, and unreadable samples reset evidence"
+expect_not_contains "unexpected-reset-stop" "$reset_loop_result" \
+    "resetting evidence cannot stop the engine"
+
 # ── Continuous late-readiness arming ───────────────────────────────────────
 # Run the real loop with only its external effects replaced. The stop marker carries
 # the probe number, so firing on failures 1-2 instead of failures 4-5 cannot pass.
@@ -199,6 +424,7 @@ late_readiness_result=$(
         }
         sleep() { :; }
         watchdog_trim_log() { :; }
+        watchdog_fetch_status() { return 1; }
         watchdog_log_size() { echo 0; }
         date() { echo 1000; }
         cat() { echo 12345; }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# watchdog.sh — detect and recover engine-host execution-domain deadlocks (GAP-137).
+# watchdog.sh — recover proven engine-host deadlocks and sustained source exhaustion.
 #
 # Current images isolate the HTTP front door, source scheduler, extension mutations,
 # deadlines, and extension networking. Legacy images used one fixed eight-thread RPC
@@ -12,9 +12,10 @@
 # walk runs ~20 minutes) starves the pool identically. Killing on a timeout alone
 # would destroy exactly the expensive work this system tries hardest not to repeat.
 #
-# The discriminator is the thread dump itself. SIGQUIT makes the JVM print every
-# thread's state to its stdout, so the dump is both the evidence AND the decision
-# input.
+# Recovery has two independent proofs. Health silence uses the all-BLOCKED predicate
+# below. A responsive health plane with all eight source workers occupied uses six
+# unchanged /status samples plus matching first/sixth source-worker dumps. Neither
+# path treats queue depth or elapsed time alone as a reason to restart.
 #
 # ── The rule: EVERY pool thread blocked, never a majority ────────────────────
 # The monitor's OWNER is what separates a deadlock from a busy engine, and the owner
@@ -250,6 +251,254 @@ wedge_verdict() {
     return 0
 }
 
+# _status_parse FILE — validate and reduce the bounded /status contract. Output is
+# tab-separated: sequence, oldest-ms, running, workers, running fingerprint, and a
+# whitespace-free approved-fields-only JSON snapshot. Any missing, duplicate,
+# malformed, oversized, or unapproved field fails closed.
+_status_parse() {
+    sp_file=$1
+    if [ ! -r "$sp_file" ]; then
+        return 1
+    fi
+    sp_size=$(wc -c 2>/dev/null < "$sp_file" || echo 0)
+    case "${sp_size:-}" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if [ "$sp_size" -gt 32768 ]; then
+        return 1
+    fi
+
+    awk '
+        function fail() { bad = 1 }
+        function top_allowed(key) {
+            return key == "ready" || key == "source_workers" || key == "per_source_limit" ||
+                key == "queued" || key == "running" || key == "completion_sequence" ||
+                key == "oldest_running_millis" || key == "completed" || key == "cancelled" ||
+                key == "timed_out" || key == "rejected" || key == "extension_running" ||
+                key == "extension_queued"
+        }
+        function scan_keys(text, source,    rest, token, key) {
+            rest = text
+            while (match(rest, /"[^"]+":/)) {
+                token = substr(rest, RSTART, RLENGTH)
+                key = substr(token, 2, length(token) - 3)
+                if (source) {
+                    if (key != "source_id" && key != "queued" && key != "running") fail()
+                } else {
+                    if (!top_allowed(key)) fail()
+                    top_count[key]++
+                }
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+        }
+        function number(text, key,    re, token) {
+            re = "\"" key "\":[0-9]+"
+            if (!match(text, re)) { fail(); return 0 }
+            token = substr(text, RSTART, RLENGTH)
+            sub(/^.*:/, "", token)
+            return token
+        }
+        function boolean(text, key,    re, token) {
+            re = "\"" key "\":(true|false)"
+            if (!match(text, re)) { fail(); return "false" }
+            token = substr(text, RSTART, RLENGTH)
+            sub(/^.*:/, "", token)
+            return token
+        }
+        function object_number(text, key,    re, token, copy) {
+            re = "\"" key "\":[0-9]+"
+            copy = text
+            if (!match(copy, re)) { fail(); return 0 }
+            token = substr(copy, RSTART, RLENGTH)
+            copy = substr(copy, RSTART + RLENGTH)
+            if (match(copy, re)) fail()
+            sub(/^.*:/, "", token)
+            return token
+        }
+        {
+            input = input $0
+        }
+        END {
+            gsub(/[[:space:]]/, "", input)
+            if (input !~ /^\{.*\}$/ || input ~ /:"/) fail()
+
+            marker = "\"busiest_sources\":["
+            start = index(input, marker)
+            if (start == 0) fail()
+            after = substr(input, start + length(marker))
+            array_end = index(after, "]")
+            if (array_end == 0) fail()
+            array = substr(after, 1, array_end - 1)
+            prefix = substr(input, 1, start - 1)
+            suffix = substr(after, array_end + 1)
+            if (index(suffix, marker) != 0) fail()
+
+            scan_keys(prefix suffix, 0)
+            required = "ready source_workers per_source_limit queued running completion_sequence oldest_running_millis completed cancelled timed_out rejected extension_running extension_queued"
+            split(required, required_keys, " ")
+            for (i in required_keys) if (top_count[required_keys[i]] != 1) fail()
+
+            ready = boolean(prefix suffix, "ready")
+            workers = number(prefix suffix, "source_workers")
+            per_source = number(prefix suffix, "per_source_limit")
+            queued = number(prefix suffix, "queued")
+            running = number(prefix suffix, "running")
+            sequence = number(prefix suffix, "completion_sequence")
+            oldest = number(prefix suffix, "oldest_running_millis")
+            completed = number(prefix suffix, "completed")
+            cancelled = number(prefix suffix, "cancelled")
+            timed_out = number(prefix suffix, "timed_out")
+            rejected = number(prefix suffix, "rejected")
+            extension_running = boolean(prefix suffix, "extension_running")
+            extension_queued = number(prefix suffix, "extension_queued")
+
+            fingerprint = workers "|" running "|"
+            source_json = ""
+            source_count = 0
+            running_sum = 0
+            if (array != "") {
+                rest = array
+                gsub(/\},\{/, "}\n{", rest)
+                count = split(rest, objects, "\n")
+                if (count > 10) fail()
+                for (i = 1; i <= count; i++) {
+                    object = objects[i]
+                    if (object !~ /^\{.*\}$/) fail()
+                    scan_keys(object, 1)
+                    source_id = object_number(object, "source_id")
+                    source_queued = object_number(object, "queued")
+                    source_running = object_number(object, "running")
+                    if (source_json != "") source_json = source_json ","
+                    source_json = source_json "{\"source_id\":" source_id ",\"queued\":" source_queued ",\"running\":" source_running "}"
+                    if (source_running > 0) {
+                        if (source_count > 0) fingerprint = fingerprint ","
+                        fingerprint = fingerprint source_id ":" source_running
+                        source_count++
+                        running_sum += source_running
+                    }
+                }
+            }
+            if (running_sum != running) fail()
+
+            approved = "{\"ready\":" ready ",\"source_workers\":" workers ",\"per_source_limit\":" per_source ",\"queued\":" queued ",\"running\":" running ",\"completion_sequence\":" sequence ",\"oldest_running_millis\":" oldest ",\"completed\":" completed ",\"cancelled\":" cancelled ",\"timed_out\":" timed_out ",\"rejected\":" rejected ",\"busiest_sources\":[" source_json "],\"extension_running\":" extension_running ",\"extension_queued\":" extension_queued "}"
+            if (input != approved) fail()
+            if (bad) exit 1
+            printf "%s\t%s\t%s\t%s\t%s\t%s\n", sequence, oldest, running, workers, fingerprint, approved
+        }
+    ' "$sp_file"
+}
+
+# status_fingerprint FILE — the exact approved physical-running-work identity.
+# Completion sequence and age are evaluated separately, and queue depth is never a
+# recovery predicate.
+status_fingerprint() {
+    sf_parsed=$(_status_parse "$1") || return 1
+    printf '%s\n' "$sf_parsed" | awk -F '\t' '{ print $5 }'
+}
+
+# _source_dump_parse FILE — require one complete HotSpot dump whose entire
+# engine-source population is either in a timed wait or visibly inside network I/O.
+# Prints a stable population fingerprint and a redacted evidence excerpt separated
+# by one tab. Raw stacks never enter diagnostics.
+_source_dump_parse() {
+    if [ ! -r "$1" ]; then
+        return 1
+    fi
+    awk '
+        function reset(    i) {
+            delete names; delete states; delete network
+            count = 0; current = ""; started = 1; invalid = 0; max_id = 0
+            complete = ""; dump_complete = 0
+        }
+        function finish_thread(    category) {
+            if (current == "") return
+            if (states[current] ~ /^TIMED_WAITING/) category = "timed-wait"
+            else if (network[current] && states[current] ~ /^(RUNNABLE|WAITING)/) category = "network-wait"
+            else invalid = 1
+                split(states[current], state_parts, " ")
+                states[current] = state_parts[1]
+                evidence[current] = category
+            current = ""
+        }
+        function build(    i, signature, excerpt, name) {
+            finish_thread()
+            if (invalid || count == 0) return ""
+            for (i = 1; i <= max_id; i++) {
+                name = "engine-source-" i
+                if (!(name in names)) return ""
+                if (signature != "") { signature = signature ","; excerpt = excerpt ";" }
+                signature = signature name
+                excerpt = excerpt name " state=" states[name] " evidence=" evidence[name]
+            }
+            if (count != max_id) return ""
+            return signature "\t" excerpt
+        }
+        /^Full thread dump/ { reset(); next }
+        started && /^"engine-source-[0-9]+" / {
+            finish_thread()
+            name = $0
+            sub(/^"/, "", name); sub(/" .*/, "", name)
+            id = name; sub(/^engine-source-/, "", id)
+            if (name in names || id !~ /^[0-9]+$/ || id < 1) invalid = 1
+            names[name] = 1; count++; if (id > max_id) max_id = id
+            current = name
+            next
+        }
+        started && /^"/ {
+            finish_thread()
+            next
+        }
+        started && current != "" && /java\.lang\.Thread\.State:/ {
+            state = $0
+            sub(/^.*State:[[:space:]]*/, "", state)
+            states[current] = state
+            next
+        }
+        started && current != "" && /(sun\.nio\.ch\.|java\.net\.Socket|okhttp3\.|okio\.|SocketDispatcher|Net\.poll|EPoll\.wait)/ {
+            network[current] = 1
+            next
+        }
+        started && /^JNI global ref/ {
+            complete = build()
+            if (complete != "") dump_complete = 1
+            next
+        }
+        END {
+            if (!dump_complete) exit 1
+            print complete
+        }
+    ' "$1"
+}
+
+# exhaustion_sample STATUS_FILE DUMP_FILE — one pure, bounded evidence record.
+exhaustion_sample() {
+    es_status=$(_status_parse "$1") || return 1
+    es_dump=$(_source_dump_parse "$2") || return 1
+    es_tab=$(printf '\t')
+    IFS="$es_tab" read -r es_sequence es_oldest es_running es_workers es_fingerprint es_approved <<EOF
+$es_status
+EOF
+    es_dump_fingerprint=$(printf '%s\n' "$es_dump" | awk -F '\t' '{ print $1 }')
+    printf '%s %s %s %s %s %s\n' "$es_sequence" "$es_oldest" "$es_running" "$es_workers" "$es_fingerprint" "$es_dump_fingerprint"
+}
+
+# exhaustion_verdict consecutive oldest_ms running workers progress_same dump_same
+# — the exact conservative restart gate. Malformed input always declines.
+exhaustion_verdict() {
+    for ev_value in "$@"; do
+        case "$ev_value" in
+            ''|*[!0-9]*) echo "decline"; return 0 ;;
+        esac
+    done
+    if [ "$#" -eq 6 ] && [ "$1" -eq 6 ] && [ "$2" -gt 180000 ] &&
+       [ "$3" -eq 8 ] && [ "$4" -eq 8 ] && [ "$5" -eq 1 ] && [ "$6" -eq 1 ]; then
+        echo "restart"
+    else
+        echo "decline"
+    fi
+    return 0
+}
+
 # ── Tunables ─────────────────────────────────────────────────────────────────
 # The probe cadence and timeout deliberately MATCH the image's HEALTHCHECK, so the
 # watchdog and the container agree on what "down" means rather than disagreeing by
@@ -262,6 +511,7 @@ wedge_verdict() {
 # forever. An explicit WATCHDOG_HEALTH_URL still wins, so an operator can point the
 # probe somewhere else entirely.
 WATCHDOG_HEALTH_URL=${WATCHDOG_HEALTH_URL:-http://127.0.0.1:${TSUNDOKU_ENGINE_PORT:-7777}/health}
+WATCHDOG_STATUS_URL=http://127.0.0.1:${TSUNDOKU_ENGINE_PORT:-7777}/status
 WATCHDOG_PROBE_INTERVAL=${WATCHDOG_PROBE_INTERVAL:-30}
 WATCHDOG_PROBE_TIMEOUT=${WATCHDOG_PROBE_TIMEOUT:-5}
 WATCHDOG_FAIL_THRESHOLD=${WATCHDOG_FAIL_THRESHOLD:-3}
@@ -280,6 +530,13 @@ WATCHDOG_LOG_MAX=${WATCHDOG_LOG_MAX:-67108864}
 # How long to wait before re-entering the health loop if it ever exits. Matched to
 # the probe interval so a loop stuck in a restart cycle cannot spin.
 WATCHDOG_RELOOP_DELAY=${WATCHDOG_RELOOP_DELAY:-30}
+
+# Internal evidence paths. These are process-local files, not owner-facing safety
+# settings; the thresholds and caps remain fixed by the recovery contract.
+WATCHDOG_STATUS_FILE=/tmp/engine-host.status
+WATCHDOG_EXHAUSTION_FIRST_DUMP=/tmp/engine-host.exhaustion-first.dump
+WATCHDOG_EXHAUSTION_SIXTH_DUMP=/tmp/engine-host.exhaustion-sixth.dump
+WATCHDOG_DIAGNOSTIC_FILE=/tmp/engine-host.watchdog-diagnostic
 
 # watchdog_log MESSAGE — one prefix for every line this file emits, so an operator
 # can grep the container log for the watchdog's decisions and see nothing else.
@@ -308,6 +565,213 @@ watchdog_trim_log() {
         : > "$WATCHDOG_LOG_FILE"
         watchdog_log "captured engine output exceeded ${WATCHDOG_LOG_MAX} bytes; truncated"
     fi
+    return 0
+}
+
+watchdog_probe_health() {
+    curl -fsS --max-time "$WATCHDOG_PROBE_TIMEOUT" "$WATCHDOG_HEALTH_URL" >/dev/null 2>&1
+}
+
+# watchdog_fetch_status FILE — fetch one bounded status snapshot. curl's size bound
+# stops an oversized body during transfer; the parser repeats the check before use.
+watchdog_fetch_status() {
+    if ! curl -fsS --max-time "$WATCHDOG_PROBE_TIMEOUT" --max-filesize 32768 \
+        "$WATCHDOG_STATUS_URL" > "$1" 2>/dev/null; then
+        : > "$1"
+        return 1
+    fi
+    return 0
+}
+
+watchdog_engine_pid() {
+    cat "$WATCHDOG_PID_FILE" 2>/dev/null || echo ""
+}
+
+# watchdog_capture_dump PID FILE — capture only output appended by this SIGQUIT.
+watchdog_capture_dump() {
+    cd_pid=$1
+    cd_file=$2
+    cd_offset=$(watchdog_log_size)
+    cd_offset=${cd_offset:-0}
+    kill -3 "$cd_pid" 2>/dev/null || return 1
+    sleep "$WATCHDOG_DUMP_SETTLE"
+    tail -c "+$((cd_offset + 1))" "$WATCHDOG_LOG_FILE" > "$cd_file" 2>/dev/null || return 1
+    return 0
+}
+
+# watchdog_write_exhaustion_diagnostics STATUS FIRST_DUMP SIXTH_DUMP PID FILE
+# Reconstruct a bounded bundle from approved fields only. Neither raw status nor raw
+# stack text is copied, so unexpected payloads, local values, and secrets cannot leak.
+watchdog_write_exhaustion_diagnostics() {
+    wd_status=$(_status_parse "$1") || return 1
+    wd_first=$(_source_dump_parse "$2") || return 1
+    wd_sixth=$(_source_dump_parse "$3") || return 1
+    case "$4" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    wd_tab=$(printf '\t')
+    IFS="$wd_tab" read -r wd_sequence wd_oldest wd_running wd_workers wd_fingerprint wd_approved <<EOF
+$wd_status
+EOF
+    wd_first_excerpt=$(printf '%s\n' "$wd_first" | awk -F '\t' '{ print $2 }')
+    wd_sixth_excerpt=$(printf '%s\n' "$wd_sixth" | awk -F '\t' '{ print $2 }')
+    wd_status_size=$(printf '%s' "$wd_approved" | wc -c)
+    wd_thread_size=$(printf '%s\n%s' "$wd_first_excerpt" "$wd_sixth_excerpt" | wc -c)
+    if [ "$wd_status_size" -gt 32768 ] || [ "$wd_thread_size" -gt 262144 ]; then
+        return 1
+    fi
+    wd_now=$(date +%s 2>/dev/null || echo 0)
+    wd_now=${wd_now:-0}
+    wd_tmp=$5.tmp.$$
+    umask 077
+    {
+        printf 'decision=sustained-source-exhaustion\n'
+        printf 'timestamp_epoch=%s\n' "$wd_now"
+        printf 'engine_pid=%s\n' "$4"
+        printf 'profile=default\n'
+        printf 'status=%s\n' "$wd_approved"
+        printf 'first_dump=%s\n' "$wd_first_excerpt"
+        printf 'sixth_dump=%s\n' "$wd_sixth_excerpt"
+    } > "$wd_tmp" || return 1
+    mv "$wd_tmp" "$5" || return 1
+    return 0
+}
+
+watchdog_reset_exhaustion() {
+    exhaustion_consecutive=0
+    exhaustion_sequence=""
+    exhaustion_fingerprint=""
+    exhaustion_first_dump_fingerprint=""
+    return 0
+}
+
+# watchdog_start_exhaustion STATUS_PARSE — begin an episode and capture its only
+# first-sample dump. Unknown or truncated evidence declines the episode immediately.
+watchdog_start_exhaustion() {
+    se_status=$1
+    se_tab=$(printf '\t')
+    IFS="$se_tab" read -r se_sequence se_oldest se_running se_workers se_fingerprint se_approved <<EOF
+$se_status
+EOF
+    se_pid=$(watchdog_engine_pid)
+    case "$se_pid" in
+        ''|*[!0-9]*)
+            watchdog_log "WARNING: source exhaustion status had no live engine pid; evidence reset"
+            watchdog_reset_exhaustion
+            return 0
+            ;;
+    esac
+    if ! watchdog_capture_dump "$se_pid" "$WATCHDOG_EXHAUSTION_FIRST_DUMP"; then
+        watchdog_log "WARNING: first source-exhaustion thread dump was unreadable; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    se_dump=$(_source_dump_parse "$WATCHDOG_EXHAUSTION_FIRST_DUMP") || se_dump=""
+    if [ -z "$se_dump" ]; then
+        watchdog_log "WARNING: first source-exhaustion thread dump was unknown or truncated; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    se_dump_fingerprint=$(printf '%s\n' "$se_dump" | awk -F '\t' '{ print $1 }')
+    se_dump_count=$(printf '%s' "$se_dump_fingerprint" | awk -F ',' '{ print NF }')
+    if [ "$se_dump_count" -ne 8 ]; then
+        watchdog_log "WARNING: first source-exhaustion dump contained ${se_dump_count} source workers, not 8; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    exhaustion_consecutive=1
+    exhaustion_sequence=$se_sequence
+    exhaustion_fingerprint=$se_fingerprint
+    exhaustion_first_dump_fingerprint=$se_dump_fingerprint
+    watchdog_log "source exhaustion episode started: 1 of 6 stable samples"
+    return 0
+}
+
+# watchdog_evaluate_exhaustion — evaluate the status already fetched into the fixed
+# status file. This path runs only after a successful /health probe.
+watchdog_evaluate_exhaustion() {
+    ee_status=$(_status_parse "$WATCHDOG_STATUS_FILE") || ee_status=""
+    if [ -z "$ee_status" ]; then
+        watchdog_log "WARNING: /status evidence was malformed, unreadable, oversized, or contained unapproved fields; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    ee_tab=$(printf '\t')
+    IFS="$ee_tab" read -r ee_sequence ee_oldest ee_running ee_workers ee_fingerprint ee_approved <<EOF
+$ee_status
+EOF
+    if [ "$ee_running" -ne 8 ] || [ "$ee_workers" -ne 8 ] || [ "$ee_oldest" -le 180000 ]; then
+        watchdog_reset_exhaustion
+        return 0
+    fi
+
+    if [ "$exhaustion_consecutive" -eq 0 ]; then
+        watchdog_start_exhaustion "$ee_status"
+        return 0
+    fi
+    if [ "$ee_sequence" != "$exhaustion_sequence" ] || [ "$ee_fingerprint" != "$exhaustion_fingerprint" ]; then
+        watchdog_log "source exhaustion progress or running fingerprint changed; evidence reset"
+        watchdog_reset_exhaustion
+        watchdog_start_exhaustion "$ee_status"
+        return 0
+    fi
+
+    exhaustion_consecutive=$((exhaustion_consecutive + 1))
+    if [ "$exhaustion_consecutive" -lt 6 ]; then
+        watchdog_log "source exhaustion evidence: ${exhaustion_consecutive} of 6 stable samples"
+        return 0
+    fi
+
+    ee_pid=$(watchdog_engine_pid)
+    case "$ee_pid" in
+        ''|*[!0-9]*)
+            watchdog_log "WARNING: sixth source-exhaustion sample had no live engine pid; evidence reset"
+            watchdog_reset_exhaustion
+            return 0
+            ;;
+    esac
+    if ! watchdog_capture_dump "$ee_pid" "$WATCHDOG_EXHAUSTION_SIXTH_DUMP"; then
+        watchdog_log "WARNING: sixth source-exhaustion thread dump was unreadable; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    ee_dump=$(_source_dump_parse "$WATCHDOG_EXHAUSTION_SIXTH_DUMP") || ee_dump=""
+    if [ -z "$ee_dump" ]; then
+        watchdog_log "WARNING: sixth source-exhaustion thread dump was unknown or truncated; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    ee_dump_fingerprint=$(printf '%s\n' "$ee_dump" | awk -F '\t' '{ print $1 }')
+    ee_dump_same=0
+    if [ "$ee_dump_fingerprint" = "$exhaustion_first_dump_fingerprint" ]; then
+        ee_dump_same=1
+    fi
+    ee_verdict=$(exhaustion_verdict "$exhaustion_consecutive" "$ee_oldest" "$ee_running" "$ee_workers" 1 "$ee_dump_same")
+    if [ "$ee_verdict" != "restart" ]; then
+        watchdog_log "sixth source-exhaustion dump did not match the first source-worker population; evidence reset, not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+
+    if ! watchdog_write_exhaustion_diagnostics "$WATCHDOG_STATUS_FILE" \
+        "$WATCHDOG_EXHAUSTION_FIRST_DUMP" "$WATCHDOG_EXHAUSTION_SIXTH_DUMP" \
+        "$ee_pid" "$WATCHDOG_DIAGNOSTIC_FILE"; then
+        watchdog_log "WARNING: bounded source-exhaustion diagnostics could not be written; not restarting"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    watchdog_log "SOURCE EXHAUSTION CONFIRMED: 8 of 8 source workers unchanged for 6 samples; diagnostics written to ${WATCHDOG_DIAGNOSTIC_FILE}"
+
+    ee_now=$(date +%s 2>/dev/null || echo 0)
+    ee_now=${ee_now:-0}
+    if [ $((ee_now - watchdog_last_kill)) -lt "$WATCHDOG_COOLDOWN" ]; then
+        watchdog_log "last restart was $((ee_now - watchdog_last_kill))s ago; holding off (thrash guard)"
+        watchdog_reset_exhaustion
+        return 0
+    fi
+    watchdog_last_kill=$ee_now
+    watchdog_reset_exhaustion
+    watchdog_stop_engine "$ee_pid"
     return 0
 }
 
@@ -354,19 +818,30 @@ watchdog_health_loop() {
     # guard.
     watchdog_last_dump=${watchdog_last_dump:-0}
     watchdog_last_kill=${watchdog_last_kill:-0}
+    watchdog_reset_exhaustion
 
     while true; do
         sleep "$WATCHDOG_PROBE_INTERVAL"
         watchdog_trim_log
 
-        if curl -fsS --max-time "$WATCHDOG_PROBE_TIMEOUT" "$WATCHDOG_HEALTH_URL" >/dev/null 2>&1; then
+        if watchdog_probe_health; then
             if [ "$armed" -eq 0 ]; then
                 armed=1
                 watchdog_log "wedge watchdog armed: health supervision armed after first successful response"
             fi
             fails=0
+            if watchdog_fetch_status "$WATCHDOG_STATUS_FILE"; then
+                watchdog_evaluate_exhaustion
+            else
+                watchdog_log "WARNING: /status evidence was unreadable or oversized; evidence reset, not restarting"
+                watchdog_reset_exhaustion
+            fi
             continue
         fi
+
+        # Sustained exhaustion requires responsive control capacity. A failed health
+        # probe therefore resets that evidence before the independent all-BLOCKED path.
+        watchdog_reset_exhaustion
 
         # Startup grace is state, not a one-time launch gate. Until this process has
         # answered at least one bounded health probe, silence is boot evidence only.

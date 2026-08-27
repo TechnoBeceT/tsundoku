@@ -1,0 +1,35 @@
+Full thread dump OpenJDK 64-Bit Server VM:
+
+"engine-source-8" #48
+   java.lang.Thread.State: RUNNABLE
+	at okhttp3.internal.http2.Http2Reader.nextFrame(Http2Reader.kt:91)
+
+"engine-source-7" #47
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at java.lang.Thread.sleep(Native Method)
+
+"engine-source-6" #46
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.SocketDispatcher.read0(Native Method)
+
+"engine-source-5" #45
+   java.lang.Thread.State: RUNNABLE
+	at java.net.Socket$SocketInputStream.read(Socket.java:100)
+
+"engine-source-4" #44
+   java.lang.Thread.State: TIMED_WAITING (parking)
+	at java.util.concurrent.locks.LockSupport.parkNanos(LockSupport.java:269)
+
+"engine-source-3" #43
+   java.lang.Thread.State: RUNNABLE
+	at okio.InputStreamSource.read(JvmOkio.kt:93)
+
+"engine-source-2" #42
+   java.lang.Thread.State: RUNNABLE
+	at sun.nio.ch.Net.poll(Native Method)
+
+"engine-source-1" #41
+   java.lang.Thread.State: TIMED_WAITING (sleeping)
+	at java.lang.Thread.sleep(Native Method)
+
+JNI global refs: 42, weak refs: 0

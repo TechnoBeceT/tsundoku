@@ -47,6 +47,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   <li>{@code FAKE_BUSY_HOLD_MS} — how long /busy's legitimate long call holds the monitor.</li>
  *   <li>{@code FAKE_WEDGE_AT_BOOT} — {@code 1} wedges the pool the instant the listener is up,
  *       BEFORE anything has ever answered /health. See {@code wedgePool}.</li>
+ *   <li>{@code FAKE_EXHAUST_AT_BOOT} — {@code 1} occupies all eight isolated source workers while
+ *       leaving health and status responsive.</li>
  * </ul>
  */
 public final class FakeEngine {
@@ -61,8 +63,10 @@ public final class FakeEngine {
     /** Long calls started / finished, reported by /health so the test can prove one COMPLETED. */
     private static final AtomicInteger BUSY_STARTED = new AtomicInteger();
     private static final AtomicInteger BUSY_DONE = new AtomicInteger();
+    private static final AtomicInteger SOURCE_EXHAUSTED = new AtomicInteger();
 
     private static ExecutorService pool;
+    private static ExecutorService sourcePool;
 
     private FakeEngine() {
     }
@@ -83,6 +87,7 @@ public final class FakeEngine {
         pool = namedThreads
                 ? Executors.newFixedThreadPool(8, rpcThreadFactory(threadNames))
                 : Executors.newFixedThreadPool(8);
+        sourcePool = Executors.newFixedThreadPool(8, rpcThreadFactory("engine-source"));
         server.setExecutor(pool);
 
         // The ops endpoint the watchdog probes. `pid` and the two counters are additions this fake
@@ -94,6 +99,30 @@ public final class FakeEngine {
                 + ",\"pid\":" + ProcessHandle.current().pid()
                 + ",\"busyStarted\":" + BUSY_STARTED.get()
                 + ",\"busyDone\":" + BUSY_DONE.get() + "}"));
+
+        // Mirrors the bounded production status contract. The exhausted snapshot is intentionally
+        // constant: the end-to-end test controls elapsed wall time through the watchdog cadence,
+        // while the status age starts beyond the production 180-second safety boundary.
+        server.createContext("/status", ex -> {
+            final boolean exhausted = SOURCE_EXHAUSTED.get() == 1;
+            final String sources = exhausted
+                    ? "[{\"source_id\":11,\"queued\":0,\"running\":2},"
+                        + "{\"source_id\":22,\"queued\":0,\"running\":2},"
+                        + "{\"source_id\":33,\"queued\":0,\"running\":2},"
+                        + "{\"source_id\":44,\"queued\":0,\"running\":2}]"
+                    : "[]";
+            respond(ex, "{\"ready\":true,\"source_workers\":8,\"per_source_limit\":2,"
+                    + "\"queued\":0,\"running\":" + (exhausted ? 8 : 0)
+                    + ",\"completion_sequence\":0,\"oldest_running_millis\":"
+                    + (exhausted ? 181001 : 0)
+                    + ",\"completed\":0,\"cancelled\":0,\"timed_out\":0,\"rejected\":0,"
+                    + "\"busiest_sources\":" + sources
+                    + ",\"extension_running\":false,\"extension_queued\":0}");
+        });
+        server.createContext("/exhaust", ex -> {
+            exhaustSourcePool();
+            respond(ex, "exhausted");
+        });
 
         // ── A TRUE DEADLOCK ──────────────────────────────────────────────────────────────────
         // The GAP-137 shape, on demand: a healthy engine that has already answered /health, and
@@ -151,6 +180,20 @@ public final class FakeEngine {
             wedgePool();
             System.out.println("fake-engine: wedged at boot; /health will never answer");
             System.out.flush();
+        }
+        if ("1".equals(env("FAKE_EXHAUST_AT_BOOT", "0"))) {
+            exhaustSourcePool();
+            System.out.println("fake-engine: all source workers exhausted; health/status remain responsive");
+            System.out.flush();
+        }
+    }
+
+    private static void exhaustSourcePool() {
+        if (!SOURCE_EXHAUSTED.compareAndSet(0, 1)) {
+            return;
+        }
+        for (int i = 0; i < 8; i++) {
+            sourcePool.execute(() -> sleepMs(Long.MAX_VALUE));
         }
     }
 

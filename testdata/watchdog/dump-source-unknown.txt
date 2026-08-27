@@ -1,0 +1,7 @@
+Full thread dump OpenJDK 64-Bit Server VM:
+
+"engine-source-1" #31
+   java.lang.Thread.State: RUNNABLE
+	at enginehost.SourceCalls.compute(SourceCalls.kt:1)
+
+JNI global refs: 41, weak refs: 0

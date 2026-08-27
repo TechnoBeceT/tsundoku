@@ -207,7 +207,7 @@ supervise_engine() {
 tail -n +1 -F "$WATCHDOG_LOG_FILE" &
 supervise_engine &
 supervise_engine_health &
-echo "entrypoint: wedge watchdog supervision started; waiting for first healthy response (GAP-137)"
+echo "entrypoint: engine recovery supervision started; waiting for first healthy response (GAP-137)"
 
 # ── Wait for the host's first /health ────────────────────────────────────────
 # EVERY attempt MUST be bounded, and `curl` has no default timeout. A wedged
