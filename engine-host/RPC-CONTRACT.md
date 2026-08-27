@@ -21,8 +21,8 @@ Returns HTTP 200 with one bounded runtime snapshot:
 | `timed_out` | integer | Public results completed by the host source-call deadline. |
 | `rejected` | integer | Source submissions rejected at capacity or after scheduler shutdown. |
 | `busiest_sources` | array | At most ten `{source_id, queued, running}` entries. |
-| `extension_running` | boolean | Whether the single extension executor is running a task. |
-| `extension_queued` | integer | Tasks waiting for the extension executor. |
+| `extension_running` | boolean | Whether either bounded extension lane is running a task. |
+| `extension_queued` | integer | Tasks waiting across the bounded extension mutation and network lanes. |
 
 `busiest_sources` is ordered by running descending, queued descending, then source id ascending.
 The response never includes request bodies, URLs, headers, cookies, tokens, preferences, or stack

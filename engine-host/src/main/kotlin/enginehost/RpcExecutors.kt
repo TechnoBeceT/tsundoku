@@ -24,13 +24,15 @@ internal interface ShutdownAwareTask : Runnable {
 
 /**
  * Owns the independent, bounded execution domains used by the RPC server. Source work passes
- * through a keyed scheduler, while extension work stays single-writer and the HTTP front door
- * remains free to dispatch control requests.
+ * through a keyed scheduler. Extension preparation/networking has a bounded lane distinct from
+ * local registry and preference mutation, while the HTTP front door remains free to dispatch
+ * control requests.
  */
 class RpcExecutors(
     frontDoorThreads: Int = FRONT_DOOR_THREADS,
     sourceScheduler: SourceScheduler? = null,
     extensionExecutor: ExecutorService? = null,
+    extensionNetworkExecutor: ExecutorService? = null,
     frontDoorQueueCapacity: Int = FRONT_DOOR_QUEUE_CAPACITY,
     sourceQueueCapacity: Int = SOURCE_QUEUE_CAPACITY,
     extensionQueueCapacity: Int = EXTENSION_QUEUE_CAPACITY,
@@ -47,8 +49,15 @@ class RpcExecutors(
 
     val sourceScheduler: SourceScheduler =
         sourceScheduler ?: SourceScheduler(SourceSchedulerLimits(queueCapacity = sourceQueueCapacity))
+    internal val clientConnectionObserver = ClientConnectionObserver()
+    private val extensionThreadFactory = RpcThreadFactory(EXTENSION_THREAD_PREFIX)
+    private val defaultExtensionState = ExtensionExecutorState(extensionQueueCapacity)
     val extensionExecutor: ExecutorService =
-        extensionExecutor ?: observedExtensionPool(extensionQueueCapacity)
+        extensionExecutor ?:
+            observedExtensionPool(extensionQueueCapacity, extensionThreadFactory, defaultExtensionState)
+    val extensionNetworkExecutor: ExecutorService =
+        extensionNetworkExecutor ?:
+            observedExtensionPool(extensionQueueCapacity, extensionThreadFactory, defaultExtensionState)
 
     val frontDoorExecutor: ExecutorService =
         boundedFixedPool(
@@ -65,9 +74,24 @@ class RpcExecutors(
 
     internal fun currentFrontDoorRejection(): RpcRejection? = frontDoorRejection.get()
 
-    fun extensionSnapshot(): ExtensionExecutorSnapshot =
-        when (val executor = extensionExecutor) {
-            is ObservedExtensionExecutor -> executor.snapshot()
+    fun extensionSnapshot(): ExtensionExecutorSnapshot {
+        val snapshots = mutableListOf<ExtensionExecutorSnapshot>()
+        val observedStates = mutableSetOf<ExtensionExecutorState>()
+        listOf(extensionExecutor, extensionNetworkExecutor).distinct().forEach { executor ->
+            if (executor is ObservedExtensionExecutor) {
+                if (observedStates.add(executor.state)) snapshots.add(executor.snapshot())
+            } else {
+                snapshots.add(executorSnapshot(executor))
+            }
+        }
+        return ExtensionExecutorSnapshot(
+            running = snapshots.any { it.running },
+            queued = snapshots.sumOf { it.queued },
+        )
+    }
+
+    private fun executorSnapshot(executor: ExecutorService): ExtensionExecutorSnapshot =
+        when (executor) {
             is ThreadPoolExecutor ->
                 ExtensionExecutorSnapshot(
                     running = executor.activeCount > 0,
@@ -82,12 +106,14 @@ class RpcExecutors(
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TERMINATION_SECONDS)
         val frontDoorQueued = frontDoorExecutor.shutdownNow()
         val extensionQueued = extensionExecutor.shutdownNow()
+        val extensionNetworkQueued = extensionNetworkExecutor.shutdownNow()
 
         frontDoorQueued.forEach { task -> runFrontDoorRejection(RpcRejection.SHUTDOWN, task) }
+        clientConnectionObserver.close()
         sourceScheduler.close()
-        extensionQueued.forEach { task -> (task as? ShutdownAwareTask)?.shutdown() }
+        (extensionQueued + extensionNetworkQueued).forEach { task -> (task as? ShutdownAwareTask)?.shutdown() }
 
-        listOf(frontDoorExecutor, extensionExecutor)
+        listOf(frontDoorExecutor, extensionExecutor, extensionNetworkExecutor)
             .distinct()
             .forEach { executor -> awaitTermination(executor, deadline) }
     }
@@ -122,7 +148,6 @@ class RpcExecutors(
         private const val FRONT_DOOR_THREADS = 4
         private const val FRONT_DOOR_QUEUE_CAPACITY = 32
         private const val SOURCE_QUEUE_CAPACITY = 128
-        private const val EXTENSION_THREADS = 1
         private const val EXTENSION_QUEUE_CAPACITY = 32
         private const val TERMINATION_SECONDS = 5L
 
@@ -145,34 +170,72 @@ class RpcExecutors(
                 rejectedExecutionHandler,
             )
 
-        private fun observedExtensionPool(queueCapacity: Int): ExecutorService =
+        private fun observedExtensionPool(
+            queueCapacity: Int,
+            threadFactory: ThreadFactory,
+            state: ExtensionExecutorState,
+        ): ExecutorService =
             ObservedExtensionExecutor(
                 queueCapacity = queueCapacity,
-                threadFactory = RpcThreadFactory(EXTENSION_THREAD_PREFIX),
+                threadFactory = threadFactory,
+                state = state,
             )
     }
+}
+
+/** Applies one aggregate queue bound and records occupancy across the extension execution lanes. */
+private class ExtensionExecutorState(
+    private val queueCapacity: Int,
+) {
+    private val lock = ReentrantLock()
+    private var queuedCount = 0
+    private var runningCount = 0
+
+    fun reserve() {
+        lock.withLock {
+            if (queuedCount >= queueCapacity) throw RejectedExecutionException("extension queue is full")
+            queuedCount++
+        }
+    }
+
+    fun start() {
+        lock.withLock {
+            queuedCount--
+            runningCount++
+        }
+    }
+
+    fun finish() {
+        lock.withLock { runningCount-- }
+    }
+
+    fun reject() {
+        lock.withLock { queuedCount-- }
+    }
+
+    fun snapshot(): ExtensionExecutorSnapshot =
+        lock.withLock {
+            ExtensionExecutorSnapshot(running = runningCount > 0, queued = queuedCount)
+        }
 }
 
 /** Tracks extension-domain occupancy without consulting extension state or waiting on its lock. */
 private class ObservedExtensionExecutor(
     queueCapacity: Int,
     threadFactory: ThreadFactory,
+    val state: ExtensionExecutorState,
 ) : ThreadPoolExecutor(
         1,
         1,
         0L,
         TimeUnit.MILLISECONDS,
         ArrayBlockingQueue(queueCapacity),
-        threadFactory,
-        AbortPolicy(),
-    ) {
-    private val statusLock = ReentrantLock()
-    private var queuedCount = 0
-    private var runningCount = 0
-
+    threadFactory,
+    AbortPolicy(),
+) {
     override fun execute(command: Runnable) {
         val observed = ObservedTask(command)
-        statusLock.withLock { queuedCount++ }
+        state.reserve()
         try {
             super.execute(observed)
         } catch (failure: RejectedExecutionException) {
@@ -187,9 +250,7 @@ private class ObservedExtensionExecutor(
         }
 
     fun snapshot(): ExtensionExecutorSnapshot =
-        statusLock.withLock {
-            ExtensionExecutorSnapshot(running = runningCount > 0, queued = queuedCount)
-        }
+        state.snapshot()
 
     private inner class ObservedTask(
         val delegate: Runnable,
@@ -198,14 +259,11 @@ private class ObservedExtensionExecutor(
 
         override fun run() {
             if (!claimed.compareAndSet(false, true)) return
-            statusLock.withLock {
-                queuedCount--
-                runningCount++
-            }
+            state.start()
             try {
                 delegate.run()
             } finally {
-                statusLock.withLock { runningCount-- }
+                state.finish()
             }
         }
 
@@ -214,7 +272,7 @@ private class ObservedExtensionExecutor(
         }
 
         fun reject() {
-            if (claimed.compareAndSet(false, true)) statusLock.withLock { queuedCount-- }
+            if (claimed.compareAndSet(false, true)) state.reject()
         }
 
         fun drain(): Runnable {

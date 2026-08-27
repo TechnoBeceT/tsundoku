@@ -76,6 +76,7 @@ class RpcThreadNamingTest {
             assertEquals("engine-http-1", threadNameFrom(executors.frontDoorExecutor))
             assertEquals("engine-source-1", sourceThreadNameFrom(executors.sourceScheduler))
             assertEquals("engine-extension-1", threadNameFrom(executors.extensionExecutor))
+            assertEquals("engine-extension-2", threadNameFrom(executors.extensionNetworkExecutor))
         } finally {
             executors.close()
         }

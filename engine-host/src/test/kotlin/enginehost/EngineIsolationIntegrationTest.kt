@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import kotlinx.coroutines.delay
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.koin.core.context.startKoin
@@ -34,7 +35,6 @@ import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.listDirectoryEntries
@@ -103,6 +103,43 @@ private class HealthyDetailsSource : Source {
             },
             emptyList(),
         )
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+private class CooperativeDetailsSource(
+    private val entered: CountDownLatch,
+    private val exited: CountDownLatch,
+) : Source {
+    override val id: Long = 404L
+    override val name: String = "Cooperative source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate {
+        entered.countDown()
+        try {
+            delay(5_000)
+            return SMangaUpdate(manga, emptyList())
+        } finally {
+            exited.countDown()
+        }
+    }
 
     override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
 
@@ -284,9 +321,8 @@ class EngineIsolationIntegrationTest {
             runningServer.start()
             val baseUrl = "http://127.0.0.1:${boundPort(runningServer)}"
             assertEquals(200, putPreference(baseUrl, false).statusCode())
-            val executor = Executors.newFixedThreadPool(2)
             try {
-                val listing = executor.submit<List<ExtensionDto>> { manager.list() }
+                val listing = getAsync(baseUrl, "/extensions", Duration.ofSeconds(3))
                 assertTrue(upstream.takeRequest(5, TimeUnit.SECONDS) != null, "repository request did not start")
                 assertFalse(listing.isDone, "slow repository transfer completed before the mutation")
 
@@ -297,25 +333,49 @@ class EngineIsolationIntegrationTest {
                 assertEquals(true, preferenceValue(mutationResponse.body()))
                 assertFalse(listing.isDone, "preference mutation waited for repository transfer")
 
-                assertEquals(emptyList(), listing.get(3, TimeUnit.SECONDS))
+                val listingResponse = listing.get(3, TimeUnit.SECONDS)
+                assertEquals(200, listingResponse.statusCode())
+                assertEquals(mapper.readTree("[]"), mapper.readTree(listingResponse.body()))
                 val persisted = getAsync(baseUrl, "/sources/303/preferences").get(500, TimeUnit.MILLISECONDS)
                 assertEquals(200, persisted.statusCode())
                 assertEquals(true, preferenceValue(persisted.body()))
             } finally {
-                executor.shutdownNow()
                 manager.close()
                 assertTrue(root.listDirectoryEntries().none { it.fileName.toString().endsWith(".tmp") })
             }
         }
     }
 
+    /** Closing the real HTTP client request promptly cancels cooperative source work. */
+    @RepeatedTest(20)
+    fun `client disconnect cancels cooperative source work before its normal response`() {
+        val entered = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val root = Files.createTempDirectory("client-disconnect-integration").toFile()
+        val loader = ExtensionLoader(root)
+        injectSource(loader, CooperativeDetailsSource(entered, exited))
+        val runningServer = RpcServer(loader, ExtensionManager(loader, root), port = 0)
+        server = runningServer
+        runningServer.start()
+        val baseUrl = "http://127.0.0.1:${boundPort(runningServer)}"
+        val request = postAsync(baseUrl, "/manga", """{"sourceId":404,"url":"/cooperative"}""")
+        blockedRequests += request
+        assertTrue(entered.await(5, TimeUnit.SECONDS), "cooperative source call did not start")
+
+        assertTrue(request.cancel(true), "HTTP request was already terminal before cancellation")
+
+        assertTrue(exited.await(500, TimeUnit.MILLISECONDS), "source work outlived the disconnected client")
+        assertTrue(awaitRunning(baseUrl, expected = 0, timeoutMillis = 500), "physical source slot did not release")
+    }
+
     private fun getAsync(
         baseUrl: String,
         path: String,
+        timeout: Duration = Duration.ofSeconds(1),
     ): CompletableFuture<HttpResponse<String>> =
         client.sendAsync(
             HttpRequest.newBuilder(URI("$baseUrl$path"))
-                .timeout(Duration.ofSeconds(1))
+                .timeout(timeout)
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
@@ -354,6 +414,22 @@ class EngineIsolationIntegrationTest {
         val preferences = mapper.readTree(body)["preferences"]
         val enabled = preferences.first { it["key"].textValue() == "enabled" }
         return enabled["currentValue"].booleanValue()
+    }
+
+    private fun awaitRunning(
+        baseUrl: String,
+        expected: Int,
+        timeoutMillis: Long,
+    ): Boolean {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+        do {
+            val status = getAsync(baseUrl, "/status").get(500, TimeUnit.MILLISECONDS)
+            if (status.statusCode() == 200 && mapper.readTree(status.body())["running"].intValue() == expected) {
+                return true
+            }
+            Thread.sleep(5)
+        } while (System.nanoTime() < deadline)
+        return false
     }
 
     private fun injectSource(

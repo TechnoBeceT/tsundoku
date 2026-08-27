@@ -237,8 +237,8 @@ func (l *Launcher) observeHealthyStatus(ctx context.Context, t superviseTarget, 
 	if l.closed {
 		return nil
 	}
-	mi, ok := l.instances[t.key]
-	if !ok || mi != t.mi || mi.proc != t.proc {
+	mi := l.currentSuperviseInstanceLocked(t)
+	if mi == nil {
 		return nil
 	}
 	if ctx.Err() != nil {
@@ -250,31 +250,57 @@ func (l *Launcher) observeHealthyStatus(ctx context.Context, t superviseTarget, 
 	// when status is unavailable. Status failure can only decline exhaustion
 	// recovery; it never degrades or restarts a control-responsive process.
 	l.markHealthyLocked(mi)
-	fingerprint, valid := status.exhaustionFingerprint()
-	qualifies := statusErr == nil && valid && status.Ready &&
-		status.SourceWorkers == managedSourceWorkers &&
-		status.Running == managedSourceWorkers &&
-		status.OldestRunningMillis > managedExhaustionOldest.Milliseconds()
+	fingerprint, qualifies := qualifyingExhaustionFingerprint(status, statusErr)
 	if !qualifies {
 		resetExhaustionEvidence(mi)
 		return nil
 	}
 
-	if fingerprint != mi.exhaustionFingerprint || status.CompletionSequence != mi.exhaustionCompletionSequence {
+	recordExhaustionSample(mi, fingerprint, status.CompletionSequence, now)
+	if !exhaustionRecoveryEligible(mi, now) {
+		return nil
+	}
+	return newExhaustionDiagnostic(mi, fingerprint, status, now)
+}
+
+func (l *Launcher) currentSuperviseInstanceLocked(t superviseTarget) *managedInstance {
+	mi, ok := l.instances[t.key]
+	if !ok || mi != t.mi || mi.proc != t.proc {
+		return nil
+	}
+	return mi
+}
+
+func qualifyingExhaustionFingerprint(status EngineStatus, statusErr error) (string, bool) {
+	if statusErr != nil || !status.Ready || status.SourceWorkers != managedSourceWorkers ||
+		status.Running != managedSourceWorkers ||
+		status.OldestRunningMillis <= managedExhaustionOldest.Milliseconds() {
+		return "", false
+	}
+	return status.exhaustionFingerprint()
+}
+
+func recordExhaustionSample(mi *managedInstance, fingerprint string, completionSequence int64, now time.Time) {
+	if fingerprint != mi.exhaustionFingerprint || completionSequence != mi.exhaustionCompletionSequence {
 		mi.exhaustionFingerprint = fingerprint
-		mi.exhaustionCompletionSequence = status.CompletionSequence
+		mi.exhaustionCompletionSequence = completionSequence
 		mi.exhaustionConsecutive = 1
 		mi.exhaustionFirstSampleAt = now
 		mi.exhaustionNextSampleAt = now.Add(managedExhaustionCadence)
-	} else if mi.exhaustionConsecutive < managedExhaustionSamples &&
-		!now.Before(mi.exhaustionNextSampleAt) {
-		mi.exhaustionConsecutive++
-		mi.exhaustionNextSampleAt = now.Add(managedExhaustionCadence)
+		return
 	}
-	if mi.exhaustionConsecutive < managedExhaustionSamples || now.Before(mi.exhaustionNextEligibleAt) {
-		return nil
+	if mi.exhaustionConsecutive >= managedExhaustionSamples || now.Before(mi.exhaustionNextSampleAt) {
+		return
 	}
+	mi.exhaustionConsecutive++
+	mi.exhaustionNextSampleAt = now.Add(managedExhaustionCadence)
+}
 
+func exhaustionRecoveryEligible(mi *managedInstance, now time.Time) bool {
+	return mi.exhaustionConsecutive >= managedExhaustionSamples && !now.Before(mi.exhaustionNextEligibleAt)
+}
+
+func newExhaustionDiagnostic(mi *managedInstance, fingerprint string, status EngineStatus, now time.Time) *ExhaustionDiagnostic {
 	status.BusiestSources = append([]EngineSourceStatus(nil), status.BusiestSources...)
 	return &ExhaustionDiagnostic{
 		ProfileKey:   mi.key,
@@ -297,18 +323,15 @@ func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diag
 	if l.closed {
 		return
 	}
-	mi, ok := l.instances[t.key]
-	if !ok || mi != t.mi || mi.proc != t.proc {
+	mi := l.currentSuperviseInstanceLocked(t)
+	if mi == nil {
 		return
 	}
 	if ctx.Err() != nil {
 		resetExhaustionEvidence(mi)
 		return
 	}
-	if mi.exhaustionFingerprint != diagnostic.Fingerprint ||
-		mi.exhaustionCompletionSequence != diagnostic.Status.CompletionSequence ||
-		mi.exhaustionConsecutive < managedExhaustionSamples ||
-		now.Before(mi.exhaustionNextEligibleAt) {
+	if !exhaustionDiagnosticStillCurrent(mi, diagnostic, now) {
 		return
 	}
 
@@ -325,6 +348,12 @@ func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diag
 	l.markHealthyLocked(mi)
 	slog.InfoContext(ctx, "enginehost: exhausted managed instance restarted and healthy",
 		"profile", mi.key, "port", mi.port, "next_exhaustion_restart_at", mi.exhaustionNextEligibleAt)
+}
+
+func exhaustionDiagnosticStillCurrent(mi *managedInstance, diagnostic ExhaustionDiagnostic, now time.Time) bool {
+	return mi.exhaustionFingerprint == diagnostic.Fingerprint &&
+		mi.exhaustionCompletionSequence == diagnostic.Status.CompletionSequence &&
+		exhaustionRecoveryEligible(mi, now)
 }
 
 func resetExhaustionEvidence(mi *managedInstance) {

@@ -57,87 +57,100 @@ type ExhaustionDiagnostic struct {
 func newHTTPStatusProber(timeout time.Duration) StatusProber {
 	client := &http.Client{Timeout: timeout}
 	return func(ctx context.Context, baseURL string) (EngineStatus, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/status", nil)
+		body, err := readStatusBody(ctx, client, baseURL)
 		if err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: build status probe: %w", err)
+			return EngineStatus{}, err
 		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: status probe %s: %w", baseURL, err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode != http.StatusOK {
-			return EngineStatus{}, fmt.Errorf("enginehost: status probe %s: status %d", baseURL, resp.StatusCode)
-		}
-		if resp.ContentLength > maxStatusBodyBytes {
-			return EngineStatus{}, fmt.Errorf("enginehost: status probe %s: response exceeds %d bytes", baseURL, maxStatusBodyBytes)
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxStatusBodyBytes+1))
-		if err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: read status probe %s: %w", baseURL, err)
-		}
-		if len(body) > maxStatusBodyBytes {
-			return EngineStatus{}, fmt.Errorf("enginehost: status probe %s: response exceeds %d bytes", baseURL, maxStatusBodyBytes)
-		}
-		if err := validateStatusShape(body); err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
-		}
-
-		var status EngineStatus
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&status); err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
-		}
-		if err := requireJSONEOF(decoder); err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
-		}
-		if err := status.validate(); err != nil {
-			return EngineStatus{}, fmt.Errorf("enginehost: validate status probe %s: %w", baseURL, err)
-		}
-		return status, nil
+		return decodeStatus(body, baseURL)
 	}
+}
+
+func readStatusBody(ctx context.Context, client *http.Client, baseURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("enginehost: build status probe: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("enginehost: status probe %s: %w", baseURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("enginehost: status probe %s: status %d", baseURL, resp.StatusCode)
+	}
+	if resp.ContentLength > maxStatusBodyBytes {
+		return nil, fmt.Errorf("enginehost: status probe %s: response exceeds %d bytes", baseURL, maxStatusBodyBytes)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxStatusBodyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("enginehost: read status probe %s: %w", baseURL, err)
+	}
+	if len(body) > maxStatusBodyBytes {
+		return nil, fmt.Errorf("enginehost: status probe %s: response exceeds %d bytes", baseURL, maxStatusBodyBytes)
+	}
+	return body, nil
+}
+
+func decodeStatus(body []byte, baseURL string) (EngineStatus, error) {
+	if err := validateStatusShape(body); err != nil {
+		return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
+	}
+	var status EngineStatus
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&status); err != nil {
+		return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return EngineStatus{}, fmt.Errorf("enginehost: decode status probe %s: %w", baseURL, err)
+	}
+	if err := status.validate(); err != nil {
+		return EngineStatus{}, fmt.Errorf("enginehost: validate status probe %s: %w", baseURL, err)
+	}
+	return status, nil
 }
 
 func validateStatusShape(body []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(body))
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('{') {
-		return fmt.Errorf("status must be one JSON object")
+	if err := requireJSONDelim(decoder, '{', "status must be one JSON object"); err != nil {
+		return err
 	}
-	seen := make(map[string]struct{}, 14)
-	for decoder.More() {
-		token, err := decoder.Token()
-		if err != nil {
-			return err
-		}
-		key, ok := token.(string)
-		if !ok || !approvedStatusField(key) {
-			return fmt.Errorf("unapproved status field")
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return fmt.Errorf("duplicate status field %q", key)
-		}
-		seen[key] = struct{}{}
-		if key == "busiest_sources" {
-			if err := validateSourceRows(decoder); err != nil {
-				return err
-			}
-			continue
-		}
-		var value json.RawMessage
-		if err := decoder.Decode(&value); err != nil {
-			return err
-		}
+	seen, err := validateStatusFields(decoder)
+	if err != nil {
+		return err
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
-		return fmt.Errorf("unterminated status object")
+	if err := requireJSONDelim(decoder, '}', "unterminated status object"); err != nil {
+		return err
 	}
 	if len(seen) != 14 {
 		return fmt.Errorf("status is missing required fields")
 	}
 	return requireJSONEOF(decoder)
+}
+
+func validateStatusFields(decoder *json.Decoder) (map[string]struct{}, error) {
+	seen := make(map[string]struct{}, 14)
+	for decoder.More() {
+		if err := validateStatusField(decoder, seen); err != nil {
+			return nil, err
+		}
+	}
+	return seen, nil
+}
+
+func validateStatusField(decoder *json.Decoder, seen map[string]struct{}) error {
+	key, err := readApprovedField(decoder, approvedStatusField, "unapproved status field")
+	if err != nil {
+		return err
+	}
+	if _, duplicate := seen[key]; duplicate {
+		return fmt.Errorf("duplicate status field %q", key)
+	}
+	seen[key] = struct{}{}
+	if key == "busiest_sources" {
+		return validateSourceRows(decoder)
+	}
+	return discardJSONValue(decoder)
 }
 
 func approvedStatusField(key string) bool {
@@ -152,9 +165,8 @@ func approvedStatusField(key string) bool {
 }
 
 func validateSourceRows(decoder *json.Decoder) error {
-	start, err := decoder.Token()
-	if err != nil || start != json.Delim('[') {
-		return fmt.Errorf("busiest_sources must be an array")
+	if err := requireJSONDelim(decoder, '[', "busiest_sources must be an array"); err != nil {
+		return err
 	}
 	rows := 0
 	for decoder.More() {
@@ -162,42 +174,67 @@ func validateSourceRows(decoder *json.Decoder) error {
 		if rows > 10 {
 			return fmt.Errorf("busiest_sources exceeds ten rows")
 		}
-		start, err := decoder.Token()
-		if err != nil || start != json.Delim('{') {
-			return fmt.Errorf("source status must be an object")
-		}
-		seen := make(map[string]struct{}, 3)
-		for decoder.More() {
-			token, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := token.(string)
-			if !ok || (key != "source_id" && key != "queued" && key != "running") {
-				return fmt.Errorf("unapproved source status field")
-			}
-			if _, duplicate := seen[key]; duplicate {
-				return fmt.Errorf("duplicate source status field %q", key)
-			}
-			seen[key] = struct{}{}
-			var value json.RawMessage
-			if err := decoder.Decode(&value); err != nil {
-				return err
-			}
-		}
-		end, err := decoder.Token()
-		if err != nil || end != json.Delim('}') {
-			return fmt.Errorf("unterminated source status object")
-		}
-		if len(seen) != 3 {
-			return fmt.Errorf("source status is missing required fields")
+		if err := validateSourceRow(decoder); err != nil {
+			return err
 		}
 	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim(']') {
-		return fmt.Errorf("unterminated busiest_sources array")
+	return requireJSONDelim(decoder, ']', "unterminated busiest_sources array")
+}
+
+func validateSourceRow(decoder *json.Decoder) error {
+	if err := requireJSONDelim(decoder, '{', "source status must be an object"); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, 3)
+	for decoder.More() {
+		key, err := readApprovedField(decoder, approvedSourceField, "unapproved source status field")
+		if err != nil {
+			return err
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("duplicate source status field %q", key)
+		}
+		seen[key] = struct{}{}
+		if err := discardJSONValue(decoder); err != nil {
+			return err
+		}
+	}
+	if err := requireJSONDelim(decoder, '}', "unterminated source status object"); err != nil {
+		return err
+	}
+	if len(seen) != 3 {
+		return fmt.Errorf("source status is missing required fields")
 	}
 	return nil
+}
+
+func approvedSourceField(key string) bool {
+	return key == "source_id" || key == "queued" || key == "running"
+}
+
+func readApprovedField(decoder *json.Decoder, approved func(string) bool, message string) (string, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return "", err
+	}
+	key, ok := token.(string)
+	if !ok || !approved(key) {
+		return "", fmt.Errorf("%s", message)
+	}
+	return key, nil
+}
+
+func requireJSONDelim(decoder *json.Decoder, want json.Delim, message string) error {
+	token, err := decoder.Token()
+	if err != nil || token != want {
+		return fmt.Errorf("%s", message)
+	}
+	return nil
+}
+
+func discardJSONValue(decoder *json.Decoder) error {
+	var value json.RawMessage
+	return decoder.Decode(&value)
 }
 
 func requireJSONEOF(decoder *json.Decoder) error {
@@ -212,10 +249,8 @@ func requireJSONEOF(decoder *json.Decoder) error {
 }
 
 func (s EngineStatus) validate() error {
-	if s.SourceWorkers < 0 || s.PerSourceLimit < 0 || s.Queued < 0 || s.Running < 0 ||
-		s.CompletionSequence < 0 || s.OldestRunningMillis < 0 || s.Completed < 0 ||
-		s.Cancelled < 0 || s.TimedOut < 0 || s.Rejected < 0 || s.ExtensionQueued < 0 {
-		return fmt.Errorf("negative counter")
+	if err := s.validateCounters(); err != nil {
+		return err
 	}
 	if s.Running > s.SourceWorkers {
 		return fmt.Errorf("running workers exceed configured workers")
@@ -223,25 +258,47 @@ func (s EngineStatus) validate() error {
 	if len(s.BusiestSources) > 10 {
 		return fmt.Errorf("busiest_sources exceeds ten rows")
 	}
-	seen := make(map[int64]struct{}, len(s.BusiestSources))
-	running := 0
-	for _, source := range s.BusiestSources {
-		if source.SourceID < 0 || source.Queued < 0 || source.Running < 0 {
-			return fmt.Errorf("invalid source occupancy")
-		}
-		if source.Running > s.PerSourceLimit {
-			return fmt.Errorf("source running count exceeds per-source limit")
-		}
-		if _, ok := seen[source.SourceID]; ok {
-			return fmt.Errorf("duplicate source id")
-		}
-		seen[source.SourceID] = struct{}{}
-		running += source.Running
+	running, err := s.validateSourceOccupancy()
+	if err != nil {
+		return err
 	}
 	if running != s.Running {
 		return fmt.Errorf("source running sum %d does not match running %d", running, s.Running)
 	}
 	return nil
+}
+
+func (s EngineStatus) validateCounters() error {
+	counters := []int64{
+		int64(s.SourceWorkers), int64(s.PerSourceLimit), int64(s.Queued), int64(s.Running),
+		s.CompletionSequence, s.OldestRunningMillis, s.Completed, s.Cancelled, s.TimedOut,
+		s.Rejected, int64(s.ExtensionQueued),
+	}
+	for _, counter := range counters {
+		if counter < 0 {
+			return fmt.Errorf("negative counter")
+		}
+	}
+	return nil
+}
+
+func (s EngineStatus) validateSourceOccupancy() (int, error) {
+	seen := make(map[int64]struct{}, len(s.BusiestSources))
+	running := 0
+	for _, source := range s.BusiestSources {
+		if source.SourceID < 0 || source.Queued < 0 || source.Running < 0 {
+			return 0, fmt.Errorf("invalid source occupancy")
+		}
+		if source.Running > s.PerSourceLimit {
+			return 0, fmt.Errorf("source running count exceeds per-source limit")
+		}
+		if _, ok := seen[source.SourceID]; ok {
+			return 0, fmt.Errorf("duplicate source id")
+		}
+		seen[source.SourceID] = struct{}{}
+		running += source.Running
+	}
+	return running, nil
 }
 
 // exhaustionFingerprint is the canonical physical-running source population.

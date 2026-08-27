@@ -122,15 +122,17 @@ class RpcServer(
             }
         }
 
-        // Registry, preferences, and extension mutations share the single-writer domain.
+        // Registry and preference mutations use the local single-writer lane.
         registerContext("/sources") { exchange, response ->
             submit(rpcExecutors.extensionExecutor, response, "sources request") {
                 handleSources(exchange, response)
             }
             true
         }
+        // Repository/APK preparation has its own bounded lane, so a slow transfer cannot occupy
+        // the preference/registry lane. ExtensionManager still serializes only the apply phase.
         registerContext("/extensions") { exchange, response ->
-            submit(rpcExecutors.extensionExecutor, response, "extensions request") {
+            submit(extensionExecutorFor(exchange), response, "extensions request") {
                 handleExtensions(exchange, response)
             }
             true
@@ -144,6 +146,16 @@ class RpcServer(
 
         server.start()
         logger.info { "RPC server listening on http://localhost:$port" }
+    }
+
+    private fun extensionExecutorFor(exchange: HttpExchange): ExecutorService {
+        val path = exchange.requestURI.path
+        val needsNetwork =
+            (path == "/extensions" && exchange.requestMethod == "GET") ||
+                (path == "/extensions/install" && exchange.requestMethod == "POST") ||
+                (path == "/extensions/refresh" && exchange.requestMethod == "POST") ||
+                (path.endsWith("/update") && exchange.requestMethod == "POST")
+        return if (needsNetwork) rpcExecutors.extensionNetworkExecutor else rpcExecutors.extensionExecutor
     }
 
     fun stop() {
@@ -566,7 +578,7 @@ class RpcServer(
 
         fun bind(future: java.util.concurrent.CompletableFuture<Unit>) {
             cancellation.set { future.cancel(false) }
-            response.cancelOnDisconnect { future.cancel(false) }
+            response.cancelOnDisconnect(rpcExecutors.clientConnectionObserver) { future.cancel(false) }
             future.whenComplete { _, failure ->
                 when {
                     future.isCancelled -> shutdown()
@@ -625,6 +637,7 @@ class RpcServer(
         private val writeFailed = AtomicBoolean(false)
         private val writeFinished = AtomicBoolean(false)
         private val disconnectCancellation = AtomicReference<(() -> Unit)?>(null)
+        private val disconnectObservation = AtomicReference<AutoCloseable?>(null)
 
         fun respondJson(
             status: Int,
@@ -640,6 +653,7 @@ class RpcServer(
             contentType: String,
         ) {
             if (!completed.compareAndSet(false, true)) return
+            disconnectObservation.getAndSet(null)?.close()
             try {
                 exchange.responseHeaders.add("Content-Type", contentType)
                 exchange.sendResponseHeaders(status, bytes.size.toLong())
@@ -651,6 +665,7 @@ class RpcServer(
             } finally {
                 writeFinished.set(true)
                 disconnectCancellation.set(null)
+                disconnectObservation.getAndSet(null)?.close()
                 completion.countDown()
             }
         }
@@ -663,11 +678,22 @@ class RpcServer(
 
         fun respondSourceTimeout() = respondMessage(504, SOURCE_TIMEOUT_MESSAGE)
 
-        fun cancelOnDisconnect(cancel: () -> Unit) {
+        fun cancelOnDisconnect(
+            observer: ClientConnectionObserver,
+            cancel: () -> Unit,
+        ) {
             disconnectCancellation.set(cancel)
+            val observation =
+                observer.observe(exchange.localAddress, exchange.remoteAddress) {
+                    if (!completed.get()) disconnectCancellation.getAndSet(null)?.invoke()
+                }
+            disconnectObservation.set(observation)
             when {
                 writeFailed.get() -> disconnectCancellation.getAndSet(null)?.invoke()
-                writeFinished.get() -> disconnectCancellation.compareAndSet(cancel, null)
+                writeFinished.get() -> {
+                    disconnectCancellation.compareAndSet(cancel, null)
+                    disconnectObservation.getAndSet(null)?.close()
+                }
             }
         }
 

@@ -37,10 +37,19 @@ var exhaustedSources = []enginehost.EngineSourceStatus{
 	{SourceID: 44, Running: 2},
 }
 
-func TestSupervise_StableExhaustionRestartsOnceAfterSixSamples(t *testing.T) {
-	starter := &fakeStarter{closeOnSignal: true}
-	var sample atomic.Int32
-	statusProber := func(context.Context, string) (enginehost.EngineStatus, error) {
+func ensureManagedProfile(t *testing.T, l *enginehost.Launcher, key string, sourceIDs ...int64) {
+	t.Helper()
+	p := profile(key)
+	if len(sourceIDs) > 0 {
+		p = profileWithSources(key, sourceIDs...)
+	}
+	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+}
+
+func changingQueueStatusProber(sample *atomic.Int32) enginehost.StatusProber {
+	return func(context.Context, string) (enginehost.EngineStatus, error) {
 		n := int(sample.Add(1))
 		sources := append([]enginehost.EngineSourceStatus(nil), exhaustedSources...)
 		if n%2 == 0 {
@@ -51,22 +60,30 @@ func TestSupervise_StableExhaustionRestartsOnceAfterSixSamples(t *testing.T) {
 		}
 		return exhaustedStatus(41, n*7, sources...), nil
 	}
+}
+
+func checkingDiagnosticSink(t *testing.T, starter *fakeStarter, diagnostics *atomic.Int32) func(context.Context, enginehost.ExhaustionDiagnostic) {
+	t.Helper()
+	return func(_ context.Context, d enginehost.ExhaustionDiagnostic) {
+		if starter.callCount() != 1 {
+			t.Errorf("diagnostic captured after restart: starter calls = %d, want 1", starter.callCount())
+		}
+		if d.ProfileKey != "k1" || d.PID != 1 || d.Status.Queued == 0 {
+			t.Errorf("diagnostic = %+v, want bounded profile/pid/status evidence", d)
+		}
+		diagnostics.Add(1)
+	}
+}
+
+func TestSupervise_StableExhaustionRestartsOnceAfterSixSamples(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	var sample atomic.Int32
 	var diagnostics atomic.Int32
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-		enginehost.WithStatusProber(statusProber),
-		enginehost.WithExhaustionDiagnosticSink(func(_ context.Context, d enginehost.ExhaustionDiagnostic) {
-			if starter.callCount() != 1 {
-				t.Errorf("diagnostic captured after restart: starter calls = %d, want 1", starter.callCount())
-			}
-			if d.ProfileKey != "k1" || d.PID != 1 || d.Status.Queued == 0 {
-				t.Errorf("diagnostic = %+v, want bounded profile/pid/status evidence", d)
-			}
-			diagnostics.Add(1)
-		}))
+		enginehost.WithStatusProber(changingQueueStatusProber(&sample)),
+		enginehost.WithExhaustionDiagnosticSink(checkingDiagnosticSink(t, starter, &diagnostics)))
 	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
-	if _, err := l.EnsureProfile(context.Background(), profileWithSources("k1", 10)); err != nil {
-		t.Fatalf("EnsureProfile: %v", err)
-	}
+	ensureManagedProfile(t, l, "k1", 10)
 
 	now := time.Unix(1_700_000_000, 0)
 	for i := 0; i < 5; i++ {
@@ -158,42 +175,43 @@ func TestSupervise_CompletionAndPhysicalFingerprintChangesResetEvidence(t *testi
 			enginehost.EngineSourceStatus{SourceID: 55, Running: 2})},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			starter := &fakeStarter{closeOnSignal: true}
-			var mu sync.Mutex
-			current := exhaustedStatus(41, 0, exhaustedSources...)
-			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-				enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
-					mu.Lock()
-					defer mu.Unlock()
-					return current, nil
-				}))
-			sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
-			if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
-				t.Fatalf("EnsureProfile: %v", err)
-			}
-			now := time.Unix(1_700_000_000, 0)
-			for i := 0; i < 5; i++ {
-				enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
-			}
+		t.Run(tt.name, func(t *testing.T) { testEvidenceChangeResetsProof(t, tt.changed) })
+	}
+}
+
+func testEvidenceChangeResetsProof(t *testing.T, changed enginehost.EngineStatus) {
+	t.Helper()
+	starter := &fakeStarter{closeOnSignal: true}
+	var mu sync.Mutex
+	current := exhaustedStatus(41, 0, exhaustedSources...)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
 			mu.Lock()
-			current = tt.changed
-			mu.Unlock()
-			enginehost.SuperviseOnce(sup, context.Background(), now.Add(5*30*time.Second))
-			if got := starter.callCount(); got != 1 {
-				t.Fatalf("starts on changed sixth sample = %d, want 1", got)
-			}
-			for i := 0; i < 4; i++ {
-				enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(6+i)*30*time.Second))
-			}
-			if got := starter.callCount(); got != 1 {
-				t.Fatalf("starts after five samples of new evidence = %d, want 1", got)
-			}
-			enginehost.SuperviseOnce(sup, context.Background(), now.Add(10*30*time.Second))
-			if got := starter.callCount(); got != 2 {
-				t.Fatalf("starts after sixth sample of new evidence = %d, want 2", got)
-			}
-		})
+			defer mu.Unlock()
+			return current, nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
+	ensureManagedProfile(t, l, "k1")
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 5; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*30*time.Second))
+	}
+	mu.Lock()
+	current = changed
+	mu.Unlock()
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(5*30*time.Second))
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts on changed sixth sample = %d, want 1", got)
+	}
+	for i := 0; i < 4; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(6+i)*30*time.Second))
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts after five samples of new evidence = %d, want 1", got)
+	}
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(10*30*time.Second))
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts after sixth sample of new evidence = %d, want 2", got)
 	}
 }
 
@@ -345,23 +363,39 @@ func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	}
 }
 
-func TestSupervise_HealthDownDuringCooldownInvalidatesExhaustionProof(t *testing.T) {
-	starter := &fakeStarter{closeOnSignal: true}
-	var healthDown atomic.Bool
-	prober := func(string) error {
+func toggledHealthProber(healthDown *atomic.Bool) func(string) error {
+	return func(string) error {
 		if healthDown.Load() {
 			return errors.New("health down")
 		}
 		return nil
 	}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
+}
+
+func assertResetEvidenceWithCooldown(t *testing.T, l *enginehost.Launcher, wantEligible time.Time) {
+	t.Helper()
+	evidence, ok := enginehost.InstanceExhaustionEvidence(l, "k1")
+	if !ok {
+		t.Fatal("instance k1 not managed")
+	}
+	if evidence.Consecutive != 0 || evidence.Fingerprint != "" ||
+		!evidence.FirstSampleAt.IsZero() || !evidence.NextSampleAt.IsZero() {
+		t.Errorf("evidence after health-down = %+v, want reset proof", evidence)
+	}
+	if !evidence.NextEligibleAt.Equal(wantEligible) {
+		t.Errorf("cooldown eligibility = %s, want preserved %s", evidence.NextEligibleAt, wantEligible)
+	}
+}
+
+func TestSupervise_HealthDownDuringCooldownInvalidatesExhaustionProof(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	var healthDown atomic.Bool
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, toggledHealthProber(&healthDown),
 		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
 			return exhaustedStatus(41, 0, exhaustedSources...), nil
 		}))
 	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
-	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
-		t.Fatalf("EnsureProfile: %v", err)
-	}
+	ensureManagedProfile(t, l, "k1")
 
 	now := time.Unix(1_700_000_000, 0)
 	for i := 0; i < 6; i++ {
@@ -377,17 +411,8 @@ func TestSupervise_HealthDownDuringCooldownInvalidatesExhaustionProof(t *testing
 	enginehost.SuperviseOnce(sup, context.Background(), now.Add(11*30*time.Second))
 	healthDown.Store(false)
 
-	evidence, ok := enginehost.InstanceExhaustionEvidence(l, "k1")
-	if !ok {
-		t.Fatal("instance k1 not managed")
-	}
-	if evidence.Consecutive != 0 || evidence.Fingerprint != "" || !evidence.FirstSampleAt.IsZero() || !evidence.NextSampleAt.IsZero() {
-		t.Errorf("evidence after health-down = %+v, want reset proof", evidence)
-	}
 	wantEligible := now.Add(5*30*time.Second + 10*time.Minute)
-	if !evidence.NextEligibleAt.Equal(wantEligible) {
-		t.Errorf("cooldown eligibility = %s, want preserved %s", evidence.NextEligibleAt, wantEligible)
-	}
+	assertResetEvidenceWithCooldown(t, l, wantEligible)
 	if got := starter.callCount(); got != 2 {
 		t.Fatalf("starts during cooldown health-down = %d, want 2", got)
 	}
@@ -401,21 +426,23 @@ func TestSupervise_HealthDownDuringCooldownInvalidatesExhaustionProof(t *testing
 	}
 }
 
+func cancellingStatusProber(armed *atomic.Bool, cancel *context.CancelFunc) enginehost.StatusProber {
+	return func(context.Context, string) (enginehost.EngineStatus, error) {
+		if armed.Swap(false) {
+			(*cancel)()
+		}
+		return exhaustedStatus(41, 0, exhaustedSources...), nil
+	}
+}
+
 func TestSupervise_CancellationAfterStatusInvalidatesPartialProof(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	var cancelOnProbe atomic.Bool
 	var cancel context.CancelFunc
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
-			if cancelOnProbe.Swap(false) {
-				cancel()
-			}
-			return exhaustedStatus(41, 0, exhaustedSources...), nil
-		}))
+		enginehost.WithStatusProber(cancellingStatusProber(&cancelOnProbe, &cancel)))
 	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
-	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
-		t.Fatalf("EnsureProfile: %v", err)
-	}
+	ensureManagedProfile(t, l, "k1")
 
 	now := time.Unix(1_700_000_000, 0)
 	for i := 0; i < 5; i++ {

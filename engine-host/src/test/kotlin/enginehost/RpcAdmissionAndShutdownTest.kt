@@ -76,12 +76,14 @@ class RpcAdmissionAndShutdownTest {
             assertEquals(32, remainingCapacity(executors.frontDoorExecutor))
             assertEquals(128, executors.sourceScheduler.limits.queueCapacity)
             assertEquals(32, remainingCapacity(executors.extensionExecutor))
+            assertEquals(32, remainingCapacity(executors.extensionNetworkExecutor))
         } finally {
             executors.close()
         }
         assertTrue(executors.frontDoorExecutor.isTerminated)
         assertTrue(executors.sourceScheduler.isTerminated)
         assertTrue(executors.extensionExecutor.isTerminated)
+        assertTrue(executors.extensionNetworkExecutor.isTerminated)
     }
 
     /** An unbounded HTTP queue accepts this request instead of returning the stable capacity error. */
@@ -185,6 +187,34 @@ class RpcAdmissionAndShutdownTest {
 
             assertBusy(rejected)
             assertEquals(1, queueSize(executors.extensionExecutor), "extension queue must stay at its configured bound")
+            release.countDown()
+            assertEquals(200, queued.get(5, TimeUnit.SECONDS).statusCode())
+        } finally {
+            release.countDown()
+            rpc.server.stop()
+            executors.close()
+        }
+    }
+
+    /** Separate extension workers must not multiply the aggregate accepted backlog. */
+    @Test
+    fun `extension lanes share one aggregate queue bound`() {
+        val executors = testExecutors(extensionQueueCapacity = 1)
+        val release = CountDownLatch(1)
+        val rpc = startServer(executors)
+        try {
+            occupy(executors.extensionExecutor, release)
+            occupy(executors.extensionNetworkExecutor, release)
+            val queued = getAsync(rpc.baseUrl, "/sources")
+            awaitQueueSize(executors.extensionExecutor, 1)
+
+            val rejected = get(rpc.baseUrl, "/extensions", timeoutMillis = 1_000)
+
+            assertBusy(rejected)
+            assertEquals(
+                1,
+                queueSize(executors.extensionExecutor) + queueSize(executors.extensionNetworkExecutor),
+            )
             release.countDown()
             assertEquals(200, queued.get(5, TimeUnit.SECONDS).statusCode())
         } finally {

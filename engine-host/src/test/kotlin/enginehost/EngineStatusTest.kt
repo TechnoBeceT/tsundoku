@@ -47,6 +47,8 @@ class EngineStatusTest {
         val sourceEntered = CountDownLatch(8)
         val extensionRelease = CountDownLatch(1)
         val extensionEntered = CountDownLatch(1)
+        val extensionNetworkRelease = CountDownLatch(1)
+        val extensionNetworkEntered = CountDownLatch(1)
         val workDir = Files.createTempDirectory("engine-status").toFile()
         val loader = ExtensionLoader(workDir)
         val server = RpcServer(loader, ExtensionManager(loader, workDir), port = 0, executors = executors)
@@ -79,7 +81,14 @@ class EngineStatusTest {
             }
             assertTrue(extensionEntered.await(5, TimeUnit.SECONDS), "extension worker did not start")
             executors.extensionExecutor.execute { extensionRelease.await() }
-            awaitExtensionQueue(executors, 1)
+            awaitExtensionQueue(executors.extensionExecutor, 1)
+            executors.extensionNetworkExecutor.execute {
+                extensionNetworkEntered.countDown()
+                extensionNetworkRelease.await()
+            }
+            assertTrue(extensionNetworkEntered.await(5, TimeUnit.SECONDS), "extension network worker did not start")
+            executors.extensionNetworkExecutor.execute { extensionNetworkRelease.await() }
+            awaitExtensionQueue(executors.extensionNetworkExecutor, 1)
 
             server.start()
             val request =
@@ -128,7 +137,7 @@ class EngineStatusTest {
             assertEquals(0, status["timed_out"].longValue())
             assertEquals(1, status["rejected"].longValue())
             assertEquals(true, status["extension_running"].booleanValue())
-            assertEquals(1, status["extension_queued"].intValue())
+            assertEquals(2, status["extension_queued"].intValue())
             assertEquals(10, status["busiest_sources"].size())
             assertEquals(
                 listOf(1L, 2L, 3L, 4L, 1_000L, 1_001L, 1_002L, 1_003L, 1_004L, 1_005L),
@@ -140,16 +149,17 @@ class EngineStatusTest {
         } finally {
             sourceRelease.countDown()
             extensionRelease.countDown()
+            extensionNetworkRelease.countDown()
             server.stop()
             executors.close()
         }
     }
 
     private fun awaitExtensionQueue(
-        executors: RpcExecutors,
+        executor: java.util.concurrent.ExecutorService,
         expected: Int,
     ) {
-        val pool = executors.extensionExecutor as java.util.concurrent.ThreadPoolExecutor
+        val pool = executor as java.util.concurrent.ThreadPoolExecutor
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (pool.queue.size != expected && System.nanoTime() < deadline) Thread.sleep(5)
         assertEquals(expected, pool.queue.size, "extension queue did not reach expected size")
