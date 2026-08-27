@@ -31,6 +31,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
@@ -369,12 +370,14 @@ func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
 	}
 }
 
-// fetchAdmissionResult distinguishes work that reached the engine from a local
-// admission failure. Callers may apply source retry/breaker/cache accounting only
-// when fetched is true.
+// fetchAdmissionResult distinguishes a won ownership claim, work that reached the
+// engine, and a local admission failure. Callers may apply source
+// retry/breaker/cache accounting only when fetched is true; owned=false is a
+// harmless concurrent-claim loss.
 type fetchAdmissionResult struct {
 	pages   fetcher.ChapterPages
 	fetched bool
+	owned   bool
 }
 
 // fetchWithAdmission makes one engine call after all admission controls that
@@ -396,7 +399,7 @@ func (d *Dispatcher) fetchWithAdmission(
 	ref fetcher.FetchRef,
 	limiter *providerLimiter,
 	globalSem *semaphore.Weighted,
-	onAdmitted func() error,
+	onAdmitted func() (bool, error),
 ) (fetchAdmissionResult, error) {
 	d.gateWait(ctx, sourceKey)
 	if err := ctx.Err(); err != nil {
@@ -415,23 +418,30 @@ func (d *Dispatcher) fetchWithAdmission(
 		return fetchAdmissionResult{}, err
 	}
 	if onAdmitted != nil {
-		if err := onAdmitted(); err != nil {
+		owned, err := onAdmitted()
+		if err != nil || !owned {
 			return fetchAdmissionResult{}, err
 		}
 	}
 	pages, err := d.f.Fetch(ctx, ref)
-	return fetchAdmissionResult{pages: pages, fetched: true}, err
+	return fetchAdmissionResult{pages: pages, fetched: true, owned: true}, err
 }
 
-// admitChapterFetch performs the eligible→in-flight state transition in a short
-// transaction and checks cancellation before committing it. The commit is the
-// engine-ownership boundary: cancellation before it rolls the transition back to
-// the exact prior state; after it, fetchWithAdmission always invokes the engine.
-// chapter.SetState remains the one state-machine gate inside the transaction.
-func (d *Dispatcher) admitChapterFetch(ctx context.Context, chapterID uuid.UUID, state entchapter.State) error {
+// admitChapterFetch conditionally claims one exact eligible→in-flight edge in a
+// short transaction and checks cancellation before committing it. The conditional
+// UPDATE's rows-affected result decides ownership: a concurrent loser returns
+// claimed=false without mutating the row. The commit is the engine-ownership
+// boundary: cancellation before it rolls the transition back to the exact prior
+// state; after it, fetchWithAdmission always invokes the engine.
+func (d *Dispatcher) admitChapterFetch(
+	ctx context.Context,
+	chapterID uuid.UUID,
+	from, to entchapter.State,
+	guards ...entpredicate.Chapter,
+) (claimed bool, err error) {
 	tx, err := d.client.Tx(ctx)
 	if err != nil {
-		return fmt.Errorf("begin admission transaction: %w", err)
+		return false, fmt.Errorf("begin admission transaction: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -440,17 +450,18 @@ func (d *Dispatcher) admitChapterFetch(ctx context.Context, chapterID uuid.UUID,
 		}
 	}()
 
-	if err := chapter.SetState(ctx, tx.Client(), chapterID, state); err != nil {
-		return err
+	claimed, err = chapter.TransitionIfCurrent(ctx, tx.Client(), chapterID, from, to, guards...)
+	if err != nil || !claimed {
+		return claimed, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit admission transaction: %w", err)
+		return false, fmt.Errorf("commit admission transaction: %w", err)
 	}
 	committed = true
-	return nil
+	return true, nil
 }
 
 // gateRecordSuccess reports a successful fetch from sourceKey to the breaker
@@ -824,14 +835,14 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // wins. If every candidate fails this cycle, finalizeAfterAllFailed decides failed
 // vs permanently_failed from the freshly-bumped per-source state.
 //
-// It returns claimed=true the instant the atomic wanted/failed→downloading
-// transition SUCCEEDS (before the fetch loop), and claimed=false only when that
-// transition itself errors. This is the FORWARD-PROGRESS signal the drain loop
-// relies on: a successful claim moves the chapter out of the wanted/failed set
-// (so it is not re-selected next pass), whereas a failed claim means the chapter
-// made no progress and — critically — must not be counted as dispatched, or a
-// write-failing DB (reads succeed, the claim write fails) would keep re-selecting
-// it forever and hot-spin drainDownloads.
+// It returns claimed=true when the atomic wanted/failed→downloading transition
+// affects the row (before the fetch loop), and claimed=false when the transition
+// errors or another cycle won the conditional UPDATE. This is the FORWARD-PROGRESS
+// signal the drain loop relies on: a successful claim moves the chapter out of the
+// wanted/failed set (so it is not re-selected next pass), whereas an error or lost
+// claim made no progress here and — critically — must not be counted as dispatched,
+// or a write-failing DB (reads succeed, the claim write fails) would keep
+// re-selecting it forever and hot-spin drainDownloads.
 //
 // The caller MUST already hold the source's start slot (RunOnce's per-source
 // scheduler acquires it; Process is single-chapter so contention cannot arise):
@@ -839,16 +850,20 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // acquisition, so a queued chapter stays wanted until it truly starts. ch must be
 // loaded WithSeries(WithCategory()) for the render step.
 func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
-	onAdmitted := func() error {
+	onAdmitted := func() (bool, error) {
 		if claimed {
-			return nil
+			return true, nil
 		}
-		if setErr := d.admitChapterFetch(ctx, chapterID, entchapter.StateDownloading); setErr != nil {
-			return fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
+		won, setErr := d.admitChapterFetch(ctx, chapterID, ch.State, entchapter.StateDownloading)
+		if setErr != nil {
+			return false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
+		}
+		if !won {
+			return false, nil
 		}
 		claimed = true
 		d.broadcast("download.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloading)})
-		return nil
+		return true, nil
 	}
 
 	var lastErr error
@@ -908,7 +923,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
 //     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
-func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() error) (done, fetched bool, cause error) {
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func() (bool, error)) (done, fetched bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
 	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))

@@ -16,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
@@ -23,9 +24,9 @@ import (
 // errUpgradeNoLongerNeeded signals that fetchAndRender found the chapter's
 // current satisfier is still the best live source, so no fetch is warranted (a
 // stale upgrade_available flag). It is NOT a failure: Upgrade returns the chapter
-// to downloaded cleanly (the watermark was already refreshed), without recording
-// last_error or emitting upgrade.fail. This is the defence-in-depth partner to
-// DetectUpgrades' self-churn guard.
+// to downloaded and refreshes the watermark in one ownership-aware transaction,
+// without recording last_error or emitting upgrade.fail. This is the
+// defence-in-depth partner to DetectUpgrades' self-churn guard.
 var errUpgradeNoLongerNeeded = errors.New("upgrade no longer needed: current satisfier is already the best source")
 
 // errUpgradeSourceUnavailable signals a stale upgrade marker whose previously
@@ -36,6 +37,7 @@ var errUpgradeSourceUnavailable = errors.New("upgrade source is no longer availa
 // upgradeResult holds the artefacts produced by fetchAndRender so that
 // Upgrade can persist them in a single update call.
 type upgradeResult struct {
+	owned       bool
 	fetched     bool
 	pc          *ent.ProviderChapter
 	sp          *ent.SeriesProvider
@@ -53,6 +55,11 @@ type upgradeResult struct {
 	// BEFORE the fetch and handed to handleUpgradeFailure so a failed attempt on
 	// EXPIRED cached links invalidates them (GAP-119) — see fetchAttempt.
 	usedCachedLinks bool
+
+	// refreshSatisfiedImportance is set only for the self-satisfier no-fetch
+	// outcome. The ownership-aware stale-marker resolver writes it in the same
+	// transaction that conditionally clears upgrade_available.
+	refreshSatisfiedImportance *int
 }
 
 // DetectUpgrades scans all Chapter rows in state=downloaded and transitions
@@ -415,21 +422,24 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.Upgrade: %w", err)
 	}
-	return d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled, nil)
+	_, err = d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled, nil)
+	return err
 }
 
 // upgradeWith is Upgrade's body, parameterised by the per-provider fetch limiter so
 // a batch of concurrent upgrades (UpgradeAll) can SHARE one — that is what caps the
 // number of simultaneous fetches against any single physical source at
 // DownloadConcurrency even if two chapters' upgrade targets resolve to the same
-// source. See Upgrade for the full flow + failure semantics.
-func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) error {
+// source. completed reports whether this worker owned an engine attempt or stale
+// marker resolution; a lost conditional claim returns false with no error. See
+// Upgrade for the full flow + failure semantics.
+func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) (completed bool, err error) {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
 		Only(ctx)
 	if err != nil {
-		return fmt.Errorf("download.Dispatcher.Upgrade: load chapter %s: %w", chapterID, err)
+		return false, fmt.Errorf("download.Dispatcher.Upgrade: load chapter %s: %w", chapterID, err)
 	}
 
 	// The upgrade fetch honours the SAME per-source concurrency cap as the download
@@ -439,12 +449,12 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled, globalSem)
 	if err != nil {
 		if !res.fetched && (errors.Is(err, errUpgradeNoLongerNeeded) || errors.Is(err, errUpgradeSourceUnavailable)) {
-			return d.finishUnstartedUpgrade(ctx, chapterID)
+			return d.finishUnstartedUpgrade(ctx, ch, res.refreshSatisfiedImportance)
 		}
 		if !res.fetched {
 			// Admission and state-transition errors are local control failures: no
 			// engine call happened, so keep upgrade_available and surface the error.
-			return err
+			return false, err
 		}
 		// A failed upgrade must NEVER reuse its partially-staged, index-keyed pages:
 		// the next attempt re-resolves the page list fresh, and a reordered list
@@ -454,10 +464,13 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// every failure path (fetch, render, or persist). res.stagingDir is populated
 		// on the fetch/render failure returns for exactly this.
 		d.cleanupStaging(ctx, res.stagingDir)
-		return d.handleUpgradeFailure(ctx, chapterID, res.pc, fetchAttempt{
+		return true, d.handleUpgradeFailure(ctx, chapterID, res.pc, fetchAttempt{
 			stagingDir:      res.stagingDir,
 			usedCachedLinks: res.usedCachedLinks,
 		}, err)
+	}
+	if !res.owned {
+		return false, nil
 	}
 
 	if err := d.persistUpgradeSuccess(ctx, chapterID, res); err != nil {
@@ -465,7 +478,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 		// bump (failedPC is nil). Still wipe the staging dir (correctness over resume,
 		// like every upgrade-failure path); the working copy on disk is untouched.
 		d.cleanupStaging(ctx, res.stagingDir)
-		return d.handleUpgradeFailure(ctx, chapterID, nil, fetchAttempt{}, err)
+		return true, d.handleUpgradeFailure(ctx, chapterID, nil, fetchAttempt{}, err)
 	}
 
 	// The staged bytes are now inside the upgraded CBZ — delete the staging dir
@@ -478,7 +491,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 	})
 
 	d.tryDeleteOldCBZ(ctx, chapterID, ch, res.newFilename)
-	return nil
+	return true, nil
 }
 
 // fetchAndRender resolves the best LIVE source for chapterID, fetches pages, and
@@ -519,12 +532,8 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// importance and signal a clean no-op — no fetch, no re-render (mirrors the
 	// len(cands)==0 early return, but without treating it as a failure).
 	if ch.SatisfiedByProviderID != nil && best.SeriesProvider.ID == *ch.SatisfiedByProviderID {
-		if err := d.client.Chapter.UpdateOneID(chapterID).
-			SetSatisfiedImportance(best.SeriesProvider.Importance).
-			Exec(ctx); err != nil {
-			return upgradeResult{}, fmt.Errorf("refresh satisfied_importance: %w", err)
-		}
-		return upgradeResult{}, errUpgradeNoLongerNeeded
+		importance := best.SeriesProvider.Importance
+		return upgradeResult{refreshSatisfiedImportance: &importance}, errUpgradeNoLongerNeeded
 	}
 
 	pc := best.ProviderChapter
@@ -538,12 +547,22 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// makes stale, and only a pre-fetch read can distinguish "re-used" from
 	// "resolved this attempt" (GAP-119; see fetchAttempt).
 	usedCachedLinks := len(pc.PageLinks) > 0
-	admission, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() error {
-		if err := d.admitChapterFetch(ctx, chapterID, entchapter.StateUpgrading); err != nil {
-			return fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)
+	admission, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() (bool, error) {
+		claimed, err := d.admitChapterFetch(
+			ctx,
+			chapterID,
+			entchapter.StateUpgradeAvailable,
+			entchapter.StateUpgrading,
+			upgradeFrozenPredicates(ch)...,
+		)
+		if err != nil {
+			return false, fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)
+		}
+		if !claimed {
+			return false, nil
 		}
 		d.broadcast("upgrade.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateUpgrading)})
-		return nil
+		return true, nil
 	})
 	if err != nil {
 		d.recordUpgradeFetchFailure(ctx, sourceKey, admission, err)
@@ -553,6 +572,9 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// partially-staged pages — Fetch populates StagingDir even on error. The fetched
 		// flag keeps this metadata unreachable for a local admission error.
 		return upgradeResult{fetched: admission.fetched, pc: pc, sp: sp, stagingDir: admission.pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
+	}
+	if !admission.owned {
+		return upgradeResult{}, nil
 	}
 	pages := admission.pages
 	// The fetch succeeded → the source is reachable; clear its breaker state.
@@ -570,10 +592,11 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// A render failure is a LOCAL fault (no pc → no cooldown), but the fetch
 		// already staged every page — carry stagingDir so the caller wipes it (a
 		// failed upgrade never resumes, unlike the download path).
-		return upgradeResult{fetched: true, stagingDir: pages.StagingDir}, err
+		return upgradeResult{owned: true, fetched: true, stagingDir: pages.StagingDir}, err
 	}
 
 	return upgradeResult{
+		owned:       true,
 		fetched:     true,
 		pc:          pc,
 		sp:          sp,
@@ -582,6 +605,25 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		pageCount:   pages.PageCount,
 		stagingDir:  pages.StagingDir,
 	}, nil
+}
+
+// upgradeFrozenPredicates returns the provenance values an upgrade decision read
+// before admission. The conditional claim must still match both values, including
+// NULL, or it yields to the writer that changed the working copy's satisfier or
+// frozen watermark.
+func upgradeFrozenPredicates(ch *ent.Chapter) []entpredicate.Chapter {
+	guards := make([]entpredicate.Chapter, 0, 2)
+	if ch.SatisfiedByProviderID == nil {
+		guards = append(guards, entchapter.SatisfiedByProviderIDIsNil())
+	} else {
+		guards = append(guards, entchapter.SatisfiedByProviderIDEQ(*ch.SatisfiedByProviderID))
+	}
+	if ch.SatisfiedImportance == nil {
+		guards = append(guards, entchapter.SatisfiedImportanceIsNil())
+	} else {
+		guards = append(guards, entchapter.SatisfiedImportanceEQ(*ch.SatisfiedImportance))
+	}
+	return guards
 }
 
 // recordUpgradeFetchFailure updates the breaker only when the engine owned the
@@ -594,16 +636,50 @@ func (d *Dispatcher) recordUpgradeFetchFailure(ctx context.Context, sourceKey st
 	d.gateRecordFailure(ctx, sourceKey, cause, time.Now())
 }
 
-// finishUnstartedUpgrade resolves a stale upgrade marker when no engine fetch is
-// needed because the target disappeared or the current satisfier is still best.
-// It uses the legal upgrade_available→downloaded state-machine edge and reports a
-// handled success without touching source retry or breaker state.
-func (d *Dispatcher) finishUnstartedUpgrade(ctx context.Context, chapterID uuid.UUID) error {
-	if err := chapter.SetState(ctx, d.client, chapterID, entchapter.StateDownloaded); err != nil {
-		return fmt.Errorf("download.Dispatcher.Upgrade: resolve unstarted upgrade %s: %w", chapterID, err)
+// finishUnstartedUpgrade conditionally owns and resolves a stale upgrade marker
+// when no engine fetch is needed. It may clear only the exact
+// upgrade_available/provenance snapshot the caller evaluated. A concurrent engine
+// owner or completed cycle makes the conditional transition affect zero rows, so
+// this worker yields without mutation, broadcast, or UpgradeAll progress.
+func (d *Dispatcher) finishUnstartedUpgrade(ctx context.Context, ch *ent.Chapter, refreshImportance *int) (resolved bool, err error) {
+	tx, err := d.client.Tx(ctx)
+	if err != nil {
+		return false, fmt.Errorf("download.Dispatcher.Upgrade: begin unstarted resolution for %s: %w", ch.ID, err)
 	}
-	d.broadcast("download.done", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloaded)})
-	return nil
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	resolved, err = chapter.TransitionIfCurrent(
+		ctx,
+		tx.Client(),
+		ch.ID,
+		entchapter.StateUpgradeAvailable,
+		entchapter.StateDownloaded,
+		upgradeFrozenPredicates(ch)...,
+	)
+	if err != nil || !resolved {
+		return resolved, err
+	}
+	if refreshImportance != nil {
+		if err := tx.Client().Chapter.UpdateOneID(ch.ID).
+			SetSatisfiedImportance(*refreshImportance).
+			Exec(ctx); err != nil {
+			return false, fmt.Errorf("download.Dispatcher.Upgrade: refresh satisfied_importance for %s: %w", ch.ID, err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("download.Dispatcher.Upgrade: commit unstarted resolution for %s: %w", ch.ID, err)
+	}
+	committed = true
+	d.broadcast("download.done", DownloadEvent{ChapterID: ch.ID, State: string(entchapter.StateDownloaded)})
+	return true, nil
 }
 
 // persistUpgradeSuccess writes the new provenance to the Chapter row, resets the

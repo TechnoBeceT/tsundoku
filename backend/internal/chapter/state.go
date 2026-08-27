@@ -8,6 +8,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 )
 
 // legalTransitions encodes the pinned chapter state machine as an adjacency map.
@@ -145,25 +146,59 @@ func CanTransition(from, to entchapter.State) bool {
 	return allowed
 }
 
+// TransitionIfCurrent atomically applies one legal state-machine edge when the
+// chapter is still in from and every additional guard still matches. It returns
+// claimed=false with no error when another writer changed the row first.
+//
+// The expected source state is part of the UPDATE predicate; there is no
+// read-then-unconditional-write window. This makes the rows-affected result the
+// ownership decision for concurrent dispatchers while keeping CanTransition the
+// single definition of legal edges. Additional guards let a caller freeze other
+// values used to make its decision without duplicating state-machine logic.
+func TransitionIfCurrent(
+	ctx context.Context,
+	client *ent.Client,
+	chapterID uuid.UUID,
+	from, to entchapter.State,
+	guards ...entpredicate.Chapter,
+) (claimed bool, err error) {
+	if !CanTransition(from, to) {
+		return false, fmt.Errorf("chapter.TransitionIfCurrent: illegal transition %s → %s", from, to)
+	}
+
+	predicates := make([]entpredicate.Chapter, 0, len(guards)+2)
+	predicates = append(predicates, entchapter.IDEQ(chapterID), entchapter.StateEQ(from))
+	predicates = append(predicates, guards...)
+	affected, err := client.Chapter.Update().
+		Where(predicates...).
+		SetState(to).
+		Save(ctx)
+	if err != nil {
+		return false, fmt.Errorf("chapter.TransitionIfCurrent: persist state %s for chapter %s: %w", to, chapterID, err)
+	}
+	if affected > 1 {
+		return false, fmt.Errorf("chapter.TransitionIfCurrent: updated %d rows for unique chapter %s", affected, chapterID)
+	}
+	return affected == 1, nil
+}
+
 // SetState loads the current state of the Chapter identified by chapterID, checks
 // whether the transition to the target state is permitted by CanTransition, and
-// applies the update if so. If the transition is not permitted, it returns a
-// descriptive error and performs no mutation.
+// applies the update through TransitionIfCurrent. If the transition is not
+// permitted, or another writer changes the state between the read and conditional
+// update, it returns a descriptive error and performs no mutation.
 func SetState(ctx context.Context, client *ent.Client, chapterID uuid.UUID, to entchapter.State) error {
 	ch, err := client.Chapter.Get(ctx, chapterID)
 	if err != nil {
 		return fmt.Errorf("chapter.SetState: load chapter %s: %w", chapterID, err)
 	}
 
-	if !CanTransition(ch.State, to) {
-		return fmt.Errorf("chapter.SetState: illegal transition %s → %s", ch.State, to)
+	claimed, err := TransitionIfCurrent(ctx, client, chapterID, ch.State, to)
+	if err != nil {
+		return fmt.Errorf("chapter.SetState: %w", err)
 	}
-
-	// Defensive path: Exec error is only reachable if the DB connection is lost
-	// between loading the chapter and persisting the new state — not reachable
-	// under normal operation.
-	if err := client.Chapter.UpdateOneID(chapterID).SetState(to).Exec(ctx); err != nil {
-		return fmt.Errorf("chapter.SetState: persist state %s for chapter %s: %w", to, chapterID, err)
+	if !claimed {
+		return fmt.Errorf("chapter.SetState: chapter %s changed from %s before transition to %s", chapterID, ch.State, to)
 	}
 
 	return nil

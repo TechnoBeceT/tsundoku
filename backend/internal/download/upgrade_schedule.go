@@ -27,7 +27,9 @@ const unresolvedTargetKey = ""
 
 // UpgradeAll upgrades chapters currently in state=upgrade_available, with
 // PER-SOURCE concurrency AND a per-source per-cycle VOLUME cap, returning the
-// number of upgrades that completed without a hard error.
+// number of engine-owned attempts and stale-marker resolutions that completed
+// without a hard error. A concurrent worker that loses the conditional ownership
+// claim returns no error and contributes zero to the count.
 //
 // # Why the per-cycle volume cap (the ban-loop fix)
 //
@@ -124,13 +126,18 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	limiter := newProviderLimiter(concurrency)
 
 	// Shared across every per-source goroutine — incremented once per upgrade that
-	// returned nil, read after all goroutines have joined.
+	// owned either an engine attempt or a no-fetch marker resolution. A concurrent
+	// claimant that lost the conditional transition yields without incrementing.
+	// Read after all goroutines have joined.
 	var upgraded atomic.Int64
 	err = runPerSourceQueues(ctx, groups, concurrency, func(ctx context.Context, chapterID uuid.UUID) error {
-		if err := d.upgradeWith(ctx, chapterID, limiter, disabled, globalSem); err != nil {
+		completed, err := d.upgradeWith(ctx, chapterID, limiter, disabled, globalSem)
+		if err != nil {
 			return fmt.Errorf("download.Dispatcher.UpgradeAll: upgrade chapter %s: %w", chapterID, err)
 		}
-		upgraded.Add(1)
+		if completed {
+			upgraded.Add(1)
+		}
 		return nil
 	})
 	return int(upgraded.Load()), err
