@@ -18,6 +18,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
@@ -27,7 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Exposes loaded sources, extension management, per-source preferences, and configuration over
  * HTTP/JSON. It owns no library state; source content is resolved per request by (sourceId, url).
- * When [executors] is omitted, the server owns and closes its default execution domains.
+ * When [executors] is omitted, the server owns and closes its default execution domains. Injected
+ * executors remain caller-owned, while the server still completes every exchange it accepted.
  */
 class RpcServer(
     private val loader: ExtensionLoader,
@@ -40,6 +42,7 @@ class RpcServer(
     private val rpcExecutors = executors ?: RpcExecutors()
     private val lifecycleLock = Any()
     private val activeResponses = ConcurrentHashMap.newKeySet<ResponseGuard>()
+    private val frontDoorDispatches = ConcurrentHashMap.newKeySet<FrontDoorDispatch>()
     private val submissions = ConcurrentHashMap.newKeySet<SubmittedExchange>()
     private val stopped = CountDownLatch(1)
     private var stopping = false
@@ -52,7 +55,7 @@ class RpcServer(
 
     fun start() {
         server = HttpServer.create(InetSocketAddress(port), 0)
-        server.executor = rpcExecutors.frontDoorExecutor
+        server.executor = Executor(::dispatchFrontDoor)
 
         // Direct, bounded control handlers never wait on source or extension capacity.
         registerContext("/health") { _, response ->
@@ -126,15 +129,18 @@ class RpcServer(
 
     fun stop() {
         val owner: Boolean
+        val acceptedFrontDoor: List<FrontDoorDispatch>
         val acceptedTasks: List<SubmittedExchange>
         val acceptedResponses: List<ResponseGuard>
         synchronized(lifecycleLock) {
             owner = !stopping
             if (owner) {
                 stopping = true
+                acceptedFrontDoor = frontDoorDispatches.toList()
                 acceptedTasks = submissions.toList()
                 acceptedResponses = activeResponses.toList()
             } else {
+                acceptedFrontDoor = emptyList()
                 acceptedTasks = emptyList()
                 acceptedResponses = emptyList()
             }
@@ -145,13 +151,76 @@ class RpcServer(
         }
 
         try {
+            acceptedFrontDoor.forEach(FrontDoorDispatch::shutdown)
             acceptedTasks.forEach(SubmittedExchange::shutdown)
             acceptedResponses.forEach(ResponseGuard::respondShutdown)
             if (ownsExecutors) rpcExecutors.close()
+            acceptedFrontDoor.forEach(FrontDoorDispatch::awaitCompletion)
             acceptedResponses.forEach(ResponseGuard::awaitCompletion)
             if (::server.isInitialized) server.stop(0)
         } finally {
             stopped.countDown()
+        }
+    }
+
+    private fun dispatchFrontDoor(command: Runnable) {
+        val dispatch = FrontDoorDispatch(command)
+        val rejection =
+            synchronized(lifecycleLock) {
+                if (stopping) {
+                    RpcRejection.SHUTDOWN
+                } else {
+                    frontDoorDispatches.add(dispatch)
+                    try {
+                        rpcExecutors.frontDoorExecutor.execute(dispatch)
+                        null
+                    } catch (_: RejectedExecutionException) {
+                        if (rpcExecutors.frontDoorExecutor.isShutdown) RpcRejection.SHUTDOWN else RpcRejection.CAPACITY
+                    }
+                }
+            }
+        if (rejection != null) dispatch.reject(rejection)
+    }
+
+    /** Tracks accepted JDK dispatches separately from ownership of the executor that runs them. */
+    private inner class FrontDoorDispatch(
+        private val command: Runnable,
+    ) : Runnable {
+        private val state = AtomicInteger(FRONT_DOOR_QUEUED)
+        private val completion = CountDownLatch(1)
+
+        override fun run() {
+            if (!state.compareAndSet(FRONT_DOOR_QUEUED, FRONT_DOOR_RUNNING)) return
+            try {
+                command.run()
+            } finally {
+                complete()
+            }
+        }
+
+        fun reject(rejection: RpcRejection) {
+            if (!state.compareAndSet(FRONT_DOOR_QUEUED, FRONT_DOOR_STOPPED)) return
+            try {
+                rpcExecutors.runFrontDoorRejection(rejection, command)
+            } finally {
+                complete()
+            }
+        }
+
+        fun shutdown() = reject(RpcRejection.SHUTDOWN)
+
+        fun awaitCompletion() {
+            try {
+                completion.await(RESPONSE_WAIT_SECONDS, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+
+        private fun complete() {
+            state.set(FRONT_DOOR_COMPLETED)
+            frontDoorDispatches.remove(this)
+            completion.countDown()
         }
     }
 
@@ -537,6 +606,10 @@ class RpcServer(
         const val SHUTDOWN_MESSAGE = "server shutting down"
         const val RESPONSE_WAIT_SECONDS = 5L
         const val STOP_WAIT_SECONDS = 5L
+        const val FRONT_DOOR_QUEUED = 0
+        const val FRONT_DOOR_RUNNING = 1
+        const val FRONT_DOOR_STOPPED = 2
+        const val FRONT_DOOR_COMPLETED = 3
         const val SUBMISSION_QUEUED = 0
         const val SUBMISSION_RUNNING = 1
         const val SUBMISSION_STOPPED = 2

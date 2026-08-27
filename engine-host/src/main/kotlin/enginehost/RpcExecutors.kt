@@ -78,7 +78,7 @@ class RpcExecutors(
             .forEach { executor -> awaitTermination(executor, deadline) }
     }
 
-    private fun runFrontDoorRejection(
+    internal fun runFrontDoorRejection(
         rejection: RpcRejection,
         task: Runnable,
     ) {

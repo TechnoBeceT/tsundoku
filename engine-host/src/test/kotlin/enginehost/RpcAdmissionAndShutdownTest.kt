@@ -185,6 +185,33 @@ class RpcAdmissionAndShutdownTest {
         }
     }
 
+    /** Server lifecycle owns accepted front-door exchanges even when the executor is caller-owned. */
+    @Test
+    fun `server stop drains an accepted queued injected front door exchange`() {
+        val executors = testExecutors(frontDoorThreads = 1, frontDoorQueueCapacity = 1)
+        val frontDoorRelease = CountDownLatch(1)
+        val source = RecordingDetailsSource()
+        val rpc = startServer(executors, source)
+        try {
+            occupy(executors.frontDoorExecutor, frontDoorRelease)
+            val queued = postAsync(rpc.baseUrl, "/queued-at-injected-front-stop")
+            awaitQueueSize(executors.frontDoorExecutor, 1)
+
+            rpc.server.stop()
+
+            assertShutdown(queued.get(5, TimeUnit.SECONDS))
+            assertFalse(executors.frontDoorExecutor.isShutdown, "RpcServer must not close the injected front-door executor")
+            assertFalse(executors.sourceExecutor.isShutdown, "RpcServer must not close injected domain executors")
+
+            frontDoorRelease.countDown()
+            awaitQueueSize(executors.frontDoorExecutor, 0)
+            assertTrue(source.invokedUrls.isEmpty(), "a front-door task claimed by stop must not invoke its route later")
+        } finally {
+            frontDoorRelease.countDown()
+            executors.close()
+        }
+    }
+
     /** Closing executors must drain accepted front-door exchanges rather than discard their tasks. */
     @Test
     fun `executor close completes an accepted queued front door exchange`() {
