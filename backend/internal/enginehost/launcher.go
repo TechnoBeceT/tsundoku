@@ -63,12 +63,15 @@ type managedInstance struct {
 	restartTimes []time.Time
 
 	// Sustained-exhaustion evidence is intentionally bounded: one canonical
-	// progress+physical-running fingerprint, a capped consecutive count, the first
-	// sample time, and the next time an exhaustion recovery may be attempted.
-	exhaustionFingerprint    string
-	exhaustionConsecutive    int
-	exhaustionFirstSampleAt  time.Time
-	exhaustionNextEligibleAt time.Time
+	// physical-running fingerprint, its separate completion sequence, a capped
+	// consecutive count, the first sample time, and the next sample/restart
+	// eligibility instants.
+	exhaustionFingerprint        string
+	exhaustionCompletionSequence int64
+	exhaustionConsecutive        int
+	exhaustionFirstSampleAt      time.Time
+	exhaustionNextSampleAt       time.Time
+	exhaustionNextEligibleAt     time.Time
 }
 
 // instance projects a managedInstance into the engineroute.Instance the reconcile

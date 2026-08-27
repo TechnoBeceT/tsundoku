@@ -37,6 +37,10 @@ func HTTPHealthProber(timeout time.Duration) HealthProber { return newHTTPHealth
 // HTTPStatusProber exposes the bounded production status prober constructor.
 func HTTPStatusProber(timeout time.Duration) StatusProber { return newHTTPStatusProber(timeout) }
 
+// ExhaustionFingerprint exposes the canonical physical-running identity used by
+// managed-profile recovery.
+func ExhaustionFingerprint(status EngineStatus) (string, bool) { return status.exhaustionFingerprint() }
+
 // AllocFreePort exposes the production free-port allocator.
 func AllocFreePort() (int, error) { return allocFreePort() }
 

@@ -244,9 +244,9 @@ func (s EngineStatus) validate() error {
 	return nil
 }
 
-// exhaustionFingerprint combines completion progress with the canonical
-// physical-running source population. Queue counts and response order are
-// intentionally absent, so queue churn cannot erase stable exhaustion proof.
+// exhaustionFingerprint is the canonical physical-running source population.
+// Completion progress is evaluated separately by the supervisor; queue counts
+// and response order are intentionally absent.
 func (s EngineStatus) exhaustionFingerprint() (string, bool) {
 	if err := s.validate(); err != nil {
 		return "", false
@@ -260,8 +260,6 @@ func (s EngineStatus) exhaustionFingerprint() (string, bool) {
 	sort.Slice(running, func(i, j int) bool { return running[i].SourceID < running[j].SourceID })
 
 	var b strings.Builder
-	b.WriteString(strconv.FormatInt(s.CompletionSequence, 10))
-	b.WriteByte('|')
 	b.WriteString(strconv.Itoa(s.SourceWorkers))
 	b.WriteByte('|')
 	b.WriteString(strconv.Itoa(s.Running))

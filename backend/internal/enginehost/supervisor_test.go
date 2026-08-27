@@ -84,6 +84,67 @@ func TestSupervise_StableExhaustionRestartsOnceAfterSixSamples(t *testing.T) {
 	}
 }
 
+func TestSupervise_ExhaustionEvidenceRequiresThirtySecondCadence(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return exhaustedStatus(41, 0, exhaustedSources...), nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(5*time.Second))
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 6; i++ {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(time.Duration(i)*5*time.Second))
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts after six five-second observations = %d, want 1", got)
+	}
+
+	for _, elapsed := range []time.Duration{30, 60, 90, 120} {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(elapsed*time.Second))
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts before the 150-second sixth proof = %d, want 1", got)
+	}
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(150*time.Second))
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts at the exact 150-second sixth proof = %d, want 2", got)
+	}
+}
+
+func TestSupervise_ExhaustionEvidenceCannotCatchUpWithClusteredObservations(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return exhaustedStatus(41, 0, exhaustedSources...), nil
+		}))
+	sup := enginehost.NewSupervisor(l, fixedInterval(5*time.Second))
+	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	for _, elapsed := range []time.Duration{0, 100, 101, 102, 120, 150} {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(elapsed*time.Second))
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts after clustered observations = %d, want 1", got)
+	}
+	for _, elapsed := range []time.Duration{180, 210} {
+		enginehost.SuperviseOnce(sup, context.Background(), now.Add(elapsed*time.Second))
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts before six spaced observations = %d, want 1", got)
+	}
+	enginehost.SuperviseOnce(sup, context.Background(), now.Add(240*time.Second))
+	if got := starter.callCount(); got != 2 {
+		t.Fatalf("starts after six spaced observations = %d, want 2", got)
+	}
+}
+
 func TestSupervise_CompletionAndPhysicalFingerprintChangesResetEvidence(t *testing.T) {
 	tests := []struct {
 		name    string

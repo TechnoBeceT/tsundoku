@@ -114,3 +114,38 @@ func TestHTTPStatusProber_ContextCancellationStopsRead(t *testing.T) {
 		t.Fatal("probe did not return promptly after context cancellation")
 	}
 }
+
+func TestExhaustionFingerprint_MatchesTask7PhysicalIdentity(t *testing.T) {
+	first := enginehost.EngineStatus{
+		SourceWorkers:      8,
+		PerSourceLimit:     2,
+		Queued:             4,
+		Running:            8,
+		CompletionSequence: 41,
+		BusiestSources: []enginehost.EngineSourceStatus{
+			{SourceID: 44, Queued: 1, Running: 2},
+			{SourceID: 11, Queued: 1, Running: 2},
+			{SourceID: 33, Queued: 1, Running: 2},
+			{SourceID: 22, Queued: 1, Running: 2},
+		},
+	}
+	second := first
+	second.CompletionSequence = 42
+	second.Queued = 99
+	second.BusiestSources = []enginehost.EngineSourceStatus{
+		{SourceID: 22, Queued: 8, Running: 2},
+		{SourceID: 33, Queued: 9, Running: 2},
+		{SourceID: 11, Queued: 7, Running: 2},
+		{SourceID: 44, Queued: 10, Running: 2},
+	}
+
+	firstFingerprint, firstOK := enginehost.ExhaustionFingerprint(first)
+	secondFingerprint, secondOK := enginehost.ExhaustionFingerprint(second)
+	const want = "8|8|11:2,22:2,33:2,44:2"
+	if !firstOK || !secondOK {
+		t.Fatalf("fingerprint validity = %v/%v, want true/true", firstOK, secondOK)
+	}
+	if firstFingerprint != want || secondFingerprint != want {
+		t.Fatalf("fingerprints = %q / %q, want Task 7 physical identity %q", firstFingerprint, secondFingerprint, want)
+	}
+}

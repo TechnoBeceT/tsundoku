@@ -13,6 +13,7 @@ const (
 	managedSourceWorkers      = 8
 	managedExhaustionOldest   = 180 * time.Second
 	managedExhaustionSamples  = 6
+	managedExhaustionCadence  = 30 * time.Second
 	managedExhaustionCooldown = 10 * time.Minute
 
 	// defaultSuperviseMaxRestarts is how many restart attempts the supervisor makes
@@ -233,12 +234,16 @@ func (l *Launcher) observeHealthyStatus(t superviseTarget, status EngineStatus, 
 		return nil
 	}
 
-	if fingerprint != mi.exhaustionFingerprint {
+	if fingerprint != mi.exhaustionFingerprint || status.CompletionSequence != mi.exhaustionCompletionSequence {
 		mi.exhaustionFingerprint = fingerprint
+		mi.exhaustionCompletionSequence = status.CompletionSequence
 		mi.exhaustionConsecutive = 1
 		mi.exhaustionFirstSampleAt = now
-	} else if mi.exhaustionConsecutive < managedExhaustionSamples {
+		mi.exhaustionNextSampleAt = now.Add(managedExhaustionCadence)
+	} else if mi.exhaustionConsecutive < managedExhaustionSamples &&
+		!now.Before(mi.exhaustionNextSampleAt) {
 		mi.exhaustionConsecutive++
+		mi.exhaustionNextSampleAt = now.Add(managedExhaustionCadence)
 	}
 	if mi.exhaustionConsecutive < managedExhaustionSamples || now.Before(mi.exhaustionNextEligibleAt) {
 		return nil
@@ -269,6 +274,7 @@ func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diag
 	mi, ok := l.instances[t.key]
 	if !ok || mi != t.mi || mi.proc != t.proc ||
 		mi.exhaustionFingerprint != diagnostic.Fingerprint ||
+		mi.exhaustionCompletionSequence != diagnostic.Status.CompletionSequence ||
 		mi.exhaustionConsecutive < managedExhaustionSamples ||
 		now.Before(mi.exhaustionNextEligibleAt) {
 		return
@@ -291,8 +297,10 @@ func (l *Launcher) restartExhausted(ctx context.Context, t superviseTarget, diag
 
 func resetExhaustionEvidence(mi *managedInstance) {
 	mi.exhaustionFingerprint = ""
+	mi.exhaustionCompletionSequence = 0
 	mi.exhaustionConsecutive = 0
 	mi.exhaustionFirstSampleAt = time.Time{}
+	mi.exhaustionNextSampleAt = time.Time{}
 }
 
 // pruneRestartTimes drops restart-attempt timestamps at or before cutoff (the
