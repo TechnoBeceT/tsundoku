@@ -24,7 +24,8 @@ type staggeredSelectionContextKey struct{}
 type staggeredSelectionBarrier struct {
 	entered chan struct{}
 	release chan struct{}
-	once    sync.Once
+	enter   sync.Once
+	exit    sync.Once
 }
 
 func installStaggeredSelectionBarrier(client *ent.Client) *staggeredSelectionBarrier {
@@ -32,14 +33,20 @@ func installStaggeredSelectionBarrier(client *ent.Client) *staggeredSelectionBar
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
-	var chapterQueries atomic.Int32
 	client.Intercept(ent.InterceptFunc(func(next ent.Querier) ent.Querier {
 		return ent.QuerierFunc(func(ctx context.Context, query ent.Query) (ent.Value, error) {
-			if _, ok := query.(*ent.ChapterQuery); ok && ctx.Value(staggeredSelectionContextKey{}) != nil {
-				if chapterQueries.Add(1) == 3 {
+			if _, ok := query.(*ent.ProviderChapterQuery); ok && ctx.Value(staggeredSelectionContextKey{}) != nil {
+				value, err := next.Query(ctx, query)
+				if err != nil {
+					return nil, err
+				}
+				b.enter.Do(func() {
+					// Block only after the generation-bearing candidate snapshot and
+					// its eager-loaded provider edges are complete, but before claim.
 					close(b.entered)
 					<-b.release
-				}
+				})
+				return value, nil
 			}
 			return next.Query(ctx, query)
 		})
@@ -48,7 +55,7 @@ func installStaggeredSelectionBarrier(client *ent.Client) *staggeredSelectionBar
 }
 
 func (b *staggeredSelectionBarrier) unblock() {
-	b.once.Do(func() { close(b.release) })
+	b.exit.Do(func() { close(b.release) })
 }
 
 type staggeredFetcher struct {

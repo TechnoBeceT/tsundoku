@@ -29,9 +29,9 @@ type resolvedChapter struct {
 	cands          []chapter.Candidate
 }
 
-// groupBySource resolves each selected chapter's live candidates and partitions the
-// chapters by their PRIMARY source — the highest-importance live candidate,
-// which is cands[0] because RankedLiveCandidates is importance-DESC. Each
+// groupBySource resolves the selected batch's live candidates in one bulk load and
+// partitions the chapters by their PRIMARY source — the highest-importance live
+// candidate, which is cands[0] because RankedLiveCandidates is importance-DESC. Each
 // source's slice is then reordered ROUND-ROBIN ACROSS SERIES (roundRobinBySeries)
 // so one series' backlog can never starve another series sharing the same
 // source — see roundRobinBySeries for the exact interleaving rule.
@@ -39,9 +39,9 @@ type resolvedChapter struct {
 // A chapter with no live candidate never enters a group and never occupies a
 // start slot: it is handled inline via handleNoCandidates (stays wanted when no
 // source has it yet or all are on cooldown; permanently_failed when every source
-// is exhausted). Per-chapter resolution errors are logged and skipped so one bad
-// chapter cannot abort the whole cycle (matching the pre-scheduler behaviour where
-// RunOnce discarded each goroutine's error).
+// is exhausted). A bulk resolution error is logged and skips this pass, matching
+// the old path where the same database failure made every per-chapter resolution
+// fail and be skipped.
 //
 // disabled is the owner's paused-source set (QCAT-513), read ONCE by RunOnceAt
 // for the whole pass and passed in here rather than re-read per chapter — this
@@ -49,16 +49,21 @@ type resolvedChapter struct {
 // a straight N+1.
 func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Selection, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]resolvedChapter {
 	groups := make(map[string][]resolvedChapter)
+	chapters := make([]*ent.Chapter, len(selections))
+	for i, selection := range selections {
+		chapters[i] = selection.Chapter
+	}
+	candsByChapter, err := chapter.RankedLiveCandidatesForMany(ctx, d.client, chapters, maxRetries, now, disabled)
+	if err != nil {
+		slog.WarnContext(ctx, "download.RunOnce: could not rank candidates — skipping selected batch this cycle",
+			"err", err,
+		)
+		return groups
+	}
+
 	for _, selection := range selections {
 		ch := selection.Chapter
-		cands, err := chapter.RankedLiveCandidates(ctx, d.client, ch.ID, maxRetries, now, disabled)
-		if err != nil {
-			slog.WarnContext(ctx, "download.RunOnce: could not rank candidates — skipping chapter this cycle",
-				"chapter_id", ch.ID,
-				"err", err,
-			)
-			continue
-		}
+		cands := candsByChapter[ch.ID]
 		// Exclude any candidate whose physical source is currently cooled down by
 		// the source-politeness gate — a chapter whose ONLY live candidates are
 		// all cooled down is handled exactly like "no live candidate" below (stays
