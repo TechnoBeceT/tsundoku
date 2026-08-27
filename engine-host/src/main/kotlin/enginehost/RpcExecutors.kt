@@ -3,11 +3,14 @@ package enginehost
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.RejectedExecutionHandler
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 internal enum class RpcRejection {
     CAPACITY,
@@ -45,7 +48,7 @@ class RpcExecutors(
     val sourceScheduler: SourceScheduler =
         sourceScheduler ?: SourceScheduler(SourceSchedulerLimits(queueCapacity = sourceQueueCapacity))
     val extensionExecutor: ExecutorService =
-        extensionExecutor ?: boundedFixedPool(EXTENSION_THREADS, extensionQueueCapacity, EXTENSION_THREAD_PREFIX)
+        extensionExecutor ?: observedExtensionPool(extensionQueueCapacity)
 
     val frontDoorExecutor: ExecutorService =
         boundedFixedPool(
@@ -61,6 +64,17 @@ class RpcExecutors(
         )
 
     internal fun currentFrontDoorRejection(): RpcRejection? = frontDoorRejection.get()
+
+    fun extensionSnapshot(): ExtensionExecutorSnapshot =
+        when (val executor = extensionExecutor) {
+            is ObservedExtensionExecutor -> executor.snapshot()
+            is ThreadPoolExecutor ->
+                ExtensionExecutorSnapshot(
+                    running = executor.activeCount > 0,
+                    queued = executor.queue.size,
+                )
+            else -> ExtensionExecutorSnapshot(running = false, queued = 0)
+        }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
@@ -130,6 +144,83 @@ class RpcExecutors(
                 RpcThreadFactory(prefix),
                 rejectedExecutionHandler,
             )
+
+        private fun observedExtensionPool(queueCapacity: Int): ExecutorService =
+            ObservedExtensionExecutor(
+                queueCapacity = queueCapacity,
+                threadFactory = RpcThreadFactory(EXTENSION_THREAD_PREFIX),
+            )
+    }
+}
+
+/** Tracks extension-domain occupancy without consulting extension state or waiting on its lock. */
+private class ObservedExtensionExecutor(
+    queueCapacity: Int,
+    threadFactory: ThreadFactory,
+) : ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue(queueCapacity),
+        threadFactory,
+        AbortPolicy(),
+    ) {
+    private val statusLock = ReentrantLock()
+    private var queuedCount = 0
+    private var runningCount = 0
+
+    override fun execute(command: Runnable) {
+        val observed = ObservedTask(command)
+        statusLock.withLock { queuedCount++ }
+        try {
+            super.execute(observed)
+        } catch (failure: RejectedExecutionException) {
+            observed.reject()
+            throw failure
+        }
+    }
+
+    override fun shutdownNow(): MutableList<Runnable> =
+        super.shutdownNow().mapTo(mutableListOf()) { queued ->
+            (queued as? ObservedTask)?.drain() ?: queued
+        }
+
+    fun snapshot(): ExtensionExecutorSnapshot =
+        statusLock.withLock {
+            ExtensionExecutorSnapshot(running = runningCount > 0, queued = queuedCount)
+        }
+
+    private inner class ObservedTask(
+        val delegate: Runnable,
+    ) : ShutdownAwareTask {
+        private val claimed = AtomicBoolean(false)
+
+        override fun run() {
+            if (!claimed.compareAndSet(false, true)) return
+            statusLock.withLock {
+                queuedCount--
+                runningCount++
+            }
+            try {
+                delegate.run()
+            } finally {
+                statusLock.withLock { runningCount-- }
+            }
+        }
+
+        override fun shutdown() {
+            (delegate as? ShutdownAwareTask)?.shutdown()
+        }
+
+        fun reject() {
+            if (claimed.compareAndSet(false, true)) statusLock.withLock { queuedCount-- }
+        }
+
+        fun drain(): Runnable {
+            reject()
+            return delegate
+        }
     }
 }
 

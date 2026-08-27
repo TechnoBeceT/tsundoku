@@ -73,6 +73,10 @@ func (f *fakeClient) Health(_ context.Context) (sourceengine.Health, error) {
 	return sourceengine.Health{}, nil
 }
 
+func (f *fakeClient) Status(_ context.Context) (sourceengine.EngineStatus, error) {
+	return sourceengine.EngineStatus{}, nil
+}
+
 func (f *fakeClient) Sources(_ context.Context) ([]sourceengine.Source, error) {
 	return f.sources, f.sourcesErr
 }

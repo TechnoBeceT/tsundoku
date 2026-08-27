@@ -16,6 +16,33 @@ type Health struct {
 	Sources int `json:"sources"`
 }
 
+// EngineSourceStatus is one of the status endpoint's ten busiest source ids.
+// It carries only bounded scheduler counts and never request content.
+type EngineSourceStatus struct {
+	SourceID int64 `json:"source_id"`
+	Queued   int   `json:"queued"`
+	Running  int   `json:"running"`
+}
+
+// EngineStatus is the engine host's bounded runtime snapshot. Counts describe
+// physical source occupancy and public-result outcomes at one sampling point.
+type EngineStatus struct {
+	Ready               bool                 `json:"ready"`
+	SourceWorkers       int                  `json:"source_workers"`
+	PerSourceLimit      int                  `json:"per_source_limit"`
+	Queued              int                  `json:"queued"`
+	Running             int                  `json:"running"`
+	CompletionSequence  int64                `json:"completion_sequence"`
+	OldestRunningMillis int64                `json:"oldest_running_millis"`
+	Completed           int64                `json:"completed"`
+	Cancelled           int64                `json:"cancelled"`
+	TimedOut            int64                `json:"timed_out"`
+	Rejected            int64                `json:"rejected"`
+	BusiestSources      []EngineSourceStatus `json:"busiest_sources"`
+	ExtensionRunning    bool                 `json:"extension_running"`
+	ExtensionQueued     int                  `json:"extension_queued"`
+}
+
 // Source is one content source loaded from an installed extension —
 // identified by a STABLE numeric ID that survives a DB rebuild + extension
 // reinstall as long as the same extension version is loaded.

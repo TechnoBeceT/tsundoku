@@ -101,6 +101,10 @@ func (f *fakeEngineClient) Health(context.Context) (sourceengine.Health, error) 
 	return sourceengine.Health{}, nil
 }
 
+func (f *fakeEngineClient) Status(context.Context) (sourceengine.EngineStatus, error) {
+	return sourceengine.EngineStatus{}, nil
+}
+
 func (f *fakeEngineClient) Search(_ context.Context, sourceID int64, _ string, _ int) (sourceengine.SearchResult, error) {
 	if f.searchErrs != nil {
 		if err, ok := f.searchErrs[sourceID]; ok {

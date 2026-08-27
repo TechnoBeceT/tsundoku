@@ -200,6 +200,15 @@ func (c *Client) Health(_ context.Context) (sourceengine.Health, error) {
 	return sourceengine.Health{Status: "ok", Sources: len(c.sources)}, nil
 }
 
+// Status returns an empty bounded snapshot unless WithError configures a failure.
+func (c *Client) Status(_ context.Context) (sourceengine.EngineStatus, error) {
+	c.record("Status")
+	if err := c.errFor("Status"); err != nil {
+		return sourceengine.EngineStatus{}, err
+	}
+	return sourceengine.EngineStatus{}, nil
+}
+
 // --- source calls ------------------------------------------------------------
 
 // Search returns the WithSearchResult-configured result for sourceID.

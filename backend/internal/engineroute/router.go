@@ -193,6 +193,11 @@ func (r *Router) Health(ctx context.Context) (sourceengine.Health, error) {
 	return r.defaultClient.Health(ctx)
 }
 
+// Status samples the default instance's bounded runtime state.
+func (r *Router) Status(ctx context.Context) (sourceengine.EngineStatus, error) {
+	return r.defaultClient.Status(ctx)
+}
+
 // Sources lists the default instance's loaded sources (the authoritative
 // registry; non-default instances mirror its installed extensions).
 func (r *Router) Sources(ctx context.Context) ([]sourceengine.Source, error) {

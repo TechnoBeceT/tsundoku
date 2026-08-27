@@ -36,6 +36,9 @@ type nullEngineClient struct{}
 func (nullEngineClient) Health(_ context.Context) (sourceengine.Health, error) {
 	panic("nullEngineClient.Health called in test")
 }
+func (nullEngineClient) Status(_ context.Context) (sourceengine.EngineStatus, error) {
+	panic("nullEngineClient.Status called in test")
+}
 func (nullEngineClient) Search(_ context.Context, _ int64, _ string, _ int) (sourceengine.SearchResult, error) {
 	panic("nullEngineClient.Search called in test")
 }

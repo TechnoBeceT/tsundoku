@@ -155,15 +155,44 @@ class SourceSchedulerTest {
             val bEntered = CountDownLatch(1)
             val b = scheduler.accepted(2L) { bEntered.countDown() }
             assertTrue(bEntered.await(5, TimeUnit.SECONDS), "healthy B did not start after A timed out publicly")
+            eventually { scheduler.snapshot(Instant.now()).completionSequence == 1L }
             val timedSnapshot = scheduler.snapshot(Instant.now())
             assertEquals(2, timedSnapshot.source(1L).running)
             assertEquals(1, timedSnapshot.source(1L).queued)
             assertEquals(2, timedSnapshot.timedOut)
+            assertEquals(1, timedSnapshot.completionSequence, "only healthy B has physically returned")
             assertFalse(a3Entered.get(), "A3 bypassed the physical per-source cap")
 
             releaseA.countDown()
             a3.get(5, TimeUnit.SECONDS)
             b.get(5, TimeUnit.SECONDS)
+            eventually { scheduler.snapshot(Instant.now()).running == 0 }
+            assertEquals(4, scheduler.snapshot(Instant.now()).completionSequence)
+        }
+    }
+
+    @Test
+    fun `completion sequence advances only when physical callables return`() {
+        val clock = MutableClock(Instant.parse("2026-08-27T10:00:00Z"))
+        SourceScheduler(clock = clock).use { scheduler ->
+            val firstRelease = CountDownLatch(1)
+            val firstEntered = CountDownLatch(1)
+            val first = scheduler.accepted(1L) { block(firstEntered, firstRelease) }
+            assertTrue(firstEntered.await(5, TimeUnit.SECONDS))
+            clock.current = clock.current.plusSeconds(4)
+
+            val running = scheduler.snapshot(clock.current)
+            assertEquals(1, running.running)
+            assertEquals(0, running.completionSequence)
+            assertEquals(4_000, running.oldestRunningMillis)
+
+            firstRelease.countDown()
+            first.get(5, TimeUnit.SECONDS)
+            eventually { scheduler.snapshot(clock.current).running == 0 }
+            val completed = scheduler.snapshot(clock.current)
+            assertEquals(1, completed.completionSequence)
+            assertEquals(1, completed.completed)
+            assertEquals(0, completed.oldestRunningMillis)
         }
     }
 

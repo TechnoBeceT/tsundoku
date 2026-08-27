@@ -69,6 +69,9 @@ func newFakeClientWithSearch(t *testing.T, title string) *fakeAddProviderClient 
 func (f *fakeAddProviderClient) Health(ctx context.Context) (sourceengine.Health, error) {
 	return sourceengine.Health{}, nil
 }
+func (f *fakeAddProviderClient) Status(ctx context.Context) (sourceengine.EngineStatus, error) {
+	return sourceengine.EngineStatus{}, nil
+}
 func (f *fakeAddProviderClient) Sources(ctx context.Context) ([]sourceengine.Source, error) {
 	if f.searchTitle == "" {
 		return nil, nil

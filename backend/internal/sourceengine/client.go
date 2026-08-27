@@ -40,7 +40,7 @@ type HTTPDoer interface {
 // concrete implementation (httpClient) is unexported; callers hold a Client.
 //
 // Method groups mirror the RPC surface in engine-host/RpcServer.kt:
-//   - Health: liveness/loaded-source-count probe.
+//   - Health/Status: liveness and bounded runtime probes.
 //   - Search/Popular/Latest/MangaDetails/Chapters/Pages/Image: url-addressed
 //     source content calls.
 //   - Sources/Preferences/SetPreferences: the loaded-source registry + each
@@ -71,6 +71,10 @@ type Client interface {
 	// Health reports the engine host's liveness and how many sources it has
 	// loaded. It never fails on a healthy host.
 	Health(ctx context.Context) (Health, error)
+
+	// Status reports a bounded, payload-free snapshot of engine scheduler and
+	// extension-domain activity.
+	Status(ctx context.Context) (EngineStatus, error)
 
 	// Search searches sourceID for query and returns one page of results.
 	// page is 1-based.

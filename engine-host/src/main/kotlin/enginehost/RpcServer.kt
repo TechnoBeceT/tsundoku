@@ -63,6 +63,22 @@ class RpcServer(
             response.respondJson(200, mapOf("status" to "ok", "sources" to loader.loaded().size))
             false
         }
+        registerContext("/status") { exchange, response ->
+            if (exchange.requestMethod != "GET") {
+                response.respondJson(405, ErrorResponse("GET only"))
+                return@registerContext false
+            }
+            val ready = synchronized(lifecycleLock) { !stopping }
+            response.respondJson(
+                200,
+                EngineStatus.from(
+                    ready = ready,
+                    source = rpcExecutors.sourceScheduler.snapshot(),
+                    extension = rpcExecutors.extensionSnapshot(),
+                ),
+            )
+            false
+        }
         registerContext("/config") { exchange, response ->
             handleConfig(exchange, response)
             false

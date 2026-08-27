@@ -158,6 +158,8 @@ class SourceScheduler(
             )
         }
 
+    fun snapshot(): SourceSchedulerSnapshot = snapshot(clock.instant())
+
     override fun close() {
         val publicResults =
             lock.withLock {
