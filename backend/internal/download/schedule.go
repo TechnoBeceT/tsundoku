@@ -17,9 +17,10 @@ import (
 
 // resolvedChapter is a wanted/failed chapter paired with both its PostgreSQL row
 // generation and the live candidate sources resolved for it at the start of a
-// pass. Admission requires that exact state/generation and revalidates the first
-// candidate's retry/cooldown plus breaker state in the claim statement. A queued
-// item can therefore never claim a later failed generation with this old slice.
+// pass. Admission requires that exact state/generation and revalidates every
+// candidate's current retry/cooldown plus breaker state before its engine call.
+// A queued item can therefore never claim a later failed generation with this
+// old slice or fall through to a source that became ineligible meanwhile.
 type resolvedChapter struct {
 	chapterID      uuid.UUID
 	seriesID       uuid.UUID

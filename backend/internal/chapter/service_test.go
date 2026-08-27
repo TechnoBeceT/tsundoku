@@ -3,7 +3,9 @@
 package chapter_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -12,7 +14,9 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
 
 // TestWantedChapters_wanted_included verifies that a chapter in state wanted is
@@ -71,6 +75,31 @@ func TestWantedChapters_failed_included(t *testing.T) {
 	}
 }
 
+func TestWantedChapters_ReturnsAttachedEntities(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := client.Series.Create().SetTitle("Attached Wanted").SetSlug("attached-wanted").SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("attached").
+		SetState(entchapter.StateWanted).
+		SaveX(ctx)
+
+	got, err := chapter.WantedChapters(ctx, client, 100)
+	if err != nil {
+		t.Fatalf("WantedChapters: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != ch.ID {
+		t.Fatalf("WantedChapters = %+v, want chapter %s", got, ch.ID)
+	}
+	if _, err := got[0].Update().SetLastError("attached update").Save(ctx); err != nil {
+		t.Fatalf("update returned wanted chapter: %v", err)
+	}
+	if got := client.Chapter.GetX(ctx, ch.ID).LastError; got != "attached update" {
+		t.Fatalf("last_error = %q, want attached update", got)
+	}
+}
+
 func TestWantedSelections_GenerationChangesAcrossFailedABA(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -104,6 +133,85 @@ func TestWantedSelections_GenerationChangesAcrossFailedABA(t *testing.T) {
 	}
 	if second[0].Generation == first[0].Generation {
 		t.Fatalf("failed ABA reused generation %q", first[0].Generation)
+	}
+}
+
+func TestRankedLiveCandidatesForMany_MatchesSingleCandidateSnapshot(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	now := time.Now()
+	past := now.Add(-time.Hour)
+	s := client.Series.Create().SetTitle("Candidate Snapshot").SetSlug("candidate-snapshot").SaveX(ctx)
+	sp := client.SeriesProvider.Create().
+		SetSeries(s).
+		SetSuwayomiID(11).
+		SetProvider("77").
+		SetProviderName("candidate source").
+		SetScanlator("candidate scans").
+		SetLanguage("en").
+		SetURL("https://example.test/series").
+		SetWebURL("https://example.test/series-web").
+		SetTitle("Candidate Snapshot Source").
+		SetMetadata(true).
+		SetStatus("ongoing").
+		SetFlags(3).
+		SetImportance(42).
+		SetCoverURL("https://example.test/cover.jpg").
+		SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProvider(sp).
+		SetChapterKey("1.5").
+		SetNumber(1.5).
+		SetName("Chapter 1.5").
+		SetURL("https://example.test/chapter").
+		SetWebURL("https://example.test/chapter-web").
+		SetProviderUploadDate(past).
+		SetProviderIndex(7).
+		SetPageCount(12).
+		SetSuwayomiChapterID(99).
+		SetAttempts(1).
+		SetLastError("prior chapter failure").
+		SetNextAttemptAt(past).
+		SetPageLinks([]fetcher.PageLink{{URL: "https://example.test/page", ImageURL: "https://example.test/image"}}).
+		SaveX(ctx)
+	ch := client.Chapter.Create().
+		SetSeries(s).
+		SetChapterKey("1.5").
+		SetNumber(1.5).
+		SaveX(ctx)
+
+	single, err := chapter.RankedLiveCandidates(ctx, client, ch.ID, 3, now, nil)
+	if err != nil {
+		t.Fatalf("RankedLiveCandidates: %v", err)
+	}
+	batched, err := chapter.RankedLiveCandidatesForMany(ctx, client, []*ent.Chapter{ch}, 3, now, nil)
+	if err != nil {
+		t.Fatalf("RankedLiveCandidatesForMany: %v", err)
+	}
+	assertCandidateSnapshotsEqual(t, single, batched[ch.ID])
+}
+
+func assertCandidateSnapshotsEqual(t *testing.T, single, bulk []chapter.Candidate) {
+	t.Helper()
+	if len(single) != 1 || len(bulk) != 1 {
+		t.Fatalf("candidate counts: single=%d bulk=%d, want 1 each", len(single), len(bulk))
+	}
+	if single[0].Generation == "" || bulk[0].Generation == "" {
+		t.Fatalf("candidate generations: single=%q bulk=%q, want both non-empty", single[0].Generation, bulk[0].Generation)
+	}
+	if bulk[0].Generation != single[0].Generation {
+		t.Fatalf("candidate generations differ: single=%q bulk=%q", single[0].Generation, bulk[0].Generation)
+	}
+	singleJSON, err := json.Marshal(single[0])
+	if err != nil {
+		t.Fatalf("marshal single candidate: %v", err)
+	}
+	bulkJSON, err := json.Marshal(bulk[0])
+	if err != nil {
+		t.Fatalf("marshal bulk candidate: %v", err)
+	}
+	if !bytes.Equal(bulkJSON, singleJSON) {
+		t.Fatalf("candidate snapshots differ:\nsingle: %s\nbulk:   %s", singleJSON, bulkJSON)
 	}
 }
 

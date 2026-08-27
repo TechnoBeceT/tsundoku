@@ -34,58 +34,12 @@ type Selection struct {
 	Generation string
 }
 
-type selectionRow struct {
-	ID                    uuid.UUID        `json:"id"`
-	SeriesID              uuid.UUID        `json:"series_id"`
-	ChapterKey            string           `json:"chapter_key"`
-	Number                *float64         `json:"number"`
-	State                 entchapter.State `json:"state"`
-	SatisfiedByProviderID *uuid.UUID       `json:"satisfied_by_provider_id"`
-	SatisfiedImportance   *int             `json:"satisfied_importance"`
-	PageCount             *int             `json:"page_count"`
-	Filename              string           `json:"filename"`
-	DownloadDate          *time.Time       `json:"download_date"`
-	FirstDownloadedAt     *time.Time       `json:"first_downloaded_at"`
-	Retries               int              `json:"retries"`
-	NextAttemptAt         *time.Time       `json:"next_attempt_at"`
-	LastError             string           `json:"last_error"`
-	ErrorCategory         string           `json:"error_category"`
-	Read                  bool             `json:"read"`
-	LastReadPage          int              `json:"last_read_page"`
-	ReadAt                *time.Time       `json:"read_at"`
-	Generation            string           `json:"work_generation"`
-}
-
-func (r selectionRow) chapter() *ent.Chapter {
-	return &ent.Chapter{
-		ID:                    r.ID,
-		SeriesID:              r.SeriesID,
-		ChapterKey:            r.ChapterKey,
-		Number:                r.Number,
-		State:                 r.State,
-		SatisfiedByProviderID: r.SatisfiedByProviderID,
-		SatisfiedImportance:   r.SatisfiedImportance,
-		PageCount:             r.PageCount,
-		Filename:              r.Filename,
-		DownloadDate:          r.DownloadDate,
-		FirstDownloadedAt:     r.FirstDownloadedAt,
-		Retries:               r.Retries,
-		NextAttemptAt:         r.NextAttemptAt,
-		LastError:             r.LastError,
-		ErrorCategory:         r.ErrorCategory,
-		Read:                  r.Read,
-		LastReadPage:          r.LastReadPage,
-		ReadAt:                r.ReadAt,
-	}
-}
-
 // WantedSelections returns up to limit eligible Chapter snapshots together with
 // their database row generation. The state filter and ordering are identical to
 // WantedChapters; the generation is selected in the same SQL statement, so it
 // cannot describe a newer row than the accompanying state/candidate work item.
 func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Selection, error) {
-	var rows []selectionRow
-	err := client.Chapter.Query().
+	chapters, err := client.Chapter.Query().
 		Where(entchapter.StateIn(
 			entchapter.StateWanted,
 			entchapter.StateFailed,
@@ -93,21 +47,26 @@ func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Sel
 		Order(
 			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
 			entchapter.ByID(),
+			selectChapterWorkGeneration,
 		).
 		Limit(limit).
-		Select(entchapter.Columns...).
-		Aggregate(func(selector *sql.Selector) string {
-			return fmt.Sprintf("%s::text AS %s", selector.C("xmin"), workGenerationColumn)
-		}).
-		Scan(ctx, &rows)
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("chapter.WantedSelections: query: %w", err)
 	}
-	selections := make([]Selection, len(rows))
-	for i, row := range rows {
-		selections[i] = Selection{Chapter: row.chapter(), Generation: row.Generation}
+	selections := make([]Selection, len(chapters))
+	for i, ch := range chapters {
+		selections[i] = Selection{Chapter: ch, Generation: chapterWorkGeneration(ch)}
 	}
 	return selections, nil
+}
+
+func selectChapterWorkGeneration(selector *sql.Selector) {
+	selector.AppendSelectAs(fmt.Sprintf("%s::text", selector.C("xmin")), workGenerationColumn)
+}
+
+func chapterWorkGeneration(ch *ent.Chapter) string {
+	return selectedGeneration(ch.Value(workGenerationColumn))
 }
 
 // WantedChapters returns up to limit Chapter rows the download dispatcher should
@@ -182,20 +141,24 @@ func providerChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Cha
 // resurrection guard turns on (providerChaptersForKey layers the drop on top of
 // it, and IsIgnorableFractional compares the two).
 func rawProviderChaptersForKey(ctx context.Context, client *ent.Client, ch *ent.Chapter) ([]*ent.ProviderChapter, error) {
-	pcs, err := client.ProviderChapter.Query().
+	pcs, err := providerChaptersWithGeneration(client).
 		Where(
 			entproviderchapter.ChapterKeyEQ(ch.ChapterKey),
 			entproviderchapter.HasSeriesProviderWith(
 				entseriesprovider.SeriesIDEQ(ch.SeriesID),
 			),
 		).
-		Order(selectProviderChapterGeneration).
-		WithSeriesProvider().
 		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("chapter: query provider chapters for chapter %s (key=%q): %w", ch.ID, ch.ChapterKey, err)
 	}
 	return pcs, nil
+}
+
+func providerChaptersWithGeneration(client *ent.Client) *ent.ProviderChapterQuery {
+	return client.ProviderChapter.Query().
+		Order(selectProviderChapterGeneration).
+		WithSeriesProvider()
 }
 
 // selectProviderChapterGeneration appends xmin to the ordinary entity query as
@@ -206,11 +169,14 @@ func selectProviderChapterGeneration(selector *sql.Selector) {
 }
 
 func providerChapterGeneration(pc *ent.ProviderChapter) string {
-	value, err := pc.Value(providerChapterGenerationColumn)
+	return selectedGeneration(pc.Value(providerChapterGenerationColumn))
+}
+
+func selectedGeneration(selected ent.Value, err error) string {
 	if err != nil {
 		return ""
 	}
-	switch value := value.(type) {
+	switch value := selected.(type) {
 	case string:
 		return value
 	case []byte:
@@ -486,11 +452,10 @@ func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapte
 		seriesIDs = append(seriesIDs, id)
 	}
 
-	pcs, err := client.ProviderChapter.Query().
+	pcs, err := providerChaptersWithGeneration(client).
 		Where(entproviderchapter.HasSeriesProviderWith(
 			entseriesprovider.SeriesIDIn(seriesIDs...),
 		)).
-		WithSeriesProvider().
 		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("chapter.RankedLiveCandidatesForMany: batch load provider chapters: %w", err)

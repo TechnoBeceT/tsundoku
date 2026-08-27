@@ -57,6 +57,37 @@ type staggeredFetcher struct {
 	err   error
 }
 
+type fallbackRevalidationFetcher struct {
+	mu      sync.Mutex
+	refs    []fetcher.FetchRef
+	mutate  func()
+	primary string
+}
+
+func (f *fallbackRevalidationFetcher) Fetch(_ context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	f.mu.Lock()
+	f.refs = append(f.refs, ref)
+	f.mu.Unlock()
+	if ref.Provider == f.primary {
+		f.mutate()
+		return fetcher.ChapterPages{}, errors.New("chapter not found")
+	}
+	return fetcher.ChapterPages{
+		Pages:     []fetcher.PageImage{{Data: []byte{0xAB}, Ext: "jpg"}},
+		PageCount: 1,
+	}, nil
+}
+
+func (f *fallbackRevalidationFetcher) providers() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.refs))
+	for i, ref := range f.refs {
+		out[i] = ref.Provider
+	}
+	return out
+}
+
 func (f *staggeredFetcher) Fetch(context.Context, fetcher.FetchRef) (fetcher.ChapterPages, error) {
 	f.calls.Add(1)
 	return f.pages, f.err
@@ -370,4 +401,104 @@ func sameOptionalTime(a, b *time.Time) bool {
 		return a == nil && b == nil
 	}
 	return a.Equal(*b)
+}
+
+func TestRunOnceAt_FallbackRevalidatesCurrentCandidateEligibility(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(context.Context, *ent.Client, *ent.ProviderChapter, time.Time)
+	}{
+		{
+			name: "generation",
+			mutate: func(ctx context.Context, client *ent.Client, pc *ent.ProviderChapter, _ time.Time) {
+				client.ProviderChapter.UpdateOneID(pc.ID).SetURL("https://example.test/replaced").ExecX(ctx)
+			},
+		},
+		{
+			name: "retry_budget",
+			mutate: func(ctx context.Context, client *ent.Client, pc *ent.ProviderChapter, _ time.Time) {
+				client.ProviderChapter.UpdateOneID(pc.ID).SetAttempts(3).ExecX(ctx)
+			},
+		},
+		{
+			name: "cooldown",
+			mutate: func(ctx context.Context, client *ent.Client, pc *ent.ProviderChapter, now time.Time) {
+				client.ProviderChapter.UpdateOneID(pc.ID).SetNextAttemptAt(now.Add(time.Hour)).ExecX(ctx)
+			},
+		},
+		{
+			name: "breaker",
+			mutate: func(ctx context.Context, client *ent.Client, _ *ent.ProviderChapter, now time.Time) {
+				client.SourceCircuitState.Create().
+					SetSourceKey("secondary").
+					SetConsecutiveFailures(1).
+					SetCooldownUntil(now.Add(time.Hour)).
+					SetLastError("tripped during primary fetch").
+					SaveX(ctx)
+			},
+		},
+		{
+			name: "chapter_carrier",
+			mutate: func(ctx context.Context, client *ent.Client, pc *ent.ProviderChapter, _ time.Time) {
+				client.ProviderChapter.UpdateOneID(pc.ID).SetChapterKey("other").ExecX(ctx)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			slug := "fallback-revalidation-" + tt.name
+			s := client.Series.Create().SetTitle(slug).SetSlug(slug).SaveX(ctx)
+			primary := client.SeriesProvider.Create().
+				SetSeries(s).
+				SetProvider("primary").
+				SetProviderName("primary").
+				SetImportance(20).
+				SaveX(ctx)
+			secondary := client.SeriesProvider.Create().
+				SetSeries(s).
+				SetProvider("secondary").
+				SetProviderName("secondary").
+				SetImportance(10).
+				SaveX(ctx)
+			client.ProviderChapter.Create().
+				SetSeriesProvider(primary).
+				SetChapterKey("1").
+				SetURL("https://example.test/primary").
+				SetProviderIndex(0).
+				SaveX(ctx)
+			secondaryChapter := client.ProviderChapter.Create().
+				SetSeriesProvider(secondary).
+				SetChapterKey("1").
+				SetURL("https://example.test/secondary").
+				SetProviderIndex(0).
+				SaveX(ctx)
+			ch := client.Chapter.Create().
+				SetSeries(s).
+				SetChapterKey("1").
+				SetState(entchapter.StateWanted).
+				SaveX(ctx)
+
+			now := time.Now()
+			policy := staggeredPolicy()
+			f := &fallbackRevalidationFetcher{
+				primary: "primary",
+				mutate: func() {
+					tt.mutate(ctx, client, secondaryChapter, now)
+				},
+			}
+			d := New(client, f, sse.NewHub(), Config{Storage: t.TempDir()}, policy, sourcegate.NewService(client, policy))
+
+			count, err := d.RunOnceAt(ctx, now, map[string]int{}, nil)
+			assertCycleCall(t, dispatchCall{count: count, err: err}, 1)
+			if got := f.providers(); len(got) != 1 || got[0] != "primary" {
+				t.Fatalf("engine providers = %v, want only primary after secondary became ineligible", got)
+			}
+			if got := client.Chapter.GetX(ctx, ch.ID).State; got != entchapter.StateFailed {
+				t.Fatalf("chapter state = %s, want failed after the owned primary attempt", got)
+			}
+		})
+	}
 }

@@ -540,6 +540,50 @@ func (d *Dispatcher) claimDownloadSelection(
 	return d.admitChapterFetch(ctx, chapterID, selectedState, entchapter.StateDownloading, guards...)
 }
 
+// downloadCandidateStillEligible revalidates a fallback against the current
+// ProviderChapter generation, retry budget, cooldown, carrier relationship, and
+// breaker state while the already-owned Chapter remains downloading. It is a
+// read-only check: only the first candidate claims the Chapter generation.
+func (d *Dispatcher) downloadCandidateStillEligible(
+	ctx context.Context,
+	chapterID uuid.UUID,
+	cand chapter.Candidate,
+	maxRetries int,
+	now time.Time,
+) (bool, error) {
+	return d.client.Chapter.Query().
+		Where(
+			entchapter.IDEQ(chapterID),
+			entchapter.StateEQ(entchapter.StateDownloading),
+			d.currentDownloadCandidate(cand, maxRetries, now),
+		).
+		Exist(ctx)
+}
+
+func (d *Dispatcher) admitDownloadCandidate(
+	ctx context.Context,
+	chapterID uuid.UUID,
+	selectedState entchapter.State,
+	workGeneration string,
+	cand chapter.Candidate,
+	maxRetries int,
+	now time.Time,
+	alreadyClaimed bool,
+) (admitted, newlyClaimed bool, err error) {
+	if alreadyClaimed {
+		eligible, checkErr := d.downloadCandidateStillEligible(ctx, chapterID, cand, maxRetries, now)
+		if checkErr != nil {
+			return false, false, fmt.Errorf("download.Dispatcher.runCandidates: revalidate fallback for chapter %s: %w", chapterID, checkErr)
+		}
+		return eligible, false, nil
+	}
+	won, setErr := d.claimDownloadSelection(ctx, chapterID, selectedState, workGeneration, cand, maxRetries, now)
+	if setErr != nil {
+		return false, false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
+	}
+	return won, won, nil
+}
+
 // gateRecordSuccess reports a successful fetch from sourceKey to the breaker
 // (resets its consecutive-failure counter and clears any cooldown). A nil
 // gate is a no-op.
@@ -931,19 +975,14 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // candidate eligibility guard.
 func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, selectedState entchapter.State, workGeneration string, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
 	onAdmitted := func(cand chapter.Candidate) (bool, error) {
-		if claimed {
-			return true, nil
+		admitted, newlyClaimed, admitErr := d.admitDownloadCandidate(
+			ctx, chapterID, selectedState, workGeneration, cand, maxRetries, now, claimed,
+		)
+		if newlyClaimed {
+			claimed = true
+			d.broadcast("download.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloading)})
 		}
-		won, setErr := d.claimDownloadSelection(ctx, chapterID, selectedState, workGeneration, cand, maxRetries, now)
-		if setErr != nil {
-			return false, fmt.Errorf("download.Dispatcher.runCandidates: transition to downloading for chapter %s: %w", chapterID, setErr)
-		}
-		if !won {
-			return false, nil
-		}
-		claimed = true
-		d.broadcast("download.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateDownloading)})
-		return true, nil
+		return admitted, admitErr
 	}
 
 	var lastErr error
@@ -953,6 +992,9 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 			return true, nil
 		}
 		if !fetched {
+			if claimed && cause == nil {
+				continue
+			}
 			return claimed, cause
 		}
 		if ctx.Err() != nil {
