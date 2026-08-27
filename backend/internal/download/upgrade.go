@@ -548,12 +548,14 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 	// "resolved this attempt" (GAP-119; see fetchAttempt).
 	usedCachedLinks := len(pc.PageLinks) > 0
 	admission, err := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(pc, sp), limiter, globalSem, func() (bool, error) {
+		guards := upgradeFrozenPredicates(ch)
+		guards = append(guards, d.currentFetchCandidate(best, d.retry.MaxRetries(ctx), time.Now()))
 		claimed, err := d.admitChapterFetch(
 			ctx,
 			chapterID,
 			entchapter.StateUpgradeAvailable,
 			entchapter.StateUpgrading,
-			upgradeFrozenPredicates(ch)...,
+			guards...,
 		)
 		if err != nil {
 			return false, fmt.Errorf("download.Dispatcher.Upgrade: transition to upgrading for chapter %s: %w", chapterID, err)

@@ -35,6 +35,38 @@ type admissionProbeClient struct {
 	started chan int64
 }
 
+type sustainedAdmission struct {
+	sourceID int64
+	url      string
+}
+
+type sustainedAdmissionClient struct {
+	sourceengine.Client
+	healthySource       int64
+	started             chan sustainedAdmission
+	releaseFirstHealthy <-chan struct{}
+}
+
+func (c *sustainedAdmissionClient) Chapters(ctx context.Context, sourceID int64, url, _ string) ([]sourceengine.Chapter, error) {
+	select {
+	case c.started <- sustainedAdmission{sourceID: sourceID, url: url}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	if sourceID == c.healthySource && url == "/healthy/1" {
+		select {
+		case <-c.releaseFirstHealthy:
+			return nil, context.Canceled
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func (c *admissionProbeClient) Chapters(ctx context.Context, sourceID int64, _ string, _ string) ([]sourceengine.Chapter, error) {
 	c.started <- sourceID
 	<-ctx.Done()
@@ -92,6 +124,70 @@ func TestSweep_AdmissionIsFairAcrossSources(t *testing.T) {
 	}
 	if result.Errors != 0 {
 		t.Fatalf("canceled sweep errors = %d, want 0", result.Errors)
+	}
+}
+
+// TestSweep_AdmissionKeepsHealthySourceProgressing proves fairness continues
+// after the first admission wave. When A1 remains wedged and B1 completes, B2
+// must receive the freed global slot before A2 can give source A both slots.
+func TestSweep_AdmissionKeepsHealthySourceProgressing(t *testing.T) {
+	const (
+		busySource    = int64(11)
+		healthySource = int64(22)
+		globalLimit   = 2
+	)
+
+	releaseFirstHealthy := make(chan struct{})
+	client := &sustainedAdmissionClient{
+		healthySource:       healthySource,
+		started:             make(chan sustainedAdmission, 4),
+		releaseFirstHealthy: releaseFirstHealthy,
+	}
+	svc := NewService(nil, ingest.NewIngest(client, nil), sse.NewHub(), fixedRefreshConcurrency(globalLimit), nil)
+	seriesList := []*ent.Series{
+		refreshTestSeries("busy-1", busySource, "/busy/1"),
+		refreshTestSeries("busy-2", busySource, "/busy/2"),
+		refreshTestSeries("healthy-1", healthySource, "/healthy/1"),
+		refreshTestSeries("healthy-2", healthySource, "/healthy/2"),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan RefreshResult, 1)
+	go func() { done <- svc.sweep(ctx, seriesList) }()
+
+	first := awaitSustainedRefreshAdmission(t, client.started)
+	second := awaitSustainedRefreshAdmission(t, client.started)
+	initial := map[sustainedAdmission]bool{first: true, second: true}
+	if !initial[sustainedAdmission{sourceID: busySource, url: "/busy/1"}] ||
+		!initial[sustainedAdmission{sourceID: healthySource, url: "/healthy/1"}] {
+		cancel()
+		<-done
+		t.Fatalf("initial admissions = %+v, want busy-1 and healthy-1", []sustainedAdmission{first, second})
+	}
+
+	close(releaseFirstHealthy)
+	third := awaitSustainedRefreshAdmission(t, client.started)
+	if third != (sustainedAdmission{sourceID: healthySource, url: "/healthy/2"}) {
+		cancel()
+		<-done
+		t.Fatalf("third admission = %+v, want healthy-2 while busy-1 remains active", third)
+	}
+
+	cancel()
+	result := <-done
+	if result.Errors != 0 {
+		t.Fatalf("canceled sweep errors = %d, want 0", result.Errors)
+	}
+}
+
+func awaitSustainedRefreshAdmission(t *testing.T, started <-chan sustainedAdmission) sustainedAdmission {
+	t.Helper()
+	select {
+	case admission := <-started:
+		return admission
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for sustained refresh admission")
+		return sustainedAdmission{}
 	}
 }
 
@@ -291,11 +387,11 @@ func awaitRefreshAdmission(t *testing.T, started <-chan int64) int64 {
 	}
 }
 
-// TestRoundRobinRefreshGroups_PreservesEveryGroupAndSourceOrder pins the queue's
-// lossless property alongside fairness: reordering admission must neither drop
-// nor duplicate a group, and work discovered earlier within one source remains
-// earlier for that source.
-func TestRoundRobinRefreshGroups_PreservesEveryGroupAndSourceOrder(t *testing.T) {
+// TestRefreshAdmissionQueue_PreservesEveryGroupAndSourceOrder pins the queue's
+// lossless property alongside fairness: admission must neither drop nor duplicate
+// a group, and work discovered earlier within one source remains earlier for
+// that source.
+func TestRefreshAdmissionQueue_PreservesEveryGroupAndSourceOrder(t *testing.T) {
 	groups := []refreshGroup{
 		{sourceID: 11, url: "/a/1"},
 		{sourceID: 11, url: "/a/2"},
@@ -305,10 +401,15 @@ func TestRoundRobinRefreshGroups_PreservesEveryGroupAndSourceOrder(t *testing.T)
 		{sourceID: 22, url: "/b/2"},
 	}
 
-	ordered := roundRobinRefreshGroups(groups)
-	got := make([]string, 0, len(ordered))
-	for _, grp := range ordered {
+	queue := newRefreshAdmissionQueue(groups)
+	got := make([]string, 0, len(groups))
+	for range groups {
+		grp, ok := queue.next()
+		if !ok {
+			t.Fatalf("admission stopped after %d of %d groups", len(got), len(groups))
+		}
 		got = append(got, grp.url)
+		queue.complete(grp.sourceID)
 	}
 	want := []string{"/a/1", "/b/1", "/c/1", "/a/2", "/b/2", "/a/3"}
 	if len(got) != len(want) {

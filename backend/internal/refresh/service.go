@@ -212,16 +212,17 @@ func (s *Service) RefreshSeries(ctx context.Context, seriesID uuid.UUID) (Refres
 // that shares it is ingested from that single result (de-amplification — a series
 // followed under three scanlators of the same source triggers one FetchChapters,
 // not three). Fetches run under the runtime-tunable concurrency bound, per-provider
-// failures are logged and skipped (partial success). Groups enter the unchanged
-// global concurrency bound through a stable per-source round-robin queue, so one
-// source's backlog cannot occupy every admission slot while another waits.
+// failures are logged and skipped (partial success). A source-aware admission
+// queue keeps a pending source represented in the active set before spare slots
+// are filled round-robin, so one wedged source cannot occupy every slot while
+// another source can still run.
 // refresh.start/refresh.done bracket the sweep. It is UPSERT-ONLY, so a chapter
 // that vanished from a source listing keeps its row and CBZ (Rule 2).
 func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshResult {
 	s.broadcast("refresh.start", RefreshEvent{Monitored: len(seriesList)})
 
 	now := time.Now()
-	groups := roundRobinRefreshGroups(s.buildRefreshGroups(ctx, seriesList, now))
+	groups := s.buildRefreshGroups(ctx, seriesList, now)
 
 	var mu sync.Mutex
 	result := RefreshResult{SeriesRefreshed: len(seriesList)}
@@ -229,20 +230,12 @@ func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshRe
 	// sweep (nil when no recorder is wired, so nothing is collected).
 	sink := s.newEventSink()
 
-	g, gctx := errgroup.WithContext(ctx)
 	// Read the parallel-refetch bound at use-time so a settings change applies to
-	// this sweep (clamped >= 1 — a 0 limit would deadlock errgroup). The bound now
-	// caps concurrent GROUPS (each = one upstream fetch) rather than providers.
-	g.SetLimit(s.refreshLimit(ctx))
-	for _, grp := range groups {
-		g.Go(func() error {
-			s.refreshGroup(gctx, grp, now, &mu, &result, sink)
-			return nil
-		})
-	}
-	// Goroutines never return non-nil, so Wait never errors; parent-ctx
-	// cancellation surfaces as context.Canceled in the fetch/ingest and is skipped.
-	_ = g.Wait()
+	// this sweep. The bound caps concurrent GROUPS (each = one upstream fetch)
+	// rather than providers.
+	s.runRefreshGroups(ctx, groups, s.refreshLimit(ctx), func(gctx context.Context, grp refreshGroup) {
+		s.refreshGroup(gctx, grp, now, &mu, &result, sink)
+	})
 	s.flushEventSink(ctx, sink)
 
 	s.broadcast("refresh.done", RefreshEvent{
@@ -255,41 +248,94 @@ func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshRe
 	return result
 }
 
-// roundRobinRefreshGroups turns discovery-ordered groups into a stable
-// per-source queue before the blocking errgroup admission loop consumes them.
-// One group from each source is emitted per round, so a source with a large
-// backlog cannot fill every slot in the global refresh limit before another
-// source receives a turn. Discovery order within each source is preserved and
-// every group is emitted exactly once.
-func roundRobinRefreshGroups(groups []refreshGroup) []refreshGroup {
-	type sourceQueue struct {
-		groups []refreshGroup
-		next   int
-	}
+type refreshSourceQueue struct {
+	groups   []refreshGroup
+	next     int
+	inFlight int
+}
 
-	bySource := make(map[int64]*sourceQueue)
-	queues := make([]*sourceQueue, 0)
+// refreshAdmissionQueue retains discovery order within each source and rotates
+// among sources. next prioritises a source with pending work and no active group;
+// only after every pending source is represented may spare global capacity admit
+// a second group from one source.
+type refreshAdmissionQueue struct {
+	bySource map[int64]*refreshSourceQueue
+	sources  []*refreshSourceQueue
+	cursor   int
+}
+
+func newRefreshAdmissionQueue(groups []refreshGroup) *refreshAdmissionQueue {
+	queue := &refreshAdmissionQueue{bySource: make(map[int64]*refreshSourceQueue)}
 	for _, grp := range groups {
-		queue, ok := bySource[grp.sourceID]
+		source, ok := queue.bySource[grp.sourceID]
 		if !ok {
-			queue = &sourceQueue{}
-			bySource[grp.sourceID] = queue
-			queues = append(queues, queue)
+			source = &refreshSourceQueue{}
+			queue.bySource[grp.sourceID] = source
+			queue.sources = append(queue.sources, source)
 		}
-		queue.groups = append(queue.groups, grp)
+		source.groups = append(source.groups, grp)
+	}
+	return queue
+}
+
+func (q *refreshAdmissionQueue) next() (refreshGroup, bool) {
+	for _, requireIdle := range []bool{true, false} {
+		for offset := range len(q.sources) {
+			index := (q.cursor + offset) % len(q.sources)
+			source := q.sources[index]
+			if source.next >= len(source.groups) || (requireIdle && source.inFlight > 0) {
+				continue
+			}
+			grp := source.groups[source.next]
+			source.next++
+			source.inFlight++
+			q.cursor = (index + 1) % len(q.sources)
+			return grp, true
+		}
+	}
+	return refreshGroup{}, false
+}
+
+func (q *refreshAdmissionQueue) complete(sourceID int64) {
+	q.bySource[sourceID].inFlight--
+}
+
+// runRefreshGroups is a work-conserving source-aware scheduler. It starts no
+// more than limit groups, waits for completions, and immediately reuses freed
+// capacity. A pending source with no active work receives the next slot before
+// any already-active source can expand, preventing a wedged source from owning
+// the whole global allowance while retaining full throughput when fewer sources
+// have work.
+func (s *Service) runRefreshGroups(ctx context.Context, groups []refreshGroup, limit int, run func(context.Context, refreshGroup)) {
+	queue := newRefreshAdmissionQueue(groups)
+	g, gctx := errgroup.WithContext(ctx)
+	completed := make(chan int64, limit)
+	running := 0
+
+	for {
+		for running < limit {
+			grp, ok := queue.next()
+			if !ok {
+				break
+			}
+			running++
+			g.Go(func() error {
+				defer func() { completed <- grp.sourceID }()
+				run(gctx, grp)
+				return nil
+			})
+		}
+		if running == 0 {
+			break
+		}
+		sourceID := <-completed
+		running--
+		queue.complete(sourceID)
 	}
 
-	ordered := make([]refreshGroup, 0, len(groups))
-	for len(queues) > 0 {
-		queue := queues[0]
-		queues = queues[1:]
-		ordered = append(ordered, queue.groups[queue.next])
-		queue.next++
-		if queue.next < len(queue.groups) {
-			queues = append(queues, queue)
-		}
-	}
-	return ordered
+	// Every started group reports completion before the loop exits. Wait retains the
+	// errgroup join contract and keeps a parent cancellation visible to workers.
+	_ = g.Wait()
 }
 
 // refreshLimit resolves the runtime-tunable parallel-refetch bound at use-time,

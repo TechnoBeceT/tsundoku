@@ -76,9 +76,10 @@ func (f *admissionFetcher) Fetch(context.Context, fetcher.FetchRef) (fetcher.Cha
 }
 
 // TestFetchWithAdmission_PolitenessWaitLeavesGlobalCapacityForHealthySource
-// is the Task 2 regression proof. The delayed source has already reserved its
-// next slot, so it is sleeping in sourcegate.Wait; the healthy source must still
-// reach its engine call with the only global permit available.
+// proves a politeness-delayed source does not reserve global capacity. The
+// delayed source has already reserved its next source slot, so it is sleeping in
+// sourcegate.Wait; the healthy source must still reach its engine call with the
+// only global permit available.
 func TestFetchWithAdmission_PolitenessWaitLeavesGlobalCapacityForHealthySource(t *testing.T) {
 	ctx := context.Background()
 	global := semaphore.NewWeighted(1)

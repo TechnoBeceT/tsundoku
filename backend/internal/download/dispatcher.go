@@ -466,14 +466,14 @@ func (d *Dispatcher) admitChapterFetch(
 	return true, nil
 }
 
-// currentDownloadCandidate guards a download claim with the retry/cooldown and
-// breaker state that exists in the SAME PostgreSQL statement as the chapter
-// transition. The exact selected attempts/next_attempt_at snapshot must still
-// match and remain live, the ProviderChapter must still carry this chapter in the
-// same series, and a wired breaker must not have a future cooldown. This removes
-// the application-level revalidation→claim gap without holding the transaction
-// across politeness or the engine call.
-func (d *Dispatcher) currentDownloadCandidate(cand chapter.Candidate, maxRetries int, now time.Time) entpredicate.Chapter {
+// currentFetchCandidate guards a download or upgrade claim with the
+// retry/cooldown and breaker state that exists in the SAME PostgreSQL statement
+// as the chapter transition. The exact selected attempts/next_attempt_at snapshot
+// must still match and remain live, the ProviderChapter must still carry this
+// chapter in the same series, and a wired breaker must not have a future
+// cooldown. This removes the application-level revalidation→claim gap without
+// holding the transaction across politeness or the engine call.
+func (d *Dispatcher) currentFetchCandidate(cand chapter.Candidate, maxRetries int, now time.Time) entpredicate.Chapter {
 	return entpredicate.Chapter(func(selector *sql.Selector) {
 		pc := sql.Table(entproviderchapter.Table)
 		sp := sql.Table(entseriesprovider.Table)
@@ -533,7 +533,7 @@ func (d *Dispatcher) claimDownloadSelection(
 	maxRetries int,
 	now time.Time,
 ) (bool, error) {
-	guards := []entpredicate.Chapter{d.currentDownloadCandidate(cand, maxRetries, now)}
+	guards := []entpredicate.Chapter{d.currentFetchCandidate(cand, maxRetries, now)}
 	if workGeneration != "" {
 		guards = append(guards, chapter.GenerationEQ(workGeneration))
 	}
@@ -555,7 +555,7 @@ func (d *Dispatcher) downloadCandidateStillEligible(
 		Where(
 			entchapter.IDEQ(chapterID),
 			entchapter.StateEQ(entchapter.StateDownloading),
-			d.currentDownloadCandidate(cand, maxRetries, now),
+			d.currentFetchCandidate(cand, maxRetries, now),
 		).
 		Exist(ctx)
 }
