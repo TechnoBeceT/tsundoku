@@ -212,14 +212,16 @@ func (s *Service) RefreshSeries(ctx context.Context, seriesID uuid.UUID) (Refres
 // that shares it is ingested from that single result (de-amplification — a series
 // followed under three scanlators of the same source triggers one FetchChapters,
 // not three). Fetches run under the runtime-tunable concurrency bound, per-provider
-// failures are logged and skipped (partial success), and refresh.start/refresh.done
-// bracket the sweep. It is UPSERT-ONLY, so a chapter that vanished from a source
-// listing keeps its row and CBZ (Rule 2).
+// failures are logged and skipped (partial success). Groups enter the unchanged
+// global concurrency bound through a stable per-source round-robin queue, so one
+// source's backlog cannot occupy every admission slot while another waits.
+// refresh.start/refresh.done bracket the sweep. It is UPSERT-ONLY, so a chapter
+// that vanished from a source listing keeps its row and CBZ (Rule 2).
 func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshResult {
 	s.broadcast("refresh.start", RefreshEvent{Monitored: len(seriesList)})
 
 	now := time.Now()
-	groups := s.buildRefreshGroups(ctx, seriesList, now)
+	groups := roundRobinRefreshGroups(s.buildRefreshGroups(ctx, seriesList, now))
 
 	var mu sync.Mutex
 	result := RefreshResult{SeriesRefreshed: len(seriesList)}
@@ -251,6 +253,43 @@ func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshRe
 		Errors:             result.Errors,
 	})
 	return result
+}
+
+// roundRobinRefreshGroups turns discovery-ordered groups into a stable
+// per-source queue before the blocking errgroup admission loop consumes them.
+// One group from each source is emitted per round, so a source with a large
+// backlog cannot fill every slot in the global refresh limit before another
+// source receives a turn. Discovery order within each source is preserved and
+// every group is emitted exactly once.
+func roundRobinRefreshGroups(groups []refreshGroup) []refreshGroup {
+	type sourceQueue struct {
+		groups []refreshGroup
+		next   int
+	}
+
+	bySource := make(map[int64]*sourceQueue)
+	queues := make([]*sourceQueue, 0)
+	for _, grp := range groups {
+		queue, ok := bySource[grp.sourceID]
+		if !ok {
+			queue = &sourceQueue{}
+			bySource[grp.sourceID] = queue
+			queues = append(queues, queue)
+		}
+		queue.groups = append(queue.groups, grp)
+	}
+
+	ordered := make([]refreshGroup, 0, len(groups))
+	for len(queues) > 0 {
+		queue := queues[0]
+		queues = queues[1:]
+		ordered = append(ordered, queue.groups[queue.next])
+		queue.next++
+		if queue.next < len(queue.groups) {
+			queues = append(queues, queue)
+		}
+	}
+	return ordered
 }
 
 // refreshLimit resolves the runtime-tunable parallel-refetch bound at use-time,
