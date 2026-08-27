@@ -21,7 +21,6 @@ internal data class ClientConnection(
 
 internal enum class ResponsePathDisposition {
     LIVE,
-    PEER_FIN,
     UNUSABLE,
     AMBIGUOUS,
 }
@@ -37,7 +36,8 @@ internal enum class TcpConnectionState(
     FIN_WAIT_2("05", ResponsePathDisposition.UNUSABLE),
     TIME_WAIT("06", ResponsePathDisposition.AMBIGUOUS),
     CLOSE("07", ResponsePathDisposition.AMBIGUOUS),
-    CLOSE_WAIT("08", ResponsePathDisposition.PEER_FIN),
+    // A peer FIN closes only the request-writing half. The client may still read the response.
+    CLOSE_WAIT("08", ResponsePathDisposition.AMBIGUOUS),
     LAST_ACK("09", ResponsePathDisposition.UNUSABLE),
     LISTEN("0A", ResponsePathDisposition.AMBIGUOUS),
     CLOSING("0B", ResponsePathDisposition.UNUSABLE),
@@ -61,8 +61,9 @@ internal fun interface ConnectionStateReader {
 /**
  * Observes accepted client sockets with one bounded, fixed-delay monitor. JDK HttpServer exposes no
  * disconnect callback before the first response write, while the Linux engine runtime exposes the
- * same connection state through procfs. Unsupported or unreadable state fails open: the normal host
- * deadline remains authoritative and no disconnect is invented.
+ * same connection state through procfs. Unsupported or unreadable state, peer FIN, tuple reuse, and
+ * absence before a positive observation fail open: the normal host deadline remains authoritative
+ * and no disconnect is invented.
  */
 internal class ClientConnectionObserver(
     private val capacity: Int = MAX_CONNECTIONS,
@@ -93,7 +94,6 @@ internal class ClientConnectionObserver(
     fun observe(
         local: InetSocketAddress,
         remote: InetSocketAddress,
-        responseExpectedAfterPeerFin: Boolean = false,
         onDisconnect: () -> Unit,
     ): AutoCloseable? {
         val connection =
@@ -110,7 +110,6 @@ internal class ClientConnectionObserver(
                     observations[it] =
                         Observation(
                             connection = connection,
-                            responseExpectedAfterPeerFin = responseExpectedAfterPeerFin,
                             onDisconnect = onDisconnect,
                         )
                 }
@@ -130,7 +129,11 @@ internal class ClientConnectionObserver(
     }
 
     private fun scan() {
-        val states = stateReader.connectionStates() ?: return
+        val states = stateReader.connectionStates()
+        if (states == null) {
+            lock.withLock { observations.values.forEach(Observation::disableInference) }
+            return
+        }
         val callbacks =
             lock.withLock {
                 buildList {
@@ -162,29 +165,36 @@ internal class ClientConnectionObserver(
 
     private data class Observation(
         val connection: ClientConnection,
-        val responseExpectedAfterPeerFin: Boolean,
         val onDisconnect: () -> Unit,
+        var seenPresent: Boolean = false,
         var missingSnapshots: Int = 0,
         var failOpen: Boolean = false,
     ) {
         fun observe(disposition: ResponsePathDisposition?): Boolean {
+            if (failOpen) return false
             when (disposition) {
-                ResponsePathDisposition.LIVE -> missingSnapshots = 0
-                ResponsePathDisposition.PEER_FIN -> {
-                    // CLOSE_WAIT proves only that the peer finished writing. An announced
-                    // close-after-response can still read, while an unannounced FIN on the
-                    // outstanding exchange is the Java client's cancellation signal.
-                    if (!responseExpectedAfterPeerFin) return true
+                ResponsePathDisposition.LIVE -> {
+                    seenPresent = true
                     missingSnapshots = 0
                 }
                 ResponsePathDisposition.UNUSABLE -> return true
                 ResponsePathDisposition.AMBIGUOUS -> {
+                    seenPresent = true
                     missingSnapshots = 0
                     failOpen = true
                 }
-                null -> if (!failOpen) missingSnapshots++
+                null -> {
+                    // A tuple that was never positively observed may have disappeared before
+                    // registration or may belong to a later connection after port reuse.
+                    if (!seenPresent) failOpen = true else missingSnapshots++
+                }
             }
             return !failOpen && missingSnapshots >= MISSING_SNAPSHOT_CONFIRMATIONS
+        }
+
+        fun disableInference() {
+            failOpen = true
+            missingSnapshots = 0
         }
     }
 

@@ -154,7 +154,8 @@ class RpcServer(
             (path == "/extensions" && exchange.requestMethod == "GET") ||
                 (path == "/extensions/install" && exchange.requestMethod == "POST") ||
                 (path == "/extensions/refresh" && exchange.requestMethod == "POST") ||
-                (path.endsWith("/update") && exchange.requestMethod == "POST")
+                (path.endsWith("/update") && exchange.requestMethod == "POST") ||
+                exchange.requestMethod == "DELETE"
         return if (needsNetwork) rpcExecutors.extensionNetworkExecutor else rpcExecutors.extensionExecutor
     }
 
@@ -687,7 +688,6 @@ class RpcServer(
                 observer.observe(
                     local = exchange.localAddress,
                     remote = exchange.remoteAddress,
-                    responseExpectedAfterPeerFin = exchange.requestsConnectionClose(),
                 ) {
                     if (!completed.get()) disconnectCancellation.getAndSet(null)?.invoke()
                 }
@@ -700,12 +700,6 @@ class RpcServer(
                 }
             }
         }
-
-        private fun HttpExchange.requestsConnectionClose(): Boolean =
-            requestHeaders["Connection"]
-                .orEmpty()
-                .flatMap { value -> value.split(',') }
-                .any { token -> token.trim().equals("close", ignoreCase = true) }
 
         private fun respondMessage(
             status: Int,

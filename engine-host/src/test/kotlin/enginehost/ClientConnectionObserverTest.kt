@@ -19,7 +19,7 @@ class ClientConnectionObserverTest {
         val cases =
             mapOf(
                 TcpConnectionState.ESTABLISHED to ResponsePathDisposition.LIVE,
-                TcpConnectionState.CLOSE_WAIT to ResponsePathDisposition.PEER_FIN,
+                TcpConnectionState.CLOSE_WAIT to ResponsePathDisposition.AMBIGUOUS,
                 TcpConnectionState.FIN_WAIT_1 to ResponsePathDisposition.UNUSABLE,
                 TcpConnectionState.FIN_WAIT_2 to ResponsePathDisposition.UNUSABLE,
                 TcpConnectionState.LAST_ACK to ResponsePathDisposition.UNUSABLE,
@@ -91,34 +91,30 @@ class ClientConnectionObserverTest {
     }
 
     @Test
-    fun `announced peer FIN remains live while unannounced FIN releases capacity`() {
+    fun `peer FIN always fails open until explicit registration cleanup`() {
         val first = connection(40501)
         val second = connection(40502)
         val reader = ControllableConnectionStateReader(states(first, TcpConnectionState.CLOSE_WAIT))
-        val unannouncedDisconnect = CountDownLatch(1)
-        val announcedDisconnect = CountDownLatch(1)
+        val disconnected = CountDownLatch(1)
         val observer =
             ClientConnectionObserver(
-                capacity = 2,
+                capacity = 1,
                 pollInterval = Duration.ofMillis(5),
                 stateReader = reader,
             )
         try {
-            assertNotNull(observer.observe(local(first), remote(first)) { unannouncedDisconnect.countDown() })
-            val announced =
-                observer.observe(local(first), remote(first), responseExpectedAfterPeerFin = true) {
-                    announcedDisconnect.countDown()
-                }
-            assertNotNull(announced)
+            val registration = observer.observe(local(first), remote(first)) { disconnected.countDown() }
+            assertNotNull(registration)
             assertNull(observer.observe(local(second), remote(second)) {})
             reader.start()
+            reader.awaitScan(states(first, TcpConnectionState.CLOSE_WAIT))
+            reader.current.set(emptyMap())
+            reader.awaitScan(emptyMap())
 
-            assertTrue(unannouncedDisconnect.await(500, TimeUnit.MILLISECONDS), "unannounced FIN was not cancelled")
-            assertEquals(false, announcedDisconnect.await(50, TimeUnit.MILLISECONDS))
-            val replacement = observer.observe(local(second), remote(second)) {}
-            assertNotNull(replacement, "cancelled registration did not release capacity")
-            replacement.close()
-            announced.close()
+            assertEquals(false, disconnected.await(50, TimeUnit.MILLISECONDS))
+            assertNull(observer.observe(local(second), remote(second)) {})
+            registration.close()
+            assertNotNull(observer.observe(local(second), remote(second)) {})
         } finally {
             observer.close()
         }
@@ -128,8 +124,9 @@ class ClientConnectionObserverTest {
     fun `ambiguous terminal state fails open until explicit registration cleanup`() {
         val first = connection(40701)
         val second = connection(40702)
-        val timeWait = states(first, TcpConnectionState.TIME_WAIT)
-        val reader = ControllableConnectionStateReader(timeWait)
+        val reusedTuple =
+            mapOf(first to setOf(TcpConnectionState.ESTABLISHED, TcpConnectionState.TIME_WAIT))
+        val reader = ControllableConnectionStateReader(reusedTuple)
         val disconnected = CountDownLatch(1)
         val observer =
             ClientConnectionObserver(
@@ -141,7 +138,7 @@ class ClientConnectionObserverTest {
             val registration = observer.observe(local(first), remote(first)) { disconnected.countDown() }
             assertNotNull(registration)
             reader.start()
-            reader.awaitScan(timeWait)
+            reader.awaitScan(reusedTuple)
             reader.current.set(emptyMap())
             reader.awaitScan(emptyMap())
 
@@ -184,13 +181,14 @@ class ClientConnectionObserverTest {
     fun `one bounded monitor detects disconnect and releases registration capacity`() {
         val first = connection(41001)
         val second = connection(41002)
-        val active = AtomicReference(liveStates(first, second))
+        val initial = liveStates(first, second)
+        val reader = ControllableConnectionStateReader(initial)
         val disconnected = CountDownLatch(1)
         val observer =
             ClientConnectionObserver(
                 capacity = 1,
                 pollInterval = Duration.ofMillis(5),
-                stateReader = ConnectionStateReader { active.get() },
+                stateReader = reader,
             )
         try {
             val firstRegistration =
@@ -199,8 +197,10 @@ class ClientConnectionObserverTest {
                 }
             assertNotNull(firstRegistration)
             assertNull(observer.observe(local(second), remote(second)) {})
+            reader.start()
+            reader.awaitScan(initial)
 
-            active.set(liveStates(second))
+            reader.current.set(liveStates(second))
 
             assertTrue(disconnected.await(500, TimeUnit.MILLISECONDS), "observer did not report the removed connection")
             assertNotNull(observer.observe(local(second), remote(second)) {})
@@ -208,6 +208,35 @@ class ClientConnectionObserverTest {
             observer.close()
         }
         assertTrue(observer.isTerminated)
+    }
+
+    @Test
+    fun `tuple absent before first positive snapshot permanently fails open`() {
+        val first = connection(41501)
+        val second = connection(41502)
+        val reader = ControllableConnectionStateReader(emptyMap())
+        val disconnected = CountDownLatch(1)
+        val observer =
+            ClientConnectionObserver(
+                capacity = 1,
+                pollInterval = Duration.ofMillis(5),
+                stateReader = reader,
+            )
+        try {
+            val registration = observer.observe(local(first), remote(first)) { disconnected.countDown() }
+            assertNotNull(registration)
+            reader.start()
+            reader.awaitScan(emptyMap())
+            reader.current.set(states(first, TcpConnectionState.FIN_WAIT_1))
+            reader.awaitScan(states(first, TcpConnectionState.FIN_WAIT_1))
+
+            assertEquals(false, disconnected.await(50, TimeUnit.MILLISECONDS))
+            assertNull(observer.observe(local(second), remote(second)) {})
+            registration.close()
+            assertNotNull(observer.observe(local(second), remote(second)) {})
+        } finally {
+            observer.close()
+        }
     }
 
     @Test
@@ -226,6 +255,37 @@ class ClientConnectionObserverTest {
             assertNotNull(registration)
             assertEquals(false, disconnected.await(50, TimeUnit.MILLISECONDS))
             registration.close()
+        } finally {
+            observer.close()
+        }
+    }
+
+    @Test
+    fun `incomplete snapshot permanently disables disconnect inference`() {
+        val first = connection(42501)
+        val second = connection(42502)
+        val current = AtomicReference<Map<ClientConnection, Set<TcpConnectionState>>?>(null)
+        val unavailableRead = CountDownLatch(1)
+        val disconnected = CountDownLatch(1)
+        val observer =
+            ClientConnectionObserver(
+                capacity = 1,
+                pollInterval = Duration.ofMillis(5),
+                stateReader =
+                    ConnectionStateReader {
+                        current.get().also { states -> if (states == null) unavailableRead.countDown() }
+                    },
+            )
+        try {
+            val registration = observer.observe(local(first), remote(first)) { disconnected.countDown() }
+            assertNotNull(registration)
+            assertTrue(unavailableRead.await(500, TimeUnit.MILLISECONDS), "incomplete snapshot was not read")
+            current.set(states(first, TcpConnectionState.FIN_WAIT_1))
+
+            assertEquals(false, disconnected.await(50, TimeUnit.MILLISECONDS))
+            assertNull(observer.observe(local(second), remote(second)) {})
+            registration.close()
+            assertNotNull(observer.observe(local(second), remote(second)) {})
         } finally {
             observer.close()
         }

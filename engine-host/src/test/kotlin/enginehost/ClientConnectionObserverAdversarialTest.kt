@@ -17,14 +17,17 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-private class HalfCloseDetailsSource(
+private class SocketDetailsSource(
+    override val id: Long,
+    private val delayMillis: Long,
     private val entered: CountDownLatch,
+    private val exited: CountDownLatch,
     private val completed: AtomicBoolean,
 ) : Source {
-    override val id: Long = 505L
-    override val name: String = "Half-close source"
+    override val name: String = "Socket lifecycle source"
     override val lang: String = "en"
     override val supportsLatest: Boolean = false
 
@@ -35,9 +38,13 @@ private class HalfCloseDetailsSource(
         fetchChapters: Boolean,
     ): SMangaUpdate {
         entered.countDown()
-        delay(500)
-        completed.set(true)
-        return SMangaUpdate(manga, emptyList())
+        try {
+            delay(delayMillis)
+            completed.set(true)
+            return SMangaUpdate(manga, emptyList())
+        } finally {
+            exited.countDown()
+        }
     }
 
     override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
@@ -57,21 +64,43 @@ class ClientConnectionObserverAdversarialTest {
     /** A request write-half FIN must not cancel the still-readable response path. */
     @RepeatedTest(20)
     fun `half closed request can still receive its normal response`() {
-        assertSuccessfulRequest(halfClose = true)
+        assertSuccessfulRequest(halfClose = true, connectionClose = true)
+    }
+
+    /** TCP FIN remains ambiguous even when the request omits a connection token. */
+    @RepeatedTest(20)
+    fun `headerless half closed request can still receive its normal response`() {
+        assertSuccessfulRequest(halfClose = true, connectionClose = false)
     }
 
     /** The connection observer must leave an ordinary response-capable request untouched. */
     @RepeatedTest(20)
     fun `normal request remains live until its successful response`() {
-        assertSuccessfulRequest(halfClose = false)
+        assertSuccessfulRequest(halfClose = false, connectionClose = true)
     }
 
-    private fun assertSuccessfulRequest(halfClose: Boolean) {
+    /** An abortive close proves the response path is gone even if the request announced close. */
+    @RepeatedTest(20)
+    fun `reset after close header promptly cancels cooperative work`() {
+        assertResetCancels(connectionClose = true)
+    }
+
+    /** An abortive close remains the same transport proof without a connection token. */
+    @RepeatedTest(20)
+    fun `headerless reset promptly cancels cooperative work`() {
+        assertResetCancels(connectionClose = false)
+    }
+
+    private fun assertSuccessfulRequest(
+        halfClose: Boolean,
+        connectionClose: Boolean,
+    ) {
         val entered = CountDownLatch(1)
+        val exited = CountDownLatch(1)
         val completed = AtomicBoolean(false)
         val root = Files.createTempDirectory("half-close-integration").toFile()
         val loader = ExtensionLoader(root)
-        injectSource(loader, HalfCloseDetailsSource(entered, completed))
+        injectSource(loader, SocketDetailsSource(505L, 500, entered, exited, completed))
         val manager = ExtensionManager(loader, root)
         val server = RpcServer(loader, manager, port = 0)
         server.start()
@@ -79,7 +108,7 @@ class ClientConnectionObserverAdversarialTest {
             Socket().use { socket ->
                 socket.soTimeout = 5_000
                 socket.connect(InetSocketAddress("127.0.0.1", boundPort(server)))
-                writeRequest(socket)
+                writeRequest(socket, sourceId = 505L, connectionClose = connectionClose)
                 assertTrue(entered.await(5, TimeUnit.SECONDS), "source call did not start")
 
                 if (halfClose) socket.shutdownOutput()
@@ -94,15 +123,50 @@ class ClientConnectionObserverAdversarialTest {
         }
     }
 
-    private fun writeRequest(socket: Socket) {
-        val body = """{"sourceId":505,"url":"/half-close"}"""
+    private fun assertResetCancels(connectionClose: Boolean) {
+        val entered = CountDownLatch(1)
+        val exited = CountDownLatch(1)
+        val completed = AtomicBoolean(false)
+        val root = Files.createTempDirectory("reset-integration").toFile()
+        val loader = ExtensionLoader(root)
+        injectSource(loader, SocketDetailsSource(506L, 5_000, entered, exited, completed))
+        val manager = ExtensionManager(loader, root)
+        val server = RpcServer(loader, manager, port = 0)
+        server.start()
+        val socket = Socket()
+        try {
+            socket.connect(InetSocketAddress("127.0.0.1", boundPort(server)))
+            writeRequest(socket, sourceId = 506L, connectionClose = connectionClose)
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "source call did not start")
+            assertTrue(awaitEstablishedTuple(socket), "reset test socket was never visible in procfs")
+            // Leave more than three monitor intervals for the observer's own positive snapshot.
+            Thread.sleep(200)
+
+            socket.setSoLinger(true, 0)
+            socket.close()
+
+            assertTrue(exited.await(500, TimeUnit.MILLISECONDS), "source work outlived the reset client")
+            assertFalse(completed.get(), "reset client was allowed to complete source work")
+        } finally {
+            runCatching(socket::close)
+            server.stop()
+            manager.close()
+        }
+    }
+
+    private fun writeRequest(
+        socket: Socket,
+        sourceId: Long,
+        connectionClose: Boolean,
+    ) {
+        val body = """{"sourceId":$sourceId,"url":"/socket-lifecycle"}"""
         val request =
             buildString {
                 append("POST /manga HTTP/1.1\r\n")
                 append("Host: 127.0.0.1\r\n")
                 append("Content-Type: application/json\r\n")
                 append("Content-Length: ${body.toByteArray(StandardCharsets.UTF_8).size}\r\n")
-                append("Connection: close\r\n")
+                if (connectionClose) append("Connection: close\r\n")
                 append("\r\n")
                 append(body)
             }
@@ -110,6 +174,23 @@ class ClientConnectionObserverAdversarialTest {
             write(request.toByteArray(StandardCharsets.UTF_8))
             flush()
         }
+    }
+
+    private fun awaitEstablishedTuple(socket: Socket): Boolean {
+        val connection =
+            ClientConnection(
+                localAddress = "7f000001",
+                localPort = socket.port,
+                remoteAddress = "7f000001",
+                remotePort = socket.localPort,
+            )
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        do {
+            val states = ProcConnectionStateReader().connectionStates()?.get(connection)
+            if (states == setOf(TcpConnectionState.ESTABLISHED)) return true
+            Thread.sleep(5)
+        } while (System.nanoTime() < deadline)
+        return false
     }
 
     private fun injectSource(

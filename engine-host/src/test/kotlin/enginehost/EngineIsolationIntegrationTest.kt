@@ -120,6 +120,7 @@ private class HealthyDetailsSource : Source {
 private class CooperativeDetailsSource(
     private val entered: CountDownLatch,
     private val exited: CountDownLatch,
+    private val completed: AtomicBoolean,
 ) : Source {
     override val id: Long = 404L
     override val name: String = "Cooperative source"
@@ -134,7 +135,8 @@ private class CooperativeDetailsSource(
     ): SMangaUpdate {
         entered.countDown()
         try {
-            delay(5_000)
+            delay(500)
+            completed.set(true)
             return SMangaUpdate(manga, emptyList())
         } finally {
             exited.countDown()
@@ -346,14 +348,15 @@ class EngineIsolationIntegrationTest {
         }
     }
 
-    /** Closing the real HTTP client request promptly cancels cooperative source work. */
+    /** A graceful Java-client cancellation is an ambiguous FIN and must fail open. */
     @RepeatedTest(20)
-    fun `client disconnect cancels cooperative source work before its normal response`() {
+    fun `graceful client cancellation fails open until source completion`() {
         val entered = CountDownLatch(1)
         val exited = CountDownLatch(1)
+        val completed = AtomicBoolean(false)
         val root = Files.createTempDirectory("client-disconnect-integration").toFile()
         val loader = ExtensionLoader(root)
-        injectSource(loader, CooperativeDetailsSource(entered, exited))
+        injectSource(loader, CooperativeDetailsSource(entered, exited, completed))
         val runningServer = RpcServer(loader, ExtensionManager(loader, root), port = 0)
         server = runningServer
         runningServer.start()
@@ -364,8 +367,71 @@ class EngineIsolationIntegrationTest {
 
         assertTrue(request.cancel(true), "HTTP request was already terminal before cancellation")
 
-        assertTrue(exited.await(500, TimeUnit.MILLISECONDS), "source work outlived the disconnected client")
+        assertTrue(exited.await(2, TimeUnit.SECONDS), "ambiguous FIN did not fail open to source completion")
+        assertTrue(completed.get(), "graceful cancellation was mistaken for provable response abandonment")
         assertTrue(awaitRunning(baseUrl, expected = 0, timeoutMillis = 500), "physical source slot did not release")
+    }
+
+    /** Uninstall's repository-backed response must not occupy the local preference lane. */
+    @RepeatedTest(20)
+    fun `slow uninstall listing does not delay preference mutation`() {
+        PreferenceIntegrationTestSetup.ensureReady()
+        MockWebServer().use { upstream ->
+            upstream.enqueue(
+                MockResponse.Builder()
+                    .body("[]")
+                    .bodyDelay(1, TimeUnit.SECONDS)
+                    .build(),
+            )
+            upstream.start()
+            val root = Files.createTempDirectory("extension-uninstall-integration")
+            val installed =
+                InstalledExtension(
+                    pkgName = "example.uninstall",
+                    name = "Uninstall fixture",
+                    versionName = "1.0.0",
+                    versionCode = 1,
+                    lang = "en",
+                    apkFileName = "example-uninstall.apk",
+                    mainClass = "example.Uninstall",
+                    isNsfw = false,
+                    iconUrl = null,
+                    repoUrl = null,
+                    sourceIds = emptyList(),
+                    sources = emptyList(),
+                )
+            Files.writeString(root.resolve("installed.json"), mapper.writeValueAsString(listOf(installed)))
+            val loader = ExtensionLoader(root.toFile())
+            injectSource(loader, MutablePreferenceSource())
+            val manager = ExtensionManager(loader, root.toFile())
+            manager.setRepos(listOf(upstream.url("/index.json").toString()))
+            val runningServer = RpcServer(loader, manager, port = 0)
+            server = runningServer
+            runningServer.start()
+            val baseUrl = "http://127.0.0.1:${boundPort(runningServer)}"
+            assertEquals(200, putPreference(baseUrl, false).statusCode())
+            try {
+                val uninstall = deleteAsync(baseUrl, "/extensions/example.uninstall")
+                assertTrue(upstream.takeRequest(5, TimeUnit.SECONDS) != null, "uninstall listing did not reach repository")
+                assertFalse(uninstall.isDone, "repository-backed uninstall response completed before preference mutation")
+
+                val mutation = putPreferenceAsync(baseUrl, true)
+
+                val mutationResponse = mutation.get(500, TimeUnit.MILLISECONDS)
+                assertEquals(200, mutationResponse.statusCode())
+                assertEquals(true, preferenceValue(mutationResponse.body()))
+                val persisted = getAsync(baseUrl, "/sources/303/preferences").get(500, TimeUnit.MILLISECONDS)
+                assertEquals(200, persisted.statusCode())
+                assertEquals(true, preferenceValue(persisted.body()))
+                assertFalse(uninstall.isDone, "preference mutation waited for uninstall repository listing")
+
+                val uninstallResponse = uninstall.get(3, TimeUnit.SECONDS)
+                assertEquals(200, uninstallResponse.statusCode())
+                assertEquals(mapper.readTree("[]"), mapper.readTree(uninstallResponse.body()))
+            } finally {
+                manager.close()
+            }
+        }
     }
 
     private fun getAsync(
@@ -389,6 +455,17 @@ class EngineIsolationIntegrationTest {
         client.sendAsync(
             HttpRequest.newBuilder(URI("$baseUrl$path"))
                 .POST(HttpRequest.BodyPublishers.ofString(body))
+                .build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
+
+    private fun deleteAsync(
+        baseUrl: String,
+        path: String,
+    ): CompletableFuture<HttpResponse<String>> =
+        client.sendAsync(
+            HttpRequest.newBuilder(URI("$baseUrl$path"))
+                .DELETE()
                 .build(),
             HttpResponse.BodyHandlers.ofString(),
         )
