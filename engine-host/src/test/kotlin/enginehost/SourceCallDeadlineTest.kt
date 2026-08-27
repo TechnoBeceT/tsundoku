@@ -1,7 +1,9 @@
 package enginehost
 
+import eu.kanade.tachiyomi.source.online.HttpSource
 import kotlinx.coroutines.awaitCancellation
 import okhttp3.EventListener
+import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
@@ -21,7 +23,20 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+
+private class DirectImageHttpSource(
+    override val client: OkHttpClient,
+) : HttpSource() {
+    override val id: Long = 9L
+    override val name: String = "Direct image test source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+    override val baseUrl: String = "https://example.test"
+
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+}
 
 class SourceCallDeadlineTest {
     @Test
@@ -104,6 +119,67 @@ class SourceCallDeadlineTest {
                 scheduler.close()
                 deadline.close()
             }
+        }
+    }
+
+    @Test
+    fun `direct image deadline retains the OkHttp call through a stalled response body`() {
+        val server = MockWebServer()
+        val responseHeadersReceived = CountDownLatch(1)
+        val cancelled = CountDownLatch(1)
+        val client =
+            OkHttpClient.Builder()
+                .eventListener(
+                    object : EventListener() {
+                        override fun responseHeadersEnd(
+                            call: okhttp3.Call,
+                            response: okhttp3.Response,
+                        ) {
+                            responseHeadersReceived.countDown()
+                        }
+
+                        override fun canceled(call: okhttp3.Call) {
+                            cancelled.countDown()
+                        }
+                    },
+                ).build()
+        val source = DirectImageHttpSource(client)
+        val cancellation = SourceCallCancellation()
+        val timer = ManualDeadlineTimer()
+        val deadline = SourceCallDeadline(Duration.ofSeconds(150), timer)
+        val scheduler =
+            SourceScheduler(
+                limits = SourceSchedulerLimits(workerCount = 1, perSourceLimit = 1, queueCapacity = 1),
+                sourceCallDeadline = deadline,
+            )
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "image/jpeg")
+                .setBody("image bytes delayed after headers")
+                .setBodyDelay(1, TimeUnit.DAYS),
+        )
+        server.start()
+        val result =
+            assertIs<Submission.Accepted<Pair<ByteArray, String>>>(
+                scheduler.submit(source.id, cancellation::cancel) {
+                    SourceCalls.image(source, pageUrl = "", imageUrl = server.url("/page.jpg").toString(), cancellation)
+                },
+            ).future
+        try {
+            assertNotNull(server.takeRequest(5, TimeUnit.SECONDS), "direct image request did not reach MockWebServer")
+            assertTrue(responseHeadersReceived.await(5, TimeUnit.SECONDS), "response headers were not received")
+            assertFalse(result.isDone, "body read must still be stalled after response headers")
+
+            timer.fireAll()
+
+            assertTimeout(result)
+            assertTrue(cancelled.await(5, TimeUnit.SECONDS), "post-headers cancellation did not reach OkHttp")
+        } finally {
+            cancellation.cancel()
+            result.cancel(true)
+            scheduler.close()
+            deadline.close()
+            server.shutdown()
         }
     }
 

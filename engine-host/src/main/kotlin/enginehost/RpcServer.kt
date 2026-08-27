@@ -562,8 +562,11 @@ class RpcServer(
 
         override fun shutdown() {
             state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_STOPPED)
-            cancellation.get()?.invoke()
+            // Claim the exchange's terminal response before cancellation can interrupt running
+            // source work. Its route containment may otherwise race in and publish a 502 for the
+            // cancellation exception even though shutdown is the reason the call ended.
             response.respondShutdown()
+            cancellation.get()?.invoke()
             activeResponses.remove(response)
             if (state.get() == SUBMISSION_STOPPED) submissions.remove(this)
             response.awaitCompletion()

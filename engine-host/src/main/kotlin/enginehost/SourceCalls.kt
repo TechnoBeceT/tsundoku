@@ -365,10 +365,12 @@ object SourceCalls {
                 .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
                 .build()
             val call = freshClient.newCachelessCallWithProgress(request, page)
-            val response = cancellation.withCallSuspend(call) { retained -> retained.awaitSuccess() }
-            val contentType = response.header("Content-Type") ?: "application/octet-stream"
-            val bytes = response.body.bytes()
-            bytes to contentType
+            cancellation.withCallSuspend(call) { retained ->
+                retained.awaitSuccess().use { response ->
+                    val contentType = response.header("Content-Type") ?: "application/octet-stream"
+                    response.body.bytes() to contentType
+                }
+            }
         }
 
     /**
