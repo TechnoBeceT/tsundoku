@@ -27,6 +27,8 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 private const val BUSY_BODY = """{"error":"server busy"}"""
+private const val SOURCE_QUEUE_FULL_BODY = """{"message":"source queue full"}"""
+private const val SOURCE_TIMEOUT_BODY = """{"message":"source call timed out"}"""
 private const val SHUTDOWN_BODY = """{"error":"server shutting down"}"""
 
 private class RecordingDetailsSource(
@@ -123,7 +125,8 @@ class RpcAdmissionAndShutdownTest {
             awaitQueueSize(executors.sourceScheduler, 1)
             val rejected = post(rpc.baseUrl, "/rejected", timeoutMillis = 1_000)
 
-            assertBusy(rejected)
+            assertEquals(503, rejected.statusCode())
+            assertEquals(SOURCE_QUEUE_FULL_BODY, rejected.body())
             assertEquals(1, queueSize(executors.sourceScheduler), "source queue must stay at its configured bound")
             release.countDown()
             assertEquals(200, queued.get(5, TimeUnit.SECONDS).statusCode())
@@ -134,6 +137,36 @@ class RpcAdmissionAndShutdownTest {
             running.forEach { runCatching { it.get(5, TimeUnit.SECONDS) } }
             rpc.server.stop()
             executors.close()
+        }
+    }
+
+    @Test
+    fun `source execution deadline completes once with stable 504`() {
+        val timer = ManualDeadlineTimer()
+        val deadline = SourceCallDeadline(Duration.ofSeconds(150), timer)
+        val scheduler =
+            SourceScheduler(
+                limits = SourceSchedulerLimits(workerCount = 1, perSourceLimit = 1, queueCapacity = 1),
+                sourceCallDeadline = deadline,
+            )
+        val executors = RpcExecutors(sourceScheduler = scheduler)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val rpc = startServer(executors, RecordingDetailsSource(entered, release))
+        try {
+            val request = postAsync(rpc.baseUrl, "/deadline")
+            assertTrue(entered.await(5, TimeUnit.SECONDS), "source call did not physically start")
+
+            timer.fireAll()
+
+            val response = request.get(5, TimeUnit.SECONDS)
+            assertEquals(504, response.statusCode())
+            assertEquals(SOURCE_TIMEOUT_BODY, response.body())
+        } finally {
+            release.countDown()
+            rpc.server.stop()
+            executors.close()
+            deadline.close()
         }
     }
 

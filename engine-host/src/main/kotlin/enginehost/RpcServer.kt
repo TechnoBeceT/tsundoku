@@ -70,38 +70,38 @@ class RpcServer(
 
         // Source calls are submitted and the callback returns without executing extension code.
         registerContext("/search") { exchange, response ->
-            submitSource(exchange, response, SearchRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.search(request.source(), request.query, request.page))
+            submitSource(exchange, response, SearchRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.search(request.source(), request.query, request.page, cancellation))
             }
         }
         registerContext("/popular") { exchange, response ->
-            submitSource(exchange, response, BrowseRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.popular(request.source(), request.page))
+            submitSource(exchange, response, BrowseRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.popular(request.source(), request.page, cancellation))
             }
         }
         registerContext("/latest") { exchange, response ->
-            submitSource(exchange, response, BrowseRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.latest(request.source(), request.page))
+            submitSource(exchange, response, BrowseRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.latest(request.source(), request.page, cancellation))
             }
         }
         registerContext("/manga") { exchange, response ->
-            submitSource(exchange, response, MangaRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.mangaDetails(request.source(), request.url))
+            submitSource(exchange, response, MangaRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.mangaDetails(request.source(), request.url, cancellation))
             }
         }
         registerContext("/chapters") { exchange, response ->
-            submitSource(exchange, response, ChaptersRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.chapters(request.source(), request.url, request.mangaTitle))
+            submitSource(exchange, response, ChaptersRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.chapters(request.source(), request.url, request.mangaTitle, cancellation))
             }
         }
         registerContext("/pages") { exchange, response ->
-            submitSource(exchange, response, PagesRequest::sourceId) { request ->
-                response.respondJson(200, SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl))
+            submitSource(exchange, response, PagesRequest::sourceId) { request, cancellation ->
+                response.respondJson(200, SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl, cancellation))
             }
         }
         registerContext("/image") { exchange, response ->
-            submitSource(exchange, response, ImageRequest::sourceId, "image request") { request ->
-                val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl)
+            submitSource(exchange, response, ImageRequest::sourceId, "image request") { request, cancellation ->
+                val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl, cancellation)
                 response.respondBytes(200, bytes, contentType)
             }
         }
@@ -418,7 +418,7 @@ class RpcServer(
         response: ResponseGuard,
         crossinline sourceId: (T) -> Long,
         operation: String = "source request",
-        crossinline call: (T) -> Unit,
+        crossinline call: (T, SourceCallCancellation) -> Unit,
     ): Boolean {
         if (exchange.requestMethod != "POST") {
             response.respondJson(405, ErrorResponse("POST only"))
@@ -438,9 +438,10 @@ class RpcServer(
                 return false
             }
 
-        submitSourceWork(sourceId(request), response, operation) {
+        val cancellation = SourceCallCancellation()
+        submitSourceWork(sourceId(request), response, operation, cancellation::cancel) {
             try {
-                call(request)
+                call(request, cancellation)
             } catch (e: BadRequest) {
                 response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
             } catch (e: IllegalArgumentException) {
@@ -459,6 +460,7 @@ class RpcServer(
         sourceId: Long,
         response: ResponseGuard,
         operation: String,
+        cancelUnderlying: () -> Unit,
         work: () -> Unit,
     ) {
         val task = SubmittedExchange(response, operation, work)
@@ -468,12 +470,12 @@ class RpcServer(
                     null
                 } else {
                     submissions.add(task)
-                    rpcExecutors.sourceScheduler.submit(sourceId, task::run)
+                    rpcExecutors.sourceScheduler.submit(sourceId, cancelUnderlying, task::run)
                 }
             }
         when (submission) {
             null -> task.reject(RpcRejection.SHUTDOWN)
-            Submission.Rejected -> task.reject(RpcRejection.CAPACITY)
+            Submission.Rejected -> task.rejectSourceQueueFull()
             is Submission.Accepted -> task.bind(submission.future)
         }
     }
@@ -537,9 +539,24 @@ class RpcServer(
             response.awaitCompletion()
         }
 
+        fun rejectSourceQueueFull() {
+            if (state.compareAndSet(SUBMISSION_QUEUED, SUBMISSION_STOPPED)) {
+                response.respondSourceQueueFull()
+                submissions.remove(this)
+                activeResponses.remove(response)
+            }
+            response.awaitCompletion()
+        }
+
         fun bind(future: java.util.concurrent.CompletableFuture<Unit>) {
             cancellation.set { future.cancel(false) }
-            future.whenComplete { _, _ -> if (future.isCancelled) shutdown() }
+            response.cancelOnDisconnect { future.cancel(false) }
+            future.whenComplete { _, failure ->
+                when {
+                    future.isCancelled -> shutdown()
+                    failure is java.util.concurrent.TimeoutException -> response.respondSourceTimeout()
+                }
+            }
             if (state.get() == SUBMISSION_STOPPED) future.cancel(false)
         }
 
@@ -586,6 +603,9 @@ class RpcServer(
     ) {
         private val completed = AtomicBoolean(false)
         private val completion = CountDownLatch(1)
+        private val writeFailed = AtomicBoolean(false)
+        private val writeFinished = AtomicBoolean(false)
+        private val disconnectCancellation = AtomicReference<(() -> Unit)?>(null)
 
         fun respondJson(
             status: Int,
@@ -605,7 +625,13 @@ class RpcServer(
                 exchange.responseHeaders.add("Content-Type", contentType)
                 exchange.sendResponseHeaders(status, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
+            } catch (failure: Throwable) {
+                writeFailed.set(true)
+                disconnectCancellation.getAndSet(null)?.invoke()
+                throw failure
             } finally {
+                writeFinished.set(true)
+                disconnectCancellation.set(null)
                 completion.countDown()
             }
         }
@@ -613,6 +639,29 @@ class RpcServer(
         fun respondBusy() = respondLifecycle(BUSY_MESSAGE)
 
         fun respondShutdown() = respondLifecycle(SHUTDOWN_MESSAGE)
+
+        fun respondSourceQueueFull() = respondMessage(503, SOURCE_QUEUE_FULL_MESSAGE)
+
+        fun respondSourceTimeout() = respondMessage(504, SOURCE_TIMEOUT_MESSAGE)
+
+        fun cancelOnDisconnect(cancel: () -> Unit) {
+            disconnectCancellation.set(cancel)
+            when {
+                writeFailed.get() -> disconnectCancellation.getAndSet(null)?.invoke()
+                writeFinished.get() -> disconnectCancellation.compareAndSet(cancel, null)
+            }
+        }
+
+        private fun respondMessage(
+            status: Int,
+            message: String,
+        ) {
+            try {
+                respondJson(status, mapOf("message" to message))
+            } catch (failure: Throwable) {
+                logger.debug(failure) { "client disconnected before source response completed" }
+            }
+        }
 
         private fun respondLifecycle(message: String) {
             try {
@@ -634,6 +683,8 @@ class RpcServer(
     private companion object {
         const val BUSY_MESSAGE = "server busy"
         const val SHUTDOWN_MESSAGE = "server shutting down"
+        const val SOURCE_QUEUE_FULL_MESSAGE = "source queue full"
+        const val SOURCE_TIMEOUT_MESSAGE = "source call timed out"
         const val RESPONSE_WAIT_SECONDS = 5L
         const val STOP_WAIT_SECONDS = 5L
         const val FRONT_DOOR_QUEUED = 0

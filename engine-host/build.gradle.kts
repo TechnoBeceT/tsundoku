@@ -72,6 +72,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0")
 
     testImplementation(kotlin("test"))
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
     // DexStackFrameRewriterTest builds a synthetic broken class with ASM to pin the VerifyError; asm
     // is compileOnly in main (rides Suwayomi's runtime), so the test source needs its own compile dep.
     testImplementation("org.ow2.asm:asm:9.9.1")

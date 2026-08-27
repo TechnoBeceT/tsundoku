@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -91,6 +92,40 @@ func TestClient_502_MapsToUpstreamError(t *testing.T) {
 	errors.As(err, &upstream)
 	if upstream.Msg != "IOException: connection reset" {
 		t.Errorf("UpstreamError.Msg = %q, want %q", upstream.Msg, "IOException: connection reset")
+	}
+}
+
+// TestClient_503_RemainsServerError proves source-scheduler saturation is a
+// source-wide engine availability failure, not a chapter-specific retry charge.
+func TestClient_503_RemainsServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusServiceUnavailable, map[string]string{"message": "source queue full"})
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).Health(context.Background())
+	assertUpstreamError(t, err, http.StatusServiceUnavailable)
+	if got := errorclass.Classify(err); got != errorclass.CategoryServerError {
+		t.Fatalf("503 category = %q, want %q", got, errorclass.CategoryServerError)
+	}
+}
+
+// TestClient_504_MapsToTimeout proves the host's explicit execution deadline
+// retains its typed upstream envelope while classifying through the existing
+// timeout category rather than the earlier server-error substring match.
+func TestClient_504_MapsToTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusGatewayTimeout, map[string]string{"message": "source call timed out"})
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(t, srv).Health(context.Background())
+	assertUpstreamError(t, err, http.StatusGatewayTimeout)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("504 error = %v, want context.DeadlineExceeded in chain", err)
+	}
+	if got := errorclass.Classify(err); got != errorclass.CategoryTimeout {
+		t.Fatalf("504 category = %q, want %q", got, errorclass.CategoryTimeout)
 	}
 }
 

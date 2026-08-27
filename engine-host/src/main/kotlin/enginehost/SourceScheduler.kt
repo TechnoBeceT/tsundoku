@@ -6,6 +6,8 @@ import java.time.Instant
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -64,6 +66,7 @@ class SourceScheduler(
     val limits: SourceSchedulerLimits = SourceSchedulerLimits(),
     private val clock: Clock = Clock.systemUTC(),
     workerExecutor: ExecutorService? = null,
+    sourceCallDeadline: SourceCallDeadline? = null,
 ) : AutoCloseable {
     private val lock = ReentrantLock()
     private val queues = linkedMapOf<Long, ArrayDeque<ScheduledWork<*>>>()
@@ -73,6 +76,8 @@ class SourceScheduler(
     private val runningWork = mutableSetOf<ScheduledWork<*>>()
     private val workers =
         workerExecutor ?: Executors.newFixedThreadPool(limits.workerCount, RpcThreadFactory(SOURCE_THREAD_PREFIX))
+    private val ownsDeadline = sourceCallDeadline == null
+    private val deadline = sourceCallDeadline ?: SourceCallDeadline()
 
     private var closed = false
     private var queuedCount = 0
@@ -89,10 +94,19 @@ class SourceScheduler(
     fun <T> submit(
         sourceId: Long,
         work: () -> T,
-    ): Submission<T> = submit(SourceWork(sourceId, work))
+    ): Submission<T> = submit(sourceId, {}, work)
 
-    private fun <T> submit(work: SourceWork<T>): Submission<T> {
-        val scheduled = ScheduledWork(work)
+    fun <T> submit(
+        sourceId: Long,
+        cancelUnderlying: () -> Unit,
+        work: () -> T,
+    ): Submission<T> = submit(SourceWork(sourceId, work), cancelUnderlying)
+
+    private fun <T> submit(
+        work: SourceWork<T>,
+        cancelUnderlying: () -> Unit,
+    ): Submission<T> {
+        val scheduled = ScheduledWork(work, cancelUnderlying = cancelUnderlying)
         val accepted =
             lock.withLock {
                 val canUseFreeWorker =
@@ -119,7 +133,7 @@ class SourceScheduler(
         lock.withLock {
             val sourceIds = (queues.keys + runningBySource.keys).toSortedSet()
             val oldest =
-                runningWork.maxOfOrNull { running ->
+                runningWork.filter { it.startedAt != Instant.EPOCH }.maxOfOrNull { running ->
                     Duration.between(running.startedAt, now).toMillis().coerceAtLeast(0)
                 } ?: 0L
             SourceSchedulerSnapshot(
@@ -173,6 +187,7 @@ class SourceScheduler(
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
+        if (ownsDeadline) deadline.close()
     }
 
     private fun ensureRunnableLocked(sourceId: Long) {
@@ -195,13 +210,14 @@ class SourceScheduler(
             queuedCount--
             if (queue.isEmpty()) queues.remove(sourceId)
             scheduled.physicalState = PhysicalState.RUNNING
-            scheduled.startedAt = clock.instant()
             physicalRunning++
             runningBySource[sourceId] = runningBySource.getOrDefault(sourceId, 0) + 1
             runningWork += scheduled
             ensureRunnableLocked(sourceId)
             try {
-                workers.execute { runPhysical(scheduled) }
+                val physical = FutureTask<Any?> { runPhysical(scheduled) }
+                scheduled.physical = physical
+                workers.execute(physical)
             } catch (_: RejectedExecutionException) {
                 physicalReturnedLocked(scheduled)
                 if (scheduled.publicState == PublicState.PENDING) {
@@ -213,22 +229,21 @@ class SourceScheduler(
         }
     }
 
-    private fun <T> runPhysical(scheduled: ScheduledWork<T>) {
-        var value: T? = null
-        var failure: Throwable? = null
+    private fun <T> runPhysical(scheduled: ScheduledWork<T>): T {
+        val startedAt = clock.instant()
+        @Suppress("UNCHECKED_CAST")
+        val physical = scheduled.physical as Future<T>
+        deadline.supervise(physical, scheduled.result, scheduled.cancelUnderlying)
+        lock.withLock { scheduled.startedAt = startedAt }
         try {
-            value = scheduled.work.run()
+            val value = scheduled.work.run()
+            scheduled.result.complete(value)
+            return value
         } catch (caught: Throwable) {
-            failure = caught
+            scheduled.result.completeExceptionally(caught)
+            throw caught
         } finally {
             lock.withLock { physicalReturnedLocked(scheduled) }
-        }
-
-        if (failure == null) {
-            @Suppress("UNCHECKED_CAST")
-            scheduled.result.complete(value as T)
-        } else {
-            scheduled.result.completeExceptionally(failure)
         }
     }
 
@@ -284,6 +299,8 @@ class SourceScheduler(
     private class ScheduledWork<T>(
         val work: SourceWork<T>,
         val result: CompletableFuture<T> = CompletableFuture(),
+        val cancelUnderlying: () -> Unit,
+        var physical: Future<Any?>? = null,
         var physicalState: PhysicalState = PhysicalState.QUEUED,
         var publicState: PublicState = PublicState.PENDING,
         var startedAt: Instant = Instant.EPOCH,

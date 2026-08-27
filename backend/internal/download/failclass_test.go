@@ -116,6 +116,29 @@ func TestClassifyFetchFailure_NonBadGatewayKeepsEnvelope(t *testing.T) {
 	}
 }
 
+// TestClassifyFetchFailure_ContainmentStatusesStaySourceWide proves neither
+// scheduler saturation nor a host execution deadline spends a chapter/source
+// retry budget. Both are engine/source availability failures, while 504 remains
+// distinguishable through the existing timeout category.
+func TestClassifyFetchFailure_ContainmentStatusesStaySourceWide(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"queue full", &sourceengine.UpstreamError{Status: 503, Msg: "source queue full"}},
+		{"deadline", &sourceengine.UpstreamError{Status: 504, Msg: "source call timed out"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyFetchFailure(tc.err); got != failureSourceWide {
+				t.Fatalf("classifyFetchFailure = %v, want failureSourceWide", got)
+			}
+			if !shouldRecordGateFailure(context.Background(), tc.err) {
+				t.Fatal("containment failure must retain source-wide breaker semantics")
+			}
+		})
+	}
+}
+
 // TestClassifyFetchFailure_BanStaysSourceWide re-pins the drain-prevention
 // behaviour across the rewrite: a ban must still be source-wide so it cools the
 // source down without burning any chapter's attempts.

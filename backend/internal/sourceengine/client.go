@@ -195,11 +195,12 @@ func (c *httpClient) Health(ctx context.Context) (Health, error) {
 
 // --- error model ---------------------------------------------------------
 
-// errorResponse is the wire shape of every non-2xx body: {"error": "..."}
-// (engine-host's ErrorResponse). It is decoded once, inside newStatusError,
+// errorResponse accepts the legacy {"error":"..."} body plus the containment
+// responses' {"message":"..."} body. It is decoded once, inside newStatusError,
 // and never exposed directly to callers.
 type errorResponse struct {
-	Error string `json:"error"`
+	Error   string `json:"error"`
+	Message string `json:"message"`
 }
 
 // BadRequestError reports a 400 response from the engine host: a malformed
@@ -233,6 +234,15 @@ func (e *UpstreamError) Error() string {
 	return fmt.Sprintf("sourceengine: upstream error (status %d): %s", e.Status, e.Msg)
 }
 
+// Unwrap makes the engine host's explicit execution deadline participate in
+// the existing typed timeout taxonomy without discarding its HTTP status.
+func (e *UpstreamError) Unwrap() error {
+	if e.Status == http.StatusGatewayTimeout {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
 // newStatusError reads resp's body and maps a non-2xx response to a typed
 // error: 400 -> *BadRequestError, anything else -> *UpstreamError. It always
 // consumes resp.Body; callers must not read it afterwards.
@@ -240,8 +250,12 @@ func newStatusError(resp *http.Response) error {
 	body, _ := io.ReadAll(resp.Body)
 	msg := string(body)
 	var parsed errorResponse
-	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error != "" {
-		msg = parsed.Error
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		if parsed.Error != "" {
+			msg = parsed.Error
+		} else if parsed.Message != "" {
+			msg = parsed.Message
+		}
 	}
 	if resp.StatusCode == http.StatusBadRequest {
 		return &BadRequestError{Msg: msg}

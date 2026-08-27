@@ -5,8 +5,8 @@ package enginehost
  * addressed by a source-relative URL: an SManga/SChapter is reconstructed from just the
  * url (that is all the source needs), so no opaque engine id ever enters the flow.
  *
- * Uses runBlocking to cross the Kotlin suspend boundary — the RPC threads are plain
- * blocking HttpServer threads.
+ * Uses a caller-cancellable runBlocking job to cross the Kotlin suspend boundary — the source
+ * workers are plain blocking threads, while coroutine and OkHttp cancellation still propagate.
  */
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -24,7 +24,6 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
-import kotlinx.coroutines.runBlocking
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -125,8 +124,9 @@ object SourceCalls {
         source: Source,
         query: String,
         page: Int,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): SearchResponse =
-        runBlocking {
+        cancellation.run {
             val result = source.getSearchManga(page, query, FilterList())
             SearchResponse(
                 manga = result.mangas.map { it.toEntryDto(source) },
@@ -138,8 +138,9 @@ object SourceCalls {
     fun popular(
         source: Source,
         page: Int,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): SearchResponse =
-        runBlocking {
+        cancellation.run {
             val cat = source as? CatalogueSource ?: error("Source ${source.name} is not a CatalogueSource")
             val result = cat.getPopularManga(page)
             SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
@@ -149,8 +150,9 @@ object SourceCalls {
     fun latest(
         source: Source,
         page: Int,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): SearchResponse =
-        runBlocking {
+        cancellation.run {
             val cat = source as? CatalogueSource ?: error("Source ${source.name} is not a CatalogueSource")
             val result = cat.getLatestUpdates(page)
             SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
@@ -160,8 +162,9 @@ object SourceCalls {
     fun mangaDetails(
         source: Source,
         url: String,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): MangaDetailsDto =
-        runBlocking {
+        cancellation.run {
             val seed = SManga.create().apply { this.url = url }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = true, fetchChapters = false)
             // A details parser returns a fresh SManga and may never set the `lateinit` identity `url`
@@ -183,8 +186,9 @@ object SourceCalls {
         source: Source,
         url: String,
         mangaTitle: String = "",
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): ChaptersResponse =
-        runBlocking {
+        cancellation.run {
             val seed = SManga.create().apply { this.url = url; title = mangaTitle }
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = false, fetchChapters = true)
             val http = source as? HttpSource
@@ -240,8 +244,9 @@ object SourceCalls {
         source: Source,
         chapterUrl: String,
         mangaUrl: String = "",
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): PagesResponse =
-        runBlocking {
+        cancellation.run {
             val bareSeed = SChapter.create().apply { this.url = chapterUrl }
             val pageList =
                 try {
@@ -326,8 +331,9 @@ object SourceCalls {
         source: Source,
         pageUrl: String,
         imageUrl: String?,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): Pair<ByteArray, String> =
-        runBlocking {
+        cancellation.run {
             val http = source as? HttpSource
                 ?: error("Source ${source.name} is not an HttpSource; cannot fetch image bytes")
 
@@ -350,7 +356,7 @@ object SourceCalls {
             // owner opted in. A non-null result is the SUCCESS path (okhttp is never touched); null
             // means fall through — an ungated source, the disabled/blank no-op, or ANY throw on the
             // gated path (config read, SOCKS build, or the fetch itself).
-            tryImpersonateGateway(source.id, request)?.let { return@runBlocking it }
+            tryImpersonateGateway(source.id, request, cancellation)?.let { return@run it }
 
             // Fallback / default: the GAP-110 fresh-connection okhttp path. A fresh-connection client
             // keeps no idle connection for reuse (see the GAP-110 note above); interceptors, headers,
@@ -358,9 +364,8 @@ object SourceCalls {
             val freshClient = http.client.newBuilder()
                 .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
                 .build()
-            val response = freshClient
-                .newCachelessCallWithProgress(request, page)
-                .awaitSuccess()
+            val call = freshClient.newCachelessCallWithProgress(request, page)
+            val response = cancellation.withCallSuspend(call) { retained -> retained.awaitSuccess() }
             val contentType = response.header("Content-Type") ?: "application/octet-stream"
             val bytes = response.body.bytes()
             bytes to contentType
@@ -400,12 +405,14 @@ object SourceCalls {
     internal fun tryImpersonateGateway(
         sourceId: Long,
         upstream: Request,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): Pair<ByteArray, String>? =
         runCatching {
             val snap = ImpersonateConfig.snapshot()
             if (!snap.allows(sourceId)) return@runCatching null
-            fetchViaGateway(impersonateGatewayClient, snap.url, socksProxyString(), upstream)
+            fetchViaGateway(impersonateGatewayClient, snap.url, socksProxyString(), upstream, cancellation)
         }.getOrElse { e ->
+            cancellation.ensureActive()
             logger.warn { "impersonate gateway fetch failed (${e.javaClass.simpleName}: ${e.message}), falling back to okhttp" }
             null
         }
@@ -423,6 +430,7 @@ object SourceCalls {
         gatewayUrl: String,
         socks: String?,
         upstream: Request,
+        cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): Pair<ByteArray, String>? {
         val bodyBytes: ByteArray? = upstream.body?.let { body ->
             val buffer = Buffer()
@@ -445,12 +453,15 @@ object SourceCalls {
             .url(gatewayUrl.trimEnd('/') + "/fetch")
             .post(impersonateMapper.writeValueAsBytes(payload).toRequestBody(jsonMediaType))
             .build()
-        client.newCall(req).execute().use { resp ->
-            if (resp.code != 200) return null
-            val upstreamStatus = resp.header("X-Upstream-Status")?.toIntOrNull() ?: return null
-            if (upstreamStatus !in 200..299) return null
-            val contentType = resp.header("Content-Type") ?: "application/octet-stream"
-            return resp.body.bytes() to contentType
+        val call = client.newCall(req)
+        return cancellation.withCall(call) { retained ->
+            retained.execute().use { resp ->
+                if (resp.code != 200) return@withCall null
+                val upstreamStatus = resp.header("X-Upstream-Status")?.toIntOrNull() ?: return@withCall null
+                if (upstreamStatus !in 200..299) return@withCall null
+                val contentType = resp.header("Content-Type") ?: "application/octet-stream"
+                resp.body.bytes() to contentType
+            }
         }
     }
 

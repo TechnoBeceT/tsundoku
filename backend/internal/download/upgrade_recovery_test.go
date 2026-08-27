@@ -16,6 +16,7 @@ package download_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -26,8 +27,51 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
+
+// TestUpgrade_ContainmentFailuresPreserveAttemptsAndRanking pins the Go-side
+// state contract for the engine scheduler's explicit 503/504 responses. Neither
+// may spend the target ProviderChapter budget or move the chapter away from its
+// existing lower-importance working copy.
+func TestUpgrade_ContainmentFailuresPreserveAttemptsAndRanking(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		msg    string
+	}{
+		{"queue full", http.StatusServiceUnavailable, "source queue full"},
+		{"deadline", http.StatusGatewayTimeout, "source call timed out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			ch := seedDownloadedLowWithHighSource(ctx, t, client, 0, nil)
+			f := &providerScopedFetcher{
+				failProviders: map[string]bool{"high": true},
+				err:           &sourceengine.UpstreamError{Status: tc.status, Msg: tc.msg},
+			}
+			d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, settings.Static{Retries: 3}, nil)
+
+			assertFailingUpgradePreservesWorkingCopy(ctx, t, client, d, ch.ID, 1)
+
+			if got := pcByProvider(ctx, t, client, "high").Attempts; got != 0 {
+				t.Fatalf("high ProviderChapter attempts = %d, want 0", got)
+			}
+			providers := client.SeriesProvider.Query().AllX(ctx)
+			for _, provider := range providers {
+				want := 5
+				if provider.Provider == "high" {
+					want = 10
+				}
+				if provider.Importance != want {
+					t.Fatalf("provider %q importance = %d, want %d", provider.Provider, provider.Importance, want)
+				}
+			}
+		})
+	}
+}
 
 // seedDownloadedLowWithHighSource seeds a chapter already DOWNLOADED from a
 // low-importance source (satisfied_importance=5) that also has a higher source
