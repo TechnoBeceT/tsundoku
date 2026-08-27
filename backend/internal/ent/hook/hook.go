@@ -213,6 +213,30 @@ func (f SettingsFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SettingsMutation", m)
 }
 
+// The SourceBreakerNotificationFunc type is an adapter to allow the use of ordinary
+// function as SourceBreakerNotification mutator.
+type SourceBreakerNotificationFunc func(context.Context, *ent.SourceBreakerNotificationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceBreakerNotificationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceBreakerNotificationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceBreakerNotificationMutation", m)
+}
+
+// The SourceBreakerNotificationCursorFunc type is an adapter to allow the use of ordinary
+// function as SourceBreakerNotificationCursor mutator.
+type SourceBreakerNotificationCursorFunc func(context.Context, *ent.SourceBreakerNotificationCursorMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceBreakerNotificationCursorFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceBreakerNotificationCursorMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceBreakerNotificationCursorMutation", m)
+}
+
 // The SourceCircuitStateFunc type is an adapter to allow the use of ordinary
 // function as SourceCircuitState mutator.
 type SourceCircuitStateFunc func(context.Context, *ent.SourceCircuitStateMutation) (ent.Value, error)

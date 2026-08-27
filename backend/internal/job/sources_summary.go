@@ -10,8 +10,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
-// sourcesSummaryTimeout bounds the detached snapshot + broadcast the breaker
-// transition hook kicks off, so a wedged DB read can never leak the goroutine.
+// sourcesSummaryTimeout bounds both detached summary refreshes and ordered
+// transition publications, so a wedged DB read cannot block either indefinitely.
 const sourcesSummaryTimeout = 10 * time.Second
 
 // SourcesSummaryEvent is the sources.summary SSE payload: how many sources are
@@ -40,16 +40,14 @@ func (r *Runner) SetBreakerSnapshotter(b BreakerSnapshotter) {
 	r.breakers = b
 }
 
-// SourcesSummaryHook is the sourcegate breaker-transition hook (see
-// sourcegate.Service.WithTransitionHook): it pushes an immediate sources.summary
-// SSE the instant a source's breaker trips or clears, so the owner's danger badge
-// updates without waiting for the 2h refresh tick.
+// SourcesSummaryHook pushes a current sources.summary snapshot asynchronously.
+// It remains the direct no-argument entry point for callers that need an
+// immediate refresh without a specific breaker transition.
 //
-// It returns immediately — the snapshot read + broadcast run on a DETACHED,
-// time-bounded goroutine (the breaker path's own ctx ends the moment RecordFailure
-// returns) and any panic is recovered — so a slow or broken alert push can NEVER
-// slow or break the breaker record it fires from (best-effort posture, mirrors the
-// metrics recorder). Pass it straight to WithTransitionHook.
+// It returns immediately — the snapshot read + broadcast run on a detached,
+// time-bounded goroutine and any panic is recovered — so a slow or broken alert
+// push cannot hold the caller. Ordered breaker transitions use
+// SourcesSummaryTransitionHook instead.
 func (r *Runner) SourcesSummaryHook() {
 	go func() {
 		defer func() {
@@ -63,12 +61,48 @@ func (r *Runner) SourcesSummaryHook() {
 	}()
 }
 
+// SourcesSummaryTransitionHook is the ordered sourcegate transition hook. The
+// durable transition carries the committed state of its physical source; the
+// current snapshot is overwritten with that state before folding, so a later
+// reset cannot erase an earlier trip alert. It completes the bounded snapshot
+// and broadcast before returning because sourcegate holds the cross-process
+// publication cursor for the callback's lifetime; detaching here would allow
+// the observable SSE effects to reverse after the callbacks were ordered.
+func (r *Runner) SourcesSummaryTransitionHook(transition sourcegate.BreakerTransition) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Warn("job.Runner: sources.summary transition hook panicked (recovered)", "panic", p)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), sourcesSummaryTimeout)
+	defer cancel()
+	r.broadcastTransitionSummary(ctx, transition)
+}
+
+func (r *Runner) broadcastTransitionSummary(ctx context.Context, transition sourcegate.BreakerTransition) {
+	if r.breakers == nil {
+		return
+	}
+	snapshot, err := r.breakers.Snapshot(ctx)
+	if err != nil {
+		slog.WarnContext(ctx, "job.Runner: sources.summary snapshot failed (skipping)", "err", err)
+		return
+	}
+	if transition.State == nil {
+		delete(snapshot, transition.SourceKey)
+	} else {
+		snapshot[transition.SourceKey] = *transition.State
+	}
+	erroring, coolingDown := sourcegate.SummaryCounts(snapshot, time.Now())
+	r.broadcastSourcesSummaryCounts(erroring, coolingDown)
+}
+
 // broadcastSourcesSummary computes the current erroring / coolingDown source
 // counts from the breaker snapshot and pushes them as a sources.summary SSE event.
 // It is a no-op when no snapshotter is wired. Best-effort: a snapshot read failure
 // is logged and swallowed (no event that pass), never propagated. It is the SINGLE
-// summary emitter, shared by BOTH the immediate transition hook (SourcesSummaryHook)
-// and the periodic refresh tick (runRefreshSweep), so the count rule lives once.
+// current-snapshot emitter, shared by SourcesSummaryHook and the periodic refresh
+// tick (runRefreshSweep), so the ordinary count rule lives once.
 func (r *Runner) broadcastSourcesSummary(ctx context.Context) {
 	if r.breakers == nil {
 		return
@@ -79,6 +113,10 @@ func (r *Runner) broadcastSourcesSummary(ctx context.Context) {
 		return
 	}
 	erroring, coolingDown := sourcegate.SummaryCounts(snap, time.Now())
+	r.broadcastSourcesSummaryCounts(erroring, coolingDown)
+}
+
+func (r *Runner) broadcastSourcesSummaryCounts(erroring, coolingDown int) {
 	raw, err := json.Marshal(SourcesSummaryEvent{Erroring: erroring, CoolingDown: coolingDown})
 	if err != nil {
 		// Defensive path: two int fields cannot fail to marshal.

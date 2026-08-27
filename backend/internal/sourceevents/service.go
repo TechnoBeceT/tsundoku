@@ -56,7 +56,8 @@ func (s *Service) LogBatch(ctx context.Context, events []Event) {
 
 // build maps one Event to a SourceEvent create builder. It converts the duration
 // to whole milliseconds and, when Err is set, fills error_message (truncated) +
-// error_category (errorclass.Classify) — the ONE place that derivation happens.
+// error_category. Durable replay may supply the category derived from the
+// original typed error; ordinary events are classified here.
 func (s *Service) build(e Event) *ent.SourceEventCreate {
 	c := s.client.SourceEvent.Create().
 		SetSourceKey(e.SourceKey).
@@ -67,7 +68,11 @@ func (s *Service) build(e Event) *ent.SourceEventCreate {
 		SetStatus(e.Status).
 		SetDurationMs(durationMs(e.Duration))
 	if e.Err != nil {
-		c.SetErrorMessage(truncateError(e.Err)).SetErrorCategory(errorclass.Classify(e.Err))
+		category := e.ErrorCategory
+		if category == "" {
+			category = errorclass.Classify(e.Err)
+		}
+		c.SetErrorMessage(truncateError(e.Err)).SetErrorCategory(category)
 	}
 	if e.ItemsCount != nil {
 		c.SetItemsCount(*e.ItemsCount)

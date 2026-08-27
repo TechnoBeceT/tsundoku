@@ -33,6 +33,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotification"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotificationcursor"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
@@ -84,6 +86,10 @@ type Client struct {
 	SeriesProvider *SeriesProviderClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
+	// SourceBreakerNotification is the client for interacting with the SourceBreakerNotification builders.
+	SourceBreakerNotification *SourceBreakerNotificationClient
+	// SourceBreakerNotificationCursor is the client for interacting with the SourceBreakerNotificationCursor builders.
+	SourceBreakerNotificationCursor *SourceBreakerNotificationCursorClient
 	// SourceCircuitState is the client for interacting with the SourceCircuitState builders.
 	SourceCircuitState *SourceCircuitStateClient
 	// SourceCoverage is the client for interacting with the SourceCoverage builders.
@@ -132,6 +138,8 @@ func (c *Client) init() {
 	c.Series = NewSeriesClient(c.config)
 	c.SeriesProvider = NewSeriesProviderClient(c.config)
 	c.Settings = NewSettingsClient(c.config)
+	c.SourceBreakerNotification = NewSourceBreakerNotificationClient(c.config)
+	c.SourceBreakerNotificationCursor = NewSourceBreakerNotificationCursorClient(c.config)
 	c.SourceCircuitState = NewSourceCircuitStateClient(c.config)
 	c.SourceCoverage = NewSourceCoverageClient(c.config)
 	c.SourceEvent = NewSourceEventClient(c.config)
@@ -232,35 +240,37 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:                   ctx,
-		config:                cfg,
-		Category:              NewCategoryClient(cfg),
-		Chapter:               NewChapterClient(cfg),
-		DisabledSource:        NewDisabledSourceClient(cfg),
-		EtagCache:             NewEtagCacheClient(cfg),
-		HarvestedExtension:    NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:         NewHarvestedRepoClient(cfg),
-		IgnoreScanlatorSource: NewIgnoreScanlatorSourceClient(cfg),
-		ImportEntry:           NewImportEntryClient(cfg),
-		LatestSeries:          NewLatestSeriesClient(cfg),
-		NetworkEndpoint:       NewNetworkEndpointClient(cfg),
-		Owner:                 NewOwnerClient(cfg),
-		PendingTrackPush:      NewPendingTrackPushClient(cfg),
-		ProviderChapter:       NewProviderChapterClient(cfg),
-		PushSubscription:      NewPushSubscriptionClient(cfg),
-		Series:                NewSeriesClient(cfg),
-		SeriesProvider:        NewSeriesProviderClient(cfg),
-		Settings:              NewSettingsClient(cfg),
-		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
-		SourceCoverage:        NewSourceCoverageClient(cfg),
-		SourceEvent:           NewSourceEventClient(cfg),
-		SourceMetric:          NewSourceMetricClient(cfg),
-		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
-		SourcePreference:      NewSourcePreferenceClient(cfg),
-		SourceSeedState:       NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:     NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:          NewTrackBindingClient(cfg),
-		TrackerConnection:     NewTrackerConnectionClient(cfg),
+		ctx:                             ctx,
+		config:                          cfg,
+		Category:                        NewCategoryClient(cfg),
+		Chapter:                         NewChapterClient(cfg),
+		DisabledSource:                  NewDisabledSourceClient(cfg),
+		EtagCache:                       NewEtagCacheClient(cfg),
+		HarvestedExtension:              NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:                   NewHarvestedRepoClient(cfg),
+		IgnoreScanlatorSource:           NewIgnoreScanlatorSourceClient(cfg),
+		ImportEntry:                     NewImportEntryClient(cfg),
+		LatestSeries:                    NewLatestSeriesClient(cfg),
+		NetworkEndpoint:                 NewNetworkEndpointClient(cfg),
+		Owner:                           NewOwnerClient(cfg),
+		PendingTrackPush:                NewPendingTrackPushClient(cfg),
+		ProviderChapter:                 NewProviderChapterClient(cfg),
+		PushSubscription:                NewPushSubscriptionClient(cfg),
+		Series:                          NewSeriesClient(cfg),
+		SeriesProvider:                  NewSeriesProviderClient(cfg),
+		Settings:                        NewSettingsClient(cfg),
+		SourceBreakerNotification:       NewSourceBreakerNotificationClient(cfg),
+		SourceBreakerNotificationCursor: NewSourceBreakerNotificationCursorClient(cfg),
+		SourceCircuitState:              NewSourceCircuitStateClient(cfg),
+		SourceCoverage:                  NewSourceCoverageClient(cfg),
+		SourceEvent:                     NewSourceEventClient(cfg),
+		SourceMetric:                    NewSourceMetricClient(cfg),
+		SourceNetworkBinding:            NewSourceNetworkBindingClient(cfg),
+		SourcePreference:                NewSourcePreferenceClient(cfg),
+		SourceSeedState:                 NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:               NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:                    NewTrackBindingClient(cfg),
+		TrackerConnection:               NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -278,35 +288,37 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:                   ctx,
-		config:                cfg,
-		Category:              NewCategoryClient(cfg),
-		Chapter:               NewChapterClient(cfg),
-		DisabledSource:        NewDisabledSourceClient(cfg),
-		EtagCache:             NewEtagCacheClient(cfg),
-		HarvestedExtension:    NewHarvestedExtensionClient(cfg),
-		HarvestedRepo:         NewHarvestedRepoClient(cfg),
-		IgnoreScanlatorSource: NewIgnoreScanlatorSourceClient(cfg),
-		ImportEntry:           NewImportEntryClient(cfg),
-		LatestSeries:          NewLatestSeriesClient(cfg),
-		NetworkEndpoint:       NewNetworkEndpointClient(cfg),
-		Owner:                 NewOwnerClient(cfg),
-		PendingTrackPush:      NewPendingTrackPushClient(cfg),
-		ProviderChapter:       NewProviderChapterClient(cfg),
-		PushSubscription:      NewPushSubscriptionClient(cfg),
-		Series:                NewSeriesClient(cfg),
-		SeriesProvider:        NewSeriesProviderClient(cfg),
-		Settings:              NewSettingsClient(cfg),
-		SourceCircuitState:    NewSourceCircuitStateClient(cfg),
-		SourceCoverage:        NewSourceCoverageClient(cfg),
-		SourceEvent:           NewSourceEventClient(cfg),
-		SourceMetric:          NewSourceMetricClient(cfg),
-		SourceNetworkBinding:  NewSourceNetworkBindingClient(cfg),
-		SourcePreference:      NewSourcePreferenceClient(cfg),
-		SourceSeedState:       NewSourceSeedStateClient(cfg),
-		SuwayomiSyncState:     NewSuwayomiSyncStateClient(cfg),
-		TrackBinding:          NewTrackBindingClient(cfg),
-		TrackerConnection:     NewTrackerConnectionClient(cfg),
+		ctx:                             ctx,
+		config:                          cfg,
+		Category:                        NewCategoryClient(cfg),
+		Chapter:                         NewChapterClient(cfg),
+		DisabledSource:                  NewDisabledSourceClient(cfg),
+		EtagCache:                       NewEtagCacheClient(cfg),
+		HarvestedExtension:              NewHarvestedExtensionClient(cfg),
+		HarvestedRepo:                   NewHarvestedRepoClient(cfg),
+		IgnoreScanlatorSource:           NewIgnoreScanlatorSourceClient(cfg),
+		ImportEntry:                     NewImportEntryClient(cfg),
+		LatestSeries:                    NewLatestSeriesClient(cfg),
+		NetworkEndpoint:                 NewNetworkEndpointClient(cfg),
+		Owner:                           NewOwnerClient(cfg),
+		PendingTrackPush:                NewPendingTrackPushClient(cfg),
+		ProviderChapter:                 NewProviderChapterClient(cfg),
+		PushSubscription:                NewPushSubscriptionClient(cfg),
+		Series:                          NewSeriesClient(cfg),
+		SeriesProvider:                  NewSeriesProviderClient(cfg),
+		Settings:                        NewSettingsClient(cfg),
+		SourceBreakerNotification:       NewSourceBreakerNotificationClient(cfg),
+		SourceBreakerNotificationCursor: NewSourceBreakerNotificationCursorClient(cfg),
+		SourceCircuitState:              NewSourceCircuitStateClient(cfg),
+		SourceCoverage:                  NewSourceCoverageClient(cfg),
+		SourceEvent:                     NewSourceEventClient(cfg),
+		SourceMetric:                    NewSourceMetricClient(cfg),
+		SourceNetworkBinding:            NewSourceNetworkBindingClient(cfg),
+		SourcePreference:                NewSourcePreferenceClient(cfg),
+		SourceSeedState:                 NewSourceSeedStateClient(cfg),
+		SuwayomiSyncState:               NewSuwayomiSyncStateClient(cfg),
+		TrackBinding:                    NewTrackBindingClient(cfg),
+		TrackerConnection:               NewTrackerConnectionClient(cfg),
 	}, nil
 }
 
@@ -340,6 +352,7 @@ func (c *Client) Use(hooks ...Hook) {
 		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
 		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
 		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
 		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
@@ -356,6 +369,7 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
 		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
 		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
 		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
@@ -401,6 +415,10 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SeriesProvider.mutate(ctx, m)
 	case *SettingsMutation:
 		return c.Settings.mutate(ctx, m)
+	case *SourceBreakerNotificationMutation:
+		return c.SourceBreakerNotification.mutate(ctx, m)
+	case *SourceBreakerNotificationCursorMutation:
+		return c.SourceBreakerNotificationCursor.mutate(ctx, m)
 	case *SourceCircuitStateMutation:
 		return c.SourceCircuitState.mutate(ctx, m)
 	case *SourceCoverageMutation:
@@ -2879,6 +2897,272 @@ func (c *SettingsClient) mutate(ctx context.Context, m *SettingsMutation) (Value
 	}
 }
 
+// SourceBreakerNotificationClient is a client for the SourceBreakerNotification schema.
+type SourceBreakerNotificationClient struct {
+	config
+}
+
+// NewSourceBreakerNotificationClient returns a client for the SourceBreakerNotification from the given config.
+func NewSourceBreakerNotificationClient(c config) *SourceBreakerNotificationClient {
+	return &SourceBreakerNotificationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcebreakernotification.Hooks(f(g(h())))`.
+func (c *SourceBreakerNotificationClient) Use(hooks ...Hook) {
+	c.hooks.SourceBreakerNotification = append(c.hooks.SourceBreakerNotification, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcebreakernotification.Intercept(f(g(h())))`.
+func (c *SourceBreakerNotificationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceBreakerNotification = append(c.inters.SourceBreakerNotification, interceptors...)
+}
+
+// Create returns a builder for creating a SourceBreakerNotification entity.
+func (c *SourceBreakerNotificationClient) Create() *SourceBreakerNotificationCreate {
+	mutation := newSourceBreakerNotificationMutation(c.config, OpCreate)
+	return &SourceBreakerNotificationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceBreakerNotification entities.
+func (c *SourceBreakerNotificationClient) CreateBulk(builders ...*SourceBreakerNotificationCreate) *SourceBreakerNotificationCreateBulk {
+	return &SourceBreakerNotificationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceBreakerNotificationClient) MapCreateBulk(slice any, setFunc func(*SourceBreakerNotificationCreate, int)) *SourceBreakerNotificationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceBreakerNotificationCreateBulk{err: fmt.Errorf("calling to SourceBreakerNotificationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceBreakerNotificationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceBreakerNotificationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceBreakerNotification.
+func (c *SourceBreakerNotificationClient) Update() *SourceBreakerNotificationUpdate {
+	mutation := newSourceBreakerNotificationMutation(c.config, OpUpdate)
+	return &SourceBreakerNotificationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceBreakerNotificationClient) UpdateOne(_m *SourceBreakerNotification) *SourceBreakerNotificationUpdateOne {
+	mutation := newSourceBreakerNotificationMutation(c.config, OpUpdateOne, withSourceBreakerNotification(_m))
+	return &SourceBreakerNotificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceBreakerNotificationClient) UpdateOneID(id int) *SourceBreakerNotificationUpdateOne {
+	mutation := newSourceBreakerNotificationMutation(c.config, OpUpdateOne, withSourceBreakerNotificationID(id))
+	return &SourceBreakerNotificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceBreakerNotification.
+func (c *SourceBreakerNotificationClient) Delete() *SourceBreakerNotificationDelete {
+	mutation := newSourceBreakerNotificationMutation(c.config, OpDelete)
+	return &SourceBreakerNotificationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceBreakerNotificationClient) DeleteOne(_m *SourceBreakerNotification) *SourceBreakerNotificationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceBreakerNotificationClient) DeleteOneID(id int) *SourceBreakerNotificationDeleteOne {
+	builder := c.Delete().Where(sourcebreakernotification.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceBreakerNotificationDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceBreakerNotification.
+func (c *SourceBreakerNotificationClient) Query() *SourceBreakerNotificationQuery {
+	return &SourceBreakerNotificationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceBreakerNotification},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceBreakerNotification entity by its id.
+func (c *SourceBreakerNotificationClient) Get(ctx context.Context, id int) (*SourceBreakerNotification, error) {
+	return c.Query().Where(sourcebreakernotification.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceBreakerNotificationClient) GetX(ctx context.Context, id int) *SourceBreakerNotification {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceBreakerNotificationClient) Hooks() []Hook {
+	return c.hooks.SourceBreakerNotification
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceBreakerNotificationClient) Interceptors() []Interceptor {
+	return c.inters.SourceBreakerNotification
+}
+
+func (c *SourceBreakerNotificationClient) mutate(ctx context.Context, m *SourceBreakerNotificationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceBreakerNotificationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceBreakerNotificationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceBreakerNotificationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceBreakerNotificationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceBreakerNotification mutation op: %q", m.Op())
+	}
+}
+
+// SourceBreakerNotificationCursorClient is a client for the SourceBreakerNotificationCursor schema.
+type SourceBreakerNotificationCursorClient struct {
+	config
+}
+
+// NewSourceBreakerNotificationCursorClient returns a client for the SourceBreakerNotificationCursor from the given config.
+func NewSourceBreakerNotificationCursorClient(c config) *SourceBreakerNotificationCursorClient {
+	return &SourceBreakerNotificationCursorClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcebreakernotificationcursor.Hooks(f(g(h())))`.
+func (c *SourceBreakerNotificationCursorClient) Use(hooks ...Hook) {
+	c.hooks.SourceBreakerNotificationCursor = append(c.hooks.SourceBreakerNotificationCursor, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcebreakernotificationcursor.Intercept(f(g(h())))`.
+func (c *SourceBreakerNotificationCursorClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceBreakerNotificationCursor = append(c.inters.SourceBreakerNotificationCursor, interceptors...)
+}
+
+// Create returns a builder for creating a SourceBreakerNotificationCursor entity.
+func (c *SourceBreakerNotificationCursorClient) Create() *SourceBreakerNotificationCursorCreate {
+	mutation := newSourceBreakerNotificationCursorMutation(c.config, OpCreate)
+	return &SourceBreakerNotificationCursorCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceBreakerNotificationCursor entities.
+func (c *SourceBreakerNotificationCursorClient) CreateBulk(builders ...*SourceBreakerNotificationCursorCreate) *SourceBreakerNotificationCursorCreateBulk {
+	return &SourceBreakerNotificationCursorCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceBreakerNotificationCursorClient) MapCreateBulk(slice any, setFunc func(*SourceBreakerNotificationCursorCreate, int)) *SourceBreakerNotificationCursorCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceBreakerNotificationCursorCreateBulk{err: fmt.Errorf("calling to SourceBreakerNotificationCursorClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceBreakerNotificationCursorCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceBreakerNotificationCursorCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceBreakerNotificationCursor.
+func (c *SourceBreakerNotificationCursorClient) Update() *SourceBreakerNotificationCursorUpdate {
+	mutation := newSourceBreakerNotificationCursorMutation(c.config, OpUpdate)
+	return &SourceBreakerNotificationCursorUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceBreakerNotificationCursorClient) UpdateOne(_m *SourceBreakerNotificationCursor) *SourceBreakerNotificationCursorUpdateOne {
+	mutation := newSourceBreakerNotificationCursorMutation(c.config, OpUpdateOne, withSourceBreakerNotificationCursor(_m))
+	return &SourceBreakerNotificationCursorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceBreakerNotificationCursorClient) UpdateOneID(id uuid.UUID) *SourceBreakerNotificationCursorUpdateOne {
+	mutation := newSourceBreakerNotificationCursorMutation(c.config, OpUpdateOne, withSourceBreakerNotificationCursorID(id))
+	return &SourceBreakerNotificationCursorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceBreakerNotificationCursor.
+func (c *SourceBreakerNotificationCursorClient) Delete() *SourceBreakerNotificationCursorDelete {
+	mutation := newSourceBreakerNotificationCursorMutation(c.config, OpDelete)
+	return &SourceBreakerNotificationCursorDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceBreakerNotificationCursorClient) DeleteOne(_m *SourceBreakerNotificationCursor) *SourceBreakerNotificationCursorDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceBreakerNotificationCursorClient) DeleteOneID(id uuid.UUID) *SourceBreakerNotificationCursorDeleteOne {
+	builder := c.Delete().Where(sourcebreakernotificationcursor.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceBreakerNotificationCursorDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceBreakerNotificationCursor.
+func (c *SourceBreakerNotificationCursorClient) Query() *SourceBreakerNotificationCursorQuery {
+	return &SourceBreakerNotificationCursorQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceBreakerNotificationCursor},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceBreakerNotificationCursor entity by its id.
+func (c *SourceBreakerNotificationCursorClient) Get(ctx context.Context, id uuid.UUID) (*SourceBreakerNotificationCursor, error) {
+	return c.Query().Where(sourcebreakernotificationcursor.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceBreakerNotificationCursorClient) GetX(ctx context.Context, id uuid.UUID) *SourceBreakerNotificationCursor {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceBreakerNotificationCursorClient) Hooks() []Hook {
+	return c.hooks.SourceBreakerNotificationCursor
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceBreakerNotificationCursorClient) Interceptors() []Interceptor {
+	return c.inters.SourceBreakerNotificationCursor
+}
+
+func (c *SourceBreakerNotificationCursorClient) mutate(ctx context.Context, m *SourceBreakerNotificationCursorMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceBreakerNotificationCursorCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceBreakerNotificationCursorUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceBreakerNotificationCursorUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceBreakerNotificationCursorDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceBreakerNotificationCursor mutation op: %q", m.Op())
+	}
+}
+
 // SourceCircuitStateClient is a client for the SourceCircuitState schema.
 type SourceCircuitStateClient struct {
 	config
@@ -4247,7 +4531,8 @@ type (
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
 		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
+		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
+		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
 		SourceNetworkBinding, SourcePreference, SourceSeedState, SuwayomiSyncState,
 		TrackBinding, TrackerConnection []ent.Hook
 	}
@@ -4255,7 +4540,8 @@ type (
 		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
 		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
+		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
+		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
 		SourceNetworkBinding, SourcePreference, SourceSeedState, SuwayomiSyncState,
 		TrackBinding, TrackerConnection []ent.Interceptor
 	}

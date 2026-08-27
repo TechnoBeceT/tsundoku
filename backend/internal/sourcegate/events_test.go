@@ -144,6 +144,29 @@ func TestBreakerEvents_TripOnceThenResetOnRecovery(t *testing.T) {
 	}
 }
 
+// TestBreakerEvents_DurablePublicationPreservesTypedErrorCategory proves
+// publication retains classification derived from the original typed error,
+// even though the durable transition stores its message for later delivery.
+func TestBreakerEvents_DurablePublicationPreservesTypedErrorCategory(t *testing.T) {
+	db := testdb.New(t)
+	svc := sourcegate.NewService(db, thresholds()).WithEventRecorder(sourceevents.NewService(db))
+	ctx := context.Background()
+	const key = "Comix"
+
+	svc.RecordFailure(ctx, key, errors.New("first"), time.Now())
+	svc.RecordFailure(ctx, key, errors.New("second"), time.Now())
+	svc.RecordFailure(ctx, key, context.Canceled, time.Now())
+
+	event := db.SourceEvent.Query().OnlyX(ctx)
+	got := "<nil>"
+	if event.ErrorCategory != nil {
+		got = *event.ErrorCategory
+	}
+	if got != "network" {
+		t.Fatalf("trip error category = %q, want network for context cancellation", got)
+	}
+}
+
 // TestBreakerEvents_SuccessOnHealthySourceEmitsNothing proves a routine success
 // on a source that was never tripped emits no breaker_reset (transition-only).
 func TestBreakerEvents_SuccessOnHealthySourceEmitsNothing(t *testing.T) {

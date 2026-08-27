@@ -58,8 +58,11 @@ type Thresholds interface {
 //
 // The breaker (SourceCircuitState) is PERSISTED — it must survive a restart, or
 // a redeploy would immediately re-hammer a still-blocked source. The
-// politeness last-access map is in-memory and ephemeral — a restart merely
-// skips one delay, which is an acceptable, non-safety-critical reset.
+// transition notifications are persisted beside their breaker mutation and
+// replayed through a per-source database cursor, so concurrent processes cannot
+// publish a reset ahead of the trip it follows. The politeness last-access map
+// is in-memory and ephemeral — a restart merely skips one delay, which is an
+// acceptable, non-safety-critical reset.
 type Service struct {
 	client *ent.Client
 	t      Thresholds
@@ -72,11 +75,11 @@ type Service struct {
 	events sourceevents.Recorder
 
 	// onTransition is the nil-guarded breaker-transition hook (see
-	// WithTransitionHook / alert.go). It fires once per breaker STATE TRANSITION —
-	// a trip and a clear — so an owner (the job.Runner) can push an immediate
-	// sources.summary alert. sourcegate stays SSE-free: this is an opaque func(),
+	// WithTransitionHook / alert.go). It records each breaker STATE TRANSITION — a
+	// trip and a clear — so an owner (the job.Runner) can push an immediate
+	// sources.summary alert. sourcegate stays SSE-free: this is an opaque callback,
 	// never the hub. Nil (the default) fires nothing.
-	onTransition func()
+	onTransition func(BreakerTransition)
 
 	mu         sync.Mutex
 	lastAccess map[string]time.Time
@@ -105,16 +108,24 @@ func (s *Service) WithEventRecorder(r sourceevents.Recorder) *Service {
 // logBreakerEvent records a breaker transition (best-effort, nil-guarded). It
 // carries only the source_key (which IS the trimmed source name — the breaker
 // has no numeric id or language), so both source_key and source_name are the key.
-func (s *Service) logBreakerEvent(ctx context.Context, key string, eventType sourceevents.EventType, status sourceevents.Status, cause error) {
+func (s *Service) logBreakerEvent(
+	ctx context.Context,
+	key string,
+	eventType sourceevents.EventType,
+	status sourceevents.Status,
+	cause error,
+	errorCategory string,
+) {
 	if s.events == nil {
 		return
 	}
 	s.events.Log(ctx, sourceevents.Event{
-		SourceKey:  key,
-		SourceName: key,
-		Type:       eventType,
-		Status:     status,
-		Err:        cause,
+		SourceKey:     key,
+		SourceName:    key,
+		Type:          eventType,
+		Status:        status,
+		Err:           cause,
+		ErrorCategory: errorCategory,
 	})
 }
 
@@ -206,16 +217,35 @@ func (s *Service) Snapshot(ctx context.Context) (map[string]BreakerState, error)
 //   - error-RETURNING (unlike the best-effort recorders) so the handler can
 //     surface a failure to the owner (§16).
 func (s *Service) Reset(ctx context.Context, key string) error {
-	if _, err := s.client.SourceCircuitState.Delete().
+	tx, _, err := s.lockCircuitState(ctx, key)
+	if err != nil {
+		return fmt.Errorf("sourcegate.Reset: lock breaker %q: %w", key, err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+	if _, err := tx.SourceCircuitState.Delete().
 		Where(entsourcecircuitstate.SourceKeyEQ(key)).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("sourcegate.Reset: delete breaker %q: %w", key, err)
 	}
-	// An owner reset is an explicit "breaker back to closed" transition — log it
-	// unconditionally (best-effort, nil-guarded).
-	s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
-	// …and push the immediate sources.summary alert (best-effort, nil-guarded).
-	s.fireTransition()
+	queued, err := s.enqueueTransition(ctx, tx, BreakerTransition{
+		SourceKey: key,
+		EventType: sourceevents.EventBreakerReset,
+	}, sourceevents.StatusSuccess, nil)
+	if err != nil {
+		return fmt.Errorf("sourcegate.Reset: enqueue reset for %q: %w", key, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sourcegate.Reset: commit reset for %q: %w", key, err)
+	}
+	committed = true
+	if queued {
+		s.publishSourceTransitions(ctx, key)
+	}
 	return nil
 }
 
@@ -239,11 +269,12 @@ func (s *Service) Clear(ctx context.Context, key string) (int, error) {
 
 // RecordSuccess resets key's consecutive-failure counter and clears any
 // cooldown, upserting the row if it does not yet exist. The row stays locked
-// through the transition and its notification verdict, so a simultaneous
+// through the state change and durable notification enqueue, so a simultaneous
 // failure is ordered before or after this complete reset rather than
-// interleaving its fields. This is database coordination, not a process-local
-// lock: separate binaries share PostgreSQL's unique source_key row. Best-effort:
-// a DB failure is logged and swallowed.
+// interleaving its fields. Publication is separately serialized by the durable
+// per-source cursor. This is database coordination, not a process-local lock:
+// separate binaries share both rows. Best-effort: a DB failure is logged and
+// swallowed.
 func (s *Service) RecordSuccess(ctx context.Context, key string) {
 	tx, row, err := s.lockCircuitState(ctx, key)
 	if err != nil {
@@ -267,6 +298,13 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 		ClearCooldownUntil().
 		ClearFailingSince().
 		Exec(ctx)
+	queued := false
+	if err == nil && wasTripped {
+		queued, err = s.enqueueTransition(ctx, tx, BreakerTransition{
+			SourceKey: key,
+			EventType: sourceevents.EventBreakerReset,
+		}, sourceevents.StatusSuccess, nil)
+	}
 	if err == nil {
 		err = tx.Commit()
 		committed = err == nil
@@ -276,9 +314,8 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 			"source_key", key, "err", err)
 		return
 	}
-	if wasTripped {
-		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerReset, sourceevents.StatusSuccess, nil)
-		s.fireTransition()
+	if queued {
+		s.publishSourceTransitions(ctx, key)
 	}
 }
 
@@ -286,9 +323,10 @@ func (s *Service) RecordSuccess(ctx context.Context, key string) {
 // last_error, upserting the row if it does not yet exist. Once the counter
 // reaches the runtime-tunable failure threshold, it trips the breaker:
 // cooldown_until = now + the runtime-tunable cooldown. A PostgreSQL row lock
-// makes the increment, threshold decision, cooldown, and notification verdict
-// one database transition across processes. Best-effort: a DB failure is logged
-// and swallowed.
+// makes the increment, threshold decision, cooldown, and durable notification
+// enqueue one database transition across processes. The publication cursor then
+// preserves that transition order across processes. Best-effort: a DB failure is
+// logged and swallowed.
 func (s *Service) RecordFailure(ctx context.Context, key string, cause error, now time.Time) {
 	threshold := s.t.SourcesFailureThreshold(ctx)
 	msg := truncateError(cause)
@@ -317,11 +355,18 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 		u = u.SetFailingSince(now)
 	}
 	tripped := false
+	var cooldownUntil *time.Time
 	if newFailures >= threshold {
-		u = u.SetCooldownUntil(now.Add(s.t.SourcesCooldown(ctx)))
+		until := now.Add(s.t.SourcesCooldown(ctx))
+		cooldownUntil = &until
+		u = u.SetCooldownUntil(until)
 		tripped = !wasTripped
 	}
 	err = u.Exec(ctx)
+	queued := false
+	if err == nil && tripped {
+		queued, err = s.enqueueTripTransition(ctx, tx, key, row, newFailures, cooldownUntil, msg, cause, now)
+	}
 	if err == nil {
 		err = tx.Commit()
 		committed = err == nil
@@ -331,10 +376,39 @@ func (s *Service) RecordFailure(ctx context.Context, key string, cause error, no
 			"source_key", key, "err", err)
 		return
 	}
-	if tripped {
-		s.logBreakerEvent(ctx, key, sourceevents.EventBreakerTrip, sourceevents.StatusFailed, cause)
-		s.fireTransition()
+	if queued {
+		s.publishSourceTransitions(ctx, key)
 	}
+}
+
+func (s *Service) enqueueTripTransition(
+	ctx context.Context,
+	tx *ent.Tx,
+	key string,
+	previous *ent.SourceCircuitState,
+	newFailures int,
+	cooldownUntil *time.Time,
+	message string,
+	cause error,
+	now time.Time,
+) (bool, error) {
+	failingSince := previous.FailingSince
+	if previous.ConsecutiveFailures == 0 {
+		started := now
+		failingSince = &started
+	}
+	return s.enqueueTransition(ctx, tx, BreakerTransition{
+		SourceKey: key,
+		EventType: sourceevents.EventBreakerTrip,
+		State: &BreakerState{
+			SourceKey:           key,
+			ConsecutiveFailures: newFailures,
+			CooldownUntil:       cooldownUntil,
+			FailingSince:        failingSince,
+			LastError:           message,
+			UpdatedAt:           time.Now().UTC(),
+		},
+	}, sourceevents.StatusFailed, cause)
 }
 
 // lockCircuitState ensures one row exists, takes its PostgreSQL write lock, and

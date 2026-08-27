@@ -401,6 +401,53 @@ var (
 		Columns:    SettingsColumns,
 		PrimaryKey: []*schema.Column{SettingsColumns[0]},
 	}
+	// SourceBreakerNotificationsColumns holds the columns for the "source_breaker_notifications" table.
+	SourceBreakerNotificationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "source_key", Type: field.TypeString},
+		{Name: "event_type", Type: field.TypeString},
+		{Name: "status", Type: field.TypeString},
+		{Name: "error_message", Type: field.TypeString, Nullable: true},
+		{Name: "error_category", Type: field.TypeString, Default: ""},
+		{Name: "event_requested", Type: field.TypeBool, Default: false},
+		{Name: "hook_requested", Type: field.TypeBool, Default: false},
+		{Name: "consecutive_failures", Type: field.TypeInt, Default: 0},
+		{Name: "cooldown_until", Type: field.TypeTime, Nullable: true},
+		{Name: "failing_since", Type: field.TypeTime, Nullable: true},
+		{Name: "last_error", Type: field.TypeString, Default: ""},
+		{Name: "published_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// SourceBreakerNotificationsTable holds the schema information for the "source_breaker_notifications" table.
+	SourceBreakerNotificationsTable = &schema.Table{
+		Name:       "source_breaker_notifications",
+		Columns:    SourceBreakerNotificationsColumns,
+		PrimaryKey: []*schema.Column{SourceBreakerNotificationsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourcebreakernotification_source_key_published_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceBreakerNotificationsColumns[1], SourceBreakerNotificationsColumns[12]},
+			},
+			{
+				Name:    "sourcebreakernotification_published_at",
+				Unique:  false,
+				Columns: []*schema.Column{SourceBreakerNotificationsColumns[12]},
+			},
+		},
+	}
+	// SourceBreakerNotificationCursorsColumns holds the columns for the "source_breaker_notification_cursors" table.
+	SourceBreakerNotificationCursorsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_key", Type: field.TypeString, Unique: true},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceBreakerNotificationCursorsTable holds the schema information for the "source_breaker_notification_cursors" table.
+	SourceBreakerNotificationCursorsTable = &schema.Table{
+		Name:       "source_breaker_notification_cursors",
+		Columns:    SourceBreakerNotificationCursorsColumns,
+		PrimaryKey: []*schema.Column{SourceBreakerNotificationCursorsColumns[0]},
+	}
 	// SourceCircuitStatesColumns holds the columns for the "source_circuit_states" table.
 	SourceCircuitStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -679,6 +726,8 @@ var (
 		SeriesTable,
 		SeriesProvidersTable,
 		SettingsTable,
+		SourceBreakerNotificationsTable,
+		SourceBreakerNotificationCursorsTable,
 		SourceCircuitStatesTable,
 		SourceCoveragesTable,
 		SourceEventsTable,

@@ -121,9 +121,8 @@ func TestBroadcastSourcesSummary_SnapshotErrorSwallowed(t *testing.T) {
 	}
 }
 
-// TestSourcesSummaryHook_BroadcastsAsync proves the breaker-transition hook (fired
-// by sourcegate on a trip/clear) pushes a sources.summary on its detached
-// goroutine and returns immediately.
+// TestSourcesSummaryHook_BroadcastsAsync proves a direct summary refresh pushes a
+// sources.summary on its detached goroutine and returns immediately.
 func TestSourcesSummaryHook_BroadcastsAsync(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-time.Minute)
@@ -141,5 +140,57 @@ func TestSourcesSummaryHook_BroadcastsAsync(t *testing.T) {
 	}
 	if got.Erroring != 1 {
 		t.Fatalf("payload = %+v, want Erroring:1", got)
+	}
+}
+
+// TestSourcesSummaryTransitionHook_UsesCommittedTransitionState proves an
+// ordered callback cannot miss a trip or resurrect a reset by reading the
+// source's newer database state. The transition snapshot wins for that source;
+// other sources still come from the current batch snapshot.
+func TestSourcesSummaryTransitionHook_UsesCommittedTransitionState(t *testing.T) {
+	now := time.Now()
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+	tests := []struct {
+		name       string
+		current    map[string]sourcegate.BreakerState
+		transition sourcegate.BreakerTransition
+		want       job.SourcesSummaryEvent
+	}{
+		{
+			name:    "delayed_trip",
+			current: map[string]sourcegate.BreakerState{},
+			transition: sourcegate.BreakerTransition{
+				SourceKey: "Comix",
+				State:     &sourcegate.BreakerState{SourceKey: "Comix", FailingSince: &past, CooldownUntil: &future},
+			},
+			want: job.SourcesSummaryEvent{Erroring: 1, CoolingDown: 1},
+		},
+		{
+			name: "delayed_reset",
+			current: map[string]sourcegate.BreakerState{
+				"Comix": {SourceKey: "Comix", FailingSince: &past, CooldownUntil: &future},
+			},
+			transition: sourcegate.BreakerTransition{SourceKey: "Comix"},
+			want:       job.SourcesSummaryEvent{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := sse.NewHub()
+			events, unsubscribe := hub.Subscribe()
+			defer unsubscribe()
+			runner := newSummaryRunner(t, hub, fakeSnapshotter{snap: tt.current})
+
+			runner.SourcesSummaryTransitionHook(tt.transition)
+
+			got, ok := awaitSourcesSummary(events, 2*time.Second)
+			if !ok {
+				t.Fatal("expected the transition hook to broadcast a sources.summary event")
+			}
+			if got != tt.want {
+				t.Fatalf("payload = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

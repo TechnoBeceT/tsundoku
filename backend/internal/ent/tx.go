@@ -46,6 +46,10 @@ type Tx struct {
 	SeriesProvider *SeriesProviderClient
 	// Settings is the client for interacting with the Settings builders.
 	Settings *SettingsClient
+	// SourceBreakerNotification is the client for interacting with the SourceBreakerNotification builders.
+	SourceBreakerNotification *SourceBreakerNotificationClient
+	// SourceBreakerNotificationCursor is the client for interacting with the SourceBreakerNotificationCursor builders.
+	SourceBreakerNotificationCursor *SourceBreakerNotificationCursorClient
 	// SourceCircuitState is the client for interacting with the SourceCircuitState builders.
 	SourceCircuitState *SourceCircuitStateClient
 	// SourceCoverage is the client for interacting with the SourceCoverage builders.
@@ -214,6 +218,8 @@ func (tx *Tx) init() {
 	tx.Series = NewSeriesClient(tx.config)
 	tx.SeriesProvider = NewSeriesProviderClient(tx.config)
 	tx.Settings = NewSettingsClient(tx.config)
+	tx.SourceBreakerNotification = NewSourceBreakerNotificationClient(tx.config)
+	tx.SourceBreakerNotificationCursor = NewSourceBreakerNotificationCursorClient(tx.config)
 	tx.SourceCircuitState = NewSourceCircuitStateClient(tx.config)
 	tx.SourceCoverage = NewSourceCoverageClient(tx.config)
 	tx.SourceEvent = NewSourceEventClient(tx.config)

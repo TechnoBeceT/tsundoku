@@ -100,7 +100,7 @@ func newTransitionHarness(t *testing.T, threshold int) (*sourcegate.Service, *en
 	gate := sourcegate.NewService(client, settings.Static{
 		SourcesFailureThresh: threshold,
 		SourcesCooldownIv:    time.Hour,
-	}).WithEventRecorder(recorder).WithTransitionHook(func() { hooked.Add(1) })
+	}).WithEventRecorder(recorder).WithTransitionHook(func(sourcegate.BreakerTransition) { hooked.Add(1) })
 	return gate, client, barrier, recorder, hooked
 }
 

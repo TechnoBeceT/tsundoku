@@ -57,6 +57,12 @@ type SeriesProvider func(*sql.Selector)
 // Settings is the predicate function for settings builders.
 type Settings func(*sql.Selector)
 
+// SourceBreakerNotification is the predicate function for sourcebreakernotification builders.
+type SourceBreakerNotification func(*sql.Selector)
+
+// SourceBreakerNotificationCursor is the predicate function for sourcebreakernotificationcursor builders.
+type SourceBreakerNotificationCursor func(*sql.Selector)
+
 // SourceCircuitState is the predicate function for sourcecircuitstate builders.
 type SourceCircuitState func(*sql.Selector)
 

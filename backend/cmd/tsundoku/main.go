@@ -352,13 +352,17 @@ func main() {
 
 	// Wire the breaker→SSE alert seam (Source Health Console proactive alerting):
 	// the runner reads its erroring/coolingDown counts from the gate's snapshot,
-	// and the gate fires runner.SourcesSummaryHook on every breaker trip/clear so a
-	// sources.summary push reaches the owner's danger badge the instant a source
-	// breaks. Kept OUT of NewService/NewRunner so sourcegate stays SSE-free and the
-	// runner's signature is untouched; the hook does its work on a detached
-	// goroutine, so a broadcast can never slow or break a breaker record.
+	// and the gate fires runner.SourcesSummaryTransitionHook on every breaker
+	// trip/clear so the owner's danger badge receives a sources.summary push the
+	// instant a source breaks. The seam stays out of NewService/NewRunner so
+	// sourcegate stays SSE-free and the runner's signature is untouched. The hook's
+	// snapshot and broadcast are time-bounded and finish inside sourcegate's
+	// ordered publication window, so observable alerts retain database commit order.
 	runner.SetBreakerSnapshotter(gateSvc)
-	gateSvc.WithTransitionHook(runner.SourcesSummaryHook)
+	gateSvc.WithTransitionHook(runner.SourcesSummaryTransitionHook)
+	// Replay a transition a prior process committed but could not publish. The
+	// durable cursor preserves per-source order against concurrent live records.
+	gateSvc.PublishPending(ctx)
 
 	// Web Push + new-chapter notifier (see buildNotifier). VAPID failure degrades
 	// gracefully — the notifier still broadcasts over SSE; only Web Push is off.

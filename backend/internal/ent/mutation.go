@@ -31,6 +31,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotification"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotificationcursor"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
@@ -54,33 +56,35 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeCategory              = "Category"
-	TypeChapter               = "Chapter"
-	TypeDisabledSource        = "DisabledSource"
-	TypeEtagCache             = "EtagCache"
-	TypeHarvestedExtension    = "HarvestedExtension"
-	TypeHarvestedRepo         = "HarvestedRepo"
-	TypeIgnoreScanlatorSource = "IgnoreScanlatorSource"
-	TypeImportEntry           = "ImportEntry"
-	TypeLatestSeries          = "LatestSeries"
-	TypeNetworkEndpoint       = "NetworkEndpoint"
-	TypeOwner                 = "Owner"
-	TypePendingTrackPush      = "PendingTrackPush"
-	TypeProviderChapter       = "ProviderChapter"
-	TypePushSubscription      = "PushSubscription"
-	TypeSeries                = "Series"
-	TypeSeriesProvider        = "SeriesProvider"
-	TypeSettings              = "Settings"
-	TypeSourceCircuitState    = "SourceCircuitState"
-	TypeSourceCoverage        = "SourceCoverage"
-	TypeSourceEvent           = "SourceEvent"
-	TypeSourceMetric          = "SourceMetric"
-	TypeSourceNetworkBinding  = "SourceNetworkBinding"
-	TypeSourcePreference      = "SourcePreference"
-	TypeSourceSeedState       = "SourceSeedState"
-	TypeSuwayomiSyncState     = "SuwayomiSyncState"
-	TypeTrackBinding          = "TrackBinding"
-	TypeTrackerConnection     = "TrackerConnection"
+	TypeCategory                        = "Category"
+	TypeChapter                         = "Chapter"
+	TypeDisabledSource                  = "DisabledSource"
+	TypeEtagCache                       = "EtagCache"
+	TypeHarvestedExtension              = "HarvestedExtension"
+	TypeHarvestedRepo                   = "HarvestedRepo"
+	TypeIgnoreScanlatorSource           = "IgnoreScanlatorSource"
+	TypeImportEntry                     = "ImportEntry"
+	TypeLatestSeries                    = "LatestSeries"
+	TypeNetworkEndpoint                 = "NetworkEndpoint"
+	TypeOwner                           = "Owner"
+	TypePendingTrackPush                = "PendingTrackPush"
+	TypeProviderChapter                 = "ProviderChapter"
+	TypePushSubscription                = "PushSubscription"
+	TypeSeries                          = "Series"
+	TypeSeriesProvider                  = "SeriesProvider"
+	TypeSettings                        = "Settings"
+	TypeSourceBreakerNotification       = "SourceBreakerNotification"
+	TypeSourceBreakerNotificationCursor = "SourceBreakerNotificationCursor"
+	TypeSourceCircuitState              = "SourceCircuitState"
+	TypeSourceCoverage                  = "SourceCoverage"
+	TypeSourceEvent                     = "SourceEvent"
+	TypeSourceMetric                    = "SourceMetric"
+	TypeSourceNetworkBinding            = "SourceNetworkBinding"
+	TypeSourcePreference                = "SourcePreference"
+	TypeSourceSeedState                 = "SourceSeedState"
+	TypeSuwayomiSyncState               = "SuwayomiSyncState"
+	TypeTrackBinding                    = "TrackBinding"
+	TypeTrackerConnection               = "TrackerConnection"
 )
 
 // CategoryMutation represents an operation that mutates the Category nodes in the graph.
@@ -15202,6 +15206,1481 @@ func (m *SettingsMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SettingsMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown Settings edge %s", name)
+}
+
+// SourceBreakerNotificationMutation represents an operation that mutates the SourceBreakerNotification nodes in the graph.
+type SourceBreakerNotificationMutation struct {
+	config
+	op                      Op
+	typ                     string
+	id                      *int
+	source_key              *string
+	event_type              *string
+	status                  *string
+	error_message           *string
+	error_category          *string
+	event_requested         *bool
+	hook_requested          *bool
+	consecutive_failures    *int
+	addconsecutive_failures *int
+	cooldown_until          *time.Time
+	failing_since           *time.Time
+	last_error              *string
+	published_at            *time.Time
+	created_at              *time.Time
+	clearedFields           map[string]struct{}
+	done                    bool
+	oldValue                func(context.Context) (*SourceBreakerNotification, error)
+	predicates              []predicate.SourceBreakerNotification
+}
+
+var _ ent.Mutation = (*SourceBreakerNotificationMutation)(nil)
+
+// sourcebreakernotificationOption allows management of the mutation configuration using functional options.
+type sourcebreakernotificationOption func(*SourceBreakerNotificationMutation)
+
+// newSourceBreakerNotificationMutation creates new mutation for the SourceBreakerNotification entity.
+func newSourceBreakerNotificationMutation(c config, op Op, opts ...sourcebreakernotificationOption) *SourceBreakerNotificationMutation {
+	m := &SourceBreakerNotificationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceBreakerNotification,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceBreakerNotificationID sets the ID field of the mutation.
+func withSourceBreakerNotificationID(id int) sourcebreakernotificationOption {
+	return func(m *SourceBreakerNotificationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceBreakerNotification
+		)
+		m.oldValue = func(ctx context.Context) (*SourceBreakerNotification, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceBreakerNotification.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceBreakerNotification sets the old SourceBreakerNotification of the mutation.
+func withSourceBreakerNotification(node *SourceBreakerNotification) sourcebreakernotificationOption {
+	return func(m *SourceBreakerNotificationMutation) {
+		m.oldValue = func(context.Context) (*SourceBreakerNotification, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceBreakerNotificationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceBreakerNotificationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceBreakerNotificationMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceBreakerNotificationMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceBreakerNotification.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceKey sets the "source_key" field.
+func (m *SourceBreakerNotificationMutation) SetSourceKey(s string) {
+	m.source_key = &s
+}
+
+// SourceKey returns the value of the "source_key" field in the mutation.
+func (m *SourceBreakerNotificationMutation) SourceKey() (r string, exists bool) {
+	v := m.source_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceKey returns the old "source_key" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldSourceKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceKey: %w", err)
+	}
+	return oldValue.SourceKey, nil
+}
+
+// ResetSourceKey resets all changes to the "source_key" field.
+func (m *SourceBreakerNotificationMutation) ResetSourceKey() {
+	m.source_key = nil
+}
+
+// SetEventType sets the "event_type" field.
+func (m *SourceBreakerNotificationMutation) SetEventType(s string) {
+	m.event_type = &s
+}
+
+// EventType returns the value of the "event_type" field in the mutation.
+func (m *SourceBreakerNotificationMutation) EventType() (r string, exists bool) {
+	v := m.event_type
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEventType returns the old "event_type" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldEventType(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEventType is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEventType requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEventType: %w", err)
+	}
+	return oldValue.EventType, nil
+}
+
+// ResetEventType resets all changes to the "event_type" field.
+func (m *SourceBreakerNotificationMutation) ResetEventType() {
+	m.event_type = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *SourceBreakerNotificationMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *SourceBreakerNotificationMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *SourceBreakerNotificationMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (m *SourceBreakerNotificationMutation) SetErrorMessage(s string) {
+	m.error_message = &s
+}
+
+// ErrorMessage returns the value of the "error_message" field in the mutation.
+func (m *SourceBreakerNotificationMutation) ErrorMessage() (r string, exists bool) {
+	v := m.error_message
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorMessage returns the old "error_message" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldErrorMessage(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorMessage is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorMessage requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorMessage: %w", err)
+	}
+	return oldValue.ErrorMessage, nil
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (m *SourceBreakerNotificationMutation) ClearErrorMessage() {
+	m.error_message = nil
+	m.clearedFields[sourcebreakernotification.FieldErrorMessage] = struct{}{}
+}
+
+// ErrorMessageCleared returns if the "error_message" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) ErrorMessageCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldErrorMessage]
+	return ok
+}
+
+// ResetErrorMessage resets all changes to the "error_message" field.
+func (m *SourceBreakerNotificationMutation) ResetErrorMessage() {
+	m.error_message = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldErrorMessage)
+}
+
+// SetErrorCategory sets the "error_category" field.
+func (m *SourceBreakerNotificationMutation) SetErrorCategory(s string) {
+	m.error_category = &s
+}
+
+// ErrorCategory returns the value of the "error_category" field in the mutation.
+func (m *SourceBreakerNotificationMutation) ErrorCategory() (r string, exists bool) {
+	v := m.error_category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldErrorCategory returns the old "error_category" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldErrorCategory(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldErrorCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldErrorCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldErrorCategory: %w", err)
+	}
+	return oldValue.ErrorCategory, nil
+}
+
+// ResetErrorCategory resets all changes to the "error_category" field.
+func (m *SourceBreakerNotificationMutation) ResetErrorCategory() {
+	m.error_category = nil
+}
+
+// SetEventRequested sets the "event_requested" field.
+func (m *SourceBreakerNotificationMutation) SetEventRequested(b bool) {
+	m.event_requested = &b
+}
+
+// EventRequested returns the value of the "event_requested" field in the mutation.
+func (m *SourceBreakerNotificationMutation) EventRequested() (r bool, exists bool) {
+	v := m.event_requested
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldEventRequested returns the old "event_requested" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldEventRequested(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldEventRequested is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldEventRequested requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldEventRequested: %w", err)
+	}
+	return oldValue.EventRequested, nil
+}
+
+// ResetEventRequested resets all changes to the "event_requested" field.
+func (m *SourceBreakerNotificationMutation) ResetEventRequested() {
+	m.event_requested = nil
+}
+
+// SetHookRequested sets the "hook_requested" field.
+func (m *SourceBreakerNotificationMutation) SetHookRequested(b bool) {
+	m.hook_requested = &b
+}
+
+// HookRequested returns the value of the "hook_requested" field in the mutation.
+func (m *SourceBreakerNotificationMutation) HookRequested() (r bool, exists bool) {
+	v := m.hook_requested
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHookRequested returns the old "hook_requested" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldHookRequested(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHookRequested is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHookRequested requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHookRequested: %w", err)
+	}
+	return oldValue.HookRequested, nil
+}
+
+// ResetHookRequested resets all changes to the "hook_requested" field.
+func (m *SourceBreakerNotificationMutation) ResetHookRequested() {
+	m.hook_requested = nil
+}
+
+// SetConsecutiveFailures sets the "consecutive_failures" field.
+func (m *SourceBreakerNotificationMutation) SetConsecutiveFailures(i int) {
+	m.consecutive_failures = &i
+	m.addconsecutive_failures = nil
+}
+
+// ConsecutiveFailures returns the value of the "consecutive_failures" field in the mutation.
+func (m *SourceBreakerNotificationMutation) ConsecutiveFailures() (r int, exists bool) {
+	v := m.consecutive_failures
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConsecutiveFailures returns the old "consecutive_failures" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldConsecutiveFailures(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConsecutiveFailures is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConsecutiveFailures requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConsecutiveFailures: %w", err)
+	}
+	return oldValue.ConsecutiveFailures, nil
+}
+
+// AddConsecutiveFailures adds i to the "consecutive_failures" field.
+func (m *SourceBreakerNotificationMutation) AddConsecutiveFailures(i int) {
+	if m.addconsecutive_failures != nil {
+		*m.addconsecutive_failures += i
+	} else {
+		m.addconsecutive_failures = &i
+	}
+}
+
+// AddedConsecutiveFailures returns the value that was added to the "consecutive_failures" field in this mutation.
+func (m *SourceBreakerNotificationMutation) AddedConsecutiveFailures() (r int, exists bool) {
+	v := m.addconsecutive_failures
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConsecutiveFailures resets all changes to the "consecutive_failures" field.
+func (m *SourceBreakerNotificationMutation) ResetConsecutiveFailures() {
+	m.consecutive_failures = nil
+	m.addconsecutive_failures = nil
+}
+
+// SetCooldownUntil sets the "cooldown_until" field.
+func (m *SourceBreakerNotificationMutation) SetCooldownUntil(t time.Time) {
+	m.cooldown_until = &t
+}
+
+// CooldownUntil returns the value of the "cooldown_until" field in the mutation.
+func (m *SourceBreakerNotificationMutation) CooldownUntil() (r time.Time, exists bool) {
+	v := m.cooldown_until
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCooldownUntil returns the old "cooldown_until" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldCooldownUntil(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCooldownUntil is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCooldownUntil requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCooldownUntil: %w", err)
+	}
+	return oldValue.CooldownUntil, nil
+}
+
+// ClearCooldownUntil clears the value of the "cooldown_until" field.
+func (m *SourceBreakerNotificationMutation) ClearCooldownUntil() {
+	m.cooldown_until = nil
+	m.clearedFields[sourcebreakernotification.FieldCooldownUntil] = struct{}{}
+}
+
+// CooldownUntilCleared returns if the "cooldown_until" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) CooldownUntilCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldCooldownUntil]
+	return ok
+}
+
+// ResetCooldownUntil resets all changes to the "cooldown_until" field.
+func (m *SourceBreakerNotificationMutation) ResetCooldownUntil() {
+	m.cooldown_until = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldCooldownUntil)
+}
+
+// SetFailingSince sets the "failing_since" field.
+func (m *SourceBreakerNotificationMutation) SetFailingSince(t time.Time) {
+	m.failing_since = &t
+}
+
+// FailingSince returns the value of the "failing_since" field in the mutation.
+func (m *SourceBreakerNotificationMutation) FailingSince() (r time.Time, exists bool) {
+	v := m.failing_since
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldFailingSince returns the old "failing_since" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldFailingSince(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldFailingSince is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldFailingSince requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldFailingSince: %w", err)
+	}
+	return oldValue.FailingSince, nil
+}
+
+// ClearFailingSince clears the value of the "failing_since" field.
+func (m *SourceBreakerNotificationMutation) ClearFailingSince() {
+	m.failing_since = nil
+	m.clearedFields[sourcebreakernotification.FieldFailingSince] = struct{}{}
+}
+
+// FailingSinceCleared returns if the "failing_since" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) FailingSinceCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldFailingSince]
+	return ok
+}
+
+// ResetFailingSince resets all changes to the "failing_since" field.
+func (m *SourceBreakerNotificationMutation) ResetFailingSince() {
+	m.failing_since = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldFailingSince)
+}
+
+// SetLastError sets the "last_error" field.
+func (m *SourceBreakerNotificationMutation) SetLastError(s string) {
+	m.last_error = &s
+}
+
+// LastError returns the value of the "last_error" field in the mutation.
+func (m *SourceBreakerNotificationMutation) LastError() (r string, exists bool) {
+	v := m.last_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastError returns the old "last_error" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldLastError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastError: %w", err)
+	}
+	return oldValue.LastError, nil
+}
+
+// ResetLastError resets all changes to the "last_error" field.
+func (m *SourceBreakerNotificationMutation) ResetLastError() {
+	m.last_error = nil
+}
+
+// SetPublishedAt sets the "published_at" field.
+func (m *SourceBreakerNotificationMutation) SetPublishedAt(t time.Time) {
+	m.published_at = &t
+}
+
+// PublishedAt returns the value of the "published_at" field in the mutation.
+func (m *SourceBreakerNotificationMutation) PublishedAt() (r time.Time, exists bool) {
+	v := m.published_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPublishedAt returns the old "published_at" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldPublishedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPublishedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPublishedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPublishedAt: %w", err)
+	}
+	return oldValue.PublishedAt, nil
+}
+
+// ClearPublishedAt clears the value of the "published_at" field.
+func (m *SourceBreakerNotificationMutation) ClearPublishedAt() {
+	m.published_at = nil
+	m.clearedFields[sourcebreakernotification.FieldPublishedAt] = struct{}{}
+}
+
+// PublishedAtCleared returns if the "published_at" field was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) PublishedAtCleared() bool {
+	_, ok := m.clearedFields[sourcebreakernotification.FieldPublishedAt]
+	return ok
+}
+
+// ResetPublishedAt resets all changes to the "published_at" field.
+func (m *SourceBreakerNotificationMutation) ResetPublishedAt() {
+	m.published_at = nil
+	delete(m.clearedFields, sourcebreakernotification.FieldPublishedAt)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceBreakerNotificationMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceBreakerNotificationMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceBreakerNotification entity.
+// If the SourceBreakerNotification object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceBreakerNotificationMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the SourceBreakerNotificationMutation builder.
+func (m *SourceBreakerNotificationMutation) Where(ps ...predicate.SourceBreakerNotification) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceBreakerNotificationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceBreakerNotificationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceBreakerNotification, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceBreakerNotificationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceBreakerNotificationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceBreakerNotification).
+func (m *SourceBreakerNotificationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceBreakerNotificationMutation) Fields() []string {
+	fields := make([]string, 0, 13)
+	if m.source_key != nil {
+		fields = append(fields, sourcebreakernotification.FieldSourceKey)
+	}
+	if m.event_type != nil {
+		fields = append(fields, sourcebreakernotification.FieldEventType)
+	}
+	if m.status != nil {
+		fields = append(fields, sourcebreakernotification.FieldStatus)
+	}
+	if m.error_message != nil {
+		fields = append(fields, sourcebreakernotification.FieldErrorMessage)
+	}
+	if m.error_category != nil {
+		fields = append(fields, sourcebreakernotification.FieldErrorCategory)
+	}
+	if m.event_requested != nil {
+		fields = append(fields, sourcebreakernotification.FieldEventRequested)
+	}
+	if m.hook_requested != nil {
+		fields = append(fields, sourcebreakernotification.FieldHookRequested)
+	}
+	if m.consecutive_failures != nil {
+		fields = append(fields, sourcebreakernotification.FieldConsecutiveFailures)
+	}
+	if m.cooldown_until != nil {
+		fields = append(fields, sourcebreakernotification.FieldCooldownUntil)
+	}
+	if m.failing_since != nil {
+		fields = append(fields, sourcebreakernotification.FieldFailingSince)
+	}
+	if m.last_error != nil {
+		fields = append(fields, sourcebreakernotification.FieldLastError)
+	}
+	if m.published_at != nil {
+		fields = append(fields, sourcebreakernotification.FieldPublishedAt)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourcebreakernotification.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceBreakerNotificationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcebreakernotification.FieldSourceKey:
+		return m.SourceKey()
+	case sourcebreakernotification.FieldEventType:
+		return m.EventType()
+	case sourcebreakernotification.FieldStatus:
+		return m.Status()
+	case sourcebreakernotification.FieldErrorMessage:
+		return m.ErrorMessage()
+	case sourcebreakernotification.FieldErrorCategory:
+		return m.ErrorCategory()
+	case sourcebreakernotification.FieldEventRequested:
+		return m.EventRequested()
+	case sourcebreakernotification.FieldHookRequested:
+		return m.HookRequested()
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		return m.ConsecutiveFailures()
+	case sourcebreakernotification.FieldCooldownUntil:
+		return m.CooldownUntil()
+	case sourcebreakernotification.FieldFailingSince:
+		return m.FailingSince()
+	case sourcebreakernotification.FieldLastError:
+		return m.LastError()
+	case sourcebreakernotification.FieldPublishedAt:
+		return m.PublishedAt()
+	case sourcebreakernotification.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceBreakerNotificationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcebreakernotification.FieldSourceKey:
+		return m.OldSourceKey(ctx)
+	case sourcebreakernotification.FieldEventType:
+		return m.OldEventType(ctx)
+	case sourcebreakernotification.FieldStatus:
+		return m.OldStatus(ctx)
+	case sourcebreakernotification.FieldErrorMessage:
+		return m.OldErrorMessage(ctx)
+	case sourcebreakernotification.FieldErrorCategory:
+		return m.OldErrorCategory(ctx)
+	case sourcebreakernotification.FieldEventRequested:
+		return m.OldEventRequested(ctx)
+	case sourcebreakernotification.FieldHookRequested:
+		return m.OldHookRequested(ctx)
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		return m.OldConsecutiveFailures(ctx)
+	case sourcebreakernotification.FieldCooldownUntil:
+		return m.OldCooldownUntil(ctx)
+	case sourcebreakernotification.FieldFailingSince:
+		return m.OldFailingSince(ctx)
+	case sourcebreakernotification.FieldLastError:
+		return m.OldLastError(ctx)
+	case sourcebreakernotification.FieldPublishedAt:
+		return m.OldPublishedAt(ctx)
+	case sourcebreakernotification.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceBreakerNotification field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceBreakerNotificationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcebreakernotification.FieldSourceKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceKey(v)
+		return nil
+	case sourcebreakernotification.FieldEventType:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEventType(v)
+		return nil
+	case sourcebreakernotification.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case sourcebreakernotification.FieldErrorMessage:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetErrorMessage(v)
+		return nil
+	case sourcebreakernotification.FieldErrorCategory:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetErrorCategory(v)
+		return nil
+	case sourcebreakernotification.FieldEventRequested:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetEventRequested(v)
+		return nil
+	case sourcebreakernotification.FieldHookRequested:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHookRequested(v)
+		return nil
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConsecutiveFailures(v)
+		return nil
+	case sourcebreakernotification.FieldCooldownUntil:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCooldownUntil(v)
+		return nil
+	case sourcebreakernotification.FieldFailingSince:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetFailingSince(v)
+		return nil
+	case sourcebreakernotification.FieldLastError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastError(v)
+		return nil
+	case sourcebreakernotification.FieldPublishedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPublishedAt(v)
+		return nil
+	case sourcebreakernotification.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotification field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceBreakerNotificationMutation) AddedFields() []string {
+	var fields []string
+	if m.addconsecutive_failures != nil {
+		fields = append(fields, sourcebreakernotification.FieldConsecutiveFailures)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceBreakerNotificationMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		return m.AddedConsecutiveFailures()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceBreakerNotificationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConsecutiveFailures(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotification numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceBreakerNotificationMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcebreakernotification.FieldErrorMessage) {
+		fields = append(fields, sourcebreakernotification.FieldErrorMessage)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldCooldownUntil) {
+		fields = append(fields, sourcebreakernotification.FieldCooldownUntil)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldFailingSince) {
+		fields = append(fields, sourcebreakernotification.FieldFailingSince)
+	}
+	if m.FieldCleared(sourcebreakernotification.FieldPublishedAt) {
+		fields = append(fields, sourcebreakernotification.FieldPublishedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceBreakerNotificationMutation) ClearField(name string) error {
+	switch name {
+	case sourcebreakernotification.FieldErrorMessage:
+		m.ClearErrorMessage()
+		return nil
+	case sourcebreakernotification.FieldCooldownUntil:
+		m.ClearCooldownUntil()
+		return nil
+	case sourcebreakernotification.FieldFailingSince:
+		m.ClearFailingSince()
+		return nil
+	case sourcebreakernotification.FieldPublishedAt:
+		m.ClearPublishedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotification nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceBreakerNotificationMutation) ResetField(name string) error {
+	switch name {
+	case sourcebreakernotification.FieldSourceKey:
+		m.ResetSourceKey()
+		return nil
+	case sourcebreakernotification.FieldEventType:
+		m.ResetEventType()
+		return nil
+	case sourcebreakernotification.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case sourcebreakernotification.FieldErrorMessage:
+		m.ResetErrorMessage()
+		return nil
+	case sourcebreakernotification.FieldErrorCategory:
+		m.ResetErrorCategory()
+		return nil
+	case sourcebreakernotification.FieldEventRequested:
+		m.ResetEventRequested()
+		return nil
+	case sourcebreakernotification.FieldHookRequested:
+		m.ResetHookRequested()
+		return nil
+	case sourcebreakernotification.FieldConsecutiveFailures:
+		m.ResetConsecutiveFailures()
+		return nil
+	case sourcebreakernotification.FieldCooldownUntil:
+		m.ResetCooldownUntil()
+		return nil
+	case sourcebreakernotification.FieldFailingSince:
+		m.ResetFailingSince()
+		return nil
+	case sourcebreakernotification.FieldLastError:
+		m.ResetLastError()
+		return nil
+	case sourcebreakernotification.FieldPublishedAt:
+		m.ResetPublishedAt()
+		return nil
+	case sourcebreakernotification.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotification field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceBreakerNotificationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceBreakerNotificationMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceBreakerNotificationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceBreakerNotificationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceBreakerNotificationMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceBreakerNotificationMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceBreakerNotification unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceBreakerNotificationMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceBreakerNotification edge %s", name)
+}
+
+// SourceBreakerNotificationCursorMutation represents an operation that mutates the SourceBreakerNotificationCursor nodes in the graph.
+type SourceBreakerNotificationCursorMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *uuid.UUID
+	source_key    *string
+	updated_at    *time.Time
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SourceBreakerNotificationCursor, error)
+	predicates    []predicate.SourceBreakerNotificationCursor
+}
+
+var _ ent.Mutation = (*SourceBreakerNotificationCursorMutation)(nil)
+
+// sourcebreakernotificationcursorOption allows management of the mutation configuration using functional options.
+type sourcebreakernotificationcursorOption func(*SourceBreakerNotificationCursorMutation)
+
+// newSourceBreakerNotificationCursorMutation creates new mutation for the SourceBreakerNotificationCursor entity.
+func newSourceBreakerNotificationCursorMutation(c config, op Op, opts ...sourcebreakernotificationcursorOption) *SourceBreakerNotificationCursorMutation {
+	m := &SourceBreakerNotificationCursorMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceBreakerNotificationCursor,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceBreakerNotificationCursorID sets the ID field of the mutation.
+func withSourceBreakerNotificationCursorID(id uuid.UUID) sourcebreakernotificationcursorOption {
+	return func(m *SourceBreakerNotificationCursorMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceBreakerNotificationCursor
+		)
+		m.oldValue = func(ctx context.Context) (*SourceBreakerNotificationCursor, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceBreakerNotificationCursor.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceBreakerNotificationCursor sets the old SourceBreakerNotificationCursor of the mutation.
+func withSourceBreakerNotificationCursor(node *SourceBreakerNotificationCursor) sourcebreakernotificationcursorOption {
+	return func(m *SourceBreakerNotificationCursorMutation) {
+		m.oldValue = func(context.Context) (*SourceBreakerNotificationCursor, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceBreakerNotificationCursorMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceBreakerNotificationCursorMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceBreakerNotificationCursor entities.
+func (m *SourceBreakerNotificationCursorMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceBreakerNotificationCursorMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceBreakerNotificationCursorMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceBreakerNotificationCursor.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceKey sets the "source_key" field.
+func (m *SourceBreakerNotificationCursorMutation) SetSourceKey(s string) {
+	m.source_key = &s
+}
+
+// SourceKey returns the value of the "source_key" field in the mutation.
+func (m *SourceBreakerNotificationCursorMutation) SourceKey() (r string, exists bool) {
+	v := m.source_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceKey returns the old "source_key" field's value of the SourceBreakerNotificationCursor entity.
+// If the SourceBreakerNotificationCursor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationCursorMutation) OldSourceKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceKey: %w", err)
+	}
+	return oldValue.SourceKey, nil
+}
+
+// ResetSourceKey resets all changes to the "source_key" field.
+func (m *SourceBreakerNotificationCursorMutation) ResetSourceKey() {
+	m.source_key = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceBreakerNotificationCursorMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceBreakerNotificationCursorMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceBreakerNotificationCursor entity.
+// If the SourceBreakerNotificationCursor object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceBreakerNotificationCursorMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceBreakerNotificationCursorMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceBreakerNotificationCursorMutation builder.
+func (m *SourceBreakerNotificationCursorMutation) Where(ps ...predicate.SourceBreakerNotificationCursor) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceBreakerNotificationCursorMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceBreakerNotificationCursorMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceBreakerNotificationCursor, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceBreakerNotificationCursorMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceBreakerNotificationCursorMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceBreakerNotificationCursor).
+func (m *SourceBreakerNotificationCursorMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceBreakerNotificationCursorMutation) Fields() []string {
+	fields := make([]string, 0, 2)
+	if m.source_key != nil {
+		fields = append(fields, sourcebreakernotificationcursor.FieldSourceKey)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcebreakernotificationcursor.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceBreakerNotificationCursorMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcebreakernotificationcursor.FieldSourceKey:
+		return m.SourceKey()
+	case sourcebreakernotificationcursor.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceBreakerNotificationCursorMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcebreakernotificationcursor.FieldSourceKey:
+		return m.OldSourceKey(ctx)
+	case sourcebreakernotificationcursor.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceBreakerNotificationCursor field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceBreakerNotificationCursorMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcebreakernotificationcursor.FieldSourceKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceKey(v)
+		return nil
+	case sourcebreakernotificationcursor.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceBreakerNotificationCursorMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceBreakerNotificationCursorMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceBreakerNotificationCursorMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceBreakerNotificationCursorMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceBreakerNotificationCursorMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceBreakerNotificationCursorMutation) ResetField(name string) error {
+	switch name {
+	case sourcebreakernotificationcursor.FieldSourceKey:
+		m.ResetSourceKey()
+		return nil
+	case sourcebreakernotificationcursor.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceBreakerNotificationCursorMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceBreakerNotificationCursorMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceBreakerNotificationCursorMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceBreakerNotificationCursor edge %s", name)
 }
 
 // SourceCircuitStateMutation represents an operation that mutates the SourceCircuitState nodes in the graph.

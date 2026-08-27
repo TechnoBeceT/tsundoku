@@ -51,8 +51,7 @@ const (
 
 // Event is one source-operation observation to be logged. The writer converts
 // Duration to whole milliseconds and, when Err is non-nil, fills error_message
-// (truncated) + error_category (via errorclass.Classify) — so the classification
-// lives in exactly one place. ItemsCount is optional (nil = not applicable).
+// (truncated) + error_category. ItemsCount is optional (nil = not applicable).
 type Event struct {
 	// SourceKey is the canonical physical-source NAME — the join key across
 	// events, breaker, and metrics (download.canonicalSourceKey).
@@ -71,6 +70,10 @@ type Event struct {
 	Duration time.Duration
 	// Err, when non-nil, sets error_message + error_category on the row.
 	Err error
+	// ErrorCategory preserves a category already derived from the original typed
+	// error before durable replay. Ordinary callers leave it empty and the writer
+	// classifies Err through errorclass.Classify.
+	ErrorCategory string
 	// ItemsCount is the operation's result cardinality where meaningful; nil when
 	// not applicable.
 	ItemsCount *int

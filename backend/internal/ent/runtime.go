@@ -24,6 +24,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/series"
 	"github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotification"
+	"github.com/technobecet/tsundoku/internal/ent/sourcebreakernotificationcursor"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcecoverage"
 	"github.com/technobecet/tsundoku/internal/ent/sourceevent"
@@ -512,6 +514,44 @@ func init() {
 	settingsDescID := settingsFields[0].Descriptor()
 	// settings.DefaultID holds the default value on creation for the id field.
 	settings.DefaultID = settingsDescID.Default.(func() uuid.UUID)
+	sourcebreakernotificationFields := schema.SourceBreakerNotification{}.Fields()
+	_ = sourcebreakernotificationFields
+	// sourcebreakernotificationDescErrorCategory is the schema descriptor for error_category field.
+	sourcebreakernotificationDescErrorCategory := sourcebreakernotificationFields[4].Descriptor()
+	// sourcebreakernotification.DefaultErrorCategory holds the default value on creation for the error_category field.
+	sourcebreakernotification.DefaultErrorCategory = sourcebreakernotificationDescErrorCategory.Default.(string)
+	// sourcebreakernotificationDescEventRequested is the schema descriptor for event_requested field.
+	sourcebreakernotificationDescEventRequested := sourcebreakernotificationFields[5].Descriptor()
+	// sourcebreakernotification.DefaultEventRequested holds the default value on creation for the event_requested field.
+	sourcebreakernotification.DefaultEventRequested = sourcebreakernotificationDescEventRequested.Default.(bool)
+	// sourcebreakernotificationDescHookRequested is the schema descriptor for hook_requested field.
+	sourcebreakernotificationDescHookRequested := sourcebreakernotificationFields[6].Descriptor()
+	// sourcebreakernotification.DefaultHookRequested holds the default value on creation for the hook_requested field.
+	sourcebreakernotification.DefaultHookRequested = sourcebreakernotificationDescHookRequested.Default.(bool)
+	// sourcebreakernotificationDescConsecutiveFailures is the schema descriptor for consecutive_failures field.
+	sourcebreakernotificationDescConsecutiveFailures := sourcebreakernotificationFields[7].Descriptor()
+	// sourcebreakernotification.DefaultConsecutiveFailures holds the default value on creation for the consecutive_failures field.
+	sourcebreakernotification.DefaultConsecutiveFailures = sourcebreakernotificationDescConsecutiveFailures.Default.(int)
+	// sourcebreakernotificationDescLastError is the schema descriptor for last_error field.
+	sourcebreakernotificationDescLastError := sourcebreakernotificationFields[10].Descriptor()
+	// sourcebreakernotification.DefaultLastError holds the default value on creation for the last_error field.
+	sourcebreakernotification.DefaultLastError = sourcebreakernotificationDescLastError.Default.(string)
+	// sourcebreakernotificationDescCreatedAt is the schema descriptor for created_at field.
+	sourcebreakernotificationDescCreatedAt := sourcebreakernotificationFields[12].Descriptor()
+	// sourcebreakernotification.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourcebreakernotification.DefaultCreatedAt = sourcebreakernotificationDescCreatedAt.Default.(func() time.Time)
+	sourcebreakernotificationcursorFields := schema.SourceBreakerNotificationCursor{}.Fields()
+	_ = sourcebreakernotificationcursorFields
+	// sourcebreakernotificationcursorDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcebreakernotificationcursorDescUpdatedAt := sourcebreakernotificationcursorFields[2].Descriptor()
+	// sourcebreakernotificationcursor.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcebreakernotificationcursor.DefaultUpdatedAt = sourcebreakernotificationcursorDescUpdatedAt.Default.(func() time.Time)
+	// sourcebreakernotificationcursor.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcebreakernotificationcursor.UpdateDefaultUpdatedAt = sourcebreakernotificationcursorDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcebreakernotificationcursorDescID is the schema descriptor for id field.
+	sourcebreakernotificationcursorDescID := sourcebreakernotificationcursorFields[0].Descriptor()
+	// sourcebreakernotificationcursor.DefaultID holds the default value on creation for the id field.
+	sourcebreakernotificationcursor.DefaultID = sourcebreakernotificationcursorDescID.Default.(func() uuid.UUID)
 	sourcecircuitstateFields := schema.SourceCircuitState{}.Fields()
 	_ = sourcecircuitstateFields
 	// sourcecircuitstateDescConsecutiveFailures is the schema descriptor for consecutive_failures field.
