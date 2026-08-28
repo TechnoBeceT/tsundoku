@@ -124,6 +124,7 @@ withDefaults(defineProps<{
   sourceThroughputSources?: SourceOption[]
   sourceThroughputGlobalConcurrency?: number
   sourceThroughputLoading?: boolean
+  sourceThroughputReady?: boolean
   sourceThroughputSavingSourceId?: string | null
   sourceThroughputError?: string | null
   /** True while the library-wide dedup sweep request is in flight. */
@@ -213,6 +214,7 @@ withDefaults(defineProps<{
   sourceThroughputSources: () => [],
   sourceThroughputGlobalConcurrency: 5,
   sourceThroughputLoading: false,
+  sourceThroughputReady: true,
   sourceThroughputSavingSourceId: null,
   sourceThroughputError: null,
   dedupAllBusy: false,
@@ -296,6 +298,7 @@ const emit = defineEmits<{
   'inherit-source-concurrency': [sourceId: string]
   'save-source-image-delay': [sourceId: string, value: string]
   'inherit-source-image-delay': [sourceId: string]
+  'reload-source-throughput': []
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
   /** Load the bulk-re-download preview for this filter (reads only). */
@@ -418,6 +421,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :throughput-sources="sourceThroughputSources"
             :global-download-concurrency="sourceThroughputGlobalConcurrency"
             :throughput-loading="sourceThroughputLoading"
+            :throughput-ready="sourceThroughputReady"
             :throughput-saving-source-id="sourceThroughputSavingSourceId"
             :throughput-error="sourceThroughputError"
             :dedup-all-busy="dedupAllBusy"
@@ -435,6 +439,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             @inherit-concurrency="emit('inherit-source-concurrency', $event)"
             @save-image-delay="onSaveSourceImageDelay"
             @inherit-image-delay="emit('inherit-source-image-delay', $event)"
+            @reload-throughput="emit('reload-source-throughput')"
             @dedup-all="emit('dedup-all')"
             @redownload-preview="emit('redownload-preview', $event)"
             @redownload="emit('redownload', $event)"

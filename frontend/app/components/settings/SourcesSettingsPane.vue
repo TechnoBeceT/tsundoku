@@ -9,6 +9,7 @@ import RedownloadDialog from './RedownloadDialog.vue'
 import SettingRow from './SettingRow.vue'
 import SourceThroughputControl from './SourceThroughputControl.vue'
 import FormError from '../ui/FormError.vue'
+import AppButton from '../ui/AppButton.vue'
 import type { SaveState, SourceOption, SourcesSettings } from '../screens/settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
 import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
@@ -57,6 +58,7 @@ const props = withDefaults(defineProps<{
   throughputSources?: SourceOption[]
   globalDownloadConcurrency?: number
   throughputLoading?: boolean
+  throughputReady?: boolean
   throughputSavingSourceId?: string | null
   throughputError?: string | null
   /** §16 state of the Save button. */
@@ -87,6 +89,7 @@ const props = withDefaults(defineProps<{
   throughputSources: () => [],
   globalDownloadConcurrency: 5,
   throughputLoading: false,
+  throughputReady: true,
   throughputSavingSourceId: null,
   throughputError: null,
   dedupAllBusy: false,
@@ -108,6 +111,7 @@ const emit = defineEmits<{
   inheritConcurrency: [sourceId: string]
   saveImageDelay: [sourceId: string, value: string]
   inheritImageDelay: [sourceId: string]
+  reloadThroughput: []
   /** Trigger the library-wide duplicate-source dedup sweep. */
   dedupAll: []
   /** Load the bulk-re-download preview for this filter (reads only). */
@@ -190,21 +194,24 @@ const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDel
     sub="Keep the global throughput for most sources, then slow down only providers that enforce tighter request limits."
   >
     <p v-if="throughputLoading" class="throughput-status" role="status">Loading source policies…</p>
-    <FormError v-if="throughputError" :message="throughputError" />
+    <div v-else-if="throughputError" class="throughput-failure">
+      <FormError :message="throughputError" />
+      <AppButton data-testid="retry-throughput" variant="text" size="sm" @click="emit('reloadThroughput')">Retry loading policies</AppButton>
+    </div>
     <SourceThroughputControl
-      v-for="policy in throughputPolicies"
+      v-for="policy in (throughputReady && !throughputLoading && !throughputError ? throughputPolicies : [])"
       :key="policy.sourceId"
       :policy="policy"
       :source-name="throughputSources.find(source => source.id === policy.sourceId)?.name"
       :global-concurrency="globalDownloadConcurrency"
       :global-image-delay="`${sources.imageRequestDelayMs}ms`"
-      :saving="throughputSavingSourceId === policy.sourceId"
+      :saving="throughputSavingSourceId !== null"
       @save-concurrency="onSaveConcurrency"
       @inherit-concurrency="emit('inheritConcurrency', $event)"
       @save-image-delay="onSaveImageDelay"
       @inherit-image-delay="emit('inheritImageDelay', $event)"
     />
-    <p v-if="!throughputLoading && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
+    <p v-if="throughputReady && !throughputLoading && !throughputError && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
   </SurfaceCard>
 
   <SurfaceCard
@@ -240,4 +247,5 @@ const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDel
 
 <style scoped>
 .throughput-status { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.throughput-failure { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 </style>

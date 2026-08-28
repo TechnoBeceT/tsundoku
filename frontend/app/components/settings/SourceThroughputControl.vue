@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import AppButton from '../ui/AppButton.vue'
 import TextField from '../ui/TextField.vue'
 import FormError from '../ui/FormError.vue'
@@ -14,6 +14,7 @@ const emit = defineEmits<{
 }>()
 const concurrency = ref('')
 const imageDelay = ref('')
+const sourceLabel = computed(() => props.sourceName || `Source ${props.policy.sourceId}`)
 watch(() => props.policy, (policy) => {
   concurrency.value = String(policy.downloadConcurrency.override ?? policy.downloadConcurrency.effective)
   imageDelay.value = policy.imageRequestDelay.override ?? policy.imageRequestDelay.effective
@@ -32,7 +33,7 @@ const saveDelay = () => emit('save-image-delay', props.policy.sourceId, imageDel
     <div class="throughput__policy">
       <div class="throughput__label"><strong>Chapter concurrency</strong><span>Global: {{ globalConcurrency }} → {{ policy.downloadConcurrency.override === null ? 'Uses global' : `Override: ${policy.downloadConcurrency.override}` }}</span><span class="throughput__effective">Effective: {{ policy.downloadConcurrency.effective }}</span></div>
       <div class="throughput__edit">
-        <TextField v-model="concurrency" compact type="number" :disabled="saving" @enter="saveConcurrency" />
+        <TextField v-model="concurrency" :label="`${sourceLabel} chapter concurrency override`" compact type="number" :disabled="saving" @enter="saveConcurrency" />
         <AppButton variant="mini" size="xs" :disabled="saving" @click="saveConcurrency">Set override</AppButton>
         <AppButton data-testid="inherit-concurrency" variant="text" size="xs" :disabled="saving || policy.downloadConcurrency.override === null" @click="emit('inherit-concurrency', policy.sourceId)">Use global</AppButton>
       </div>
@@ -40,7 +41,7 @@ const saveDelay = () => emit('save-image-delay', props.policy.sourceId, imageDel
     <div class="throughput__policy">
       <div class="throughput__label"><strong>Image request delay</strong><span>Global: {{ globalImageDelay }} → {{ policy.imageRequestDelay.override === null ? 'Uses global' : `Override: ${policy.imageRequestDelay.override}` }}</span><span class="throughput__effective">Effective: {{ policy.imageRequestDelay.effective }}</span></div>
       <div class="throughput__edit">
-        <label class="throughput__duration"><span class="sr-only">Image request delay</span><input v-model="imageDelay" data-testid="image-delay" :disabled="saving" @keydown.enter="saveDelay"></label>
+        <label class="throughput__duration"><span class="sr-only">{{ sourceLabel }} image request delay override</span><input v-model="imageDelay" data-testid="image-delay" :disabled="saving" @keydown.enter="saveDelay"></label>
         <AppButton variant="mini" size="xs" :disabled="saving" @click="saveDelay">Set override</AppButton>
         <AppButton data-testid="inherit-delay" variant="text" size="xs" :disabled="saving || policy.imageRequestDelay.override === null" @click="emit('inherit-image-delay', policy.sourceId)">Use global</AppButton>
       </div>

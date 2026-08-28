@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceThroughputControl from './SourceThroughputControl.vue'
+
+vi.mock('~/utils/api/client', () => ({
+  apiClient: { GET: vi.fn().mockResolvedValue({ data: { authenticated: true, ownerId: 'owner' } }) },
+  setUnauthorizedHandler: vi.fn(),
+}))
 
 const inherited = {
   sourceId: '101',
@@ -10,12 +15,14 @@ const inherited = {
 
 describe('SourceThroughputControl', () => {
   it('shows inherited and effective values', () => {
-    const wrapper = mount(SourceThroughputControl, { props: { policy: inherited } })
+    const wrapper = mount(SourceThroughputControl, { props: { policy: inherited, sourceName: 'ComicK Fanmade' } })
     expect(wrapper.text()).toContain('Uses global')
     expect(wrapper.text()).toContain('Global: 5')
     expect(wrapper.text()).toContain('Global: 500ms')
     expect(wrapper.text()).toContain('Effective: 5')
     expect(wrapper.text()).toContain('Effective: 500ms')
+    expect(wrapper.get('input[type="number"]').element.closest('label')?.textContent).toContain('ComicK Fanmade chapter concurrency override')
+    expect(wrapper.get('[data-testid="image-delay"]').element.closest('label')?.textContent).toContain('ComicK Fanmade image request delay override')
   })
 
   it('saves an explicit zero delay instead of clearing to inherit', async () => {

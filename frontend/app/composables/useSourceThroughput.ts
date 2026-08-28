@@ -1,9 +1,36 @@
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
+import type { SourceOption } from '~/components/screens/settings.types'
 
 export type SourceThroughputPolicy = components['schemas']['SourceThroughputPolicy']
 type UpdateRequest = components['schemas']['SourceThroughputUpdateRequest']
+
+export function composeSourceThroughputPolicies(
+  sources: SourceOption[],
+  storedPolicies: SourceThroughputPolicy[],
+  globals: { downloadConcurrency: number, imageRequestDelay: string },
+): SourceThroughputPolicy[] {
+  return sources.map((source) => {
+    const stored = storedPolicies.find(policy => policy.sourceId === source.id)
+    if (!stored) {
+      return {
+        sourceId: source.id,
+        downloadConcurrency: { override: null, effective: globals.downloadConcurrency },
+        imageRequestDelay: { override: null, effective: globals.imageRequestDelay },
+      }
+    }
+    return {
+      ...stored,
+      downloadConcurrency: stored.downloadConcurrency.override === null
+        ? { override: null, effective: globals.downloadConcurrency }
+        : stored.downloadConcurrency,
+      imageRequestDelay: stored.imageRequestDelay.override === null
+        ? { override: null, effective: globals.imageRequestDelay }
+        : stored.imageRequestDelay,
+    }
+  })
+}
 
 function isWholeMillisecondDuration(value: string): boolean {
   if (value === '0') return true
@@ -15,19 +42,24 @@ function isWholeMillisecondDuration(value: string): boolean {
 }
 
 export function useSourceThroughput() {
-  const policies = ref<SourceThroughputPolicy[]>([])
+  const policies = ref<SourceThroughputPolicy[] | null>(null)
   const loading = ref(false)
   const savingSourceId = ref<string | null>(null)
   const error = ref<string | null>(null)
 
   function replacePolicy(policy: SourceThroughputPolicy): void {
-    const index = policies.value.findIndex(item => item.sourceId === policy.sourceId)
-    if (index === -1) policies.value = [...policies.value, policy]
-    else policies.value.splice(index, 1, policy)
+    const current = policies.value ?? []
+    const index = current.findIndex(item => item.sourceId === policy.sourceId)
+    if (index === -1) policies.value = [...current, policy]
+    else {
+      current.splice(index, 1, policy)
+      policies.value = current
+    }
   }
 
   async function load(): Promise<void> {
     loading.value = true
+    policies.value = null
     error.value = null
     try {
       const result = await apiClient.GET('/api/sources/throughput')
@@ -41,6 +73,7 @@ export function useSourceThroughput() {
   }
 
   async function update(sourceId: string, body: UpdateRequest): Promise<void> {
+    if (savingSourceId.value !== null) return
     savingSourceId.value = sourceId
     error.value = null
     try {
@@ -55,6 +88,7 @@ export function useSourceThroughput() {
   }
 
   async function saveConcurrencyOverride(sourceId: string, value: number): Promise<void> {
+    if (savingSourceId.value !== null) return
     if (!Number.isInteger(value) || value < 1 || value > 32) {
       error.value = 'Download concurrency must be a whole number between 1 and 32.'
       return
@@ -64,6 +98,7 @@ export function useSourceThroughput() {
   const inheritConcurrency = (sourceId: string) => update(sourceId, { downloadConcurrency: { mode: 'inherit' } })
 
   async function saveImageDelayOverride(sourceId: string, value: string): Promise<void> {
+    if (savingSourceId.value !== null) return
     if (!isWholeMillisecondDuration(value.trim())) {
       error.value = 'Image delay must be a non-negative duration in whole milliseconds, such as 750ms, 2s, or 0s.'
       return

@@ -268,14 +268,13 @@ const {
   inheritImageDelay,
 } = useSourceThroughput()
 
-const sourceThroughputPolicies = computed(() => networkSources.value.map((source) => {
-  const stored = storedThroughputPolicies.value.find(policy => policy.sourceId === source.id)
-  return stored ?? {
-    sourceId: source.id,
-    downloadConcurrency: { override: null, effective: library.value.downloadConcurrency },
-    imageRequestDelay: { override: null, effective: `${sourcesSettings.value.imageRequestDelayMs}ms` },
-  }
-}))
+const sourceThroughputPolicies = computed(() => storedThroughputPolicies.value === null
+  ? []
+  : composeSourceThroughputPolicies(networkSources.value, storedThroughputPolicies.value, {
+      downloadConcurrency: library.value.downloadConcurrency,
+      imageRequestDelay: `${sourcesSettings.value.imageRequestDelayMs}ms`,
+    }))
+const sourceThroughputReady = computed(() => storedThroughputPolicies.value !== null)
 
 void loadSourceThroughput()
 
@@ -401,6 +400,7 @@ const loading = computed(
       :source-throughput-sources="networkSources"
       :source-throughput-global-concurrency="library.downloadConcurrency"
       :source-throughput-loading="sourceThroughputLoading"
+      :source-throughput-ready="sourceThroughputReady"
       :source-throughput-saving-source-id="sourceThroughputSavingSourceId"
       :source-throughput-error="sourceThroughputError"
       :dedup-all-busy="dedupAllBusy"
@@ -462,6 +462,7 @@ const loading = computed(
       @inherit-source-concurrency="inheritConcurrency"
       @save-source-image-delay="saveImageDelayOverride"
       @inherit-source-image-delay="inheritImageDelay"
+      @reload-source-throughput="loadSourceThroughput"
       @dedup-all="dedupAllProviders"
       @redownload-preview="loadRedownloadPreview"
       @redownload="applyRedownload"
