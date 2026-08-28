@@ -3,6 +3,8 @@ package sourcethroughput_test
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
+	entpolicy "github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 )
 
@@ -100,6 +103,131 @@ func TestPartialUpdateDoesNotClobberOtherOverride(t *testing.T) {
 	}
 }
 
+type queryBarrierDriver struct {
+	dialect.Driver
+	mu      sync.Mutex
+	arrived int
+	release chan struct{}
+}
+
+func newQueryBarrierClient(t *testing.T, dbDriver dialect.Driver) *ent.Client {
+	t.Helper()
+	client := ent.NewClient(ent.Driver(&queryBarrierDriver{
+		Driver:  dbDriver,
+		release: make(chan struct{}),
+	}))
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func (d *queryBarrierDriver) Query(ctx context.Context, query string, args, v any) error {
+	if err := d.Driver.Query(ctx, query, args, v); err != nil {
+		return err
+	}
+	if !strings.HasPrefix(strings.TrimSpace(query), "SELECT") {
+		return nil
+	}
+
+	d.mu.Lock()
+	d.arrived++
+	arrived := d.arrived
+	if arrived == 2 {
+		close(d.release)
+	}
+	d.mu.Unlock()
+
+	if arrived <= 2 {
+		select {
+		case <-d.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}
+
+func TestConcurrentDisjointPartialUpdatesDoNotClobber(t *testing.T) {
+	seedClient, db := testdb.NewWithSQL(t)
+	ctx := context.Background()
+	seedClient.SourceThroughputPolicy.Create().
+		SetSourceID(101).
+		SetDownloadConcurrency(2).
+		SetImageRequestDelayMs(750).
+		SaveX(ctx)
+
+	client := newQueryBarrierClient(t, entsql.OpenDB(dialect.Postgres, db))
+	svc := sourcethroughput.NewService(client, defaults{concurrency: 5, delay: 500 * time.Millisecond})
+	runConcurrentUpdates(t,
+		func() error {
+			_, err := svc.Update(ctx, 101, sourcethroughput.Patch{
+				DownloadConcurrency: sourcethroughput.Set(3),
+			})
+			return err
+		},
+		func() error {
+			_, err := svc.Update(ctx, 101, sourcethroughput.Patch{
+				ImageRequestDelay: sourcethroughput.Set(time.Second),
+			})
+			return err
+		},
+	)
+
+	got := client.SourceThroughputPolicy.Query().
+		Where(entpolicy.SourceID(101)).
+		OnlyX(ctx)
+	if got.DownloadConcurrency == nil || *got.DownloadConcurrency != 3 ||
+		got.ImageRequestDelayMs == nil || *got.ImageRequestDelayMs != 1000 {
+		t.Fatalf("concurrent partial updates stored concurrency=%v delay_ms=%v, want 3 and 1000", got.DownloadConcurrency, got.ImageRequestDelayMs)
+	}
+}
+
+func TestConcurrentFirstWritesMergeWithoutConstraintError(t *testing.T) {
+	_, db := testdb.NewWithSQL(t)
+	ctx := context.Background()
+	client := newQueryBarrierClient(t, entsql.OpenDB(dialect.Postgres, db))
+	svc := sourcethroughput.NewService(client, defaults{concurrency: 5, delay: 500 * time.Millisecond})
+	runConcurrentUpdates(t,
+		func() error {
+			_, err := svc.Update(ctx, 202, sourcethroughput.Patch{
+				DownloadConcurrency: sourcethroughput.Set(1),
+			})
+			return err
+		},
+		func() error {
+			_, err := svc.Update(ctx, 202, sourcethroughput.Patch{
+				ImageRequestDelay: sourcethroughput.Set(750 * time.Millisecond),
+			})
+			return err
+		},
+	)
+
+	got := client.SourceThroughputPolicy.Query().
+		Where(entpolicy.SourceID(202)).
+		OnlyX(ctx)
+	if got.DownloadConcurrency == nil || *got.DownloadConcurrency != 1 ||
+		got.ImageRequestDelayMs == nil || *got.ImageRequestDelayMs != 750 {
+		t.Fatalf("concurrent first writes stored concurrency=%v delay_ms=%v, want 1 and 750", got.DownloadConcurrency, got.ImageRequestDelayMs)
+	}
+}
+
+func runConcurrentUpdates(t *testing.T, updates ...func() error) {
+	t.Helper()
+	start := make(chan struct{})
+	errs := make(chan error, len(updates))
+	for _, update := range updates {
+		go func() {
+			<-start
+			errs <- update()
+		}()
+	}
+	close(start)
+	for range updates {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Update: %v", err)
+		}
+	}
+}
+
 func TestClearOneKeepsOtherAndClearLastDeletesRow(t *testing.T) {
 	svc, client := newService(t)
 	ctx := context.Background()
@@ -178,6 +306,60 @@ func TestInvalidUpdatesLeaveExistingPolicyUnchanged(t *testing.T) {
 				t.Fatalf("policy changed after invalid update: %+v", policy)
 			}
 		})
+	}
+}
+
+func TestImageRequestDelayAcceptsZeroAndWholeMilliseconds(t *testing.T) {
+	tests := []struct {
+		name     string
+		sourceID int64
+		delay    time.Duration
+	}{
+		{name: "explicit zero", sourceID: 301, delay: 0},
+		{name: "whole milliseconds", sourceID: 302, delay: 1250 * time.Millisecond},
+	}
+
+	svc, _ := newService(t)
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.Update(ctx, tt.sourceID, sourcethroughput.Patch{
+				ImageRequestDelay: sourcethroughput.Set(tt.delay),
+			})
+			if err != nil {
+				t.Fatalf("Update(%v): %v", tt.delay, err)
+			}
+			if got.ImageRequestDelay == nil || *got.ImageRequestDelay != tt.delay {
+				t.Fatalf("stored delay = %v, want %v", got.ImageRequestDelay, tt.delay)
+			}
+		})
+	}
+}
+
+func TestPositiveSubMillisecondImageDelayIsRejectedWithoutMutation(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+	_, err := svc.Update(ctx, 303, sourcethroughput.Patch{
+		ImageRequestDelay: sourcethroughput.Set(750 * time.Millisecond),
+	})
+	if err != nil {
+		t.Fatalf("seed Update: %v", err)
+	}
+
+	_, err = svc.Update(ctx, 303, sourcethroughput.Patch{
+		ImageRequestDelay: sourcethroughput.Set(500 * time.Microsecond),
+	})
+	if !errors.Is(err, sourcethroughput.ErrInvalidPolicy) {
+		t.Fatalf("Update(500us) error = %v, want ErrInvalidPolicy", err)
+	}
+
+	got, err := svc.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	stored := got[303]
+	if stored.ImageRequestDelay == nil || *stored.ImageRequestDelay != 750*time.Millisecond {
+		t.Fatalf("delay changed after invalid update: %v", stored.ImageRequestDelay)
 	}
 }
 

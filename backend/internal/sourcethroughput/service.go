@@ -122,57 +122,56 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Over
 		return Override{}, err
 	}
 
-	row, err := s.client.SourceThroughputPolicy.Query().
-		Where(entpolicy.SourceID(sourceID)).
-		Only(ctx)
-	if err != nil && !ent.IsNotFound(err) {
-		return Override{}, fmt.Errorf("sourcethroughput.Update: query source %d: %w", sourceID, err)
+	if patch.DownloadConcurrency.Operation == PatchKeep && patch.ImageRequestDelay.Operation == PatchKeep {
+		return s.loadOverride(ctx, sourceID)
 	}
 
-	var next Override
-	if err == nil {
-		next = overrideFromRow(row)
-	}
-	applyPatch(&next, patch)
-
-	if next.DownloadConcurrency == nil && next.ImageRequestDelay == nil {
-		if err == nil {
-			if deleteErr := s.client.SourceThroughputPolicy.DeleteOneID(row.ID).Exec(ctx); deleteErr != nil {
-				return Override{}, fmt.Errorf("sourcethroughput.Update: delete source %d: %w", sourceID, deleteErr)
-			}
-		}
-		return Override{}, nil
-	}
-
-	if ent.IsNotFound(err) {
-		delayMs := durationMillis(next.ImageRequestDelay)
-		created, createErr := s.client.SourceThroughputPolicy.Create().
+	// A set-bearing patch is one atomic upsert. Its conflict clause changes only
+	// fields named by the patch, so disjoint callers merge and concurrent first
+	// writes converge on the unique source_id row without a constraint race.
+	if patch.DownloadConcurrency.Operation == PatchSet || patch.ImageRequestDelay.Operation == PatchSet {
+		now := time.Now()
+		create := s.client.SourceThroughputPolicy.Create().
 			SetSourceID(sourceID).
-			SetNillableDownloadConcurrency(next.DownloadConcurrency).
-			SetNillableImageRequestDelayMs(delayMs).
-			Save(ctx)
-		if createErr != nil {
-			return Override{}, fmt.Errorf("sourcethroughput.Update: create source %d: %w", sourceID, createErr)
+			SetUpdatedAt(now)
+		if patch.DownloadConcurrency.Operation == PatchSet {
+			create.SetDownloadConcurrency(patch.DownloadConcurrency.Value)
 		}
-		return overrideFromRow(created), nil
+		if patch.ImageRequestDelay.Operation == PatchSet {
+			create.SetImageRequestDelayMs(patch.ImageRequestDelay.Value.Milliseconds())
+		}
+
+		err := create.
+			OnConflictColumns(entpolicy.FieldSourceID).
+			Update(func(update *ent.SourceThroughputPolicyUpsert) {
+				applyUpsertPatch(update, patch)
+				update.SetUpdatedAt(now)
+			}).
+			Exec(ctx)
+		if err != nil {
+			return Override{}, fmt.Errorf("sourcethroughput.Update: upsert source %d: %w", sourceID, err)
+		}
+	} else {
+		update := s.client.SourceThroughputPolicy.Update().Where(entpolicy.SourceID(sourceID))
+		applyClearPatch(update, patch)
+		if _, err := update.Save(ctx); err != nil {
+			return Override{}, fmt.Errorf("sourcethroughput.Update: clear source %d: %w", sourceID, err)
+		}
 	}
 
-	update := row.Update()
-	if next.DownloadConcurrency == nil {
-		update.ClearDownloadConcurrency()
-	} else {
-		update.SetDownloadConcurrency(*next.DownloadConcurrency)
+	// Delete only if the row is still empty at statement execution time. A
+	// concurrent setter makes this predicate false and keeps its override.
+	if _, err := s.client.SourceThroughputPolicy.Delete().
+		Where(
+			entpolicy.SourceID(sourceID),
+			entpolicy.DownloadConcurrencyIsNil(),
+			entpolicy.ImageRequestDelayMsIsNil(),
+		).
+		Exec(ctx); err != nil {
+		return Override{}, fmt.Errorf("sourcethroughput.Update: delete empty source %d: %w", sourceID, err)
 	}
-	if next.ImageRequestDelay == nil {
-		update.ClearImageRequestDelayMs()
-	} else {
-		update.SetImageRequestDelayMs(next.ImageRequestDelay.Milliseconds())
-	}
-	updated, updateErr := update.Save(ctx)
-	if updateErr != nil {
-		return Override{}, fmt.Errorf("sourcethroughput.Update: update source %d: %w", sourceID, updateErr)
-	}
-	return overrideFromRow(updated), nil
+
+	return s.loadOverride(ctx, sourceID)
 }
 
 func (s *Service) resolve(ctx context.Context, stored Override) Effective {
@@ -198,28 +197,40 @@ func overrideFromRow(row *ent.SourceThroughputPolicy) Override {
 	return override
 }
 
-func applyPatch(override *Override, patch Patch) {
+func applyUpsertPatch(update *ent.SourceThroughputPolicyUpsert, patch Patch) {
 	switch patch.DownloadConcurrency.Operation {
 	case PatchSet:
-		value := patch.DownloadConcurrency.Value
-		override.DownloadConcurrency = &value
+		update.SetDownloadConcurrency(patch.DownloadConcurrency.Value)
 	case PatchClear:
-		override.DownloadConcurrency = nil
+		update.ClearDownloadConcurrency()
 	}
 
 	switch patch.ImageRequestDelay.Operation {
 	case PatchSet:
-		value := patch.ImageRequestDelay.Value
-		override.ImageRequestDelay = &value
+		update.SetImageRequestDelayMs(patch.ImageRequestDelay.Value.Milliseconds())
 	case PatchClear:
-		override.ImageRequestDelay = nil
+		update.ClearImageRequestDelayMs()
 	}
 }
 
-func durationMillis(delay *time.Duration) *int64 {
-	if delay == nil {
-		return nil
+func applyClearPatch(update *ent.SourceThroughputPolicyUpdate, patch Patch) {
+	if patch.DownloadConcurrency.Operation == PatchClear {
+		update.ClearDownloadConcurrency()
 	}
-	ms := delay.Milliseconds()
-	return &ms
+	if patch.ImageRequestDelay.Operation == PatchClear {
+		update.ClearImageRequestDelayMs()
+	}
+}
+
+func (s *Service) loadOverride(ctx context.Context, sourceID int64) (Override, error) {
+	row, err := s.client.SourceThroughputPolicy.Query().
+		Where(entpolicy.SourceID(sourceID)).
+		Only(ctx)
+	if ent.IsNotFound(err) {
+		return Override{}, nil
+	}
+	if err != nil {
+		return Override{}, fmt.Errorf("sourcethroughput.Update: query source %d: %w", sourceID, err)
+	}
+	return overrideFromRow(row), nil
 }

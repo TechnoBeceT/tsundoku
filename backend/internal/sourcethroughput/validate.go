@@ -3,6 +3,7 @@ package sourcethroughput
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 const (
@@ -27,6 +28,9 @@ func validatePatch(patch Patch) error {
 	}
 	if patch.ImageRequestDelay.Operation == PatchSet && patch.ImageRequestDelay.Value < 0 {
 		return fmt.Errorf("%w: image request delay must not be negative", ErrInvalidPolicy)
+	}
+	if patch.ImageRequestDelay.Operation == PatchSet && patch.ImageRequestDelay.Value%time.Millisecond != 0 {
+		return fmt.Errorf("%w: image request delay must be a whole number of milliseconds", ErrInvalidPolicy)
 	}
 	return nil
 }
