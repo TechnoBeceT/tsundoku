@@ -77,6 +77,32 @@ func TestExplicitZeroDelayOverridesGlobalDelay(t *testing.T) {
 	}
 }
 
+func TestImageRequestDelayReturnsCurrentGlobalOnPolicyReadFailure(t *testing.T) {
+	client := testdb.New(t)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close client: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		want time.Duration
+	}{
+		{name: "non-zero global", want: 500 * time.Millisecond},
+		{name: "explicit zero global", want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := sourcethroughput.NewService(client, defaults{concurrency: 5, delay: tc.want})
+			got, err := svc.ImageRequestDelay(context.Background(), 101)
+			if err == nil {
+				t.Fatal("ImageRequestDelay error = nil, want policy read error for observability")
+			}
+			if got != tc.want {
+				t.Fatalf("ImageRequestDelay = %v, want current global fallback %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPartialUpdateDoesNotClobberOtherOverride(t *testing.T) {
 	svc, _ := newService(t)
 	ctx := context.Background()

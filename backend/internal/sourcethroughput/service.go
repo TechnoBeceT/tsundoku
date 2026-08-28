@@ -129,11 +129,13 @@ func ApplyDefaults(defaults Effective, stored Override) Effective {
 }
 
 // ImageRequestDelay returns the effective delay through the same resolution
-// path as Resolve. It is the narrow adapter used by image-request pacing.
+// path as Resolve. If the optional override cannot be read, it returns the
+// current global delay alongside the error so the image data plane can continue
+// conservatively while surfacing the control-plane failure.
 func (s *Service) ImageRequestDelay(ctx context.Context, sourceID int64) (time.Duration, error) {
 	effective, err := s.Resolve(ctx, sourceID)
 	if err != nil {
-		return 0, err
+		return s.defaults.ImageRequestDelay(ctx), err
 	}
 	return effective.ImageRequestDelay, nil
 }

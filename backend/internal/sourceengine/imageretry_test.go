@@ -1,8 +1,11 @@
 package sourceengine_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,6 +56,25 @@ func (c *flakyImageClient) Image(ctx context.Context, sourceID int64, pageURL, i
 		return nil, "", c.failErr
 	}
 	return c.Client.Image(ctx, sourceID, pageURL, imageURL)
+}
+
+type timedImageClient struct {
+	*fake.Client
+	mu     sync.Mutex
+	starts []time.Time
+}
+
+func (c *timedImageClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	c.mu.Lock()
+	c.starts = append(c.starts, time.Now())
+	c.mu.Unlock()
+	return c.Client.Image(ctx, sourceID, pageURL, imageURL)
+}
+
+func (c *timedImageClient) requestStarts() []time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Time(nil), c.starts...)
 }
 
 // TestStagePages_TransientImage_SucceedsOnRetry proves a transient per-image error
@@ -120,18 +142,41 @@ func TestStagePages_StagedPageDoesNotResolveDelay(t *testing.T) {
 	}
 }
 
-func TestStagePages_DelayResolutionFailurePreventsImageRequest(t *testing.T) {
+func TestStagePages_DelayResolutionFailureUsesFallbackAndWarns(t *testing.T) {
 	want := errors.New("policy store unavailable")
-	inner := fake.New(fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}))
-	resolver := &recordingImageDelayResolver{err: want}
-	f := sourceengine.NewFetcher(inner, t.TempDir(), resolver)
+	const fallback = 25 * time.Millisecond
+	inner := fake.New(
+		fake.WithPages(7, "/ch/1", []sourceengine.Page{
+			{Index: 0, URL: "/ch/1/page/0"},
+			{Index: 1, URL: "/ch/1/page/1"},
+		}),
+		fake.WithImage(7, "/ch/1/page/0", validJPEG(t), "image/jpeg"),
+		fake.WithImage(7, "/ch/1/page/1", validJPEG(t), "image/jpeg"),
+	)
+	client := &timedImageClient{Client: inner}
+	resolver := &recordingImageDelayResolver{delay: fallback, err: want}
+	f := sourceengine.NewFetcher(client, t.TempDir(), resolver)
 
-	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
-	if !errors.Is(err, want) {
-		t.Fatalf("Fetch error = %v, want wrapping resolver error %v", err, want)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	if _, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"}); err != nil {
+		t.Fatalf("Fetch: %v (policy read failure must not abort image fetching)", err)
 	}
-	if got := inner.CallCount("Image"); got != 0 {
-		t.Fatalf("Image calls = %d, want 0 (resolver failure is fail-closed)", got)
+	starts := client.requestStarts()
+	if len(starts) != 2 {
+		t.Fatalf("Image calls = %d, want 2", len(starts))
+	}
+	if spacing := starts[1].Sub(starts[0]); spacing < fallback {
+		t.Fatalf("request-start spacing = %v, want at least fallback %v", spacing, fallback)
+	}
+	logged := logs.String()
+	for _, wantField := range []string{"image delay policy read failed", `"source_id":7`, "policy store unavailable"} {
+		if !strings.Contains(logged, wantField) {
+			t.Fatalf("warning log %q does not contain %q", logged, wantField)
+		}
 	}
 }
 
