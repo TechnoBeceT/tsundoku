@@ -93,6 +93,19 @@ func classifyFetchFailure(err error) failureKind {
 	}
 }
 
+// isImmediateContainmentFailure reports whether err is an explicit instruction
+// to stop sending traffic, rather than merely evidence contributing to the
+// configurable consecutive-failure threshold. Classification sees through the
+// engine-host 502 envelope for the same reason classifyFetchFailure does.
+func isImmediateContainmentFailure(err error) bool {
+	switch errorclass.Classify(sourceErrorOf(err)) {
+	case errorclass.CategoryRateLimit:
+		return true
+	default:
+		return false
+	}
+}
+
 // sourceErrorOf strips the engine host's transport envelope so classification
 // sees what the SOURCE said, not the status code that carried it (GAP-141).
 //

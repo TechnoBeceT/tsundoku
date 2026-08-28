@@ -31,6 +31,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -145,6 +146,79 @@ func TestFetchFailure_SourceWide_CooldownsNoBump_TripsBreaker(t *testing.T) {
 				t.Error("breaker did NOT trip on a source-wide failure — the whole source must be paused")
 			}
 		})
+	}
+}
+
+// TestFetchFailure_ContainmentSignalTripsImmediatelyAboveGenericThreshold proves
+// an explicit upstream stop signal does not wait for the generic consecutive-
+// failure threshold. The first queued chapter opens the persisted breaker, so the
+// same pass's stale second selection and an immediate next pass both lose
+// admission before reaching the engine.
+func TestFetchFailure_ContainmentSignalTripsImmediatelyAboveGenericThreshold(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := client.Series.Create().SetTitle("Contained").SetSlug("contained").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	for _, key := range []string{"c1", "c2"} {
+		client.ProviderChapter.Create().
+			SetSeriesProviderID(sp.ID).SetChapterKey(key).SetURL("https://x/" + key).SetProviderIndex(0).SaveX(ctx)
+		client.Chapter.Create().SetSeries(s).SetChapterKey(key).SaveX(ctx)
+	}
+
+	rs := settings.Static{
+		Retries: 3, Backoff: 0, DownloadConc: 1,
+		SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour,
+	}
+	gate := sourcegate.NewService(client, rs)
+	f := &gateCallCountFetcher{err: errors.New("HTTP 429 too many requests")}
+	d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, rs, gate)
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("first RunOnce: %v", err)
+	}
+	if got := f.calls.Load(); got != 1 {
+		t.Fatalf("first-pass fetch calls = %d, want 1 (later same-source selection must lose admission)", got)
+	}
+	if gate.IsAvailable(ctx, "mangadex", time.Now()) {
+		t.Fatal("breaker remains available after an explicit containment signal")
+	}
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("second RunOnce: %v", err)
+	}
+	if got := f.calls.Load(); got != 1 {
+		t.Fatalf("fetch calls after immediate next pass = %d, want 1 (persisted breaker must hold)", got)
+	}
+}
+
+// TestFetchFailure_TransientSourceFailureStillUsesGenericThreshold protects the
+// deliberate contrast with an explicit ban: one ordinary upstream failure is
+// evidence for the configurable breaker, but is not enough to pause the source
+// when that threshold is greater than one.
+func TestFetchFailure_TransientSourceFailureStillUsesGenericThreshold(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	_, pc := singleSourceChapter(ctx, t, client)
+	rs := settings.Static{
+		Retries: 3, Backoff: time.Hour, DownloadConc: 1,
+		SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour,
+	}
+	gate := sourcegate.NewService(client, rs)
+	f := &gateCallCountFetcher{err: errors.New("502 bad gateway")}
+	d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, rs, gate)
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if !gate.IsAvailable(ctx, "mangadex", time.Now()) {
+		t.Fatal("one transient server error bypassed the configured failure threshold")
+	}
+	state := client.SourceCircuitState.Query().Where(sourcecircuitstate.SourceKeyEQ("mangadex")).OnlyX(ctx)
+	if state.ConsecutiveFailures != 1 || state.CooldownUntil != nil {
+		t.Fatalf("breaker state = failures %d cooldown %v, want 1 and nil", state.ConsecutiveFailures, state.CooldownUntil)
+	}
+	if got := client.ProviderChapter.GetX(ctx, pc.ID).Attempts; got != 0 {
+		t.Fatalf("attempts = %d, want 0 for a source-wide transient failure", got)
 	}
 }
 

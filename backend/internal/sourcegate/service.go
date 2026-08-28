@@ -393,11 +393,23 @@ func recoveryMutation(
 // NotificationGap. The publication cursor preserves the order of stored
 // transitions across processes. Other DB failures are logged and swallowed.
 func (s *Service) RecordFailure(ctx context.Context, key string, cause error, now time.Time) {
-	queued, err := s.recordFailure(ctx, key, cause, now, true)
+	s.recordFailureBestEffort(ctx, key, cause, now, s.t.SourcesFailureThreshold(ctx))
+}
+
+// RecordRateLimit records an explicit upstream throttle and opens key's persisted
+// breaker immediately. Unlike RecordFailure, it deliberately bypasses the
+// configurable consecutive-failure threshold: a 429 is already definitive
+// evidence that further requests must stop.
+func (s *Service) RecordRateLimit(ctx context.Context, key string, cause error, now time.Time) {
+	s.recordFailureBestEffort(ctx, key, cause, now, 1)
+}
+
+func (s *Service) recordFailureBestEffort(ctx context.Context, key string, cause error, now time.Time, threshold int) {
+	queued, err := s.recordFailure(ctx, key, cause, now, threshold, true)
 	if isNotificationEnqueueError(err) {
 		slog.WarnContext(ctx, "sourcegate: trip notification storage failed; preserving containment with a notification gap",
 			"source_key", key, "err", err)
-		queued, err = s.recordFailure(ctx, key, cause, now, false)
+		queued, err = s.recordFailure(ctx, key, cause, now, threshold, false)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
@@ -414,9 +426,9 @@ func (s *Service) recordFailure(
 	key string,
 	cause error,
 	now time.Time,
+	threshold int,
 	enqueueNotification bool,
 ) (bool, error) {
-	threshold := s.t.SourcesFailureThreshold(ctx)
 	msg := truncateError(cause)
 	tx, row, err := s.lockCircuitState(ctx, key)
 	if err != nil {

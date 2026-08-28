@@ -609,11 +609,16 @@ func (d *Dispatcher) gateRecordSuccess(ctx context.Context, sourceKey string) {
 	d.gate.RecordSuccess(ctx, sourceKey)
 }
 
-// gateRecordFailure reports a failed fetch from sourceKey to the breaker
-// (bumps its consecutive-failure counter, tripping it into cooldown once the
-// runtime threshold is reached). A nil gate is a no-op.
+// gateRecordFailure reports a failed fetch from sourceKey to the breaker. An
+// explicit rate-limit signal opens the breaker immediately; ordinary source-wide
+// failures retain the configurable consecutive-failure threshold.
+// A nil gate is a no-op.
 func (d *Dispatcher) gateRecordFailure(ctx context.Context, sourceKey string, cause error, now time.Time) {
 	if d.gate == nil {
+		return
+	}
+	if isImmediateContainmentFailure(cause) {
+		d.gate.RecordRateLimit(ctx, sourceKey, cause, now)
 		return
 	}
 	d.gate.RecordFailure(ctx, sourceKey, cause, now)
