@@ -437,8 +437,8 @@ func (l *Launcher) superviseInstance(ctx context.Context, s *Supervisor, t super
 	if l.closed {
 		return
 	}
-	mi, ok := l.instances[t.key]
-	if !ok || mi != t.mi || mi.proc != t.proc {
+	mi := l.currentSuperviseInstanceLocked(t)
+	if mi == nil {
 		return // retired or replaced since the snapshot — next pass handles the current one
 	}
 	if ctx.Err() != nil {
@@ -447,14 +447,21 @@ func (l *Launcher) superviseInstance(ctx context.Context, s *Supervisor, t super
 	}
 
 	if healthy {
-		if mi.degraded {
-			slog.InfoContext(ctx, "enginehost: supervised instance recovered, restoring routing",
-				"profile", mi.key, "port", mi.port)
-		}
-		l.markHealthyLocked(mi)
+		l.superviseHealthyLocked(ctx, mi)
 		return
 	}
+	l.superviseDownLocked(ctx, s, mi, now)
+}
 
+func (l *Launcher) superviseHealthyLocked(ctx context.Context, mi *managedInstance) {
+	if mi.degraded {
+		slog.InfoContext(ctx, "enginehost: supervised instance recovered, restoring routing",
+			"profile", mi.key, "port", mi.port)
+	}
+	l.markHealthyLocked(mi)
+}
+
+func (l *Launcher) superviseDownLocked(ctx context.Context, s *Supervisor, mi *managedInstance, now time.Time) {
 	// Down: keep its sources on the default engine while we try to bring it back.
 	resetExhaustionEvidence(mi)
 	if !mi.degraded {
