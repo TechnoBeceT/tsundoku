@@ -8262,8 +8262,9 @@ paths:
           in: path
           required: true
           schema:
-            type: integer
-            format: int64
+            type: string
+            pattern: "^-?[0-9]+$"
+          description: Signed decimal int64 source identity, kept as a string for lossless JavaScript transport.
       requestBody:
         required: true
         content:

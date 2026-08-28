@@ -9109,7 +9109,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                sourceId: number;
+                /** @description Signed decimal int64 source identity, kept as a string for lossless JavaScript transport. */
+                sourceId: string;
             };
             cookie?: never;
         };
