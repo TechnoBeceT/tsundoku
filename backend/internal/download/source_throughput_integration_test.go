@@ -110,27 +110,12 @@ func TestStoredSourceThroughputPolicyDrivesDispatcherAndImagePacer(t *testing.T)
 		_, err := dispatcher.RunOnce(ctx)
 		done <- err
 	}()
-	for range 3 {
-		select {
-		case <-engine.pageStarted:
-		case <-time.After(10 * time.Second):
-			t.Fatal("timed out waiting for asymmetric dispatcher admission")
-		}
-	}
+	waitForPageStarts(t, engine.pageStarted, 3)
 	engine.mu.Lock()
-	if engine.pageMax[101] != 1 || engine.pageMax[202] != 2 {
-		t.Errorf("page admission maxima = %v, want source 101=1 and source 202=2", engine.pageMax)
-	}
+	assertAdmissionMaxima(t, engine.pageMax)
 	engine.mu.Unlock()
 	close(engine.releasePages)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("RunOnce: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for integrated download cycle")
-	}
+	waitForIntegratedCycle(t, done)
 
 	if got := countStates(ctx, t, client, limitedIDs)["downloaded"]; got != 2 {
 		t.Errorf("limited source downloaded = %d, want 2", got)
@@ -142,20 +127,60 @@ func TestStoredSourceThroughputPolicyDrivesDispatcherAndImagePacer(t *testing.T)
 	limitedStarts := append([]time.Time(nil), engine.imageStarts[101]...)
 	inheritedStarts := append([]time.Time(nil), engine.imageStarts[202]...)
 	engine.mu.Unlock()
-	if len(limitedStarts) != 3 {
-		t.Fatalf("source 101 image attempts = %d, want 3 including one retry", len(limitedStarts))
+	assertPacedImageStarts(t, limitedStarts)
+	assertInheritedImageStarts(t, inheritedStarts, limitedStarts[1])
+}
+
+func waitForPageStarts(t *testing.T, started <-chan struct{}, count int) {
+	t.Helper()
+	for range count {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for asymmetric dispatcher admission")
+		}
 	}
-	for i := 1; i < len(limitedStarts); i++ {
-		if gap := limitedStarts[i].Sub(limitedStarts[i-1]); gap < 700*time.Millisecond {
+}
+
+func assertAdmissionMaxima(t *testing.T, maxima map[int64]int) {
+	t.Helper()
+	if maxima[101] != 1 || maxima[202] != 2 {
+		t.Errorf("page admission maxima = %v, want source 101=1 and source 202=2", maxima)
+	}
+}
+
+func waitForIntegratedCycle(t *testing.T, done <-chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunOnce: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for integrated download cycle")
+	}
+}
+
+func assertPacedImageStarts(t *testing.T, starts []time.Time) {
+	t.Helper()
+	if len(starts) != 3 {
+		t.Fatalf("source 101 image attempts = %d, want 3 including one retry", len(starts))
+	}
+	for i := 1; i < len(starts); i++ {
+		if gap := starts[i].Sub(starts[i-1]); gap < 700*time.Millisecond {
 			t.Errorf("source 101 image start gap %d = %v, want approximately 750ms pacing", i, gap)
 		}
 	}
-	if len(inheritedStarts) != 2 {
-		t.Fatalf("source 202 image attempts = %d, want 2", len(inheritedStarts))
+}
+
+func assertInheritedImageStarts(t *testing.T, starts []time.Time, pacedRetry time.Time) {
+	t.Helper()
+	if len(starts) != 2 {
+		t.Fatalf("source 202 image attempts = %d, want 2", len(starts))
 	}
-	for i, started := range inheritedStarts {
-		if !started.Before(limitedStarts[1]) {
-			t.Errorf("inherited source image start %d = %v, want before source 101's first paced retry at %v", i, started, limitedStarts[1])
+	for i, started := range starts {
+		if !started.Before(pacedRetry) {
+			t.Errorf("inherited source image start %d = %v, want before source 101's first paced retry at %v", i, started, pacedRetry)
 		}
 	}
 }

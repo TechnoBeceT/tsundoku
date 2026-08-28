@@ -187,31 +187,6 @@ func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.C
 	return groups, sourceIDs
 }
 
-// capUpgradeGroups truncates each REAL upgrade-target source's queue to the
-// remainder of its shared per-cycle fetch budget: budget minus what the download
-// drain already fetched from that physical source this cycle (consumed, keyed by
-// canonicalSourceKey; a nil map reads as all-zero). Chapters dropped from a group
-// stay upgrade_available and are handled next cycle. The unresolvedTargetKey group
-// (no live target — it fetches nothing, only clears a stale flag) is left uncapped
-// so a stale flag always resolves regardless of any source's budget. Groups are
-// ordered lowest-chapter-number-first (see UpgradeAll's query), so truncation keeps
-// the earliest chapters and defers the rest deterministically.
-func capUpgradeGroups(groups map[string][]uuid.UUID, budget int, consumed map[string]int) {
-	for key, ids := range groups {
-		if key == unresolvedTargetKey {
-			continue
-		}
-		remaining := budget - consumed[key]
-		if remaining <= 0 {
-			delete(groups, key)
-			continue
-		}
-		if len(ids) > remaining {
-			groups[key] = ids[:remaining]
-		}
-	}
-}
-
 func capUpgradeGroupsWithLimits(groups map[string][]uuid.UUID, limits map[string]int, consumed map[string]int) {
 	for key, ids := range groups {
 		if key == unresolvedTargetKey {

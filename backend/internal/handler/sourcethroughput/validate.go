@@ -50,27 +50,34 @@ func decodeUpdateRequest(body io.Reader) (updateRequest, error) {
 
 	var request updateRequest
 	for name, raw := range fields {
-		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-			return updateRequest{}, invalidField(name, "must not be null")
-		}
-		switch name {
-		case "downloadConcurrency":
-			var field intPatchRequest
-			if err := decodeStrict(raw, &field); err != nil {
-				return updateRequest{}, invalidField(name, "invalid object")
-			}
-			request.DownloadConcurrency = &field
-		case "imageRequestDelay":
-			var field durationPatchRequest
-			if err := decodeStrict(raw, &field); err != nil {
-				return updateRequest{}, invalidField(name, "invalid object")
-			}
-			request.ImageRequestDelay = &field
-		default:
-			return updateRequest{}, invalidField(name, "unknown field")
+		if err := request.decodeField(name, raw); err != nil {
+			return updateRequest{}, err
 		}
 	}
 	return request, nil
+}
+
+func (r *updateRequest) decodeField(name string, raw json.RawMessage) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return invalidField(name, "must not be null")
+	}
+	switch name {
+	case "downloadConcurrency":
+		return decodeRequestField(raw, name, &r.DownloadConcurrency)
+	case "imageRequestDelay":
+		return decodeRequestField(raw, name, &r.ImageRequestDelay)
+	default:
+		return invalidField(name, "unknown field")
+	}
+}
+
+func decodeRequestField[T any](raw json.RawMessage, name string, destination **T) error {
+	var field T
+	if err := decodeStrict(raw, &field); err != nil {
+		return invalidField(name, "invalid object")
+	}
+	*destination = &field
+	return nil
 }
 
 func decodeStrict(raw []byte, target any) error {

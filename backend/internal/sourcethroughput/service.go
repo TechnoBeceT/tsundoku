@@ -151,52 +151,60 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Over
 		return s.loadOverride(ctx, sourceID)
 	}
 
-	// A set-bearing patch is one atomic upsert. Its conflict clause changes only
-	// fields named by the patch, so disjoint callers merge and concurrent first
-	// writes converge on the unique source_id row without a constraint race.
-	if patch.DownloadConcurrency.Operation == PatchSet || patch.ImageRequestDelay.Operation == PatchSet {
-		now := time.Now()
-		create := s.client.SourceThroughputPolicy.Create().
-			SetSourceID(sourceID).
-			SetUpdatedAt(now)
-		if patch.DownloadConcurrency.Operation == PatchSet {
-			create.SetDownloadConcurrency(patch.DownloadConcurrency.Value)
-		}
-		if patch.ImageRequestDelay.Operation == PatchSet {
-			create.SetImageRequestDelayMs(patch.ImageRequestDelay.Value.Milliseconds())
-		}
-
-		err := create.
-			OnConflictColumns(entpolicy.FieldSourceID).
-			Update(func(update *ent.SourceThroughputPolicyUpsert) {
-				applyUpsertPatch(update, patch)
-				update.SetUpdatedAt(now)
-			}).
-			Exec(ctx)
-		if err != nil {
-			return Override{}, fmt.Errorf("sourcethroughput.Update: upsert source %d: %w", sourceID, err)
-		}
-	} else {
-		update := s.client.SourceThroughputPolicy.Update().Where(entpolicy.SourceID(sourceID))
-		applyClearPatch(update, patch)
-		if _, err := update.Save(ctx); err != nil {
-			return Override{}, fmt.Errorf("sourcethroughput.Update: clear source %d: %w", sourceID, err)
-		}
+	if err := s.persistPatch(ctx, sourceID, patch); err != nil {
+		return Override{}, err
 	}
 
 	// Delete only if the row is still empty at statement execution time. A
 	// concurrent setter makes this predicate false and keeps its override.
-	if _, err := s.client.SourceThroughputPolicy.Delete().
-		Where(
-			entpolicy.SourceID(sourceID),
-			entpolicy.DownloadConcurrencyIsNil(),
-			entpolicy.ImageRequestDelayMsIsNil(),
-		).
-		Exec(ctx); err != nil {
+	if err := s.deleteEmptyOverride(ctx, sourceID); err != nil {
 		return Override{}, fmt.Errorf("sourcethroughput.Update: delete empty source %d: %w", sourceID, err)
 	}
 
 	return s.loadOverride(ctx, sourceID)
+}
+
+func (s *Service) persistPatch(ctx context.Context, sourceID int64, patch Patch) error {
+	// A set-bearing patch is one atomic upsert. Its conflict clause changes only
+	// fields named by the patch, so disjoint callers merge and concurrent first
+	// writes converge on the unique source_id row without a constraint race.
+	if patch.DownloadConcurrency.Operation == PatchSet || patch.ImageRequestDelay.Operation == PatchSet {
+		return s.upsertPatch(ctx, sourceID, patch)
+	}
+	update := s.client.SourceThroughputPolicy.Update().Where(entpolicy.SourceID(sourceID))
+	applyClearPatch(update, patch)
+	if _, err := update.Save(ctx); err != nil {
+		return fmt.Errorf("sourcethroughput.Update: clear source %d: %w", sourceID, err)
+	}
+	return nil
+}
+
+func (s *Service) upsertPatch(ctx context.Context, sourceID int64, patch Patch) error {
+	now := time.Now()
+	create := s.client.SourceThroughputPolicy.Create().SetSourceID(sourceID).SetUpdatedAt(now)
+	if patch.DownloadConcurrency.Operation == PatchSet {
+		create.SetDownloadConcurrency(patch.DownloadConcurrency.Value)
+	}
+	if patch.ImageRequestDelay.Operation == PatchSet {
+		create.SetImageRequestDelayMs(patch.ImageRequestDelay.Value.Milliseconds())
+	}
+	if err := create.OnConflictColumns(entpolicy.FieldSourceID).
+		Update(func(update *ent.SourceThroughputPolicyUpsert) {
+			applyUpsertPatch(update, patch)
+			update.SetUpdatedAt(now)
+		}).Exec(ctx); err != nil {
+		return fmt.Errorf("sourcethroughput.Update: upsert source %d: %w", sourceID, err)
+	}
+	return nil
+}
+
+func (s *Service) deleteEmptyOverride(ctx context.Context, sourceID int64) error {
+	_, err := s.client.SourceThroughputPolicy.Delete().Where(
+		entpolicy.SourceID(sourceID),
+		entpolicy.DownloadConcurrencyIsNil(),
+		entpolicy.ImageRequestDelayMsIsNil(),
+	).Exec(ctx)
+	return err
 }
 
 func overrideFromRow(row *ent.SourceThroughputPolicy) Override {

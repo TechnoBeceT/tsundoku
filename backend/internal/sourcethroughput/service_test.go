@@ -257,16 +257,25 @@ func runConcurrentUpdates(t *testing.T, updates ...func() error) {
 func TestClearOneKeepsOtherAndClearLastDeletesRow(t *testing.T) {
 	svc, client := newService(t)
 	ctx := context.Background()
+	seedSourceThroughputOverride(t, ctx, svc, 101)
+	clearConcurrencyAndAssertDelayRemains(t, ctx, svc, client, 101)
+	clearDelayAndAssertRowDeleted(t, ctx, svc, client, 101)
+}
 
-	_, err := svc.Update(ctx, 101, sourcethroughput.Patch{
+func seedSourceThroughputOverride(t *testing.T, ctx context.Context, svc *sourcethroughput.Service, sourceID int64) {
+	t.Helper()
+	_, err := svc.Update(ctx, sourceID, sourcethroughput.Patch{
 		DownloadConcurrency: sourcethroughput.Set(2),
 		ImageRequestDelay:   sourcethroughput.Set(750 * time.Millisecond),
 	})
 	if err != nil {
 		t.Fatalf("initial Update: %v", err)
 	}
+}
 
-	got, err := svc.Update(ctx, 101, sourcethroughput.Patch{
+func clearConcurrencyAndAssertDelayRemains(t *testing.T, ctx context.Context, svc *sourcethroughput.Service, client *ent.Client, sourceID int64) {
+	t.Helper()
+	got, err := svc.Update(ctx, sourceID, sourcethroughput.Patch{
 		DownloadConcurrency: sourcethroughput.Clear[int](),
 	})
 	if err != nil {
@@ -281,8 +290,11 @@ func TestClearOneKeepsOtherAndClearLastDeletesRow(t *testing.T) {
 	if n := client.SourceThroughputPolicy.Query().CountX(ctx); n != 1 {
 		t.Fatalf("row count after clearing one override = %d, want 1", n)
 	}
+}
 
-	got, err = svc.Update(ctx, 101, sourcethroughput.Patch{
+func clearDelayAndAssertRowDeleted(t *testing.T, ctx context.Context, svc *sourcethroughput.Service, client *ent.Client, sourceID int64) {
+	t.Helper()
+	got, err := svc.Update(ctx, sourceID, sourcethroughput.Patch{
 		ImageRequestDelay: sourcethroughput.Clear[time.Duration](),
 	})
 	if err != nil {

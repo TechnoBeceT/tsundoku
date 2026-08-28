@@ -248,29 +248,12 @@ func TestUpgradeAll_SourceOverrideControlsSchedulingAndAdmission(t *testing.T) {
 		WithSourceThroughputPolicies(staticThroughputOverrides{101: {DownloadConcurrency: &one}})
 
 	for i, target := range []string{"101", "202"} {
-		s, ids := seedDownloadableSeries(ctx, t, client, "override-upg-"+target, "low-"+target, chapters)
-		if _, err := d.RunOnce(ctx); err != nil {
-			t.Fatalf("initial RunOnce source %s: %v", target, err)
-		}
-		sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(target).SetProviderName("target-" + target).SetImportance(10).SaveX(ctx)
-		for n := range chapters {
-			number := float64(n + 1)
-			client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey(s.Slug + "-" + itoa(n+1)).SetNillableNumber(&number).SetURL("https://target/" + target).SetProviderIndex(n).SaveX(ctx)
-		}
-		if flagged, err := d.DetectUpgrades(ctx, d.MaxRetries(ctx)); err != nil || flagged != len(ids) {
-			t.Fatalf("DetectUpgrades source %d = %d, %v; want %d", i, flagged, err, len(ids))
-		}
+		seedSourceOverrideUpgrade(t, ctx, client, d, target, i, chapters)
 	}
 
 	done := make(chan error, 1)
 	go func() { _, err := d.UpgradeAll(ctx, nil, nil); done <- err }()
-	for range 4 { // source 101 override=1 plus source 202 inherited=3
-		select {
-		case <-f.started:
-		case <-time.After(10 * time.Second):
-			t.Fatal("timed out waiting for upgrade admission")
-		}
-	}
+	waitForUpgradeStarts(t, f.started, 4) // source 101 override=1 plus source 202 inherited=3
 	f.mu.Lock()
 	if f.maxima["101"] != 1 || f.maxima["202"] != 3 {
 		t.Errorf("upgrade maxima = %v, want 101=1 and 202=3", f.maxima)
@@ -279,6 +262,33 @@ func TestUpgradeAll_SourceOverrideControlsSchedulingAndAdmission(t *testing.T) {
 	close(f.release)
 	if err := <-done; err != nil {
 		t.Fatalf("UpgradeAll: %v", err)
+	}
+}
+
+func seedSourceOverrideUpgrade(t *testing.T, ctx context.Context, client *ent.Client, d *download.Dispatcher, target string, sourceIndex, chapters int) {
+	t.Helper()
+	s, ids := seedDownloadableSeries(ctx, t, client, "override-upg-"+target, "low-"+target, chapters)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("initial RunOnce source %s: %v", target, err)
+	}
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(target).SetProviderName("target-" + target).SetImportance(10).SaveX(ctx)
+	for n := range chapters {
+		number := float64(n + 1)
+		client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey(s.Slug + "-" + itoa(n+1)).SetNillableNumber(&number).SetURL("https://target/" + target).SetProviderIndex(n).SaveX(ctx)
+	}
+	if flagged, err := d.DetectUpgrades(ctx, d.MaxRetries(ctx)); err != nil || flagged != len(ids) {
+		t.Fatalf("DetectUpgrades source %d = %d, %v; want %d", sourceIndex, flagged, err, len(ids))
+	}
+}
+
+func waitForUpgradeStarts(t *testing.T, started <-chan string, count int) {
+	t.Helper()
+	for range count {
+		select {
+		case <-started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for upgrade admission")
+		}
 	}
 }
 

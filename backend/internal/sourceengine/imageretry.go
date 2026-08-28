@@ -74,24 +74,8 @@ func (f *Fetcher) fetchImageRetrying(ctx context.Context, sourceID int64, link f
 		err         error
 	)
 	for attempt := 0; ; attempt++ {
-		if f.delayResolver != nil {
-			delay, resolveErr := f.delayResolver.ImageRequestDelay(ctx, sourceID)
-			if resolveErr != nil {
-				if ctxErr := ctx.Err(); ctxErr != nil {
-					return nil, "", ctxErr
-				}
-				if errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded) {
-					return nil, "", resolveErr
-				}
-				slog.WarnContext(ctx, "sourceengine: image delay policy read failed; using global fallback",
-					"source_id", sourceID,
-					"delay", delay,
-					"err", resolveErr,
-				)
-			}
-			if waitErr := f.imagePacer.Wait(ctx, sourceID, delay); waitErr != nil {
-				return nil, "", waitErr
-			}
+		if waitErr := f.waitForImagePacing(ctx, sourceID); waitErr != nil {
+			return nil, "", waitErr
 		}
 		data, contentType, err = f.client.Image(ctx, sourceID, link.URL, link.ImageURL)
 		if err == nil {
@@ -100,11 +84,38 @@ func (f *Fetcher) fetchImageRetrying(ctx context.Context, sourceID int64, link f
 		if attempt >= imageRetries || !isTransientImageError(err) {
 			return nil, "", err
 		}
-		// Flat backoff before the next try, but never outlast a cancelled context.
-		select {
-		case <-ctx.Done():
-			return nil, "", ctx.Err()
-		case <-time.After(imageRetryBackoff):
+		if waitErr := waitImageRetry(ctx); waitErr != nil {
+			return nil, "", waitErr
 		}
+	}
+}
+
+func (f *Fetcher) waitForImagePacing(ctx context.Context, sourceID int64) error {
+	if f.delayResolver == nil {
+		return nil
+	}
+	delay, err := f.delayResolver.ImageRequestDelay(ctx, sourceID)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		slog.WarnContext(ctx, "sourceengine: image delay policy read failed; using global fallback",
+			"source_id", sourceID,
+			"delay", delay,
+			"err", err,
+		)
+	}
+	return f.imagePacer.Wait(ctx, sourceID, delay)
+}
+
+func waitImageRetry(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(imageRetryBackoff):
+		return nil
 	}
 }
