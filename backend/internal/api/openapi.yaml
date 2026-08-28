@@ -2324,6 +2324,121 @@ components:
                 type: string
                 example: 30m
 
+    SourceThroughputDefaults:
+      type: object
+      required: [downloadConcurrency, imageRequestDelay]
+      properties:
+        downloadConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+        imageRequestDelay:
+          type: string
+          description: Non-negative Go duration resolved from the global runtime setting.
+          example: 500ms
+
+    SourceThroughputIntegerValue:
+      type: object
+      required: [override, effective]
+      properties:
+        override:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 32
+          description: Null means this source inherits the global value.
+        effective:
+          type: integer
+          minimum: 1
+          maximum: 32
+
+    SourceThroughputDurationValue:
+      type: object
+      required: [override, effective]
+      properties:
+        override:
+          type: [string, "null"]
+          description: Null means inherit; `0s` is an explicit pacing override.
+          example: 750ms
+        effective:
+          type: string
+          example: 750ms
+
+    SourceThroughputPolicy:
+      type: object
+      required: [sourceId, downloadConcurrency, imageRequestDelay]
+      properties:
+        sourceId:
+          type: integer
+          format: int64
+        downloadConcurrency:
+          $ref: "#/components/schemas/SourceThroughputIntegerValue"
+        imageRequestDelay:
+          $ref: "#/components/schemas/SourceThroughputDurationValue"
+
+    SourceThroughputList:
+      type: object
+      required: [defaults, sources]
+      properties:
+        defaults:
+          $ref: "#/components/schemas/SourceThroughputDefaults"
+        sources:
+          type: array
+          description: Stored overrides ordered by numeric source id.
+          items:
+            $ref: "#/components/schemas/SourceThroughputPolicy"
+
+    SourceThroughputConcurrencyPatch:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode:
+              type: string
+              const: inherit
+        - type: object
+          additionalProperties: false
+          required: [mode, value]
+          properties:
+            mode:
+              type: string
+              const: override
+            value:
+              type: integer
+              minimum: 1
+              maximum: 32
+
+    SourceThroughputDelayPatch:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode:
+              type: string
+              const: inherit
+        - type: object
+          additionalProperties: false
+          required: [mode, value]
+          properties:
+            mode:
+              type: string
+              const: override
+            value:
+              type: string
+              description: Non-negative Go duration in whole milliseconds; `0s` disables pacing.
+              example: 750ms
+
+    SourceThroughputUpdateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        downloadConcurrency:
+          $ref: "#/components/schemas/SourceThroughputConcurrencyPatch"
+        imageRequestDelay:
+          $ref: "#/components/schemas/SourceThroughputDelayPatch"
+
     SourceMetric:
       type: object
       description: |
@@ -8096,6 +8211,72 @@ paths:
                   $ref: "#/components/schemas/Setting"
         "400":
           description: An unknown key, an out-of-bounds value, or an empty batch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/throughput:
+    get:
+      operationId: listSourceThroughput
+      summary: List source-throughput defaults and overrides
+      description: Returns current global defaults and every stored per-source override with its effective values.
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Global defaults and source policies ordered by source id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceThroughputList"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/throughput:
+    patch:
+      operationId: updateSourceThroughput
+      summary: Partially update one source's throughput overrides
+      description: |
+        Omitted fields remain unchanged. `mode: inherit` clears that field's
+        override and forbids `value`; `mode: override` requires `value`.
+        An explicit image delay of `0s` disables pacing and does not inherit.
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceThroughputUpdateRequest"
+      responses:
+        "200":
+          description: Refreshed stored and effective policy for this source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceThroughputPolicy"
+        "400":
+          description: Malformed source id or invalid tri-state field encoding/value.
           content:
             application/json:
               schema:

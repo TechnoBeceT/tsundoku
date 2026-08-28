@@ -24,6 +24,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -89,6 +90,7 @@ func New(
 	ownerH *owner.Handler,
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
+	sourceThroughputSvc *sourcethroughput.Service,
 	metricsSvc *metrics.Service,
 	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
@@ -129,6 +131,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
 	return e
 }

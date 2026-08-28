@@ -65,6 +65,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/account"
@@ -144,6 +145,7 @@ func main() {
 	// job tickers, refresh concurrency, series stale-grace) so an owner's change
 	// via the settings API applies on the next cycle without a restart.
 	settingsSvc := settings.NewService(entClient, defaultsFromConfig(cfg))
+	sourceThroughputSvc := sourcethroughput.NewService(entClient, settingsSvc)
 
 	// Source-performance metrics store (best-effort recorder + reader). The
 	// imports search fan-out records per-source timings into it; the warm-up job
@@ -470,7 +472,7 @@ func main() {
 	// async + single-flight per series. It does NOT alter the whole-library cadence.
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange, runner.SetProviderHealer)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange, runner.SetProviderHealer)
 
 	addr := ":" + cfg.Server.Port
 

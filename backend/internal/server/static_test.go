@@ -137,7 +137,7 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
 	// The trailing nil is the provider-heal sink (registerProviderHealer): these
 	// route-level tests never run a refresh sweep, so no healer is registered.
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, metricsSvc, eventsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil, nil, nil, nil), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, nil, metricsSvc, eventsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil, nil, nil, nil), authSvc
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path

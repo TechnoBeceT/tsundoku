@@ -30,6 +30,7 @@ import (
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
+	sourcethroughputh "github.com/technobecet/tsundoku/internal/handler/sourcethroughput"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/ignorescanlator"
@@ -52,6 +53,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sourcepurge"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -112,6 +114,8 @@ import (
 //   - /api/library/duplicate-files                  — library-wide list of series with removable duplicate CBZs; read-only, no execute counterpart (RequireOwner).
 //   - /api/settings (GET)                          — list runtime tunables (RequireOwner).
 //   - /api/settings (PATCH)                         — batch-update runtime tunables (RequireOwner).
+//   - /api/sources/throughput (GET)                 — global + per-source throughput policy (RequireOwner).
+//   - /api/sources/:sourceId/throughput (PATCH)     — partially set/clear source overrides (RequireOwner).
 //   - /api/sources/metrics (GET)                   — per-source performance metrics + isSlow (RequireOwner).
 //   - /api/sources/:sourceId/series (GET)          — read-only list of series carrying a source, each flagged goes-dark / take-over provider (QCAT-513) (RequireOwner).
 //   - /api/sources/warmup (POST)                   — trigger a full anti-bot warm-up pass (RequireOwner).
@@ -189,6 +193,7 @@ func registerRoutes(
 	ownerH *owner.Handler,
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
+	sourceThroughputSvc *sourcethroughput.Service,
 	metricsSvc *metrics.Service,
 	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
@@ -354,6 +359,10 @@ func registerRoutes(
 	settingsH := settingsh.NewHandler(settingsSvc)
 	authed.GET("/settings", settingsH.List)
 	authed.PATCH("/settings", settingsH.Update)
+
+	sourceThroughputH := sourcethroughputh.NewHandler(sourceThroughputSvc)
+	authed.GET("/sources/throughput", sourceThroughputH.List)
+	authed.PATCH("/sources/:sourceId/throughput", sourceThroughputH.Update)
 
 	// Source metrics + anti-bot warm-up API. The handler reads the rolling
 	// per-source performance snapshot (metricsSvc) and triggers a manual warm

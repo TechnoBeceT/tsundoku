@@ -35,6 +35,11 @@ func validatePatch(patch Patch) error {
 	return nil
 }
 
+// Validate checks a patch without mutating storage. HTTP and other adapters use
+// it to reject invalid inputs before invoking Update while sharing one range
+// and duration-precision contract with the service boundary.
+func Validate(patch Patch) error { return validatePatch(patch) }
+
 func validateOperation(field string, operation PatchOperation) error {
 	if operation > PatchClear {
 		return fmt.Errorf("%w: unsupported %s operation %d", ErrInvalidPolicy, field, operation)

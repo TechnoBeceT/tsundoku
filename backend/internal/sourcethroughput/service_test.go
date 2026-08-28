@@ -404,3 +404,24 @@ func TestSnapshotLoadsAllOverridesInOneQuery(t *testing.T) {
 		t.Fatalf("Snapshot[202] = %+v, want explicit zero delay", got[202])
 	}
 }
+
+// TestDefaultsAndApplyDefaults prove the API can resolve a whole policy
+// snapshot after reading hot-reloadable defaults once, without an N+1 read.
+func TestDefaultsAndApplyDefaults(t *testing.T) {
+	ctx := context.Background()
+	svc := sourcethroughput.NewService(nil, defaults{concurrency: 5, delay: 500 * time.Millisecond})
+
+	global := svc.Defaults(ctx)
+	if global.DownloadConcurrency != 5 || global.ImageRequestDelay != 500*time.Millisecond {
+		t.Fatalf("Defaults = %#v", global)
+	}
+	one := 1
+	zero := time.Duration(0)
+	got := sourcethroughput.ApplyDefaults(global, sourcethroughput.Override{
+		DownloadConcurrency: &one,
+		ImageRequestDelay:   &zero,
+	})
+	if got.DownloadConcurrency != 1 || got.ImageRequestDelay != 0 {
+		t.Fatalf("ApplyDefaults = %#v", got)
+	}
+}

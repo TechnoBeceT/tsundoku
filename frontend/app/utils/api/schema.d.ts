@@ -1776,6 +1776,48 @@ export interface paths {
         patch: operations["updateSettings"];
         trace?: never;
     };
+    "/api/sources/throughput": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List source-throughput defaults and overrides
+         * @description Returns current global defaults and every stored per-source override with its effective values.
+         */
+        get: operations["listSourceThroughput"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/throughput": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Partially update one source's throughput overrides
+         * @description Omitted fields remain unchanged. `mode: inherit` clears that field's
+         *     override and forbids `value`; `mode: override` requires `value`.
+         *     An explicit image delay of `0s` disables pacing and does not inherit.
+         */
+        patch: operations["updateSourceThroughput"];
+        trace?: never;
+    };
     "/api/sources/metrics": {
         parameters: {
             query?: never;
@@ -4080,6 +4122,63 @@ export interface components {
                 /** @example 30m */
                 value: string;
             }[];
+        };
+        SourceThroughputDefaults: {
+            downloadConcurrency: number;
+            /**
+             * @description Non-negative Go duration resolved from the global runtime setting.
+             * @example 500ms
+             */
+            imageRequestDelay: string;
+        };
+        SourceThroughputIntegerValue: {
+            /** @description Null means this source inherits the global value. */
+            override: number | null;
+            effective: number;
+        };
+        SourceThroughputDurationValue: {
+            /**
+             * @description Null means inherit; `0s` is an explicit pacing override.
+             * @example 750ms
+             */
+            override: string | null;
+            /** @example 750ms */
+            effective: string;
+        };
+        SourceThroughputPolicy: {
+            /** Format: int64 */
+            sourceId: number;
+            downloadConcurrency: components["schemas"]["SourceThroughputIntegerValue"];
+            imageRequestDelay: components["schemas"]["SourceThroughputDurationValue"];
+        };
+        SourceThroughputList: {
+            defaults: components["schemas"]["SourceThroughputDefaults"];
+            /** @description Stored overrides ordered by numeric source id. */
+            sources: components["schemas"]["SourceThroughputPolicy"][];
+        };
+        SourceThroughputConcurrencyPatch: {
+            /** @constant */
+            mode: "inherit";
+        } | {
+            /** @constant */
+            mode: "override";
+            value: number;
+        };
+        SourceThroughputDelayPatch: {
+            /** @constant */
+            mode: "inherit";
+        } | {
+            /** @constant */
+            mode: "override";
+            /**
+             * @description Non-negative Go duration in whole milliseconds; `0s` disables pacing.
+             * @example 750ms
+             */
+            value: string;
+        };
+        SourceThroughputUpdateRequest: {
+            downloadConcurrency?: components["schemas"]["SourceThroughputConcurrencyPatch"];
+            imageRequestDelay?: components["schemas"]["SourceThroughputDelayPatch"];
         };
         /**
          * @description One source's rolling search-performance snapshot. "isSlow" is derived at
@@ -8954,6 +9053,79 @@ export interface operations {
                 };
             };
             /** @description An unknown key, an out-of-bounds value, or an empty batch. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listSourceThroughput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Global defaults and source policies ordered by source id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceThroughputList"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSourceThroughput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sourceId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceThroughputUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Refreshed stored and effective policy for this source. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceThroughputPolicy"];
+                };
+            };
+            /** @description Malformed source id or invalid tri-state field encoding/value. */
             400: {
                 headers: {
                     [name: string]: unknown;

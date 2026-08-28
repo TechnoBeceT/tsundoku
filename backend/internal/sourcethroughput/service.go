@@ -102,7 +102,30 @@ func (s *Service) Resolve(ctx context.Context, sourceID int64) (Effective, error
 	if err == nil {
 		stored = overrideFromRow(row)
 	}
-	return s.resolve(ctx, stored), nil
+	return ApplyDefaults(s.Defaults(ctx), stored), nil
+}
+
+// Defaults returns the current fully inherited throughput policy. Runtime
+// settings are read at use time so callers observe hot-reloaded global values.
+func (s *Service) Defaults(ctx context.Context) Effective {
+	return Effective{
+		DownloadConcurrency: s.defaults.DownloadConcurrency(ctx),
+		ImageRequestDelay:   s.defaults.ImageRequestDelay(ctx),
+	}
+}
+
+// ApplyDefaults overlays independently optional source values on one captured
+// global policy. It lets batched callers resolve a snapshot without re-reading
+// the runtime settings for every source.
+func ApplyDefaults(defaults Effective, stored Override) Effective {
+	effective := defaults
+	if stored.DownloadConcurrency != nil {
+		effective.DownloadConcurrency = *stored.DownloadConcurrency
+	}
+	if stored.ImageRequestDelay != nil {
+		effective.ImageRequestDelay = *stored.ImageRequestDelay
+	}
+	return effective
 }
 
 // ImageRequestDelay returns the effective delay through the same resolution
@@ -172,20 +195,6 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Over
 	}
 
 	return s.loadOverride(ctx, sourceID)
-}
-
-func (s *Service) resolve(ctx context.Context, stored Override) Effective {
-	effective := Effective{
-		DownloadConcurrency: s.defaults.DownloadConcurrency(ctx),
-		ImageRequestDelay:   s.defaults.ImageRequestDelay(ctx),
-	}
-	if stored.DownloadConcurrency != nil {
-		effective.DownloadConcurrency = *stored.DownloadConcurrency
-	}
-	if stored.ImageRequestDelay != nil {
-		effective.ImageRequestDelay = *stored.ImageRequestDelay
-	}
-	return effective
 }
 
 func overrideFromRow(row *ent.SourceThroughputPolicy) Override {
