@@ -38,6 +38,7 @@ type Static struct {
 	SourcesFailureThresh int
 	SourcesCooldownIv    time.Duration
 	SourcesMinDelay      time.Duration
+	ImageRequestDelayIv  time.Duration
 	// SuppressParts backs the SuppressSplitParts accessor.
 	SuppressParts bool
 	// TrackRetryIv backs the TrackRetryInterval accessor.
@@ -129,6 +130,9 @@ func (s Static) SourcesCooldown(context.Context) time.Duration { return s.Source
 
 // SourcesMinRequestDelay returns the fixed per-source politeness delay; 0 disables it.
 func (s Static) SourcesMinRequestDelay(context.Context) time.Duration { return s.SourcesMinDelay }
+
+// ImageRequestDelay returns the fixed per-image request delay; 0 disables it.
+func (s Static) ImageRequestDelay(context.Context) time.Duration { return s.ImageRequestDelayIv }
 
 // SuppressSplitParts returns the fixed fractional-part-suppression flag.
 func (s Static) SuppressSplitParts(context.Context) bool { return s.SuppressParts }

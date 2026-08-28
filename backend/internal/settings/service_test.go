@@ -16,39 +16,40 @@ import (
 // testDefaults mirrors the config defaults so resolution tests are meaningful.
 func testDefaults() settings.Defaults {
 	return settings.Defaults{
-		DownloadInterval:        15 * time.Minute,
-		DownloadConcurrency:     5,
-		MaxConcurrentDownloads:  6,
-		RefreshInterval:         2 * time.Hour,
-		RefreshConcurrency:      4,
-		MaxRetries:              3,
-		RetryBackoff:            time.Minute,
-		LockedRetryInterval:     72 * time.Hour,
-		StaleGraceDays:          14,
-		StalledThresholdDays:    30,
-		ExtensionCheckInterval:  24 * time.Hour,
-		WarmupInterval:          15 * time.Minute,
-		WarmupSlowThresholdMs:   5000,
-		EngineSuperviseInterval: 30 * time.Second,
-		SearchCacheTTL:          time.Hour,
-		ChapterCacheTTL:         time.Hour,
-		SourcesFailureThreshold: 5,
-		SourcesCooldown:         30 * time.Minute,
-		SourcesMinRequestDelay:  500 * time.Millisecond,
-		SuppressSplitParts:      true,
-		TrackRetryInterval:      5 * time.Minute,
-		MetadataAutoIdentify:    true,
-		FlareSolverrEnabled:     false,
-		FlareSolverrURL:         "",
-		FlareSolverrTimeout:     60,
-		FlareSolverrSessionName: "",
-		FlareSolverrSessionTTL:  15,
-		NotificationsEnabled:    true,
-		EngineSocksEnabled:      false,
-		EngineSocksHost:         "",
-		EngineSocksPort:         1080,
-		EngineSocksVersion:      5,
-		RetainedVersions:        3,
+		DownloadInterval:         15 * time.Minute,
+		DownloadConcurrency:      5,
+		MaxConcurrentDownloads:   6,
+		RefreshInterval:          2 * time.Hour,
+		RefreshConcurrency:       4,
+		MaxRetries:               3,
+		RetryBackoff:             time.Minute,
+		LockedRetryInterval:      72 * time.Hour,
+		StaleGraceDays:           14,
+		StalledThresholdDays:     30,
+		ExtensionCheckInterval:   24 * time.Hour,
+		WarmupInterval:           15 * time.Minute,
+		WarmupSlowThresholdMs:    5000,
+		EngineSuperviseInterval:  30 * time.Second,
+		SearchCacheTTL:           time.Hour,
+		ChapterCacheTTL:          time.Hour,
+		SourcesFailureThreshold:  5,
+		SourcesCooldown:          30 * time.Minute,
+		SourcesMinRequestDelay:   500 * time.Millisecond,
+		SourcesImageRequestDelay: 500 * time.Millisecond,
+		SuppressSplitParts:       true,
+		TrackRetryInterval:       5 * time.Minute,
+		MetadataAutoIdentify:     true,
+		FlareSolverrEnabled:      false,
+		FlareSolverrURL:          "",
+		FlareSolverrTimeout:      60,
+		FlareSolverrSessionName:  "",
+		FlareSolverrSessionTTL:   15,
+		NotificationsEnabled:     true,
+		EngineSocksEnabled:       false,
+		EngineSocksHost:          "",
+		EngineSocksPort:          1080,
+		EngineSocksVersion:       5,
+		RetainedVersions:         3,
 	}
 }
 
@@ -418,8 +419,8 @@ func TestListReflectsDefaultsAndOverrides(t *testing.T) {
 	ctx := context.Background()
 
 	list := svc.List(ctx)
-	if len(list) != 39 {
-		t.Fatalf("List len = %d, want 39", len(list))
+	if len(list) != 40 {
+		t.Fatalf("List len = %d, want 40", len(list))
 	}
 	// Stable order: first row is download_interval.
 	if list[0].Key != settings.KeyDownloadInterval {
@@ -478,6 +479,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		Retries: 5, Backoff: 3 * time.Second, LockedRetry: 96 * time.Hour, StaleGrace: 7,
 		ExtCheck: 12 * time.Hour, WarmupIv: 15 * time.Minute, WarmupSlow: 4000,
 		SourcesFailureThresh: 8, SourcesCooldownIv: 45 * time.Minute, SourcesMinDelay: 750 * time.Millisecond,
+		ImageRequestDelayIv:      1250 * time.Millisecond,
 		MetadataAutoIdentifyFlag: true,
 	}
 	checks := []struct {
@@ -502,6 +504,7 @@ func TestStaticProviderReturnsFixedValues(t *testing.T) {
 		{"SourcesFailureThreshold", s.SourcesFailureThreshold(ctx), 8},
 		{"SourcesCooldown", s.SourcesCooldown(ctx), 45 * time.Minute},
 		{"SourcesMinRequestDelay", s.SourcesMinRequestDelay(ctx), 750 * time.Millisecond},
+		{"ImageRequestDelay", s.ImageRequestDelay(ctx), 1250 * time.Millisecond},
 		{"MetadataAutoIdentify", s.MetadataAutoIdentify(ctx), true},
 	}
 	for _, c := range checks {
@@ -715,6 +718,34 @@ func TestSourcesMinRequestDelay_SetValidation(t *testing.T) {
 				t.Errorf("SourcesMinRequestDelay after Set(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestImageRequestDelayRuntimeOverride proves image pacing resolves the config
+// default, permits zero to disable it, rejects negative durations, and reloads
+// a valid database override without rebuilding the service.
+func TestImageRequestDelayRuntimeOverride(t *testing.T) {
+	db := testdb.New(t)
+	svc := settings.NewService(db, testDefaults())
+	ctx := context.Background()
+
+	if got := svc.ImageRequestDelay(ctx); got != 500*time.Millisecond {
+		t.Fatalf("ImageRequestDelay default = %v, want 500ms", got)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesImageRequestDelay, "0s"); err != nil {
+		t.Fatalf("Set(0s): %v", err)
+	}
+	if got := svc.ImageRequestDelay(ctx); got != 0 {
+		t.Fatalf("ImageRequestDelay after Set(0s) = %v, want 0", got)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesImageRequestDelay, "-1s"); !errors.Is(err, settings.ErrInvalidSetting) {
+		t.Fatalf("Set(-1s): want ErrInvalidSetting, got %v", err)
+	}
+	if err := svc.Set(ctx, settings.KeySourcesImageRequestDelay, "1250ms"); err != nil {
+		t.Fatalf("Set(1250ms): %v", err)
+	}
+	if got := svc.ImageRequestDelay(ctx); got != 1250*time.Millisecond {
+		t.Errorf("ImageRequestDelay after Set(1250ms) = %v, want 1250ms", got)
 	}
 }
 

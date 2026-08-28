@@ -21,6 +21,12 @@ type Service struct {
 	defaults Defaults
 }
 
+// ImageDelaySettings is the runtime policy surface for the interval between
+// image requests during chapter downloads.
+type ImageDelaySettings interface {
+	ImageRequestDelay(context.Context) time.Duration
+}
+
 // NewService builds a settings Service over the Ent client, with the
 // config-resolved defaults injected by the caller (main). The service never
 // reads env — defaults arrive already typed, preserving the single env boundary.
@@ -138,6 +144,12 @@ func (s *Service) SourcesCooldown(ctx context.Context) time.Duration {
 // else default).
 func (s *Service) SourcesMinRequestDelay(ctx context.Context) time.Duration {
 	return s.resolveDuration(ctx, KeySourcesMinRequestDelay)
+}
+
+// ImageRequestDelay is the delay between individual image requests while
+// downloading a chapter; 0 disables it (DB override else default).
+func (s *Service) ImageRequestDelay(ctx context.Context) time.Duration {
+	return s.resolveDuration(ctx, KeySourcesImageRequestDelay)
 }
 
 // SuppressSplitParts reports whether fractional-part suppression is enabled

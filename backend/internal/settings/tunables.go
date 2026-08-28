@@ -149,6 +149,10 @@ const (
 	// source, independent of the per-source concurrency cap. Default 500ms
 	// (Kaizoku.GO parity).
 	KeySourcesMinRequestDelay = "sources.min_request_delay"
+	// KeySourcesImageRequestDelay is the delay between individual image
+	// requests while downloading a chapter (duration, 0 = disabled). Default
+	// 500ms.
+	KeySourcesImageRequestDelay = "sources.image_request_delay"
 	// KeySuppressSplitParts toggles fractional-part suppression.
 	KeySuppressSplitParts = "jobs.suppress_split_parts"
 	// KeyTrackRetryInterval is the tracker-push retry-queue drain period
@@ -323,29 +327,30 @@ var engineSocksVersions = []int{4, 5}
 // it into NewService, so the settings layer never touches os.Getenv — the single
 // env boundary stays in internal/config.
 type Defaults struct {
-	DownloadInterval        time.Duration
-	DownloadConcurrency     int
-	MaxConcurrentDownloads  int
-	RefreshInterval         time.Duration
-	RefreshConcurrency      int
-	MaxRetries              int
-	RetryBackoff            time.Duration
-	LockedRetryInterval     time.Duration
-	StaleGraceDays          int
-	StalledThresholdDays    int
-	ExtensionCheckInterval  time.Duration
-	WarmupInterval          time.Duration
-	WarmupSlowThresholdMs   int
-	EngineSuperviseInterval time.Duration
-	SearchCacheTTL          time.Duration
-	ChapterCacheTTL         time.Duration
-	SourcesFailureThreshold int
-	SourcesCooldown         time.Duration
-	SourcesMinRequestDelay  time.Duration
-	SuppressSplitParts      bool
-	TrackRetryInterval      time.Duration
-	AutoUpdateTrack         bool
-	MetadataAutoIdentify    bool
+	DownloadInterval         time.Duration
+	DownloadConcurrency      int
+	MaxConcurrentDownloads   int
+	RefreshInterval          time.Duration
+	RefreshConcurrency       int
+	MaxRetries               int
+	RetryBackoff             time.Duration
+	LockedRetryInterval      time.Duration
+	StaleGraceDays           int
+	StalledThresholdDays     int
+	ExtensionCheckInterval   time.Duration
+	WarmupInterval           time.Duration
+	WarmupSlowThresholdMs    int
+	EngineSuperviseInterval  time.Duration
+	SearchCacheTTL           time.Duration
+	ChapterCacheTTL          time.Duration
+	SourcesFailureThreshold  int
+	SourcesCooldown          time.Duration
+	SourcesMinRequestDelay   time.Duration
+	SourcesImageRequestDelay time.Duration
+	SuppressSplitParts       bool
+	TrackRetryInterval       time.Duration
+	AutoUpdateTrack          bool
+	MetadataAutoIdentify     bool
 	// FlareSolverrEnabled..FlareSolverrResponseFallback back the Tsundoku-owned
 	// FlareSolverr tunables (QCAT-238). Unlike every other Defaults field these
 	// are NOT sourced from cfg.* in defaultsFromConfig — there is deliberately
@@ -427,6 +432,7 @@ var tunableOrder = []string{
 	KeySourcesFailureThreshold,
 	KeySourcesCooldown,
 	KeySourcesMinRequestDelay,
+	KeySourcesImageRequestDelay,
 	KeySuppressSplitParts,
 	KeyTrackRetryInterval,
 	KeyAutoUpdateTrack,
@@ -540,6 +546,10 @@ var tunables = map[string]tunable{
 	KeySourcesMinRequestDelay: durationTunableMinOrZero(
 		KeySourcesMinRequestDelay, "duration", 0,
 		func(d Defaults) time.Duration { return d.SourcesMinRequestDelay },
+	),
+	KeySourcesImageRequestDelay: durationTunableMinOrZero(
+		KeySourcesImageRequestDelay, "duration", 0,
+		func(d Defaults) time.Duration { return d.SourcesImageRequestDelay },
 	),
 	KeySuppressSplitParts: boolTunable(
 		KeySuppressSplitParts,

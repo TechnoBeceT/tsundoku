@@ -879,6 +879,9 @@ func TestSourcesDefaults(t *testing.T) {
 	if cfg.Sources.MinRequestDelay != 500*time.Millisecond {
 		t.Errorf("Sources.MinRequestDelay default = %v, want 500ms", cfg.Sources.MinRequestDelay)
 	}
+	if cfg.Sources.ImageRequestDelay != 500*time.Millisecond {
+		t.Errorf("Sources.ImageRequestDelay default = %v, want 500ms", cfg.Sources.ImageRequestDelay)
+	}
 }
 
 // TestSourcesEnvOverride confirms the TSUNDOKU_SOURCES_* env vars override the
@@ -967,6 +970,32 @@ func TestValidateRejectsSourcesMinRequestDelayNegative(t *testing.T) {
 	cfg.Sources.MinRequestDelay = 0
 	if err := config.ExportValidateForTest(cfg); err != nil {
 		t.Errorf("validate() rejected MinRequestDelay=0 (disabled), want accept: %v", err)
+	}
+}
+
+// TestValidateImageRequestDelay accepts the disabled sentinel and rejects a
+// negative interval, so image fetch pacing can be turned off but never runs
+// with an invalid duration.
+func TestValidateImageRequestDelay(t *testing.T) {
+	cfg := &config.Config{
+		Database:   config.DatabaseConfig{Password: "somepassword"},
+		Auth:       config.AuthConfig{Secret: "exactly16charssss"},
+		Engine:     validEngineConfig(),
+		Extensions: validExtensionsConfig(),
+		Jobs:       validJobsConfig(),
+		Sources: config.SourcesConfig{
+			FailureThreshold:  5,
+			Cooldown:          30 * time.Minute,
+			ImageRequestDelay: -time.Second,
+		},
+	}
+	if err := config.ExportValidateForTest(cfg); err == nil {
+		t.Fatal("expected validate error for negative ImageRequestDelay, got nil")
+	}
+
+	cfg.Sources.ImageRequestDelay = 0
+	if err := config.ExportValidateForTest(cfg); err != nil {
+		t.Errorf("validate() rejected ImageRequestDelay=0 (disabled), want accept: %v", err)
 	}
 }
 

@@ -258,6 +258,10 @@ type SourcesConfig struct {
 	// it. validate() rejects a negative value. Set via
 	// TSUNDOKU_SOURCES_MINREQUESTDELAY.
 	MinRequestDelay time.Duration
+	// ImageRequestDelay is the delay enforced between individual image requests
+	// while downloading a chapter. Default 500ms; 0 disables it. validate()
+	// rejects a negative value. Set via TSUNDOKU_SOURCES_IMAGEREQUESTDELAY.
+	ImageRequestDelay time.Duration
 }
 
 // HealthConfig tunes the M7 source-health computation.
@@ -514,9 +518,10 @@ func defaults() map[string]any {
 		"health.stalledthresholddays": 30,
 		"storage.folder":              "/data/manga",
 		// Sources — source-politeness circuit-breaker + delay defaults.
-		"sources.failurethreshold": 5,
-		"sources.cooldown":         "30m",
-		"sources.minrequestdelay":  "500ms",
+		"sources.failurethreshold":  5,
+		"sources.cooldown":          "30m",
+		"sources.minrequestdelay":   "500ms",
+		"sources.imagerequestdelay": "500ms",
 		// Metadata — Phase-1 native metadata engine provider credentials.
 		"metadata.mal_clientid": "",
 		"metadata.autoidentify": true,
@@ -683,6 +688,8 @@ const minAuthSecretLen = 16
 //     would let a tripped source re-trip immediately, defeating the breaker.
 //   - Sources.MinRequestDelay must not be negative — a negative politeness
 //     delay is meaningless (0 is the valid "disabled" sentinel).
+//   - Sources.ImageRequestDelay must not be negative — a negative image-request
+//     delay is meaningless (0 is the valid "disabled" sentinel).
 //   - Tracker.PublicURL, when set, must be a well-formed absolute http/https
 //     URL — blank leaves the whole tracker OAuth subsystem dormant and is
 //     NOT an error (see TrackerConfig's doc comment).
@@ -796,6 +803,11 @@ func validateSourcesConfig(s SourcesConfig) []string {
 	if s.MinRequestDelay < 0 {
 		errs = append(errs, fmt.Sprintf(
 			"TSUNDOKU_SOURCES_MINREQUESTDELAY must not be negative (got %s)", s.MinRequestDelay,
+		))
+	}
+	if s.ImageRequestDelay < 0 {
+		errs = append(errs, fmt.Sprintf(
+			"TSUNDOKU_SOURCES_IMAGEREQUESTDELAY must not be negative (got %s)", s.ImageRequestDelay,
 		))
 	}
 	return errs
