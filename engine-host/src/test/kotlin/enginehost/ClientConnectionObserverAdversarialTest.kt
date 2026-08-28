@@ -1,6 +1,5 @@
 package enginehost
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -20,6 +19,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -50,6 +50,7 @@ private class SocketDetailsSource(
         entered.countDown()
         try {
             delay(delayMillis)
+            manga.title = "Socket lifecycle response"
             completed.set(true)
             return SMangaUpdate(manga, emptyList())
         } finally {
@@ -131,12 +132,11 @@ class ClientConnectionObserverAdversarialTest {
                 assertEquals("HTTP/1.1 200 OK", response.statusLine, response.diagnostic())
                 assertEquals("application/json", response.headers["content-type"], response.diagnostic())
                 assertEquals(
-                    response.body.size.toString(),
+                    EXPECTED_RESPONSE_BODY.size.toString(),
                     response.headers["content-length"],
-                    "response body was not framed completely; ${response.diagnostic()}",
+                    "response Content-Length did not match the expected UTF-8 payload; ${response.diagnostic()}",
                 )
-                val json = JSON.readTree(response.body)
-                assertEquals("/socket-lifecycle", json.path("url").asText(), response.diagnostic())
+                assertContentEquals(EXPECTED_RESPONSE_BODY, response.body, response.diagnostic())
                 assertTrue(completed.get(), "live half-close was misclassified as cancellation")
                 assertTrue(exited.await(0, TimeUnit.MILLISECONDS), "response arrived before source work exited")
             }
@@ -284,7 +284,9 @@ class ClientConnectionObserverAdversarialTest {
     }
 
     private companion object {
-        val JSON = jacksonObjectMapper()
+        val EXPECTED_RESPONSE_BODY =
+            """{"url":"/socket-lifecycle","title":"Socket lifecycle response","author":null,"artist":null,"description":null,"genres":[],"status":"UNKNOWN","thumbnailUrl":null,"realUrl":null}"""
+                .toByteArray(StandardCharsets.UTF_8)
         val HTTP_HEADER_END = "\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
     }
 }
