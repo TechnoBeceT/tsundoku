@@ -2,6 +2,7 @@ package sourcethroughput
 
 import (
 	"sort"
+	"strconv"
 	"time"
 
 	policy "github.com/technobecet/tsundoku/internal/sourcethroughput"
@@ -23,7 +24,7 @@ type durationPolicyDTO struct {
 }
 
 type sourcePolicyDTO struct {
-	SourceID            int64             `json:"sourceId"`
+	SourceID            string            `json:"sourceId"`
 	DownloadConcurrency intPolicyDTO      `json:"downloadConcurrency"`
 	ImageRequestDelay   durationPolicyDTO `json:"imageRequestDelay"`
 }
@@ -52,7 +53,7 @@ func newListResponse(defaults policy.Effective, snapshot map[int64]policy.Overri
 func newSourcePolicyDTO(sourceID int64, defaults policy.Effective, stored policy.Override) sourcePolicyDTO {
 	effective := policy.ApplyDefaults(defaults, stored)
 	return sourcePolicyDTO{
-		SourceID:            sourceID,
+		SourceID:            strconv.FormatInt(sourceID, 10),
 		DownloadConcurrency: intPolicyDTO{Override: stored.DownloadConcurrency, Effective: effective.DownloadConcurrency},
 		ImageRequestDelay:   durationPolicyDTO{Override: durationString(stored.ImageRequestDelay), Effective: effective.ImageRequestDelay.String()},
 	}

@@ -92,14 +92,14 @@ func TestListReturnsDefaultsAndSortedEffectivePolicies(t *testing.T) {
 	one := 1
 	zero := time.Duration(0)
 	env.svc.snapshot = map[int64]sourcethroughput.Override{
-		99: {ImageRequestDelay: &zero},
-		42: {DownloadConcurrency: &one},
+		1998416842837112832: {ImageRequestDelay: &zero},
+		-42:                 {DownloadConcurrency: &one},
 	}
 	rec := env.do(http.MethodGet, "/api/sources/throughput", "", true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("List: got %d (%s), want 200", rec.Code, rec.Body.String())
 	}
-	want := `{"defaults":{"downloadConcurrency":5,"imageRequestDelay":"500ms"},"sources":[{"sourceId":42,"downloadConcurrency":{"override":1,"effective":1},"imageRequestDelay":{"override":null,"effective":"500ms"}},{"sourceId":99,"downloadConcurrency":{"override":null,"effective":5},"imageRequestDelay":{"override":"0s","effective":"0s"}}]}` + "\n"
+	want := `{"defaults":{"downloadConcurrency":5,"imageRequestDelay":"500ms"},"sources":[{"sourceId":"-42","downloadConcurrency":{"override":1,"effective":1},"imageRequestDelay":{"override":null,"effective":"500ms"}},{"sourceId":"1998416842837112832","downloadConcurrency":{"override":null,"effective":5},"imageRequestDelay":{"override":"0s","effective":"0s"}}]}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("List body:\n got %s\nwant %s", got, want)
 	}
@@ -116,7 +116,7 @@ func TestUpdateMapsKeepSetClearAndReturnsRefreshedEffectivePolicy(t *testing.T) 
 	if env.svc.gotID != -42 || env.svc.gotPatch.DownloadConcurrency.Operation != sourcethroughput.PatchClear || env.svc.gotPatch.ImageRequestDelay.Operation != sourcethroughput.PatchSet || env.svc.gotPatch.ImageRequestDelay.Value != 0 {
 		t.Fatalf("service call = id %d patch %#v", env.svc.gotID, env.svc.gotPatch)
 	}
-	want := `{"sourceId":-42,"downloadConcurrency":{"override":null,"effective":5},"imageRequestDelay":{"override":"0s","effective":"0s"}}` + "\n"
+	want := `{"sourceId":"-42","downloadConcurrency":{"override":null,"effective":5},"imageRequestDelay":{"override":"0s","effective":"0s"}}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("Update body:\n got %s\nwant %s", got, want)
 	}
@@ -165,6 +165,23 @@ func TestUpdateRejectsInvalidFieldEncodings(t *testing.T) {
 		`{"imageRequestDelay":{"mode":"override","value":"bad"}}`,
 		`{"imageRequestDelay":{"mode":"override","value":"-1ms"}}`,
 		`{"imageRequestDelay":{"mode":"override","value":"500us"}}`,
+	}
+	for _, body := range cases {
+		env := newTestEnv(t)
+		rec := env.do(http.MethodPatch, "/api/sources/42/throughput", body, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("body %s: got %d (%s), want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestUpdateRejectsUnknownPropertiesAndExplicitNullFields(t *testing.T) {
+	cases := []string{
+		`{"downloadConcurrency":{"mode":"override","value":1},"unknown":true}`,
+		`{"downloadConcurrency":{"mode":"override","value":1,"unknown":true}}`,
+		`{"imageRequestDelay":{"mode":"override","value":"0s","unknown":true}}`,
+		`{"downloadConcurrency":null,"imageRequestDelay":{"mode":"override","value":"0s"}}`,
+		`{"downloadConcurrency":{"mode":"override","value":1},"imageRequestDelay":null}`,
 	}
 	for _, body := range cases {
 		env := newTestEnv(t)

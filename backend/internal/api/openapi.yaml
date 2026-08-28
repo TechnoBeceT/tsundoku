@@ -2368,8 +2368,10 @@ components:
       required: [sourceId, downloadConcurrency, imageRequestDelay]
       properties:
         sourceId:
-          type: integer
-          format: int64
+          type: string
+          pattern: "^-?[0-9]+$"
+          description: Signed decimal int64 source identity, stringified for lossless JavaScript transport.
+          example: "1998416842837112832"
         downloadConcurrency:
           $ref: "#/components/schemas/SourceThroughputIntegerValue"
         imageRequestDelay:

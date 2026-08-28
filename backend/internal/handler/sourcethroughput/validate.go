@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,6 +36,58 @@ type durationPatchRequest struct {
 type updateRequest struct {
 	DownloadConcurrency *intPatchRequest      `json:"downloadConcurrency"`
 	ImageRequestDelay   *durationPatchRequest `json:"imageRequestDelay"`
+}
+
+func decodeUpdateRequest(body io.Reader) (updateRequest, error) {
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return updateRequest{}, echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return updateRequest{}, err
+	}
+
+	var request updateRequest
+	for name, raw := range fields {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return updateRequest{}, invalidField(name, "must not be null")
+		}
+		switch name {
+		case "downloadConcurrency":
+			var field intPatchRequest
+			if err := decodeStrict(raw, &field); err != nil {
+				return updateRequest{}, invalidField(name, "invalid object")
+			}
+			request.DownloadConcurrency = &field
+		case "imageRequestDelay":
+			var field durationPatchRequest
+			if err := decodeStrict(raw, &field); err != nil {
+				return updateRequest{}, invalidField(name, "invalid object")
+			}
+			request.ImageRequestDelay = &field
+		default:
+			return updateRequest{}, invalidField(name, "unknown field")
+		}
+	}
+	return request, nil
+}
+
+func decodeStrict(raw []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	return requireJSONEOF(decoder)
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return echo.NewHTTPError(http.StatusBadRequest, "request body must contain one JSON object")
+	}
+	return nil
 }
 
 func parseSourceID(raw string) (int64, error) {

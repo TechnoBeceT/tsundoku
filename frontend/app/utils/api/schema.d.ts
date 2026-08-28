@@ -4146,8 +4146,11 @@ export interface components {
             effective: string;
         };
         SourceThroughputPolicy: {
-            /** Format: int64 */
-            sourceId: number;
+            /**
+             * @description Signed decimal int64 source identity, stringified for lossless JavaScript transport.
+             * @example 1998416842837112832
+             */
+            sourceId: string;
             downloadConcurrency: components["schemas"]["SourceThroughputIntegerValue"];
             imageRequestDelay: components["schemas"]["SourceThroughputDurationValue"];
         };

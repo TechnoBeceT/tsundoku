@@ -36,9 +36,9 @@ func (h *Handler) Update(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	var request updateRequest
-	if err := c.Bind(&request); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	request, err := decodeUpdateRequest(c.Request().Body)
+	if err != nil {
+		return err
 	}
 	patch, err := request.toPatch()
 	if err != nil {
