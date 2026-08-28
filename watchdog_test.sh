@@ -304,9 +304,6 @@ stable_loop_result=$(
         sample_count=0
         status_count=0
         dump_count=0
-        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
-        # shellcheck disable=SC2329
-        curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || exit 0; }
         watchdog_trim_log() { :; }
         watchdog_probe_health() { sample_count=$((sample_count + 1)); return 0; }
@@ -328,9 +325,6 @@ progressing_loop_result=$(
         WATCHDOG_COOLDOWN=600
         tick=0
         sample_count=0
-        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
-        # shellcheck disable=SC2329
-        curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || { echo "progressing-ended samples=$sample_count"; exit 0; }; }
         watchdog_trim_log() { :; }
         watchdog_probe_health() { return 0; }
@@ -361,9 +355,6 @@ cooldown_loop_result=$(
         tick=0
         sample_count=0
         stop_count=0
-        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
-        # shellcheck disable=SC2329
-        curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 15 ] || { echo "cooldown-ended stops=$stop_count"; exit 0; }; }
         watchdog_trim_log() { :; }
         watchdog_probe_health() { return 0; }
@@ -386,9 +377,6 @@ post_dump_progress_result=$(
         tick=0
         status_count=0
         dump_count=0
-        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
-        # shellcheck disable=SC2329
-        curl() { return 0; }
         sleep() {
             if [ "$status_count" -ge 7 ]; then
                 echo "post-dump-progress-ended statuses=$status_count dumps=$dump_count"
@@ -427,9 +415,6 @@ reset_loop_result=$(
         WATCHDOG_COOLDOWN=600
         tick=0
         sample_count=0
-        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
-        # shellcheck disable=SC2329
-        curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 12 ] || { echo "reset-ended samples=$sample_count"; exit 0; }; }
         watchdog_trim_log() { :; }
         watchdog_probe_health() { return 0; }
