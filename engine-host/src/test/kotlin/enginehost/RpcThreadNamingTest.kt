@@ -10,9 +10,11 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -85,15 +87,32 @@ class RpcThreadNamingTest {
     /** Deadline supervision must be distinguishable from source execution in thread dumps. */
     @Test
     fun `deadline timer uses its exact domain name and closes cleanly`() {
-        val deadline = SourceCallDeadline(Duration.ofHours(1))
+        val releaseDecoy = CountDownLatch(1)
+        val decoy = Thread({ releaseDecoy.await() }, "engine-deadline-1").apply { start() }
         try {
-            deadline.supervise(FutureTask<Unit> {}, CompletableFuture(), {})
-            assertEquals("engine-deadline-1", awaitThreadName("engine-deadline-"))
-        } finally {
-            deadline.close()
-        }
+            val callbackEntered = CountDownLatch(1)
+            val callbackThread = AtomicReference<Thread>()
+            val publicResult = CompletableFuture<Unit>()
+            val deadline = SourceCallDeadline(Duration.ofMillis(1))
+            try {
+                deadline.supervise(FutureTask<Unit> {}, publicResult) {
+                    callbackThread.set(Thread.currentThread())
+                    callbackEntered.countDown()
+                }
+                assertTrue(callbackEntered.await(5, TimeUnit.SECONDS), "deadline callback did not run")
+                assertTrue(publicResult.isCompletedExceptionally, "deadline callback left the public result incomplete")
+                assertEquals("engine-deadline-1", callbackThread.get()?.name)
+            } finally {
+                deadline.close()
+            }
 
-        awaitNoThread("engine-deadline-")
+            val ownedThread = requireNotNull(callbackThread.get())
+            ownedThread.join(TimeUnit.SECONDS.toMillis(5))
+            assertFalse(ownedThread.isAlive, "${ownedThread.name} remained alive after SourceCallDeadline.close")
+        } finally {
+            releaseDecoy.countDown()
+            decoy.join()
+        }
     }
 
     /** The owned async transport is bounded, named, and leaves no non-daemon thread after close. */

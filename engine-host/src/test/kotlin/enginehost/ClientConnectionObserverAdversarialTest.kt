@@ -1,5 +1,6 @@
 package enginehost
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -9,8 +10,11 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import kotlinx.coroutines.delay
 import org.junit.jupiter.api.RepeatedTest
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
@@ -19,6 +23,12 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+
+private data class RawHttpResponse(
+    val statusLine: String,
+    val headers: Map<String, String>,
+    val body: ByteArray,
+)
 
 private class SocketDetailsSource(
     override val id: Long,
@@ -113,9 +123,22 @@ class ClientConnectionObserverAdversarialTest {
 
                 if (halfClose) socket.shutdownOutput()
 
-                val statusLine = socket.getInputStream().bufferedReader(StandardCharsets.US_ASCII).readLine()
-                assertEquals("HTTP/1.1 200 OK", statusLine)
+                // Consume through the server's EOF instead of closing after the first header line.
+                // That proves the half-closed response path completed and keeps HttpServer.stop()
+                // out of the JDK connection-dispatcher's legal close bookkeeping window.
+                val responseBytes = readThroughEof(socket.getInputStream())
+                val response = parseResponse(responseBytes)
+                assertEquals("HTTP/1.1 200 OK", response.statusLine, response.diagnostic())
+                assertEquals("application/json", response.headers["content-type"], response.diagnostic())
+                assertEquals(
+                    response.body.size.toString(),
+                    response.headers["content-length"],
+                    "response body was not framed completely; ${response.diagnostic()}",
+                )
+                val json = JSON.readTree(response.body)
+                assertEquals("/socket-lifecycle", json.path("url").asText(), response.diagnostic())
                 assertTrue(completed.get(), "live half-close was misclassified as cancellation")
+                assertTrue(exited.await(0, TimeUnit.MILLISECONDS), "response arrived before source work exited")
             }
         } finally {
             server.stop()
@@ -193,6 +216,57 @@ class ClientConnectionObserverAdversarialTest {
         return false
     }
 
+    private fun parseResponse(bytes: ByteArray): RawHttpResponse {
+        val headerEnd = bytes.indexOf(HTTP_HEADER_END)
+        require(headerEnd >= 0) {
+            "response ended before HTTP headers completed: ${bytes.toString(StandardCharsets.US_ASCII)}"
+        }
+        val headerLines =
+            bytes.copyOfRange(0, headerEnd)
+                .toString(StandardCharsets.US_ASCII)
+                .split("\r\n")
+        val statusLine = headerLines.firstOrNull().orEmpty()
+        require(statusLine.isNotEmpty()) { "response contained no HTTP status line" }
+        val headers =
+            headerLines.drop(1).associate { line ->
+                val separator = line.indexOf(':')
+                require(separator > 0) { "malformed HTTP response header: $line" }
+                line.substring(0, separator).lowercase() to line.substring(separator + 1).trim()
+            }
+        val body = bytes.copyOfRange(headerEnd + HTTP_HEADER_END.size, bytes.size)
+        return RawHttpResponse(statusLine, headers, body)
+    }
+
+    private fun readThroughEof(input: InputStream): ByteArray {
+        val received = ByteArrayOutputStream()
+        val buffer = ByteArray(1024)
+        while (true) {
+            val count =
+                try {
+                    input.read(buffer)
+                } catch (failure: SocketTimeoutException) {
+                    throw AssertionError(
+                        "timed out waiting for response EOF after ${received.size()} bytes: " +
+                            received.toByteArray().toString(StandardCharsets.US_ASCII),
+                        failure,
+                    )
+                }
+            if (count < 0) return received.toByteArray()
+            received.write(buffer, 0, count)
+        }
+    }
+
+    private fun ByteArray.indexOf(needle: ByteArray): Int {
+        if (needle.isEmpty()) return 0
+        for (start in 0..size - needle.size) {
+            if (needle.indices.all { offset -> this[start + offset] == needle[offset] }) return start
+        }
+        return -1
+    }
+
+    private fun RawHttpResponse.diagnostic(): String =
+        "status=$statusLine headers=$headers body=${body.toString(StandardCharsets.UTF_8)}"
+
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
@@ -207,5 +281,10 @@ class ClientConnectionObserverAdversarialTest {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }
         val http = field.get(rpc) as com.sun.net.httpserver.HttpServer
         return http.address.port
+    }
+
+    private companion object {
+        val JSON = jacksonObjectMapper()
+        val HTTP_HEADER_END = "\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
     }
 }
