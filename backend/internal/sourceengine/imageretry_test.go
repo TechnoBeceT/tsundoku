@@ -3,12 +3,35 @@ package sourceengine_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
+
+type recordingImageDelayResolver struct {
+	mu    sync.Mutex
+	delay time.Duration
+	err   error
+	calls []int64
+}
+
+func (r *recordingImageDelayResolver) ImageRequestDelay(_ context.Context, sourceID int64) (time.Duration, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, sourceID)
+	return r.delay, r.err
+}
+
+func (r *recordingImageDelayResolver) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
 
 // flakyImageClient wraps a fake.Client, failing the first failCount Image calls
 // with failErr before delegating to the embedded client for the rest. imageCalls
@@ -55,6 +78,60 @@ func TestStagePages_TransientImage_SucceedsOnRetry(t *testing.T) {
 	}
 	if client.imageCalls != 3 {
 		t.Errorf("Image called %d times, want 3 (2 transient failures + 1 success, ≤3 retries)", client.imageCalls)
+	}
+}
+
+func TestStagePages_ResolvesDelayForEveryRealRetry(t *testing.T) {
+	jpg := validJPEG(t)
+	inner := fake.New(
+		fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
+		fake.WithImage(7, "/ch/1/page/0", jpg, "image/jpeg"),
+	)
+	client := &flakyImageClient{Client: inner, failErr: errors.New("502 bad gateway"), failCount: 2}
+	resolver := &recordingImageDelayResolver{}
+	f := sourceengine.NewFetcher(client, t.TempDir(), resolver)
+
+	if _, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"}); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if got := resolver.callCount(); got != 3 {
+		t.Fatalf("delay resolver calls = %d, want 3 (one per real Image attempt)", got)
+	}
+}
+
+func TestStagePages_StagedPageDoesNotResolveDelay(t *testing.T) {
+	jpg := validJPEG(t)
+	inner := fake.New(
+		fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
+		fake.WithImage(7, "/ch/1/page/0", jpg, "image/jpeg"),
+	)
+	resolver := &recordingImageDelayResolver{}
+	f := sourceengine.NewFetcher(inner, t.TempDir(), resolver)
+	ref := fetcher.FetchRef{Provider: "7", URL: "/ch/1", ProviderChapterID: uuid.New()}
+
+	if _, err := f.Fetch(context.Background(), ref); err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	if _, err := f.Fetch(context.Background(), ref); err != nil {
+		t.Fatalf("resumed Fetch: %v", err)
+	}
+	if got := resolver.callCount(); got != 1 {
+		t.Fatalf("delay resolver calls = %d, want 1 (staged page consumes no pacing slot)", got)
+	}
+}
+
+func TestStagePages_DelayResolutionFailurePreventsImageRequest(t *testing.T) {
+	want := errors.New("policy store unavailable")
+	inner := fake.New(fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}))
+	resolver := &recordingImageDelayResolver{err: want}
+	f := sourceengine.NewFetcher(inner, t.TempDir(), resolver)
+
+	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
+	if !errors.Is(err, want) {
+		t.Fatalf("Fetch error = %v, want wrapping resolver error %v", err, want)
+	}
+	if got := inner.CallCount("Image"); got != 0 {
+		t.Fatalf("Image calls = %d, want 0 (resolver failure is fail-closed)", got)
 	}
 }
 

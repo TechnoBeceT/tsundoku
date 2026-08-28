@@ -3,6 +3,7 @@ package sourceengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/fetcher"
@@ -73,6 +74,15 @@ func (f *Fetcher) fetchImageRetrying(ctx context.Context, sourceID int64, link f
 		err         error
 	)
 	for attempt := 0; ; attempt++ {
+		if f.delayResolver != nil {
+			delay, resolveErr := f.delayResolver.ImageRequestDelay(ctx, sourceID)
+			if resolveErr != nil {
+				return nil, "", fmt.Errorf("sourceengine fetcher: resolve image request delay for source %d: %w", sourceID, resolveErr)
+			}
+			if waitErr := f.imagePacer.Wait(ctx, sourceID, delay); waitErr != nil {
+				return nil, "", waitErr
+			}
+		}
 		data, contentType, err = f.client.Image(ctx, sourceID, link.URL, link.ImageURL)
 		if err == nil {
 			return data, contentType, nil

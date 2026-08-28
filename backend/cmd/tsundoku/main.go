@@ -300,7 +300,7 @@ func main() {
 	// the library's filesystem (so the atomic temp→rename is a real rename, not a
 	// cross-device copy) and the leading dot keeps it invisible to the library
 	// scanner/reconcile (every OTHER top-level dir under storage is a category).
-	engineFetcher := sourceengine.NewFetcher(engineClient, stagingRoot)
+	engineFetcher := sourceengine.NewFetcher(engineClient, stagingRoot, sourceThroughputSvc)
 
 	// Network-routing domain service (DB-truth: endpoints + bindings). Read by
 	// ReconcileNetwork to derive the profiles; a stateless second instance is

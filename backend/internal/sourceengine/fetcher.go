@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/fetcher"
 )
@@ -41,7 +42,9 @@ var ErrNotLiveSource = errors.New("sourceengine: provider is not a live source i
 // and then deletes the staging dir, so the byte cache holds bytes ONLY for
 // in-progress chapters (bounded, disk-backed, self-cleaning).
 type Fetcher struct {
-	client Client
+	client        Client
+	delayResolver ImageDelayResolver
+	imagePacer    *imagePacer
 	// stagingRoot is the directory each chapter's staging dir lives under
 	// (<stagingRoot>/<providerChapterID>/). In production it is a hidden dir under
 	// the library storage root, so it shares the library's filesystem (the atomic
@@ -49,11 +52,28 @@ type Fetcher struct {
 	stagingRoot string
 }
 
+// ImageDelayResolver resolves the effective request delay for a live source.
+// Fetcher calls it immediately before every real image attempt so runtime global
+// and per-source policy changes apply during an in-progress chapter.
+type ImageDelayResolver interface {
+	ImageRequestDelay(context.Context, int64) (time.Duration, error)
+}
+
 // NewFetcher constructs a Fetcher backed by the given Client, staging downloaded
-// page bytes under stagingRoot. The client must not be nil; all operations are
-// driven by the caller's context.
-func NewFetcher(client Client, stagingRoot string) *Fetcher {
-	return &Fetcher{client: client, stagingRoot: stagingRoot}
+// page bytes under stagingRoot. When a resolver is supplied, one shared per-source
+// pacer applies its effective delay to every real image attempt. The client must
+// not be nil; all operations are driven by the caller's context.
+func NewFetcher(client Client, stagingRoot string, resolver ...ImageDelayResolver) *Fetcher {
+	var imageDelayResolver ImageDelayResolver
+	if len(resolver) > 0 {
+		imageDelayResolver = resolver[0]
+	}
+	return &Fetcher{
+		client:        client,
+		stagingRoot:   stagingRoot,
+		delayResolver: imageDelayResolver,
+		imagePacer:    newRealtimeImagePacer(),
+	}
 }
 
 // Fetch retrieves and decodes all pages for the chapter identified by ref.
