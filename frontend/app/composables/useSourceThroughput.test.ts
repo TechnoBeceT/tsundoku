@@ -41,7 +41,8 @@ describe('useSourceThroughput', () => {
     const state = useSourceThroughput()
     await state.load()
     expect(state.policies.value).toBeNull()
-    expect(state.error.value).toBe('Policy service unavailable')
+    expect(state.loadError.value).toBe('Policy service unavailable')
+    expect(state.error.value).toBeNull()
   })
 
   it.each([
@@ -79,6 +80,28 @@ describe('useSourceThroughput', () => {
     await state.saveImageDelayOverride('101', '750ms')
     expect(state.savingSourceId.value).toBeNull()
     expect(state.error.value).toBe('Source policy could not be saved')
+    expect(state.loadError.value).toBeNull()
+  })
+
+  it('keeps authoritative policies through a deferred PATCH failure and clears only the mutation error on recovery', async () => {
+    let reject!: () => void
+    vi.mocked(apiClient.PATCH).mockReturnValueOnce(new Promise(r => {
+      reject = () => r({ error: { message: 'Source policy could not be saved' }, response: new Response() })
+    }))
+    const state = useSourceThroughput()
+    await state.load()
+    const failed = state.saveConcurrencyOverride('101', 2)
+    expect(state.policies.value).toEqual([inherited])
+    reject()
+    await failed
+    expect(state.policies.value).toEqual([inherited])
+    expect(state.error.value).toBe('Source policy could not be saved')
+    expect(state.loadError.value).toBeNull()
+
+    vi.mocked(apiClient.PATCH).mockResolvedValueOnce({ data: { ...inherited, downloadConcurrency: { override: 2, effective: 2 } }, response: new Response() })
+    await state.saveConcurrencyOverride('101', 2)
+    expect(state.error.value).toBeNull()
+    expect(state.policies.value?.[0]?.downloadConcurrency).toEqual({ override: 2, effective: 2 })
   })
 
   it.each([

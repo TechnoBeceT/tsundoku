@@ -260,6 +260,7 @@ const {
   policies: storedThroughputPolicies,
   loading: sourceThroughputLoading,
   savingSourceId: sourceThroughputSavingSourceId,
+  loadError: sourceThroughputLoadError,
   error: sourceThroughputError,
   load: loadSourceThroughput,
   saveConcurrencyOverride,
@@ -402,6 +403,7 @@ const loading = computed(
       :source-throughput-loading="sourceThroughputLoading"
       :source-throughput-ready="sourceThroughputReady"
       :source-throughput-saving-source-id="sourceThroughputSavingSourceId"
+      :source-throughput-load-error="sourceThroughputLoadError"
       :source-throughput-error="sourceThroughputError"
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"

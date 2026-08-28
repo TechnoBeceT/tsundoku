@@ -126,6 +126,7 @@ withDefaults(defineProps<{
   sourceThroughputLoading?: boolean
   sourceThroughputReady?: boolean
   sourceThroughputSavingSourceId?: string | null
+  sourceThroughputLoadError?: string | null
   sourceThroughputError?: string | null
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
@@ -216,6 +217,7 @@ withDefaults(defineProps<{
   sourceThroughputLoading: false,
   sourceThroughputReady: true,
   sourceThroughputSavingSourceId: null,
+  sourceThroughputLoadError: null,
   sourceThroughputError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
@@ -423,6 +425,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :throughput-loading="sourceThroughputLoading"
             :throughput-ready="sourceThroughputReady"
             :throughput-saving-source-id="sourceThroughputSavingSourceId"
+            :throughput-load-error="sourceThroughputLoadError"
             :throughput-error="sourceThroughputError"
             :dedup-all-busy="dedupAllBusy"
             :dedup-all-message="dedupAllMessage"

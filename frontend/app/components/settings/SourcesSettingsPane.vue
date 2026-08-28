@@ -60,6 +60,7 @@ const props = withDefaults(defineProps<{
   throughputLoading?: boolean
   throughputReady?: boolean
   throughputSavingSourceId?: string | null
+  throughputLoadError?: string | null
   throughputError?: string | null
   /** §16 state of the Save button. */
   save?: SaveState
@@ -91,6 +92,7 @@ const props = withDefaults(defineProps<{
   throughputLoading: false,
   throughputReady: true,
   throughputSavingSourceId: null,
+  throughputLoadError: null,
   throughputError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
@@ -194,12 +196,13 @@ const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDel
     sub="Keep the global throughput for most sources, then slow down only providers that enforce tighter request limits."
   >
     <p v-if="throughputLoading" class="throughput-status" role="status">Loading source policies…</p>
-    <div v-else-if="throughputError" class="throughput-failure">
-      <FormError :message="throughputError" />
+    <div v-else-if="throughputLoadError" class="throughput-failure">
+      <FormError :message="throughputLoadError" />
       <AppButton data-testid="retry-throughput" variant="text" size="sm" @click="emit('reloadThroughput')">Retry loading policies</AppButton>
     </div>
+    <FormError v-if="throughputError" :message="throughputError" />
     <SourceThroughputControl
-      v-for="policy in (throughputReady && !throughputLoading && !throughputError ? throughputPolicies : [])"
+      v-for="policy in (throughputReady && !throughputLoading && !throughputLoadError ? throughputPolicies : [])"
       :key="policy.sourceId"
       :policy="policy"
       :source-name="throughputSources.find(source => source.id === policy.sourceId)?.name"
@@ -211,7 +214,7 @@ const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDel
       @save-image-delay="onSaveImageDelay"
       @inherit-image-delay="emit('inheritImageDelay', $event)"
     />
-    <p v-if="throughputReady && !throughputLoading && !throughputError && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
+    <p v-if="throughputReady && !throughputLoading && !throughputLoadError && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
   </SurfaceCard>
 
   <SurfaceCard

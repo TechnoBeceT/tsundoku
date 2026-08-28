@@ -24,10 +24,21 @@ describe('SourcesSettingsPane throughput authority', () => {
   })
 
   it('does not render false inherited controls after load failure and offers retry', async () => {
-    const wrapper = mount(SourcesSettingsPane, { props: { ...baseProps, throughputError: 'Policy service unavailable' } })
+    const wrapper = mount(SourcesSettingsPane, { props: { ...baseProps, throughputLoadError: 'Policy service unavailable' } })
     expect(wrapper.findComponent(SourceThroughputControl).exists()).toBe(false)
     await wrapper.get('[data-testid="retry-throughput"]').trigger('click')
     expect(wrapper.emitted('reloadThroughput')).toBeTruthy()
+  })
+
+  it.each([
+    'Download concurrency must be between 1 and 32.',
+    'Source policy could not be saved',
+  ])('keeps authoritative controls editable for mutation failure: %s', (message) => {
+    const wrapper = mount(SourcesSettingsPane, { props: { ...baseProps, throughputError: message } })
+    expect(wrapper.findComponent(SourceThroughputControl).exists()).toBe(true)
+    expect(wrapper.get('[role="alert"]').text()).toContain(message)
+    expect(wrapper.find('[data-testid="retry-throughput"]').exists()).toBe(false)
+    expect(wrapper.get('input[type="number"]').attributes('disabled')).toBeUndefined()
   })
 
   it('renders a successful authoritative policy set', () => {

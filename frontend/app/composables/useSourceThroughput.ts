@@ -45,6 +45,7 @@ export function useSourceThroughput() {
   const policies = ref<SourceThroughputPolicy[] | null>(null)
   const loading = ref(false)
   const savingSourceId = ref<string | null>(null)
+  const loadError = ref<string | null>(null)
   const error = ref<string | null>(null)
 
   function replacePolicy(policy: SourceThroughputPolicy): void {
@@ -60,6 +61,7 @@ export function useSourceThroughput() {
   async function load(): Promise<void> {
     loading.value = true
     policies.value = null
+    loadError.value = null
     error.value = null
     try {
       const result = await apiClient.GET('/api/sources/throughput')
@@ -67,7 +69,7 @@ export function useSourceThroughput() {
       policies.value = result.data.sources
     }
     catch (cause) {
-      error.value = cause instanceof Error ? cause.message : 'Source throughput settings could not be loaded'
+      loadError.value = cause instanceof Error ? cause.message : 'Source throughput settings could not be loaded'
     }
     finally { loading.value = false }
   }
@@ -107,5 +109,5 @@ export function useSourceThroughput() {
   }
   const inheritImageDelay = (sourceId: string) => update(sourceId, { imageRequestDelay: { mode: 'inherit' } })
 
-  return { policies, loading, savingSourceId, error, load, saveConcurrencyOverride, inheritConcurrency, saveImageDelayOverride, inheritImageDelay }
+  return { policies, loading, savingSourceId, loadError, error, load, saveConcurrencyOverride, inheritConcurrency, saveImageDelayOverride, inheritImageDelay }
 }
