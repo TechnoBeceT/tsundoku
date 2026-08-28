@@ -7,8 +7,11 @@ import TextField from '../ui/TextField.vue'
 import LibraryDedupDialog from './LibraryDedupDialog.vue'
 import RedownloadDialog from './RedownloadDialog.vue'
 import SettingRow from './SettingRow.vue'
-import type { SaveState, SourcesSettings } from '../screens/settings.types'
+import SourceThroughputControl from './SourceThroughputControl.vue'
+import FormError from '../ui/FormError.vue'
+import type { SaveState, SourceOption, SourcesSettings } from '../screens/settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
+import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
 
 /**
  * SourcesSettingsPane — the anti-IP-block runtime knobs (source-politeness
@@ -50,6 +53,12 @@ import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedow
 const props = withDefaults(defineProps<{
   /** The runtime-editable warm-up/politeness knobs. */
   sources: SourcesSettings
+  throughputPolicies?: SourceThroughputPolicy[]
+  throughputSources?: SourceOption[]
+  globalDownloadConcurrency?: number
+  throughputLoading?: boolean
+  throughputSavingSourceId?: string | null
+  throughputError?: string | null
   /** §16 state of the Save button. */
   save?: SaveState
   /** True while the library-wide dedup sweep request is in flight. */
@@ -74,6 +83,12 @@ const props = withDefaults(defineProps<{
   redownloadError?: string | null
 }>(), {
   save: () => ({ status: 'idle' }),
+  throughputPolicies: () => [],
+  throughputSources: () => [],
+  globalDownloadConcurrency: 5,
+  throughputLoading: false,
+  throughputSavingSourceId: null,
+  throughputError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -89,6 +104,10 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** Persist the edited knobs — carries the full edited copy. */
   save: [settings: SourcesSettings]
+  saveConcurrency: [sourceId: string, value: number]
+  inheritConcurrency: [sourceId: string]
+  saveImageDelay: [sourceId: string, value: string]
+  inheritImageDelay: [sourceId: string]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   dedupAll: []
   /** Load the bulk-re-download preview for this filter (reads only). */
@@ -106,6 +125,7 @@ const cloneSources = (s: SourcesSettings): SourcesSettings => ({
   failureThreshold: s.failureThreshold,
   cooldown: { ...s.cooldown },
   minRequestDelayMs: s.minRequestDelayMs,
+  imageRequestDelayMs: s.imageRequestDelayMs,
 })
 
 const src = reactive(cloneSources(props.sources))
@@ -129,6 +149,8 @@ function onSave() {
   if (!dirty.value || props.save.status === 'saving') return
   emit('save', cloneSources(src))
 }
+const onSaveConcurrency = (sourceId: string, value: number) => emit('saveConcurrency', sourceId, value)
+const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDelay', sourceId, value)
 </script>
 
 <template>
@@ -156,7 +178,33 @@ function onSave() {
       <TextField compact type="number" :model-value="String(src.minRequestDelayMs)" @update:model-value="src.minRequestDelayMs = clampInt($event)" />
     </SettingRow>
 
+    <SettingRow name="Image request delay" hint="Gap (ms) between individual image requests; 0 disables. Per-source overrides are below.">
+      <TextField compact type="number" :model-value="String(src.imageRequestDelayMs)" @update:model-value="src.imageRequestDelayMs = clampInt($event)" />
+    </SettingRow>
+
     <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
+  </SurfaceCard>
+
+  <SurfaceCard
+    title="Per-source download pace"
+    sub="Keep the global throughput for most sources, then slow down only providers that enforce tighter request limits."
+  >
+    <p v-if="throughputLoading" class="throughput-status" role="status">Loading source policies…</p>
+    <FormError v-if="throughputError" :message="throughputError" />
+    <SourceThroughputControl
+      v-for="policy in throughputPolicies"
+      :key="policy.sourceId"
+      :policy="policy"
+      :source-name="throughputSources.find(source => source.id === policy.sourceId)?.name"
+      :global-concurrency="globalDownloadConcurrency"
+      :global-image-delay="`${sources.imageRequestDelayMs}ms`"
+      :saving="throughputSavingSourceId === policy.sourceId"
+      @save-concurrency="onSaveConcurrency"
+      @inherit-concurrency="emit('inheritConcurrency', $event)"
+      @save-image-delay="onSaveImageDelay"
+      @inherit-image-delay="emit('inheritImageDelay', $event)"
+    />
+    <p v-if="!throughputLoading && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
   </SurfaceCard>
 
   <SurfaceCard
@@ -189,3 +237,7 @@ function onSave() {
     />
   </SurfaceCard>
 </template>
+
+<style scoped>
+.throughput-status { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+</style>

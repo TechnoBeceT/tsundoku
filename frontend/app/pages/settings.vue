@@ -256,6 +256,29 @@ const {
   clearBinding,
 } = useSourceNetworkBindings()
 
+const {
+  policies: storedThroughputPolicies,
+  loading: sourceThroughputLoading,
+  savingSourceId: sourceThroughputSavingSourceId,
+  error: sourceThroughputError,
+  load: loadSourceThroughput,
+  saveConcurrencyOverride,
+  inheritConcurrency,
+  saveImageDelayOverride,
+  inheritImageDelay,
+} = useSourceThroughput()
+
+const sourceThroughputPolicies = computed(() => networkSources.value.map((source) => {
+  const stored = storedThroughputPolicies.value.find(policy => policy.sourceId === source.id)
+  return stored ?? {
+    sourceId: source.id,
+    downloadConcurrency: { override: null, effective: library.value.downloadConcurrency },
+    imageRequestDelay: { override: null, effective: `${sourcesSettings.value.imageRequestDelayMs}ms` },
+  }
+}))
+
+void loadSourceThroughput()
+
 /** Unpack the row's full merged binding payload and PUT it for the source. */
 function onSetBinding(payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }): void {
   const { sourceId, ...update } = payload
@@ -374,6 +397,12 @@ const loading = computed(
       :checking-updates="checkingUpdates"
       :sources-settings="sourcesSettings"
       :sources-settings-save="sourcesSettingsSave"
+      :source-throughput-policies="sourceThroughputPolicies"
+      :source-throughput-sources="networkSources"
+      :source-throughput-global-concurrency="library.downloadConcurrency"
+      :source-throughput-loading="sourceThroughputLoading"
+      :source-throughput-saving-source-id="sourceThroughputSavingSourceId"
+      :source-throughput-error="sourceThroughputError"
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
@@ -429,6 +458,10 @@ const loading = computed(
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
+      @save-source-concurrency="saveConcurrencyOverride"
+      @inherit-source-concurrency="inheritConcurrency"
+      @save-source-image-delay="saveImageDelayOverride"
+      @inherit-source-image-delay="inheritImageDelay"
       @dedup-all="dedupAllProviders"
       @redownload-preview="loadRedownloadPreview"
       @redownload="applyRedownload"

@@ -46,6 +46,7 @@
  *                                    formatMsDuration below, NOT parseGoDuration
  *                                    (that h/m/s parser misreads "500ms" as
  *                                    500 minutes — the "m" in "ms" collides).
+ *   sources.image_request_delay    → imageRequestDelayMs   (number, ms)
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -164,6 +165,7 @@ const SOURCES_DEFAULTS: SourcesSettings = {
   failureThreshold: 5,
   cooldown: { value: 30, unit: 'm' },
   minRequestDelayMs: 500,
+  imageRequestDelayMs: 500,
 }
 
 // ── DTO mappers ───────────────────────────────────────────────────────────────
@@ -201,7 +203,7 @@ function mapSystem(dto: SystemDTO): SystemInfo {
   }
 }
 
-/** Maps the Sources pane's 5 keys from the settings list (see the key-mapping doc above). */
+/** Maps the Sources pane's 6 keys from the settings list (see the key-mapping doc above). */
 function mapSourcesSettings(settings: SettingDTO[]): SourcesSettings {
   const v = (key: string): string | undefined => settings.find(s => s.key === key)?.value
 
@@ -226,6 +228,7 @@ function mapSourcesSettings(settings: SettingDTO[]): SourcesSettings {
     failureThreshold: int('sources.failure_threshold', SOURCES_DEFAULTS.failureThreshold),
     cooldown: dur('sources.cooldown', SOURCES_DEFAULTS.cooldown),
     minRequestDelayMs: ms('sources.min_request_delay', SOURCES_DEFAULTS.minRequestDelayMs),
+    imageRequestDelayMs: ms('sources.image_request_delay', SOURCES_DEFAULTS.imageRequestDelayMs),
   }
 }
 
@@ -264,6 +267,7 @@ export function useSettings() {
     failureThreshold: SOURCES_DEFAULTS.failureThreshold,
     cooldown: { ...SOURCES_DEFAULTS.cooldown },
     minRequestDelayMs: SOURCES_DEFAULTS.minRequestDelayMs,
+    imageRequestDelayMs: SOURCES_DEFAULTS.imageRequestDelayMs,
   })
   const sourcesSettingsSave = ref<SaveState>({ status: 'idle' })
 
@@ -297,7 +301,7 @@ export function useSettings() {
       metadataAutoIdentify.value = rawMetadataAutoIdentify !== undefined
         ? rawMetadataAutoIdentify === 'true'
         : METADATA_AUTO_IDENTIFY_DEFAULT
-      // Sources pane: the same settings list carries all 5 warm-up/politeness keys.
+      // Sources pane: the same settings list carries all 6 warm-up/politeness keys.
       sourcesSettings.value = mapSourcesSettings(settingsRes.data)
     }
     catch (err) {
@@ -444,7 +448,7 @@ export function useSettings() {
   }
 
   /**
-   * §16 save for the Sources pane: builds the 5-key batch from the edited
+   * §16 save for the Sources pane: builds the 6-key batch from the edited
    * SourcesSettings, PATCHes /api/settings, drives sourcesSettingsSave through
    * the SaveState lifecycle, and reseeds sourcesSettings from the authoritative
    * response (never the local copy) — mirrors saveLibrary.
@@ -460,6 +464,7 @@ export function useSettings() {
             { key: 'sources.failure_threshold', value: String(next.failureThreshold) },
             { key: 'sources.cooldown', value: formatGoDuration(next.cooldown) },
             { key: 'sources.min_request_delay', value: formatMsDuration(next.minRequestDelayMs) },
+            { key: 'sources.image_request_delay', value: formatMsDuration(next.imageRequestDelayMs) },
           ],
         },
       })

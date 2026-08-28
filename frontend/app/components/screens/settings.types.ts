@@ -107,6 +107,8 @@ export interface SourcesSettings {
   cooldown: DurationValue
   /** Minimum gap (ms) enforced between requests to one source; 0 disables. */
   minRequestDelayMs: number
+  /** Delay between individual image request starts across all sources; 0 disables. */
+  imageRequestDelayMs: number
 }
 
 /* ---- 2b. Categories ------------------------------------------------------- */

@@ -28,6 +28,7 @@ import type {
   UpgradeStep,
 } from '../components/screens/settings.types'
 import type { SourceMetric } from '../components/screens/sourceHealth.types'
+import type { SourceThroughputPolicy } from '../composables/useSourceThroughput'
 
 /** The runtime-editable library knobs (2a). */
 export const librarySettings: LibrarySettings = {
@@ -152,19 +153,32 @@ export const repos: Repo[] = [
 /** Background extension update-check cadence (2e). */
 export const extCheckInterval: DurationValue = { value: 12, unit: 'h' }
 
-/** The 5 warm-up/politeness knobs (source-politeness spec), at their defaults. */
+/** The 6 warm-up/politeness knobs (source-politeness spec), at their defaults. */
 export const sourcesSettings: SourcesSettings = {
   warmupInterval: { value: 15, unit: 'm' },
   warmupSlowThresholdMs: 5000,
   failureThreshold: 5,
   cooldown: { value: 30, unit: 'm' },
   minRequestDelayMs: 500,
+  imageRequestDelayMs: 500,
 }
 
 /** Warm-up disabled (0) — the "a source keeps getting IP-blocked" recommendation. */
 export const sourcesSettingsWarmupDisabled: SourcesSettings = {
   ...sourcesSettings,
   warmupInterval: { value: 0, unit: 's' },
+}
+
+export const inheritedThroughputPolicy: SourceThroughputPolicy = {
+  sourceId: '1998416842837112832',
+  downloadConcurrency: { override: null, effective: 5 },
+  imageRequestDelay: { override: null, effective: '500ms' },
+}
+
+export const overriddenThroughputPolicy: SourceThroughputPolicy = {
+  sourceId: '2035199668263834297',
+  downloadConcurrency: { override: 1, effective: 1 },
+  imageRequestDelay: { override: '750ms', effective: '750ms' },
 }
 
 /* ---- 2f. Source metrics --------------------------------------------------- */

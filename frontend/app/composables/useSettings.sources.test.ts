@@ -3,12 +3,12 @@
  * cadence/threshold + the per-source circuit-breaker/politeness-delay knobs.
  *
  * Mirrors useSettings.downloadConcurrency.test.ts's structure, but pins all
- * 5 Sources-pane keys, including the millisecond-granularity duration
+ * 6 Sources-pane keys, including the millisecond-granularity durations
  * (`sources.min_request_delay`, formatted "500ms" not "0.5s") and the plain
  * ms-int (`jobs.warmup_slow_threshold_ms`).
  *
  * Non-vacuous:
- *   - If any of the 5 keys were missing from the load map, the corresponding
+ *   - If any of the 6 keys were missing from the load map, the corresponding
  *     field would silently keep its SOURCES_DEFAULTS fallback instead of the
  *     fixture's distinct value — each assertion below pins a fixture value
  *     that differs from the default, so a dropped mapping fails it.
@@ -38,6 +38,7 @@ const BASE_SETTINGS = [
   { key: 'sources.failure_threshold', value: '7' },
   { key: 'sources.cooldown', value: '45m0s' },
   { key: 'sources.min_request_delay', value: '500ms' },
+  { key: 'sources.image_request_delay', value: '750ms' },
 ]
 
 const SYSTEM_RESPONSE = {
@@ -80,7 +81,7 @@ describe('useSettings – sourcesSettings', () => {
     patchBody = null
   })
 
-  it('maps all 5 keys onto sourcesSettings', async () => {
+  it('maps all 6 keys onto sourcesSettings', async () => {
     const { sourcesSettings } = useSettings()
 
     await vi.waitFor(() => {
@@ -90,11 +91,12 @@ describe('useSettings – sourcesSettings', () => {
         failureThreshold: 7,
         cooldown: { value: 45, unit: 'm' },
         minRequestDelayMs: 500,
+        imageRequestDelayMs: 750,
       })
     })
   })
 
-  it('saveSourcesSettings PATCHes all 5 keys in the backend format and drives idle→saving→success', async () => {
+  it('saveSourcesSettings PATCHes all 6 keys in the backend format and drives idle→saving→success', async () => {
     const { sourcesSettings, saveSourcesSettings, sourcesSettingsSave } = useSettings()
 
     // Wait for the initial load so the edited copy starts from live values.
@@ -110,6 +112,7 @@ describe('useSettings – sourcesSettings', () => {
       failureThreshold: 5,
       cooldown: { value: 30, unit: 'm' },
       minRequestDelayMs: 500,
+      imageRequestDelayMs: 0,
     })
 
     expect(patchBody).toEqual({
@@ -119,6 +122,7 @@ describe('useSettings – sourcesSettings', () => {
         { key: 'sources.failure_threshold', value: '5' },
         { key: 'sources.cooldown', value: '30m' },
         { key: 'sources.min_request_delay', value: '500ms' },
+        { key: 'sources.image_request_delay', value: '0ms' },
       ],
     })
 

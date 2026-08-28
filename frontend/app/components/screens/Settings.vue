@@ -36,6 +36,7 @@ import type {
   UpgradeStep,
 } from './settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
+import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
 
 /**
  * Settings — the single-owner control panel. A thin container: a sticky sidebar
@@ -119,6 +120,12 @@ withDefaults(defineProps<{
   sourcesSettings: SourcesSettings
   /** §16 state of the Sources-pane Save button. */
   sourcesSettingsSave?: SaveState
+  sourceThroughputPolicies?: SourceThroughputPolicy[]
+  sourceThroughputSources?: SourceOption[]
+  sourceThroughputGlobalConcurrency?: number
+  sourceThroughputLoading?: boolean
+  sourceThroughputSavingSourceId?: string | null
+  sourceThroughputError?: string | null
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -202,6 +209,12 @@ withDefaults(defineProps<{
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
   sourcesSettingsSave: () => ({ status: 'idle' }),
+  sourceThroughputPolicies: () => [],
+  sourceThroughputSources: () => [],
+  sourceThroughputGlobalConcurrency: 5,
+  sourceThroughputLoading: false,
+  sourceThroughputSavingSourceId: null,
+  sourceThroughputError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -279,6 +292,10 @@ const emit = defineEmits<{
   'update:ext-check-interval': [DurationValue]
   /** Persist the edited Sources-pane warm-up/circuit-breaker knobs. */
   'save-sources-settings': [settings: SourcesSettings]
+  'save-source-concurrency': [sourceId: string, value: number]
+  'inherit-source-concurrency': [sourceId: string]
+  'save-source-image-delay': [sourceId: string, value: string]
+  'inherit-source-image-delay': [sourceId: string]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
   /** Load the bulk-re-download preview for this filter (reads only). */
@@ -314,6 +331,9 @@ const emit = defineEmits<{
   /** Clear a source's binding (revert to global default). */
   'clear-binding': [sourceId: string]
 }>()
+
+const onSaveSourceConcurrency = (sourceId: string, value: number) => emit('save-source-concurrency', sourceId, value)
+const onSaveSourceImageDelay = (sourceId: string, value: string) => emit('save-source-image-delay', sourceId, value)
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
 </script>
@@ -394,6 +414,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           <SourcesSettingsPane
             :sources="sourcesSettings"
             :save="sourcesSettingsSave"
+            :throughput-policies="sourceThroughputPolicies"
+            :throughput-sources="sourceThroughputSources"
+            :global-download-concurrency="sourceThroughputGlobalConcurrency"
+            :throughput-loading="sourceThroughputLoading"
+            :throughput-saving-source-id="sourceThroughputSavingSourceId"
+            :throughput-error="sourceThroughputError"
             :dedup-all-busy="dedupAllBusy"
             :dedup-all-message="dedupAllMessage"
             :dedup-all-error="dedupAllError"
@@ -405,6 +431,10 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
             :redownload-message="redownloadMessage"
             :redownload-error="redownloadError"
             @save="emit('save-sources-settings', $event)"
+            @save-concurrency="onSaveSourceConcurrency"
+            @inherit-concurrency="emit('inherit-source-concurrency', $event)"
+            @save-image-delay="onSaveSourceImageDelay"
+            @inherit-image-delay="emit('inherit-source-image-delay', $event)"
             @dedup-all="emit('dedup-all')"
             @redownload-preview="emit('redownload-preview', $event)"
             @redownload="emit('redownload', $event)"
