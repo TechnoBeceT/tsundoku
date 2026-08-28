@@ -499,7 +499,7 @@ exhaustion_sample() {
     es_status=$(_status_parse "$1") || return 1
     es_dump=$(_source_dump_parse "$2") || return 1
     es_tab=$(printf '\t')
-    IFS="$es_tab" read -r es_sequence es_oldest es_running es_workers es_fingerprint es_approved <<EOF
+    IFS="$es_tab" read -r es_sequence es_oldest es_running es_workers es_fingerprint _ <<EOF
 $es_status
 EOF
     es_dump_fingerprint=$(printf '%s\n' "$es_dump" | awk -F '\t' '{ print $1 }')
@@ -634,7 +634,7 @@ watchdog_write_exhaustion_diagnostics() {
         ''|*[!0-9]*) return 1 ;;
     esac
     wd_tab=$(printf '\t')
-    IFS="$wd_tab" read -r wd_sequence wd_oldest wd_running wd_workers wd_fingerprint wd_approved <<EOF
+    IFS="$wd_tab" read -r _ _ _ _ _ wd_approved <<EOF
 $wd_status
 EOF
     wd_first_excerpt=$(printf '%s\n' "$wd_first" | awk -F '\t' '{ print $2 }')
@@ -674,7 +674,7 @@ watchdog_reset_exhaustion() {
 watchdog_start_exhaustion() {
     se_status=$1
     se_tab=$(printf '\t')
-    IFS="$se_tab" read -r se_sequence se_oldest se_running se_workers se_fingerprint se_approved <<EOF
+    IFS="$se_tab" read -r se_sequence _ _ _ se_fingerprint _ <<EOF
 $se_status
 EOF
     se_pid=$(watchdog_engine_pid)
@@ -721,7 +721,7 @@ watchdog_evaluate_exhaustion() {
         return 0
     fi
     ee_tab=$(printf '\t')
-    IFS="$ee_tab" read -r ee_sequence ee_oldest ee_running ee_workers ee_fingerprint ee_approved <<EOF
+    IFS="$ee_tab" read -r ee_sequence ee_oldest ee_running ee_workers ee_fingerprint _ <<EOF
 $ee_status
 EOF
     if [ "$ee_running" -ne 8 ] || [ "$ee_workers" -ne 8 ] || [ "$ee_oldest" -le 180000 ]; then
@@ -786,7 +786,7 @@ EOF
         watchdog_reset_exhaustion
         return 0
     fi
-    IFS="$ee_tab" read -r ee_final_sequence ee_final_oldest ee_final_running ee_final_workers ee_final_fingerprint ee_final_approved <<EOF
+    IFS="$ee_tab" read -r ee_final_sequence ee_final_oldest ee_final_running ee_final_workers ee_final_fingerprint _ <<EOF
 $ee_final_status
 EOF
     ee_final_pid=$(watchdog_engine_pid)

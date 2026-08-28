@@ -304,6 +304,8 @@ stable_loop_result=$(
         sample_count=0
         status_count=0
         dump_count=0
+        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
+        # shellcheck disable=SC2329
         curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || exit 0; }
         watchdog_trim_log() { :; }
@@ -326,6 +328,8 @@ progressing_loop_result=$(
         WATCHDOG_COOLDOWN=600
         tick=0
         sample_count=0
+        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
+        # shellcheck disable=SC2329
         curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 10 ] || { echo "progressing-ended samples=$sample_count"; exit 0; }; }
         watchdog_trim_log() { :; }
@@ -357,6 +361,8 @@ cooldown_loop_result=$(
         tick=0
         sample_count=0
         stop_count=0
+        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
+        # shellcheck disable=SC2329
         curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 15 ] || { echo "cooldown-ended stops=$stop_count"; exit 0; }; }
         watchdog_trim_log() { :; }
@@ -380,6 +386,8 @@ post_dump_progress_result=$(
         tick=0
         status_count=0
         dump_count=0
+        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
+        # shellcheck disable=SC2329
         curl() { return 0; }
         sleep() {
             if [ "$status_count" -ge 7 ]; then
@@ -419,6 +427,8 @@ reset_loop_result=$(
         WATCHDOG_COOLDOWN=600
         tick=0
         sample_count=0
+        # Resolved dynamically by the sourced watchdog loop; ShellCheck cannot see that call path.
+        # shellcheck disable=SC2329
         curl() { return 0; }
         sleep() { tick=$((tick + 1)); [ "$tick" -lt 12 ] || { echo "reset-ended samples=$sample_count"; exit 0; }; }
         watchdog_trim_log() { :; }
