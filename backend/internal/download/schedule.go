@@ -27,6 +27,7 @@ type resolvedChapter struct {
 	selectedState  entchapter.State
 	workGeneration string
 	cands          []chapter.Candidate
+	sourceID       int64
 }
 
 // groupBySource resolves the selected batch's live candidates in one bulk load and
@@ -89,6 +90,7 @@ func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Sel
 			selectedState:  ch.State,
 			workGeneration: selection.Generation,
 			cands:          cands,
+			sourceID:       linkedSourceID(cands[0].SeriesProvider),
 		})
 	}
 	for key, items := range groups {
@@ -175,17 +177,17 @@ func roundRobinBySeries(items []resolvedChapter) []resolvedChapter {
 // wait in the source-politeness gate before it makes an engine call. The actual
 // fetch boundary acquires the global semaphore after that wait, so a delayed
 // source cannot consume global capacity needed by a healthy source.
-func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrency int, run func(context.Context, T) error) error {
-	if concurrency < 1 {
-		concurrency = 1
-	}
+func runPerSourceQueues[T any](ctx context.Context, groups map[string][]T, concurrencyFor func(string) int, run func(context.Context, string, T) error) error {
 	sources, sctx := errgroup.WithContext(ctx)
-	for _, items := range groups {
+	for sourceKey, items := range groups {
 		if len(items) == 0 {
 			continue
 		}
+		concurrency := clampConcurrency(concurrencyFor(sourceKey))
 		sources.Go(func() error {
-			return drainSourceQueue(sctx, items, concurrency, run)
+			return drainSourceQueue(sctx, items, concurrency, func(ctx context.Context, item T) error {
+				return run(ctx, sourceKey, item)
+			})
 		})
 	}
 	return sources.Wait()
@@ -242,9 +244,11 @@ func runQueuedItem[T any](ctx context.Context, it T, run func(context.Context, T
 // globalSem is the cycle-shared GLOBAL cap (nil ⇒ per-source only), passed to
 // downloadResolved so only an actual engine call acquires it after the source
 // politeness wait.
-func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, concurrency, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem *semaphore.Weighted) {
-	_ = runPerSourceQueues(ctx, groups, concurrency,
-		func(ctx context.Context, it resolvedChapter) error {
+func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, policy sourceConcurrencyPolicy, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem *semaphore.Weighted) {
+	_ = runPerSourceQueues(ctx, groups, func(key string) int {
+		return policy.For(groups[key][0].sourceID)
+	},
+		func(ctx context.Context, _ string, it resolvedChapter) error {
 			if d.downloadResolved(ctx, it, maxRetries, now, limiter, globalSem) {
 				progressed.Add(1)
 			}

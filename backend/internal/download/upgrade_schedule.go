@@ -110,7 +110,10 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	}
 
 	maxRetries := d.retry.MaxRetries(ctx)
-	concurrency := d.downloadConcurrency(ctx)
+	policy, err := d.concurrencyPolicy(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: %w", err)
+	}
 	now := time.Now()
 
 	// Owner-paused sources (QCAT-513) are read ONCE for the whole pass and shared by
@@ -121,16 +124,20 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: %w", err)
 	}
 
-	groups := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now, disabled)
-	capUpgradeGroups(groups, BatchPerSource(concurrency), downloadsConsumed)
-	limiter := newProviderLimiter(concurrency)
+	groups, sourceIDs := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now, disabled)
+	limits := make(map[string]int, len(groups))
+	for key := range groups {
+		limits[key] = policy.For(sourceIDs[key])
+	}
+	capUpgradeGroupsWithLimits(groups, limits, downloadsConsumed)
+	limiter := newPolicyProviderLimiter(policy)
 
 	// Shared across every per-source goroutine — incremented once per upgrade that
 	// owned either an engine attempt or a no-fetch marker resolution. A concurrent
 	// claimant that lost the conditional transition yields without incrementing.
 	// Read after all goroutines have joined.
 	var upgraded atomic.Int64
-	err = runPerSourceQueues(ctx, groups, concurrency, func(ctx context.Context, chapterID uuid.UUID) error {
+	err = runPerSourceQueues(ctx, groups, func(key string) int { return limits[key] }, func(ctx context.Context, _ string, chapterID uuid.UUID) error {
 		completed, err := d.upgradeWith(ctx, chapterID, limiter, disabled, globalSem)
 		if err != nil {
 			return fmt.Errorf("download.Dispatcher.UpgradeAll: upgrade chapter %s: %w", chapterID, err)
@@ -158,8 +165,9 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 // owner re-rank or a breaker trip landing mid-pass). The shared providerLimiter and
 // the source gate bound the actual fetch rate in that case, so the drift costs
 // scheduling accuracy, never politeness.
-func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) map[string][]uuid.UUID {
+func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (map[string][]uuid.UUID, map[string]int64) {
 	groups := make(map[string][]uuid.UUID)
+	sourceIDs := make(map[string]int64)
 	for _, ch := range chapters {
 		best, err := bestUpgradeCandidate(ctx, d.client, d.gate, ch, maxRetries, now, disabled)
 		if err != nil {
@@ -171,10 +179,11 @@ func (d *Dispatcher) groupByUpgradeTarget(ctx context.Context, chapters []*ent.C
 		key := unresolvedTargetKey
 		if best != nil {
 			key = canonicalSourceKey(best.SeriesProvider)
+			sourceIDs[key] = linkedSourceID(best.SeriesProvider)
 		}
 		groups[key] = append(groups[key], ch.ID)
 	}
-	return groups
+	return groups, sourceIDs
 }
 
 // capUpgradeGroups truncates each REAL upgrade-target source's queue to the
@@ -192,6 +201,22 @@ func capUpgradeGroups(groups map[string][]uuid.UUID, budget int, consumed map[st
 			continue
 		}
 		remaining := budget - consumed[key]
+		if remaining <= 0 {
+			delete(groups, key)
+			continue
+		}
+		if len(ids) > remaining {
+			groups[key] = ids[:remaining]
+		}
+	}
+}
+
+func capUpgradeGroupsWithLimits(groups map[string][]uuid.UUID, limits map[string]int, consumed map[string]int) {
+	for key, ids := range groups {
+		if key == unresolvedTargetKey {
+			continue
+		}
+		remaining := BatchPerSource(limits[key]) - consumed[key]
 		if remaining <= 0 {
 			delete(groups, key)
 			continue

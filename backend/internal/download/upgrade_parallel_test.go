@@ -205,6 +205,83 @@ func TestUpgradeAll_PerSourceParallelism(t *testing.T) {
 	assertSatisfiedByPrefix(ctx, t, client, chapterIDs, upgradeTargetPrefix)
 }
 
+type gatedNumericUpgradeFetcher struct {
+	mu       sync.Mutex
+	started  chan string
+	release  chan struct{}
+	inFlight map[string]int
+	maxima   map[string]int
+}
+
+func newGatedNumericUpgradeFetcher() *gatedNumericUpgradeFetcher {
+	return &gatedNumericUpgradeFetcher{started: make(chan string, 16), release: make(chan struct{}), inFlight: map[string]int{}, maxima: map[string]int{}}
+}
+
+func (f *gatedNumericUpgradeFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	page := fetcher.ChapterPages{Pages: []fetcher.PageImage{{Data: []byte{1}, Ext: "jpg"}}, PageCount: 1}
+	if ref.Provider != "101" && ref.Provider != "202" {
+		return page, nil
+	}
+	f.mu.Lock()
+	f.inFlight[ref.Provider]++
+	f.maxima[ref.Provider] = max(f.maxima[ref.Provider], f.inFlight[ref.Provider])
+	f.mu.Unlock()
+	f.started <- ref.Provider
+	select {
+	case <-f.release:
+	case <-ctx.Done():
+		return fetcher.ChapterPages{}, ctx.Err()
+	}
+	f.mu.Lock()
+	f.inFlight[ref.Provider]--
+	f.mu.Unlock()
+	return page, nil
+}
+
+func TestUpgradeAll_SourceOverrideControlsSchedulingAndAdmission(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	const chapters = 4
+	f := newGatedNumericUpgradeFetcher()
+	one := 1
+	d := download.New(client, f, sse.NewHub(), download.Config{Storage: mustTempDir(t)}, settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: 3}, nil).
+		WithSourceThroughputPolicies(staticThroughputOverrides{101: {DownloadConcurrency: &one}})
+
+	for i, target := range []string{"101", "202"} {
+		s, ids := seedDownloadableSeries(ctx, t, client, "override-upg-"+target, "low-"+target, chapters)
+		if _, err := d.RunOnce(ctx); err != nil {
+			t.Fatalf("initial RunOnce source %s: %v", target, err)
+		}
+		sp := client.SeriesProvider.Create().SetSeries(s).SetProvider(target).SetProviderName("target-" + target).SetImportance(10).SaveX(ctx)
+		for n := range chapters {
+			number := float64(n + 1)
+			client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey(s.Slug + "-" + itoa(n+1)).SetNillableNumber(&number).SetURL("https://target/" + target).SetProviderIndex(n).SaveX(ctx)
+		}
+		if flagged, err := d.DetectUpgrades(ctx, d.MaxRetries(ctx)); err != nil || flagged != len(ids) {
+			t.Fatalf("DetectUpgrades source %d = %d, %v; want %d", i, flagged, err, len(ids))
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() { _, err := d.UpgradeAll(ctx, nil, nil); done <- err }()
+	for range 4 { // source 101 override=1 plus source 202 inherited=3
+		select {
+		case <-f.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for upgrade admission")
+		}
+	}
+	f.mu.Lock()
+	if f.maxima["101"] != 1 || f.maxima["202"] != 3 {
+		t.Errorf("upgrade maxima = %v, want 101=1 and 202=3", f.maxima)
+	}
+	f.mu.Unlock()
+	close(f.release)
+	if err := <-done; err != nil {
+		t.Fatalf("UpgradeAll: %v", err)
+	}
+}
+
 // assertPerSourceScheduling asserts the two halves of the per-source contract:
 // sources make progress CONCURRENTLY (the barrier fired — the throughput fix), and
 // no single source exceeded the per-source concurrency cap (the anti-ban invariant).

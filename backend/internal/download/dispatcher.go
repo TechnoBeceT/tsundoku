@@ -38,6 +38,7 @@ import (
 	entsourcecircuitstate "github.com/technobecet/tsundoku/internal/ent/sourcecircuitstate"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -158,7 +159,8 @@ type Dispatcher struct {
 	// drops those sources from candidacy, so a paused source is neither downloaded
 	// nor upgraded from. Nil ⇒ nothing is paused (the pre-QCAT-513 behaviour), which
 	// is what keeps existing call sites and tests unaffected.
-	disabled DisabledSources
+	disabled   DisabledSources
+	throughput SourceThroughputPolicies
 }
 
 // sourceWaiter is the minimal source-politeness dependency required at the
@@ -229,6 +231,13 @@ func (d *Dispatcher) WithEventRecorder(r sourceevents.Recorder) *Dispatcher {
 // declare it does not care.
 func (d *Dispatcher) WithDisabledSources(s DisabledSources) *Dispatcher {
 	d.disabled = s
+	return d
+}
+
+// WithSourceThroughputPolicies attaches the persisted per-source throughput
+// override store. Nil preserves inherited global concurrency for every source.
+func (d *Dispatcher) WithSourceThroughputPolicies(s SourceThroughputPolicies) *Dispatcher {
+	d.throughput = s
 	return d
 }
 
@@ -360,6 +369,11 @@ func providerSourceID(sp *ent.SeriesProvider) string {
 	return sp.Provider
 }
 
+func linkedSourceID(sp *ent.SeriesProvider) int64 {
+	id, _ := providerid.SourceID(sp.Provider)
+	return id
+}
+
 // gateWait enforces the politeness delay for sourceKey before a fetch. A nil
 // gate is a no-op.
 func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
@@ -414,7 +428,8 @@ func (d *Dispatcher) fetchWithAdmission(
 		}
 		defer globalSem.Release(1)
 	}
-	releaseSource := limiter.acquire(sourceKey)
+	sourceID, _ := providerid.SourceID(ref.Provider)
+	releaseSource := limiter.acquire(sourceKey, sourceID)
 	defer releaseSource()
 	if err := ctx.Err(); err != nil {
 		return fetchAdmissionResult{}, err
@@ -828,7 +843,10 @@ func (d *Dispatcher) RunOnce(ctx context.Context) (dispatched int, err error) {
 // job.Runner.RunDownloadCycle).
 func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[string]int, globalSem *semaphore.Weighted) (dispatched int, err error) {
 	maxRetries := d.retry.MaxRetries(ctx)
-	concurrency := d.downloadConcurrency(ctx)
+	policy, err := d.concurrencyPolicy(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.Dispatcher.RunOnceAt: %w", err)
+	}
 
 	selections, err := chapter.WantedSelections(ctx, d.client, wantedScanLimit)
 	if err != nil {
@@ -852,8 +870,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// occupy a start slot. The limiter is shared across the whole cycle so a
 	// provider's fetch cap holds even for fall-through candidates.
 	groups := d.groupBySource(ctx, selections, maxRetries, now, disabled)
-	limiter := newProviderLimiter(concurrency)
-	budget := BatchPerSource(concurrency)
+	limiter := newPolicyProviderLimiter(policy)
 
 	// Cap each source to the REMAINDER of its per-cycle budget (batchPerSource
 	// already consumed earlier this cycle), and record what this pass selects so
@@ -863,6 +880,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// candidate.
 	batched := make(map[string][]resolvedChapter, len(groups))
 	for key, items := range groups {
+		budget := BatchPerSource(policy.For(items[0].sourceID))
 		remaining := budget - consumed[key]
 		if remaining <= 0 {
 			continue
@@ -886,7 +904,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// increments it on a claim), so it must be atomic; read once with .Load() after
 	// all goroutines have joined.
 	var progressed atomic.Int64
-	d.runDownloadQueues(ctx, batched, concurrency, maxRetries, now, limiter, &progressed, globalSem)
+	d.runDownloadQueues(ctx, batched, policy, maxRetries, now, limiter, &progressed, globalSem)
 	d.flushEventSink(ctx, sink)
 	return int(progressed.Load()), nil
 }
@@ -898,7 +916,11 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 func (d *Dispatcher) Process(ctx context.Context, chapterID uuid.UUID) error {
 	maxRetries := d.retry.MaxRetries(ctx)
 	now := time.Now()
-	limiter := newProviderLimiter(d.downloadConcurrency(ctx))
+	policy, err := d.concurrencyPolicy(ctx)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.Process: %w", err)
+	}
+	limiter := newPolicyProviderLimiter(policy)
 	disabled, err := d.disabledSourceSet(ctx)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.Process: %w", err)
@@ -1637,9 +1659,10 @@ func (d *Dispatcher) handleSourcelessChapter(ctx context.Context, ch *ent.Chapte
 // at once, and the scheduler's start channel is a separate object, so no
 // self-deadlock is possible.
 type providerLimiter struct {
-	mu   sync.Mutex
-	cap  int
-	sems map[string]chan struct{}
+	mu     sync.Mutex
+	cap    int
+	policy *sourceConcurrencyPolicy
+	sems   map[string]chan struct{}
 }
 
 // newProviderLimiter builds a limiter whose per-source concurrency is capacity
@@ -1651,13 +1674,25 @@ func newProviderLimiter(capacity int) *providerLimiter {
 	return &providerLimiter{cap: capacity, sems: make(map[string]chan struct{})}
 }
 
+func newPolicyProviderLimiter(policy sourceConcurrencyPolicy) *providerLimiter {
+	return &providerLimiter{
+		cap:    policy.For(0),
+		policy: &policy,
+		sems:   make(map[string]chan struct{}),
+	}
+}
+
 // acquire blocks until a concurrency slot for the given source key is free, then
 // returns a release func the caller must invoke (once) to free the slot.
-func (l *providerLimiter) acquire(sourceKey string) (release func()) {
+func (l *providerLimiter) acquire(sourceKey string, sourceID int64) (release func()) {
 	l.mu.Lock()
 	sem, ok := l.sems[sourceKey]
 	if !ok {
-		sem = make(chan struct{}, l.cap)
+		capacity := l.cap
+		if l.policy != nil {
+			capacity = l.policy.For(sourceID)
+		}
+		sem = make(chan struct{}, capacity)
 		l.sems[sourceKey] = sem
 	}
 	l.mu.Unlock()

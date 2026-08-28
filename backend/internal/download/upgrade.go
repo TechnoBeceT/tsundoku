@@ -418,11 +418,15 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 	// Standalone single-chapter entry point: it owns its limiter, so nothing else
 	// contends for it. UpgradeAll drives upgradeWith with ONE limiter shared across
 	// the whole pass instead (see upgradeWith).
+	policy, err := d.concurrencyPolicy(ctx)
+	if err != nil {
+		return fmt.Errorf("download.Dispatcher.Upgrade: %w", err)
+	}
 	disabled, err := d.disabledSourceSet(ctx)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.Upgrade: %w", err)
 	}
-	_, err = d.upgradeWith(ctx, chapterID, newProviderLimiter(d.downloadConcurrency(ctx)), disabled, nil)
+	_, err = d.upgradeWith(ctx, chapterID, newPolicyProviderLimiter(policy), disabled, nil)
 	return err
 }
 

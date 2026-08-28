@@ -197,6 +197,13 @@ func (r *Runner) RunDownloadCycle(ctx context.Context) error {
 
 	slog.InfoContext(ctx, "job.Runner: download cycle started")
 
+	cycleCtx, err := r.dispatcher.BeginCycle(ctx)
+	if err != nil {
+		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
+		return fmt.Errorf("job.Runner.RunDownloadCycle: source throughput policy: %w", err)
+	}
+	ctx = cycleCtx
+
 	// Size the ONE global concurrency semaphore for this cycle from the runtime
 	// tunable (read once, clamped to >= 1 by the dispatcher accessor). It bounds the
 	// TOTAL number of concurrent chapter fetches across ALL sources — the aggregate

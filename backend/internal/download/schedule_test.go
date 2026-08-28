@@ -18,6 +18,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/fetcher"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -376,6 +377,46 @@ func TestRunOnce_DownloadConcurrencyReadAtUse(t *testing.T) {
 	g.open()
 	if err := <-done2; err != nil {
 		t.Fatalf("cycle 2 RunOnce: %v", err)
+	}
+}
+
+type staticThroughputOverrides map[int64]sourcethroughput.Override
+
+func (s staticThroughputOverrides) Snapshot(context.Context) (map[int64]sourcethroughput.Override, error) {
+	return s, nil
+}
+
+func TestRunOnce_SourceOverrideControlsSchedulingBatchAndFetchAdmission(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	limitedIDs := seedSourceChapters(ctx, t, client, "limited-source", "101", 10, 6)
+	inheritedIDs := seedSourceChapters(ctx, t, client, "inherited-source", "202", 10, 6)
+	one := 1
+	g := newGateFetcher()
+	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
+		&mutableSettings{conc: 3, retries: 3, backoff: time.Hour}, nil).
+		WithSourceThroughputPolicies(staticThroughputOverrides{101: {DownloadConcurrency: &one}})
+
+	done := make(chan error, 1)
+	go func() { _, err := d.RunOnce(ctx); done <- err }()
+	g.waitStarted(t, 4) // overridden source=1 plus inherited source=3
+
+	if got := countStates(ctx, t, client, limitedIDs)[entchapter.StateDownloading]; got != 1 {
+		t.Errorf("limited source downloading = %d, want override 1", got)
+	}
+	if got := countStates(ctx, t, client, inheritedIDs)[entchapter.StateDownloading]; got != 3 {
+		t.Errorf("inherited source downloading = %d, want global 3", got)
+	}
+
+	g.open()
+	if err := <-done; err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := countStates(ctx, t, client, limitedIDs)[entchapter.StateDownloaded]; got != 2 {
+		t.Errorf("limited source batch = %d, want BatchPerSource(1)=2", got)
+	}
+	if got := countStates(ctx, t, client, inheritedIDs)[entchapter.StateDownloaded]; got != 6 {
+		t.Errorf("inherited source batch = %d, want BatchPerSource(3)=6", got)
 	}
 }
 

@@ -339,7 +339,8 @@ func main() {
 		StagingRoot: stagingRoot,
 	}, settingsSvc, gateSvc).
 		WithEventRecorder(eventsSvc). // logs a `download` audit event per source attempt
-		WithDisabledSources(disabledSrcSvc)
+		WithDisabledSources(disabledSrcSvc).
+		WithSourceThroughputPolicies(sourceThroughputSvc)
 	runner := job.NewRunner(dispatcher, entClient, hub, cfg.Storage.Folder, settingsSvc)
 
 	// One-time startup upgrade-detection pass. ResetOrphanedChapters above unflagged
