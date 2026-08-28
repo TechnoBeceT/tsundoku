@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 )
 
@@ -63,6 +64,33 @@ func TestRunOnceAtSnapshotFailurePrecedesChapterSelection(t *testing.T) {
 	_, err := d.RunOnceAt(context.Background(), time.Now(), map[string]int{}, nil)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("RunOnceAt error = %v, want policy error %v before nil client is read", err, wantErr)
+	}
+}
+
+func TestUpgradeAllSnapshotFailurePrecedesChapterSelection(t *testing.T) {
+	wantErr := errors.New("policy store unavailable")
+	d := &Dispatcher{
+		retry:      fixedRetrySettings{concurrency: 3},
+		throughput: &stubThroughputPolicies{err: wantErr},
+	}
+
+	_, err := d.UpgradeAll(context.Background(), nil, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("UpgradeAll error = %v, want policy error %v before nil client is read", err, wantErr)
+	}
+}
+
+func TestUpgradeAllEmptySelectionStillReturnsSnapshotFailure(t *testing.T) {
+	wantErr := errors.New("policy store unavailable")
+	d := &Dispatcher{
+		client:     testdb.New(t),
+		retry:      fixedRetrySettings{concurrency: 3},
+		throughput: &stubThroughputPolicies{err: wantErr},
+	}
+
+	_, err := d.UpgradeAll(context.Background(), nil, nil)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("UpgradeAll error = %v, want policy error %v despite empty selection", err, wantErr)
 	}
 }
 

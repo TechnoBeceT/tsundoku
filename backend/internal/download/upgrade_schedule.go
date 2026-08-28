@@ -90,6 +90,11 @@ const unresolvedTargetKey = ""
 // This is an additional bound ON TOP OF the per-source concurrency and the source
 // gate — it never makes any single source more aggressive.
 func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[string]int, globalSem *semaphore.Weighted) (int, error) {
+	policy, err := d.concurrencyPolicy(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: %w", err)
+	}
+
 	chapters, err := d.client.Chapter.Query().
 		Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable)).
 		// Stable order (chapter number ascending, nulls last, id tiebreak — the same
@@ -110,10 +115,6 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	}
 
 	maxRetries := d.retry.MaxRetries(ctx)
-	policy, err := d.concurrencyPolicy(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("download.Dispatcher.UpgradeAll: %w", err)
-	}
 	now := time.Now()
 
 	// Owner-paused sources (QCAT-513) are read ONCE for the whole pass and shared by
