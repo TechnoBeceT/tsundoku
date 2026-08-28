@@ -629,6 +629,28 @@ var (
 			},
 		},
 	}
+	// SourceThroughputPoliciesColumns holds the columns for the "source_throughput_policies" table.
+	SourceThroughputPoliciesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64},
+		{Name: "download_concurrency", Type: field.TypeInt, Nullable: true},
+		{Name: "image_request_delay_ms", Type: field.TypeInt64, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceThroughputPoliciesTable holds the schema information for the "source_throughput_policies" table.
+	SourceThroughputPoliciesTable = &schema.Table{
+		Name:       "source_throughput_policies",
+		Columns:    SourceThroughputPoliciesColumns,
+		PrimaryKey: []*schema.Column{SourceThroughputPoliciesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "sourcethroughputpolicy_source_id",
+				Unique:  true,
+				Columns: []*schema.Column{SourceThroughputPoliciesColumns[1]},
+			},
+		},
+	}
 	// SuwayomiSyncStatesColumns holds the columns for the "suwayomi_sync_states" table.
 	SuwayomiSyncStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -747,6 +769,7 @@ var (
 		SourceNetworkBindingsTable,
 		SourcePreferencesTable,
 		SourceSeedStatesTable,
+		SourceThroughputPoliciesTable,
 		SuwayomiSyncStatesTable,
 		TrackBindingsTable,
 		TrackerConnectionsTable,

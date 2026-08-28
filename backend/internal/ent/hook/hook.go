@@ -321,6 +321,18 @@ func (f SourceSeedStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Va
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceSeedStateMutation", m)
 }
 
+// The SourceThroughputPolicyFunc type is an adapter to allow the use of ordinary
+// function as SourceThroughputPolicy mutator.
+type SourceThroughputPolicyFunc func(context.Context, *ent.SourceThroughputPolicyMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceThroughputPolicyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceThroughputPolicyMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceThroughputPolicyMutation", m)
+}
+
 // The SuwayomiSyncStateFunc type is an adapter to allow the use of ordinary
 // function as SuwayomiSyncState mutator.
 type SuwayomiSyncStateFunc func(context.Context, *ent.SuwayomiSyncStateMutation) (ent.Value, error)

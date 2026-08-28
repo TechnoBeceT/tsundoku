@@ -33,6 +33,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -742,6 +743,22 @@ func init() {
 	sourceseedstateDescID := sourceseedstateFields[0].Descriptor()
 	// sourceseedstate.DefaultID holds the default value on creation for the id field.
 	sourceseedstate.DefaultID = sourceseedstateDescID.Default.(func() uuid.UUID)
+	sourcethroughputpolicyFields := schema.SourceThroughputPolicy{}.Fields()
+	_ = sourcethroughputpolicyFields
+	// sourcethroughputpolicyDescCreatedAt is the schema descriptor for created_at field.
+	sourcethroughputpolicyDescCreatedAt := sourcethroughputpolicyFields[4].Descriptor()
+	// sourcethroughputpolicy.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourcethroughputpolicy.DefaultCreatedAt = sourcethroughputpolicyDescCreatedAt.Default.(func() time.Time)
+	// sourcethroughputpolicyDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcethroughputpolicyDescUpdatedAt := sourcethroughputpolicyFields[5].Descriptor()
+	// sourcethroughputpolicy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcethroughputpolicy.DefaultUpdatedAt = sourcethroughputpolicyDescUpdatedAt.Default.(func() time.Time)
+	// sourcethroughputpolicy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcethroughputpolicy.UpdateDefaultUpdatedAt = sourcethroughputpolicyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcethroughputpolicyDescID is the schema descriptor for id field.
+	sourcethroughputpolicyDescID := sourcethroughputpolicyFields[0].Descriptor()
+	// sourcethroughputpolicy.DefaultID holds the default value on creation for the id field.
+	sourcethroughputpolicy.DefaultID = sourcethroughputpolicyDescID.Default.(func() uuid.UUID)
 	suwayomisyncstateFields := schema.SuwayomiSyncState{}.Fields()
 	_ = suwayomisyncstateFields
 	// suwayomisyncstateDescLastError is the schema descriptor for last_error field.

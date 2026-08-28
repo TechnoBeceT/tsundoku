@@ -40,6 +40,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
+	"github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -82,6 +83,7 @@ const (
 	TypeSourceNetworkBinding            = "SourceNetworkBinding"
 	TypeSourcePreference                = "SourcePreference"
 	TypeSourceSeedState                 = "SourceSeedState"
+	TypeSourceThroughputPolicy          = "SourceThroughputPolicy"
 	TypeSuwayomiSyncState               = "SuwayomiSyncState"
 	TypeTrackBinding                    = "TrackBinding"
 	TypeTrackerConnection               = "TrackerConnection"
@@ -22838,6 +22840,699 @@ func (m *SourceSeedStateMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceSeedStateMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceSeedState edge %s", name)
+}
+
+// SourceThroughputPolicyMutation represents an operation that mutates the SourceThroughputPolicy nodes in the graph.
+type SourceThroughputPolicyMutation struct {
+	config
+	op                        Op
+	typ                       string
+	id                        *uuid.UUID
+	source_id                 *int64
+	addsource_id              *int64
+	download_concurrency      *int
+	adddownload_concurrency   *int
+	image_request_delay_ms    *int64
+	addimage_request_delay_ms *int64
+	created_at                *time.Time
+	updated_at                *time.Time
+	clearedFields             map[string]struct{}
+	done                      bool
+	oldValue                  func(context.Context) (*SourceThroughputPolicy, error)
+	predicates                []predicate.SourceThroughputPolicy
+}
+
+var _ ent.Mutation = (*SourceThroughputPolicyMutation)(nil)
+
+// sourcethroughputpolicyOption allows management of the mutation configuration using functional options.
+type sourcethroughputpolicyOption func(*SourceThroughputPolicyMutation)
+
+// newSourceThroughputPolicyMutation creates new mutation for the SourceThroughputPolicy entity.
+func newSourceThroughputPolicyMutation(c config, op Op, opts ...sourcethroughputpolicyOption) *SourceThroughputPolicyMutation {
+	m := &SourceThroughputPolicyMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceThroughputPolicy,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceThroughputPolicyID sets the ID field of the mutation.
+func withSourceThroughputPolicyID(id uuid.UUID) sourcethroughputpolicyOption {
+	return func(m *SourceThroughputPolicyMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceThroughputPolicy
+		)
+		m.oldValue = func(ctx context.Context) (*SourceThroughputPolicy, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceThroughputPolicy.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceThroughputPolicy sets the old SourceThroughputPolicy of the mutation.
+func withSourceThroughputPolicy(node *SourceThroughputPolicy) sourcethroughputpolicyOption {
+	return func(m *SourceThroughputPolicyMutation) {
+		m.oldValue = func(context.Context) (*SourceThroughputPolicy, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceThroughputPolicyMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceThroughputPolicyMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceThroughputPolicy entities.
+func (m *SourceThroughputPolicyMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceThroughputPolicyMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceThroughputPolicyMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceThroughputPolicy.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceThroughputPolicyMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceThroughputPolicyMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceThroughputPolicy entity.
+// If the SourceThroughputPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceThroughputPolicyMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourceThroughputPolicyMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourceThroughputPolicyMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceThroughputPolicyMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetDownloadConcurrency sets the "download_concurrency" field.
+func (m *SourceThroughputPolicyMutation) SetDownloadConcurrency(i int) {
+	m.download_concurrency = &i
+	m.adddownload_concurrency = nil
+}
+
+// DownloadConcurrency returns the value of the "download_concurrency" field in the mutation.
+func (m *SourceThroughputPolicyMutation) DownloadConcurrency() (r int, exists bool) {
+	v := m.download_concurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDownloadConcurrency returns the old "download_concurrency" field's value of the SourceThroughputPolicy entity.
+// If the SourceThroughputPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceThroughputPolicyMutation) OldDownloadConcurrency(ctx context.Context) (v *int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDownloadConcurrency is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDownloadConcurrency requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDownloadConcurrency: %w", err)
+	}
+	return oldValue.DownloadConcurrency, nil
+}
+
+// AddDownloadConcurrency adds i to the "download_concurrency" field.
+func (m *SourceThroughputPolicyMutation) AddDownloadConcurrency(i int) {
+	if m.adddownload_concurrency != nil {
+		*m.adddownload_concurrency += i
+	} else {
+		m.adddownload_concurrency = &i
+	}
+}
+
+// AddedDownloadConcurrency returns the value that was added to the "download_concurrency" field in this mutation.
+func (m *SourceThroughputPolicyMutation) AddedDownloadConcurrency() (r int, exists bool) {
+	v := m.adddownload_concurrency
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearDownloadConcurrency clears the value of the "download_concurrency" field.
+func (m *SourceThroughputPolicyMutation) ClearDownloadConcurrency() {
+	m.download_concurrency = nil
+	m.adddownload_concurrency = nil
+	m.clearedFields[sourcethroughputpolicy.FieldDownloadConcurrency] = struct{}{}
+}
+
+// DownloadConcurrencyCleared returns if the "download_concurrency" field was cleared in this mutation.
+func (m *SourceThroughputPolicyMutation) DownloadConcurrencyCleared() bool {
+	_, ok := m.clearedFields[sourcethroughputpolicy.FieldDownloadConcurrency]
+	return ok
+}
+
+// ResetDownloadConcurrency resets all changes to the "download_concurrency" field.
+func (m *SourceThroughputPolicyMutation) ResetDownloadConcurrency() {
+	m.download_concurrency = nil
+	m.adddownload_concurrency = nil
+	delete(m.clearedFields, sourcethroughputpolicy.FieldDownloadConcurrency)
+}
+
+// SetImageRequestDelayMs sets the "image_request_delay_ms" field.
+func (m *SourceThroughputPolicyMutation) SetImageRequestDelayMs(i int64) {
+	m.image_request_delay_ms = &i
+	m.addimage_request_delay_ms = nil
+}
+
+// ImageRequestDelayMs returns the value of the "image_request_delay_ms" field in the mutation.
+func (m *SourceThroughputPolicyMutation) ImageRequestDelayMs() (r int64, exists bool) {
+	v := m.image_request_delay_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImageRequestDelayMs returns the old "image_request_delay_ms" field's value of the SourceThroughputPolicy entity.
+// If the SourceThroughputPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceThroughputPolicyMutation) OldImageRequestDelayMs(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImageRequestDelayMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImageRequestDelayMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImageRequestDelayMs: %w", err)
+	}
+	return oldValue.ImageRequestDelayMs, nil
+}
+
+// AddImageRequestDelayMs adds i to the "image_request_delay_ms" field.
+func (m *SourceThroughputPolicyMutation) AddImageRequestDelayMs(i int64) {
+	if m.addimage_request_delay_ms != nil {
+		*m.addimage_request_delay_ms += i
+	} else {
+		m.addimage_request_delay_ms = &i
+	}
+}
+
+// AddedImageRequestDelayMs returns the value that was added to the "image_request_delay_ms" field in this mutation.
+func (m *SourceThroughputPolicyMutation) AddedImageRequestDelayMs() (r int64, exists bool) {
+	v := m.addimage_request_delay_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearImageRequestDelayMs clears the value of the "image_request_delay_ms" field.
+func (m *SourceThroughputPolicyMutation) ClearImageRequestDelayMs() {
+	m.image_request_delay_ms = nil
+	m.addimage_request_delay_ms = nil
+	m.clearedFields[sourcethroughputpolicy.FieldImageRequestDelayMs] = struct{}{}
+}
+
+// ImageRequestDelayMsCleared returns if the "image_request_delay_ms" field was cleared in this mutation.
+func (m *SourceThroughputPolicyMutation) ImageRequestDelayMsCleared() bool {
+	_, ok := m.clearedFields[sourcethroughputpolicy.FieldImageRequestDelayMs]
+	return ok
+}
+
+// ResetImageRequestDelayMs resets all changes to the "image_request_delay_ms" field.
+func (m *SourceThroughputPolicyMutation) ResetImageRequestDelayMs() {
+	m.image_request_delay_ms = nil
+	m.addimage_request_delay_ms = nil
+	delete(m.clearedFields, sourcethroughputpolicy.FieldImageRequestDelayMs)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceThroughputPolicyMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceThroughputPolicyMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceThroughputPolicy entity.
+// If the SourceThroughputPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceThroughputPolicyMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceThroughputPolicyMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceThroughputPolicyMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceThroughputPolicyMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceThroughputPolicy entity.
+// If the SourceThroughputPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceThroughputPolicyMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceThroughputPolicyMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceThroughputPolicyMutation builder.
+func (m *SourceThroughputPolicyMutation) Where(ps ...predicate.SourceThroughputPolicy) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceThroughputPolicyMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceThroughputPolicyMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceThroughputPolicy, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceThroughputPolicyMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceThroughputPolicyMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceThroughputPolicy).
+func (m *SourceThroughputPolicyMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceThroughputPolicyMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.source_id != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldSourceID)
+	}
+	if m.download_concurrency != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldDownloadConcurrency)
+	}
+	if m.image_request_delay_ms != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldImageRequestDelayMs)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceThroughputPolicyMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		return m.SourceID()
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		return m.DownloadConcurrency()
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		return m.ImageRequestDelayMs()
+	case sourcethroughputpolicy.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourcethroughputpolicy.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceThroughputPolicyMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		return m.OldDownloadConcurrency(ctx)
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		return m.OldImageRequestDelayMs(ctx)
+	case sourcethroughputpolicy.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourcethroughputpolicy.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceThroughputPolicy field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceThroughputPolicyMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDownloadConcurrency(v)
+		return nil
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImageRequestDelayMs(v)
+		return nil
+	case sourcethroughputpolicy.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourcethroughputpolicy.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceThroughputPolicy field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceThroughputPolicyMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldSourceID)
+	}
+	if m.adddownload_concurrency != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldDownloadConcurrency)
+	}
+	if m.addimage_request_delay_ms != nil {
+		fields = append(fields, sourcethroughputpolicy.FieldImageRequestDelayMs)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceThroughputPolicyMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		return m.AddedSourceID()
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		return m.AddedDownloadConcurrency()
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		return m.AddedImageRequestDelayMs()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceThroughputPolicyMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDownloadConcurrency(v)
+		return nil
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddImageRequestDelayMs(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceThroughputPolicy numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceThroughputPolicyMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcethroughputpolicy.FieldDownloadConcurrency) {
+		fields = append(fields, sourcethroughputpolicy.FieldDownloadConcurrency)
+	}
+	if m.FieldCleared(sourcethroughputpolicy.FieldImageRequestDelayMs) {
+		fields = append(fields, sourcethroughputpolicy.FieldImageRequestDelayMs)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceThroughputPolicyMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceThroughputPolicyMutation) ClearField(name string) error {
+	switch name {
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		m.ClearDownloadConcurrency()
+		return nil
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		m.ClearImageRequestDelayMs()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceThroughputPolicy nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceThroughputPolicyMutation) ResetField(name string) error {
+	switch name {
+	case sourcethroughputpolicy.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcethroughputpolicy.FieldDownloadConcurrency:
+		m.ResetDownloadConcurrency()
+		return nil
+	case sourcethroughputpolicy.FieldImageRequestDelayMs:
+		m.ResetImageRequestDelayMs()
+		return nil
+	case sourcethroughputpolicy.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourcethroughputpolicy.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceThroughputPolicy field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceThroughputPolicyMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceThroughputPolicyMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceThroughputPolicyMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceThroughputPolicyMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceThroughputPolicyMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceThroughputPolicyMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceThroughputPolicyMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceThroughputPolicy unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceThroughputPolicyMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceThroughputPolicy edge %s", name)
 }
 
 // SuwayomiSyncStateMutation represents an operation that mutates the SuwayomiSyncState nodes in the graph.
