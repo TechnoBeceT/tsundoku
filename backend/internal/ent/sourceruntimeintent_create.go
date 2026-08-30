@@ -203,6 +203,11 @@ func (_c *SourceRuntimeIntentCreate) check() error {
 	if _, ok := _c.mutation.LastApplyError(); !ok {
 		return &ValidationError{Name: "last_apply_error", err: errors.New(`ent: missing required field "SourceRuntimeIntent.last_apply_error"`)}
 	}
+	if v, ok := _c.mutation.LastApplyError(); ok {
+		if err := sourceruntimeintent.LastApplyErrorValidator(v); err != nil {
+			return &ValidationError{Name: "last_apply_error", err: fmt.Errorf(`ent: validator failed for field "SourceRuntimeIntent.last_apply_error": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "SourceRuntimeIntent.created_at"`)}
 	}

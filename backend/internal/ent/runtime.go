@@ -731,6 +731,8 @@ func init() {
 	sourceruntimeintentDescLastApplyError := sourceruntimeintentFields[5].Descriptor()
 	// sourceruntimeintent.DefaultLastApplyError holds the default value on creation for the last_apply_error field.
 	sourceruntimeintent.DefaultLastApplyError = sourceruntimeintentDescLastApplyError.Default.(string)
+	// sourceruntimeintent.LastApplyErrorValidator is a validator for the "last_apply_error" field. It is called by the builders before save.
+	sourceruntimeintent.LastApplyErrorValidator = sourceruntimeintentDescLastApplyError.Validators[0].(func(string) error)
 	// sourceruntimeintentDescCreatedAt is the schema descriptor for created_at field.
 	sourceruntimeintentDescCreatedAt := sourceruntimeintentFields[6].Descriptor()
 	// sourceruntimeintent.DefaultCreatedAt holds the default value on creation for the created_at field.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
@@ -88,6 +89,17 @@ func (s *Service) loadOverride(ctx context.Context, sourceID int64) (Override, e
 	return overrideFromRow(row), nil
 }
 
+func loadOverrideTx(ctx context.Context, tx *ent.Tx, sourceID int64) (Override, error) {
+	row, err := tx.SourceTransportPolicy.Query().Where(entpolicy.SourceID(sourceID)).Only(ctx)
+	if ent.IsNotFound(err) {
+		return Override{}, nil
+	}
+	if err != nil {
+		return Override{}, fmt.Errorf("query source %d transport policy: %w", sourceID, err)
+	}
+	return overrideFromRow(row), nil
+}
+
 func overrideFromRow(row *ent.SourceTransportPolicy) Override {
 	override := Override{ReuseBypassSession: row.ReuseBypassSession}
 	if row.ImageConnectionMode != nil {
@@ -141,7 +153,15 @@ func sanitizeApplyError(message string) string {
 	message = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(message)
 	message = strings.TrimSpace(message)
 	if len(message) > maxApplyErrorLen {
-		return message[:maxApplyErrorLen]
+		end := 0
+		for _, r := range message {
+			size := utf8.RuneLen(r)
+			if end+size > maxApplyErrorLen {
+				break
+			}
+			end += size
+		}
+		return message[:end]
 	}
 	return message
 }

@@ -61,6 +61,8 @@ var (
 	DefaultAppliedRevision int64
 	// DefaultLastApplyError holds the default value on creation for the "last_apply_error" field.
 	DefaultLastApplyError string
+	// LastApplyErrorValidator is a validator for the "last_apply_error" field. It is called by the builders before save.
+	LastApplyErrorValidator func(string) error
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.

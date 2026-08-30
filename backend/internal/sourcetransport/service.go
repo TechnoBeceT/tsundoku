@@ -84,25 +84,22 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		_ = tx.Rollback()
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
-	if _, err := s.AdvanceIntentTx(ctx, tx, sourceID); err != nil {
+	intent, err := s.AdvanceIntentTx(ctx, tx, sourceID)
+	if err != nil {
 		_ = tx.Rollback()
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: advance source %d intent: %w", sourceID, err)
+	}
+	override, err := loadOverrideTx(ctx, tx, sourceID)
+	if err != nil {
+		_ = tx.Rollback()
+		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: commit source %d: %w", sourceID, err)
 	}
-
-	override, err := s.loadOverride(ctx, sourceID)
-	if err != nil {
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
-	}
 	effective, err := s.resolveOverride(ctx, sourceID, override)
 	if err != nil {
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
-	}
-	intent, err := s.loadIntent(ctx, sourceID)
-	if err != nil {
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
 	return UpdateResult{Override: override, Effective: effective, Intent: intent}, nil
 }
@@ -111,9 +108,13 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 // transaction. Proxy and network owners use this primitive alongside their own
 // policy mutations so handlers never advance an intent separately.
 func (s *Service) AdvanceIntentTx(ctx context.Context, tx *ent.Tx, sourceID int64) (Intent, error) {
+	now := time.Now()
 	if err := tx.SourceRuntimeIntent.Create().SetSourceID(sourceID).SetDesiredRevision(1).
 		OnConflictColumns(entintent.FieldSourceID).
-		Update(func(update *ent.SourceRuntimeIntentUpsert) { update.AddDesiredRevision(1) }).
+		Update(func(update *ent.SourceRuntimeIntentUpsert) {
+			update.AddDesiredRevision(1)
+			update.SetUpdatedAt(now)
+		}).
 		Exec(ctx); err != nil {
 		return Intent{}, fmt.Errorf("upsert source %d runtime intent: %w", sourceID, err)
 	}

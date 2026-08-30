@@ -612,7 +612,7 @@ var (
 		{Name: "desired_revision", Type: field.TypeInt64, Default: 0},
 		{Name: "applied_revision", Type: field.TypeInt64, Default: 0},
 		{Name: "last_apply_attempt", Type: field.TypeTime, Nullable: true},
-		{Name: "last_apply_error", Type: field.TypeString, Default: ""},
+		{Name: "last_apply_error", Type: field.TypeString, Size: 512, Default: ""},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

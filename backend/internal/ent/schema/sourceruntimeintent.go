@@ -23,7 +23,7 @@ func (SourceRuntimeIntent) Fields() []ent.Field {
 		field.Int64("desired_revision").Default(0),
 		field.Int64("applied_revision").Default(0),
 		field.Time("last_apply_attempt").Optional().Nillable(),
-		field.String("last_apply_error").Default(""),
+		field.String("last_apply_error").MaxLen(512).Default(""),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

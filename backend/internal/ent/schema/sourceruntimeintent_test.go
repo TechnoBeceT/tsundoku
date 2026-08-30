@@ -2,6 +2,7 @@ package schema_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -23,6 +24,19 @@ func TestSourceRuntimeIntentRevisionsAreInt64AndDefaultToZero(t *testing.T) {
 		SaveX(ctx)
 	if got.DesiredRevision != 2 {
 		t.Fatalf("desired_revision = %d, want monotonic increment to 2", got.DesiredRevision)
+	}
+}
+
+func TestSourceRuntimeIntentRejectsOversizedApplyError(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	_, err := client.SourceRuntimeIntent.Create().
+		SetSourceID(101).
+		SetLastApplyError(strings.Repeat("x", 513)).
+		Save(ctx)
+	if err == nil {
+		t.Fatal("oversized last_apply_error error = nil")
 	}
 }
 

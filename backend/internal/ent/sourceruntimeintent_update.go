@@ -172,7 +172,20 @@ func (_u *SourceRuntimeIntentUpdate) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SourceRuntimeIntentUpdate) check() error {
+	if v, ok := _u.mutation.LastApplyError(); ok {
+		if err := sourceruntimeintent.LastApplyErrorValidator(v); err != nil {
+			return &ValidationError{Name: "last_apply_error", err: fmt.Errorf(`ent: validator failed for field "SourceRuntimeIntent.last_apply_error": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SourceRuntimeIntentUpdate) sqlSave(ctx context.Context) (_node int, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(sourceruntimeintent.Table, sourceruntimeintent.Columns, sqlgraph.NewFieldSpec(sourceruntimeintent.FieldID, field.TypeUUID))
 	if ps := _u.mutation.predicates; len(ps) > 0 {
 		_spec.Predicate = func(selector *sql.Selector) {
@@ -388,7 +401,20 @@ func (_u *SourceRuntimeIntentUpdateOne) defaults() {
 	}
 }
 
+// check runs all checks and user-defined validators on the builder.
+func (_u *SourceRuntimeIntentUpdateOne) check() error {
+	if v, ok := _u.mutation.LastApplyError(); ok {
+		if err := sourceruntimeintent.LastApplyErrorValidator(v); err != nil {
+			return &ValidationError{Name: "last_apply_error", err: fmt.Errorf(`ent: validator failed for field "SourceRuntimeIntent.last_apply_error": %w`, err)}
+		}
+	}
+	return nil
+}
+
 func (_u *SourceRuntimeIntentUpdateOne) sqlSave(ctx context.Context) (_node *SourceRuntimeIntent, err error) {
+	if err := _u.check(); err != nil {
+		return _node, err
+	}
 	_spec := sqlgraph.NewUpdateSpec(sourceruntimeintent.Table, sourceruntimeintent.Columns, sqlgraph.NewFieldSpec(sourceruntimeintent.FieldID, field.TypeUUID))
 	id, ok := _u.mutation.ID()
 	if !ok {
