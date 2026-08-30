@@ -157,6 +157,12 @@ type runtimeRetryGeneration struct {
 	retry  chan struct{}
 }
 
+// runtimeRetryRegistration balances one Start lifecycle. Its epoch is used
+// only when that Start exits; cadence requests deliberately never carry it.
+type runtimeRetryRegistration struct {
+	epoch uint64
+}
+
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
 // nil (or never calling it) leaves the cycle notifier-free. The notifier is
 // best-effort — its error never affects RunDownloadCycle's result.
@@ -395,19 +401,19 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context) {
-	runtimeEpoch, registered := r.startRuntimeRetry(ctx)
+	runtimeRegistration := r.startRuntimeRetry(ctx)
 	loop := periodLoop{
 		name:     "download",
 		interval: r.intervals.DownloadInterval,
 		trigger:  r.trigger,
 		run: func(ctx context.Context, triggered bool) {
-			r.runDownloadCycleLogging(ctx, triggered, runtimeEpoch)
+			r.runDownloadCycleLogging(ctx, triggered)
 		},
 		mark: r.schedule.markDownload,
 	}
 	go func() {
-		if registered {
-			defer r.stopRuntimeRetry(runtimeEpoch)
+		if runtimeRegistration != nil {
+			defer r.stopRuntimeRetry(runtimeRegistration)
 		}
 		loop.loop(ctx)
 	}()
@@ -416,27 +422,36 @@ func (r *Runner) Start(ctx context.Context) {
 // runDownloadCycleLogging runs one download cycle and logs (without aborting the
 // loop) any hard error, tagged so triggered vs ticked cycles are distinguishable
 // in the logs.
-func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, runtimeEpoch uint64) {
+func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
 	msg := "download cycle error"
 	if triggered {
 		msg = "triggered download cycle error"
 	}
 	if ctx.Err() != nil {
+		// Multiple Start loops share one coalescing trigger. A canceled loop can
+		// win the channel receive while a live loop is also waiting; return that
+		// opportunity so cancellation cannot swallow the requested download.
+		if triggered {
+			r.Trigger()
+		}
 		return
 	}
-	r.requestRuntimeRetry(runtimeEpoch)
+	r.requestRuntimeRetry()
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)
 	}
 }
 
 // requestRuntimeRetry attaches one retry request to a download-cycle start
-// without waiting for engine convergence. The cap-1 channel collapses requests
-// arriving while the single worker is busy into at most one later pass.
-func (r *Runner) requestRuntimeRetry(epoch uint64) {
+// without waiting for engine convergence. It resolves the current live retry
+// epoch when the cadence opportunity is consumed, rather than using the epoch
+// captured by whichever Start loop happened to receive it. The cap-1 channel
+// collapses requests arriving while the single worker is busy into at most one
+// later pass.
+func (r *Runner) requestRuntimeRetry() {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
-	if epoch != r.runtimeEpoch || r.runtimeStarts == 0 {
+	if r.runtimeStarts == 0 {
 		return
 	}
 	if r.runtimeStopping {
@@ -462,9 +477,9 @@ func (r *Runner) requestRuntimeRetry(epoch uint64) {
 	}
 }
 
-func (r *Runner) startRuntimeRetry(context.Context) (uint64, bool) {
+func (r *Runner) startRuntimeRetry(context.Context) *runtimeRetryRegistration {
 	if r.runtimeReconciler == nil {
-		return 0, false
+		return nil
 	}
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
@@ -474,7 +489,7 @@ func (r *Runner) startRuntimeRetry(context.Context) (uint64, bool) {
 	if !r.runtimeStopping {
 		r.ensureRuntimeRetryLocked()
 	}
-	return epoch, true
+	return &runtimeRetryRegistration{epoch: epoch}
 }
 
 func (r *Runner) ensureRuntimeRetryLocked() *runtimeRetryGeneration {
@@ -495,10 +510,10 @@ func (r *Runner) ensureRuntimeRetryLocked() *runtimeRetryGeneration {
 	return generation
 }
 
-func (r *Runner) stopRuntimeRetry(epoch uint64) {
+func (r *Runner) stopRuntimeRetry(registration *runtimeRetryRegistration) {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
-	if epoch != r.runtimeEpoch {
+	if registration.epoch != r.runtimeEpoch {
 		return
 	}
 	r.runtimeStarts--

@@ -856,6 +856,126 @@ type blockingRuntimeReconciler struct {
 	max         int
 }
 
+type runtimeEpochRaceContextKey struct{}
+
+type runtimeEpochRaceIntervals struct {
+	oldInterval time.Duration
+	oldReady    chan struct{}
+	newEntered  chan struct{}
+	releaseNew  chan struct{}
+	oldOnce     sync.Once
+	newOnce     sync.Once
+}
+
+func (i *runtimeEpochRaceIntervals) DownloadInterval(ctx context.Context) time.Duration {
+	switch ctx.Value(runtimeEpochRaceContextKey{}) {
+	case "old":
+		i.oldOnce.Do(func() { close(i.oldReady) })
+		return i.oldInterval
+	case "new":
+		i.newOnce.Do(func() { close(i.newEntered) })
+		select {
+		case <-i.releaseNew:
+		case <-ctx.Done():
+		}
+		return time.Hour
+	default:
+		return time.Hour
+	}
+}
+
+func (*runtimeEpochRaceIntervals) RefreshInterval(context.Context) time.Duration {
+	return time.Hour
+}
+
+func (*runtimeEpochRaceIntervals) ExtensionCheckInterval(context.Context) time.Duration { return 0 }
+func (*runtimeEpochRaceIntervals) WarmupInterval(context.Context) time.Duration         { return 0 }
+func (*runtimeEpochRaceIntervals) TrackRetryInterval(context.Context) time.Duration {
+	return time.Hour
+}
+
+func TestRunnerOldLoopConsumingTriggerRequestsCurrentRuntimeEpoch(t *testing.T) {
+	testRunnerOldLoopRequestsCurrentRuntimeEpoch(t, time.Hour, true)
+}
+
+func TestRunnerOldScheduledCadenceRequestsCurrentRuntimeEpoch(t *testing.T) {
+	testRunnerOldLoopRequestsCurrentRuntimeEpoch(t, time.Second, false)
+}
+
+func testRunnerOldLoopRequestsCurrentRuntimeEpoch(t *testing.T, oldInterval time.Duration, trigger bool) {
+	t.Helper()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	intervals := &runtimeEpochRaceIntervals{
+		oldInterval: oldInterval,
+		oldReady:    make(chan struct{}),
+		newEntered:  make(chan struct{}),
+		releaseNew:  make(chan struct{}),
+	}
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, intervals)
+	probe := &retryRuntimeReconciler{calls: make(chan int, 2)}
+	r.SetRuntimeReconciler(probe)
+
+	oldBase, cancelOld := context.WithCancel(context.Background())
+	oldCtx := context.WithValue(oldBase, runtimeEpochRaceContextKey{}, "old")
+	newBase, cancelNew := context.WithCancel(context.Background())
+	newCtx := context.WithValue(newBase, runtimeEpochRaceContextKey{}, "new")
+	newReleased := false
+	t.Cleanup(func() {
+		cancelOld()
+		cancelNew()
+		if !newReleased {
+			close(intervals.releaseNew)
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+			t.Errorf("ShutdownRuntimeRetry cleanup: %v", err)
+		}
+	})
+
+	r.Start(oldCtx)
+	<-intervals.oldReady
+	waitForSchedule(t, r, func(s job.Schedule) bool { return !s.Download.NextRunAt.IsZero() }, "old download loop to wait")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+		cancelShutdown()
+		t.Fatalf("invalidate old runtime epoch: %v", err)
+	}
+	cancelShutdown()
+
+	r.Start(newCtx)
+	<-intervals.newEntered // the replacement loop is live but cannot consume the opportunity
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	if trigger {
+		r.Trigger()
+	}
+
+	select {
+	case call := <-probe.calls:
+		if call != 1 {
+			t.Fatalf("current runtime epoch call = %d, want 1", call)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("old download loop consumed the cadence opportunity without requesting the current runtime epoch")
+	}
+	cycleStart, cycleDone := collectCycleEvents(events, 2*time.Second)
+	if !cycleStart || !cycleDone {
+		t.Fatalf("download opportunity delivery start/done = %v/%v, want true/true", cycleStart, cycleDone)
+	}
+	select {
+	case call := <-probe.calls:
+		t.Fatalf("one cadence opportunity launched extra runtime retry %d", call)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(intervals.releaseNew)
+	newReleased = true
+}
+
 func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error {
 	r.mu.Lock()
 	r.calls++
