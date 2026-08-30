@@ -85,6 +85,29 @@ describe('DownloadEnginePane', () => {
     expect(wrapper.findAll('[data-testid="engine-section-nav"] a')).toHaveLength(5)
   })
 
+  it('uses one h1, canonical h2 section titles, and nested h3 card titles', () => {
+    const wrapper = mountPane()
+
+    expect(wrapper.findAll('h1').map(heading => heading.text())).toEqual([
+      'Defaults first. Exceptions only where needed.',
+    ])
+    expect(wrapper.findAll('h2').map(heading => heading.text())).toEqual([
+      'Scheduling',
+      'Protection',
+      'Access & bypass',
+      'Routing',
+      'Source exceptions',
+    ])
+    expect(wrapper.findAll('h3').map(heading => heading.text())).toEqual(expect.arrayContaining([
+      'Cadence & capacity',
+      'Anti-block protection',
+      'Cloudflare bypass (FlareSolverr)',
+      'Chrome-fingerprint image proxy',
+      'Egress endpoints',
+      'Source exceptions',
+    ]))
+  })
+
   it('shows every global control once and removes the old all-source forms', () => {
     const wrapper = mountPane()
     const globalSections = [

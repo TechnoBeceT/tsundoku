@@ -18,6 +18,8 @@ import type { FlareSolverrConfig } from '../screens/settings.types'
 const props = defineProps<{
   /** The FlareSolverr config (v-model). */
   modelValue: FlareSolverrConfig
+  /** Semantic heading level when nested below a host section. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }>()
 
 const emit = defineEmits<{
@@ -32,7 +34,7 @@ function patch(part: Partial<FlareSolverrConfig>) {
 </script>
 
 <template>
-  <SurfaceCard title="Cloudflare bypass (FlareSolverr)" sub="Solve Cloudflare challenges for protected sources">
+  <SurfaceCard :heading-level="headingLevel" title="Cloudflare bypass (FlareSolverr)" sub="Solve Cloudflare challenges for protected sources">
     <template #actions>
       <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
       <Toggle :model-value="modelValue.enabled" :ariaLabel="'Enable FlareSolverr'" @update:model-value="patch({ enabled: $event })" />

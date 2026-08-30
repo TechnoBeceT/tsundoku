@@ -72,8 +72,7 @@ export const Desktop: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     for (const heading of ['Scheduling', 'Protection', 'Access & bypass', 'Routing', 'Source exceptions']) {
-      const matches = canvas.getAllByRole('heading', { name: heading, level: 2 })
-      await expect(matches[0]).toBeVisible()
+      await expect(canvas.getByRole('heading', { name: heading, level: 2 })).toBeVisible()
     }
     await expect(canvas.getByRole('button', { name: 'Add endpoint' })).toBeVisible()
   },
@@ -94,6 +93,7 @@ export const Narrow: Story = {
     const pane = canvasElement.querySelector<HTMLElement>('[data-testid="download-engine-pane"]')
     await expect(pane).not.toBeNull()
     await expect(pane!.querySelectorAll('[data-engine-section]')).toHaveLength(5)
+    await expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(document.documentElement.clientWidth)
     await expect(pane!.scrollWidth).toBeLessThanOrEqual(pane!.clientWidth)
   },
 }

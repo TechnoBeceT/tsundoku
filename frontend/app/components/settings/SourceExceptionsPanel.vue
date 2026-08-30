@@ -50,6 +50,8 @@ const props = withDefaults(defineProps<{
     saving?: boolean
     error?: string | null
   }
+  /** Semantic heading level when nested below a host section. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }>(), {
   selectedSourceId: null,
   configuration: null,
@@ -63,6 +65,7 @@ const props = withDefaults(defineProps<{
   configurationError: null,
   highlightedSourceId: null,
   action: () => ({ sourceId: null, key: null, saving: false, error: null }),
+  headingLevel: 2,
 })
 
 const emit = defineEmits<{
@@ -127,6 +130,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
 <template>
   <SurfaceCard
     class="source-exceptions"
+    :heading-level="headingLevel"
     title="Source exceptions"
     sub="Start with sources that differ from global behavior, then search the full installed catalog."
   >

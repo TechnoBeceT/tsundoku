@@ -44,10 +44,13 @@ const props = withDefaults(defineProps<{
   impersonateSave?: SaveState
   /** Transitional screen prop; membership is no longer rendered here. */
   impersonateSources?: SourceOption[]
+  /** Semantic heading level for cards nested inside a host section. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }>(), {
   flareSolverrSave: () => ({ status: 'idle' }),
   impersonateSave: () => ({ status: 'idle' }),
   impersonateSources: () => [],
+  headingLevel: 2,
 })
 
 const emit = defineEmits<{
@@ -103,9 +106,9 @@ function onSaveImpersonate() {
 
 <template>
   <div class="pane-stack">
-    <FlareSolverrCard :model-value="flare" @update:model-value="v => Object.assign(flare, v)" />
+    <FlareSolverrCard :model-value="flare" :heading-level="headingLevel" @update:model-value="v => Object.assign(flare, v)" />
     <SaveFooter :state="flareFooterState" :dirty="flareDirty" label="Save FlareSolverr settings" @save="onSaveFlareSolverr" />
-    <ImpersonateCard :model-value="imp" @update:model-value="v => Object.assign(imp, v)" />
+    <ImpersonateCard :model-value="imp" :heading-level="headingLevel" @update:model-value="v => Object.assign(imp, v)" />
     <SaveFooter :state="impFooterState" :dirty="impDirty" label="Save image-proxy settings" @save="onSaveImpersonate" />
   </div>
 </template>
@@ -116,5 +119,7 @@ function onSaveImpersonate() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  max-width: 100%;
 }
 </style>

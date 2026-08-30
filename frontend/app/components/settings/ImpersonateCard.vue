@@ -16,6 +16,8 @@ import type { ImpersonateConfig } from '../screens/settings.types'
 const props = defineProps<{
   /** The impersonate config (v-model). */
   modelValue: ImpersonateConfig
+  /** Semantic heading level when nested below a host section. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }>()
 
 const emit = defineEmits<{
@@ -30,7 +32,7 @@ function patch(part: Partial<ImpersonateConfig>) {
 </script>
 
 <template>
-  <SurfaceCard title="Chrome-fingerprint image proxy" sub="Configure the shared browser-fingerprint gateway; opt sources in from Source exceptions">
+  <SurfaceCard :heading-level="headingLevel" title="Chrome-fingerprint image proxy" sub="Configure the shared browser-fingerprint gateway; opt sources in from Source exceptions">
     <template #actions>
       <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
       <Toggle :model-value="modelValue.enabled" :ariaLabel="'Enable impersonate gateway'" @update:model-value="patch({ enabled: $event })" />

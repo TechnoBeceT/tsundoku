@@ -191,7 +191,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             <p>Control discovery, queue cadence, retry budget, and shared download capacity.</p>
           </header>
 
-          <SurfaceCard title="Cadence & capacity" sub="Schedulers re-read these values on the next tick.">
+          <SurfaceCard :heading-level="3" title="Cadence & capacity" sub="Schedulers re-read these values on the next tick.">
             <SettingRow name="Refresh interval" hint="How often to poll titles for new chapters">
               <DurationInput v-model="libraryDraft.refreshInterval" />
             </SettingRow>
@@ -240,7 +240,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             <p>Warm sessions, pause blocked sources, and pace requests before providers enforce their own limits.</p>
           </header>
 
-          <SurfaceCard title="Anti-block protection" sub="Shared warm-up, circuit-breaker, and request pacing.">
+          <SurfaceCard :heading-level="3" title="Anti-block protection" sub="Shared warm-up, circuit-breaker, and request pacing.">
             <SettingRow name="Warm-up interval" hint="How often to keep anti-bot source sessions warm; 0 disables">
               <DurationInput v-model="sourceDraft.warmupInterval" />
             </SettingRow>
@@ -276,6 +276,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
           </header>
 
           <SuwayomiPane
+            :heading-level="3"
             :flare-solverr="flareSolverr"
             :flare-solverr-save="flareSolverrSave"
             :impersonate="impersonate"
@@ -298,6 +299,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
           </header>
 
           <NetworkPane
+            :heading-level="3"
             :endpoints="endpoints"
             :endpoint-action="endpointAction"
             :endpoints-pending="endpointsPending"
@@ -321,6 +323,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
           </header>
 
           <SourceExceptionsPanel
+            :heading-level="3"
             :sources="sourceCatalog"
             :summaries="sourceSummaries"
             :selected-source-id="selectedSourceId"
@@ -349,6 +352,8 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
 <style scoped>
 .download-engine {
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
 }
@@ -441,6 +446,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
 .download-engine__sections {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-3xl);
   min-width: 0;
   max-width: 100%;
@@ -448,6 +454,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
 .engine-section {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-base);
   min-width: 0;
   max-width: 100%;

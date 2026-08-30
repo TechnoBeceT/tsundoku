@@ -38,7 +38,7 @@ export default withNuxt(
       parserOptions: {
         // `allowDefaultProject` lets root/tooling config files be linted even
         // though they sit outside the Nuxt tsconfig project.
-        projectService: { allowDefaultProject: ['eslint.config.mjs', 'vitest.config.ts', '.storybook/main.ts', '.storybook/preview.ts'] },
+        projectService: { allowDefaultProject: ['eslint.config.mjs', 'vitest.config.ts', '.storybook/main.ts', '.storybook/preview.ts', 'scripts/test-download-engine-responsive.mjs'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -69,7 +69,7 @@ export default withNuxt(
     // Tooling config files (this file + Storybook setup) are linted with the
     // default project, where imported configs resolve to `any`. Turn off the
     // type-aware rules for them — they're build config, not shipped app code.
-    files: ['eslint.config.mjs', 'vitest.config.ts', '.storybook/**'],
+    files: ['eslint.config.mjs', 'vitest.config.ts', '.storybook/**', 'scripts/test-download-engine-responsive.mjs'],
     ...tseslint.configs.disableTypeChecked,
   },
 )

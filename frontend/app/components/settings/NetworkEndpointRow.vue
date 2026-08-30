@@ -135,4 +135,23 @@ const kindLabel = computed(() => (props.endpoint.kind === 'socks' ? 'SOCKS' : 'F
   background: var(--surface3);
   color: var(--muted);
 }
+
+@media (max-width: 560px) {
+  .ep-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ep-row__body {
+    order: 2;
+    flex-basis: 100%;
+  }
+
+  .ep-row__name,
+  .ep-row__summary {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+}
 </style>

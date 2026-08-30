@@ -8,6 +8,7 @@
  *
  *   - `title`: the card heading (omit for a header-less / custom-header card).
  *   - `sub`: the faint one-line description under the title.
+ *   - `headingLevel`: the semantic title level; defaults to the legacy `h2`.
  *
  * Slots:
  *   - default: the card body (each consumer keeps its own body markup).
@@ -15,12 +16,16 @@
  *   - `actions`: header-right content (a toggle, a badge, a button) laid out
  *     across from the title.
  */
-defineProps<{
+withDefaults(defineProps<{
   /** Card heading shown in the header (omit for a header-less card). */
   title?: string
   /** Faint one-line description under the title. */
   sub?: string
-}>()
+  /** Semantic title level for cards nested below a screen or section heading. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
+}>(), {
+  headingLevel: 2,
+})
 </script>
 
 <template>
@@ -30,7 +35,7 @@ defineProps<{
     <slot name="header">
       <div v-if="title || sub || $slots.actions" class="surface-card__head">
         <div class="surface-card__heading">
-          <h2 v-if="title" class="surface-card__title">{{ title }}</h2>
+          <component :is="`h${headingLevel}`" v-if="title" class="surface-card__title">{{ title }}</component>
           <p v-if="sub" class="surface-card__sub">{{ sub }}</p>
         </div>
         <div v-if="$slots.actions" class="surface-card__actions">
@@ -44,6 +49,9 @@ defineProps<{
 
 <style scoped>
 .surface-card {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-2xl);
@@ -55,6 +63,8 @@ defineProps<{
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
   /* The head owns the rhythm before the body — moved here off `.surface-card__sub`
      so a TITLE-ONLY card (e.g. the Series-Detail Trackers section, whose header
      carries the "Reset progress / Sync now" actions) is never flush against its
@@ -81,9 +91,23 @@ defineProps<{
 
 .surface-card__heading {
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .surface-card__actions {
   flex: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 560px) {
+  .surface-card__head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .surface-card__actions {
+    width: 100%;
+  }
 }
 </style>

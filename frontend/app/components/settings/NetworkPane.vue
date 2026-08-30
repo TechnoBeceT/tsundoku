@@ -49,6 +49,8 @@ const props = withDefaults(defineProps<{
   bindingsPending?: boolean
   /** A sources/bindings load failure, surfaced inline. */
   bindingsError?: string | null
+  /** Semantic heading level when nested below a host section. */
+  headingLevel?: 2 | 3 | 4 | 5 | 6
 }>(), {
   endpointAction: () => ({ busyId: null }),
   endpointsPending: false,
@@ -58,6 +60,7 @@ const props = withDefaults(defineProps<{
   bindingAction: () => ({ busyId: null }),
   bindingsPending: false,
   bindingsError: null,
+  headingLevel: 2,
 })
 
 const emit = defineEmits<{
@@ -119,6 +122,7 @@ const endpointSkeletons = [0, 1]
   <div class="pane-stack">
     <!-- Card 1 — reusable egress endpoints ------------------------------------ -->
     <SurfaceCard
+      :heading-level="headingLevel"
       title="Egress endpoints"
       sub="Reusable SOCKS proxies + FlareSolverr servers you can route individual sources through."
     >
@@ -181,6 +185,8 @@ const endpointSkeletons = [0, 1]
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .net-banner {
