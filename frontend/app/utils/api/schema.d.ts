@@ -9387,6 +9387,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     updateSourceImageProxy: {
@@ -9433,6 +9442,15 @@ export interface operations {
             };
             /** @description Source not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11767,6 +11785,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     clearNetworkBinding: {
@@ -11810,6 +11837,15 @@ export interface operations {
             };
             /** @description The source had no binding to clear. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

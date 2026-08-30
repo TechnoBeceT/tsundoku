@@ -122,6 +122,19 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertRequestRef(t, paths, "/api/network/bindings/{sourceId}", "put", "#/components/schemas/SourceNetworkBindingUpdate")
 		assertResponseRef(t, paths, "/api/network/bindings/{sourceId}", "put", "200", "#/components/schemas/SourceMutationResponse")
 		assertResponseRef(t, paths, "/api/network/bindings/{sourceId}", "delete", "200", "#/components/schemas/SourceMutationResponse")
+		for _, route := range []struct {
+			path   string
+			method string
+		}{
+			{"/api/sources/{sourceId}/transport", "patch"},
+			{"/api/sources/{sourceId}/image-proxy", "put"},
+			{"/api/network/bindings/{sourceId}", "put"},
+			{"/api/network/bindings/{sourceId}", "delete"},
+		} {
+			t.Run(route.method+" "+route.path+" catalog unavailable", func(t *testing.T) {
+				assertResponseRef(t, paths, route.path, route.method, "503", "#/components/schemas/ErrorResponse")
+			})
+		}
 		if _, exists := paths["/api/network/sources/{sourceId}/binding"]; exists {
 			t.Fatal("legacy network binding path remains in the contract")
 		}

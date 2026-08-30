@@ -8584,6 +8584,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/sources/{sourceId}/image-proxy:
     put:
@@ -8626,6 +8632,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
           content:
             application/json:
               schema:
@@ -10886,6 +10898,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     delete:
       operationId: clearNetworkBinding
       summary: Clear a source's network route
@@ -10922,6 +10940,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: The source had no binding to clear.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
           content:
             application/json:
               schema:
