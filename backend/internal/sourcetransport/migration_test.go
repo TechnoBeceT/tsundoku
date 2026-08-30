@@ -8,13 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"entgo.io/ent/dialect"
-	entsql "entgo.io/ent/dialect/sql"
-	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
+	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/network"
@@ -77,8 +73,7 @@ func TestMigrationPreservesExistingBehavior(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			cfg := migrationDatabase(t)
-			legacyClient, legacySQL := createLegacyFixture(t, cfg, tc.globalSession)
+			legacyClient, legacySQL, cfg := createLegacyFixture(t, tc.globalSession)
 
 			for _, table := range []string{
 				"global_runtime_intents",
@@ -148,8 +143,7 @@ func TestMigrationPreservesExistingBehavior(t *testing.T) {
 
 	t.Run("global intent seed remains conditional", func(t *testing.T) {
 		ctx := context.Background()
-		cfg := migrationDatabase(t)
-		legacyClient, legacySQL := createLegacySchema(t, cfg)
+		legacyClient, legacySQL, cfg := createLegacySchema(t)
 		if _, err := legacySQL.ExecContext(ctx,
 			`INSERT INTO settings (id, key, value, updated_at) VALUES ($1, $2, $3, NOW())`,
 			"00000000-0000-0000-0000-000000000021", settings.KeyStaleGraceDays, "14"); err != nil {
@@ -243,48 +237,10 @@ func migrationSettingDefaults() settings.Defaults {
 	}
 }
 
-func migrationDatabase(t *testing.T) config.DatabaseConfig {
+func createLegacyFixture(t *testing.T, globalSession string) (*ent.Client, *sql.DB, config.DatabaseConfig) {
 	t.Helper()
 	ctx := context.Background()
-	ctr, err := postgres.Run(ctx,
-		"postgres:17-alpine",
-		postgres.BasicWaitStrategies(),
-		postgres.WithDatabase("tsundoku_migration"),
-		postgres.WithUsername("postgres"),
-		postgres.WithPassword("testpassword"),
-	)
-	if err != nil {
-		t.Fatalf("start migration postgres: %v", err)
-	}
-	t.Cleanup(func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := ctr.Terminate(shutdownCtx); err != nil {
-			t.Logf("terminate migration postgres: %v", err)
-		}
-	})
-	host, err := ctr.Host(ctx)
-	if err != nil {
-		t.Fatalf("migration postgres host: %v", err)
-	}
-	port, err := ctr.MappedPort(ctx, "5432")
-	if err != nil {
-		t.Fatalf("migration postgres port: %v", err)
-	}
-	return config.DatabaseConfig{
-		Host:     host,
-		Port:     port.Port(),
-		User:     "postgres",
-		Password: "testpassword",
-		Name:     "tsundoku_migration",
-		SSLMode:  "disable",
-	}
-}
-
-func createLegacyFixture(t *testing.T, cfg config.DatabaseConfig, globalSession string) (*ent.Client, *sql.DB) {
-	t.Helper()
-	ctx := context.Background()
-	client, db := createLegacySchema(t, cfg)
+	client, db, cfg := createLegacySchema(t)
 
 	settingsRows := []struct{ id, key, value string }{
 		{"00000000-0000-0000-0000-000000000001", settings.KeyFlareSolverrSessionName, globalSession},
@@ -341,23 +297,16 @@ func createLegacyFixture(t *testing.T, cfg config.DatabaseConfig, globalSession 
 		}
 	}
 
-	return client, db
+	return client, db, cfg
 }
 
-func createLegacySchema(t *testing.T, cfg config.DatabaseConfig) (*ent.Client, *sql.DB) {
+func createLegacySchema(t *testing.T) (*ent.Client, *sql.DB, config.DatabaseConfig) {
 	t.Helper()
-	db, err := sql.Open("pgx", cfg.DSN())
-	if err != nil {
-		t.Fatalf("open legacy fixture database: %v", err)
-	}
+	client, db, cfg := testdb.NewUnmigrated(t)
 	if _, err := db.ExecContext(context.Background(), legacySchema); err != nil {
-		_ = db.Close()
 		t.Fatalf("create legacy fixture schema: %v", err)
 	}
-	driver := entsql.OpenDB(dialect.Postgres, db)
-	client := ent.NewClient(ent.Driver(driver))
-	t.Cleanup(func() { _ = client.Close() })
-	return client, db
+	return client, db, cfg
 }
 
 func assertTableAbsent(t *testing.T, db *sql.DB, table string) {

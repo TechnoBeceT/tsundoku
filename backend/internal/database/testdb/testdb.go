@@ -17,13 +17,16 @@
 // sharing radius is exactly one package — packages still cannot see each other's
 // data, and `go test -p N` still bounds the number of live containers by N).
 //
-// # Isolation mechanism: one DATABASE per New() call
+// # Isolation mechanism: one DATABASE per constructor call
 //
-// Sharing a container must not share STATE. Each New/NewWithSQL call creates its
-// own freshly-migrated, freshly-seeded PostgreSQL DATABASE on the shared server and
-// hands back a client bound to it; t.Cleanup drops it. Tests therefore remain fully
-// independent and order-insensitive, and two New(t) calls inside the SAME test are
-// still isolated from each other (pinned by TestNewIsIsolated).
+// Sharing a container must not share STATE. Each New/NewWithSQL/NewUnmigrated call
+// creates its own PostgreSQL DATABASE on the shared server and hands back a client
+// bound to it; t.Cleanup drops it. New and NewWithSQL migrate and seed the database;
+// NewUnmigrated deliberately leaves it schema-free for pre-existing-database
+// migration fixtures. Tests therefore remain fully independent and
+// order-insensitive, and two constructor calls inside the SAME test are still
+// isolated from each other (pinned by TestNewIsIsolated and
+// TestNewUnmigratedIsIsolatedAndReopenable).
 //
 // A per-test database was chosen over truncate-between-tests because truncation is
 // order-sensitive by construction (it must know every table, and it leaks sequence
@@ -78,6 +81,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"github.com/technobecet/tsundoku/internal/category"
+	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
@@ -136,6 +140,38 @@ func New(t *testing.T) *ent.Client {
 // guarantees apply — both handles are closed via t.Cleanup.
 func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 	t.Helper()
+	client, db, _ := newIsolatedDatabase(t)
+	ctx := context.Background()
+
+	if err := client.Schema.Create(ctx); err != nil {
+		t.Fatalf("testdb: run ent migration: %v", err)
+	}
+
+	mirrorProductionSeedSequence(t, ctx, client, db)
+
+	return client, db
+}
+
+// NewUnmigrated creates an isolated, schema-free PostgreSQL database on the
+// package's shared test server. It returns an Ent client and sql.DB for building
+// a raw pre-existing schema plus the production DatabaseConfig that reopens the
+// same database through database.Open. Cleanup retains the same acquisition-time
+// registration and forced-drop guarantees as NewWithSQL.
+func NewUnmigrated(t *testing.T) (*ent.Client, *sql.DB, config.DatabaseConfig) {
+	t.Helper()
+	client, db, dsn := newIsolatedDatabase(t)
+	cfg, err := configFromDSN(dsn)
+	if err != nil {
+		t.Fatalf("testdb: derive database config: %v", err)
+	}
+	return client, db, cfg
+}
+
+// newIsolatedDatabase provisions one database and registers every cleanup at
+// acquisition time, but deliberately does not create a schema. Constructors
+// choose whether to migrate after this common lifecycle has been established.
+func newIsolatedDatabase(t *testing.T) (*ent.Client, *sql.DB, string) {
+	t.Helper()
 
 	ctx := context.Background()
 
@@ -162,12 +198,13 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 
 	// CLEANUP IS REGISTERED AT ACQUISITION TIME, never at the end of the happy path.
 	//
-	// Every step below (sql.Open, Schema.Create, the seed sequence) is fallible and
-	// calls t.Fatalf. If the cleanups were registered only after the last of them, a
-	// failing migration would leak this database AND its connection pool for the rest
-	// of the test binary's life — and because the shared server's max_connections is
-	// 100, a package with more tests than that would bury the REAL error under a
-	// cascade of "sorry, too many clients already". t.Cleanup runs LIFO, so
+	// Every step after provisioning (sql.Open, optional Schema.Create, the seed
+	// sequence) is fallible and calls t.Fatalf. If the cleanups were registered only
+	// after the last of them, a failing migration would leak this database AND its
+	// connection pool for the rest of the test binary's life — and because the shared
+	// server's max_connections is 100, a package with more tests than that would bury
+	// the REAL error under a cascade of "sorry, too many clients already". t.Cleanup
+	// runs LIFO, so
 	// registering in acquisition order (drop → pool close → ent close) executes in the
 	// required teardown order (ent close → pool close → drop).
 	t.Cleanup(func() { dropDatabase(t, srv, dbName) })
@@ -182,13 +219,41 @@ func NewWithSQL(t *testing.T) (*ent.Client, *sql.DB) {
 	client := ent.NewClient(ent.Driver(drv))
 	t.Cleanup(func() { _ = client.Close() })
 
-	if err := client.Schema.Create(ctx); err != nil {
-		t.Fatalf("testdb: run ent migration: %v", err)
+	return client, db, dsn
+}
+
+// configFromDSN projects the testcontainer connection URL into the typed config
+// consumed by database.Open. net/url retains credentials and query parameters
+// correctly; string slicing here would reintroduce the DSN corruption class that
+// dsnForDatabase is designed to prevent.
+func configFromDSN(dsn string) (config.DatabaseConfig, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return config.DatabaseConfig{}, fmt.Errorf("parse database dsn: %w", err)
 	}
-
-	mirrorProductionSeedSequence(t, ctx, client, db)
-
-	return client, db
+	if u.User == nil || u.Hostname() == "" || u.Port() == "" {
+		return config.DatabaseConfig{}, fmt.Errorf("database dsn %q is missing credentials, host, or port", dsn)
+	}
+	password, ok := u.User.Password()
+	if !ok {
+		return config.DatabaseConfig{}, fmt.Errorf("database dsn %q has no password", dsn)
+	}
+	dbName := strings.TrimPrefix(u.Path, "/")
+	if dbName == "" {
+		return config.DatabaseConfig{}, fmt.Errorf("database dsn %q has no database", dsn)
+	}
+	sslMode := u.Query().Get("sslmode")
+	if sslMode == "" {
+		return config.DatabaseConfig{}, fmt.Errorf("database dsn %q has no sslmode", dsn)
+	}
+	return config.DatabaseConfig{
+		Host:     u.Hostname(),
+		Port:     u.Port(),
+		User:     u.User.Username(),
+		Password: password,
+		Name:     dbName,
+		SSLMode:  sslMode,
+	}, nil
 }
 
 // mirrorProductionSeedSequence runs, in order, every post-auto-migration step

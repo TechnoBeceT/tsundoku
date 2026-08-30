@@ -2,6 +2,7 @@ package testdb_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/database"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 )
 
@@ -45,6 +47,60 @@ func TestNewIsIsolated(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected isolated database (count=0 in clientB), got %d", count)
+	}
+}
+
+// TestNewUnmigratedIsIsolatedAndReopenable pins the migration-test seam: each
+// call receives a schema-free database on the shared test server, and the
+// returned production config addresses that exact database for a later Open.
+func TestNewUnmigratedIsIsolatedAndReopenable(t *testing.T) {
+	ctx := context.Background()
+	clientA, dbA, cfgA := testdb.NewUnmigrated(t)
+	_, dbB, cfgB := testdb.NewUnmigrated(t)
+
+	if cfgA.Name == cfgB.Name {
+		t.Fatalf("unmigrated database names = %q and %q, want isolated databases", cfgA.Name, cfgB.Name)
+	}
+	if _, err := clientA.Owner.Query().Count(ctx); err == nil {
+		t.Fatal("Owner query before migration succeeded, want a schema-free database")
+	}
+	if _, err := dbA.ExecContext(ctx, `CREATE TABLE legacy_marker (value text NOT NULL)`); err != nil {
+		t.Fatalf("create legacy marker: %v", err)
+	}
+	if _, err := dbA.ExecContext(ctx, `INSERT INTO legacy_marker (value) VALUES ('preserved')`); err != nil {
+		t.Fatalf("seed legacy marker: %v", err)
+	}
+
+	var inB sql.NullString
+	if err := dbB.QueryRowContext(ctx, `SELECT to_regclass('legacy_marker')`).Scan(&inB); err != nil {
+		t.Fatalf("inspect isolated database: %v", err)
+	}
+	if inB.Valid {
+		t.Fatalf("second unmigrated database sees first database marker as %q", inB.String)
+	}
+	if err := clientA.Close(); err != nil {
+		t.Fatalf("close pre-migration client: %v", err)
+	}
+
+	migratedA, err := database.Open(ctx, cfgA)
+	if err != nil {
+		t.Fatalf("database.Open returned config: %v", err)
+	}
+	t.Cleanup(func() { _ = migratedA.Close() })
+	if _, err := migratedA.Owner.Query().Count(ctx); err != nil {
+		t.Fatalf("Owner query after production migration: %v", err)
+	}
+	reopenedA, err := sql.Open("pgx", cfgA.DSN())
+	if err != nil {
+		t.Fatalf("reopen returned config: %v", err)
+	}
+	t.Cleanup(func() { _ = reopenedA.Close() })
+	var marker string
+	if err := reopenedA.QueryRowContext(ctx, `SELECT value FROM legacy_marker`).Scan(&marker); err != nil {
+		t.Fatalf("query preserved legacy marker: %v", err)
+	}
+	if marker != "preserved" {
+		t.Fatalf("legacy marker after production migration = %q, want preserved", marker)
 	}
 }
 
