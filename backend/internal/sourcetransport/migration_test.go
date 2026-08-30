@@ -68,6 +68,12 @@ func TestMigrationPreservesExistingBehavior(t *testing.T) {
 			wantGlobalReuse: true,
 			wantGlobalMode:  sourcetransport.BypassSessionReusable,
 		},
+		{
+			name:            "whitespace configured session stays reusable exactly",
+			globalSession:   "   ",
+			wantGlobalReuse: true,
+			wantGlobalMode:  sourcetransport.BypassSessionReusable,
+		},
 	}
 
 	for _, tc := range cases {
@@ -130,6 +136,22 @@ func TestMigrationPreservesExistingBehavior(t *testing.T) {
 			}
 			if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
 				t.Fatalf("source runtime intents after migration = %d, want zero", got)
+			}
+			if tc.globalSession == "   " {
+				if got := settingService.FlareSolverrSessionName(ctx); got != tc.globalSession {
+					t.Fatalf("post-migration session = %q, want byte-exact whitespace", got)
+				}
+				if _, err := client.SourceTransportPolicy.Create().SetSourceID(globalSourceID).
+					SetReuseBypassSession(true).Save(ctx); err != nil {
+					t.Fatalf("create explicit On policy: %v", err)
+				}
+				explicit, err := transportService.Resolve(ctx, globalSourceID)
+				if err != nil {
+					t.Fatalf("Resolve explicit On whitespace session: %v", err)
+				}
+				if !explicit.ReuseBypassSession || explicit.BypassSessionMode != sourcetransport.BypassSessionReusable {
+					t.Fatalf("explicit On whitespace transport = %+v, want reusable", explicit)
+				}
 			}
 
 			intents := client.GlobalRuntimeIntent.Query().AllX(ctx)

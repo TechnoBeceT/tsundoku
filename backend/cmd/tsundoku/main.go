@@ -821,7 +821,8 @@ func startEngine(
 // (enginetopo.Reconcile, DB->engine PROVISION) then SEED (enginetopo.RunSeed,
 // engine->DB CAPTURE) — in that order, in a single detached, non-blocking
 // background goroutine. It is called from startEngine, immediately after the
-// recurring tickers start. http.Get is the production repo-index/apk fetcher.
+// recurring tickers start. Repo-index/apk fetches use the injected configured
+// HTTP client with each request bound to the boot convergence context.
 //
 // ORDER MATTERS: Reconcile runs FIRST because it is what makes a freshly-
 // started/wiped/swapped engine-host USABLE — it installs the library's
