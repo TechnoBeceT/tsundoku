@@ -198,8 +198,8 @@ try {
 }
 finally {
   socket?.close()
-  if (chromium?.exitCode == null) {
-    chromium?.kill('SIGTERM')
+  if (chromium && chromium.exitCode == null) {
+    chromium.kill('SIGTERM')
     await once(chromium, 'exit')
   }
   await rm(profile, { recursive: true, force: true, maxRetries: 4, retryDelay: 50 })

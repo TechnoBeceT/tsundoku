@@ -22,13 +22,11 @@ const emit = defineEmits<{
 
 // The panes in display order, with their sidebar labels.
 const panes: { key: SettingsPane, label: string }[] = [
-  { key: 'library', label: 'Schedules & Behavior' },
+  { key: 'library', label: 'Library' },
   { key: 'categories', label: 'Categories' },
-  { key: 'engine', label: 'Engine' },
-  { key: 'serverConfig', label: 'Server config' },
+  { key: 'download-engine', label: 'Download engine' },
+  { key: 'engine', label: 'Engine diagnostics' },
   { key: 'extensions', label: 'Sources & Extensions' },
-  { key: 'sources', label: 'Sources' },
-  { key: 'network', label: 'Network' },
   { key: 'trackers', label: 'Trackers' },
   { key: 'notifications', label: 'Notifications' },
 ]

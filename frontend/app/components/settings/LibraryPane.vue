@@ -3,14 +3,11 @@ import LockedRow from '../ui/LockedRow.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import Toggle from '../ui/Toggle.vue'
 import SettingRow from './SettingRow.vue'
-import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings.types'
+import type { SystemInfo } from '../screens/settings.types'
 
 /**
- * Library-only settings that remain after scheduling and capacity move to the
- * Download engine pane: metadata auto-identification plus read-only deploy
- * facts. The legacy library/save props remain declared for compatibility while
- * the Settings container adopts the consolidated pane, but this pane neither
- * renders nor owns those controls.
+ * Library-only settings that remain after scheduling and capacity moved to the
+ * Download engine pane: metadata auto-identification plus read-only deploy facts.
  *
  *   - `system`: read-only deploy-time facts for the System card.
  *   - `autoIdentify`: the current `metadata.auto_identify` setting value —
@@ -22,18 +19,13 @@ import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings
  * Emits `toggle-auto-identify` with the new boolean value.
  */
 withDefaults(defineProps<{
-  /** Transitional screen prop; scheduling is rendered by DownloadEnginePane. */
-  library?: LibrarySettings
   /** Read-only deploy-time facts (env-sourced). */
   system: SystemInfo
-  /** Transitional screen prop; scheduling save state moved with its controls. */
-  save?: SaveState
   /** The current `metadata.auto_identify` setting value. */
   autoIdentify?: boolean
   /** True while the auto-identify toggle's own save is in flight. */
   autoIdentifyBusy?: boolean
 }>(), {
-  save: () => ({ status: 'idle' }),
   autoIdentify: true,
   autoIdentifyBusy: false,
 })

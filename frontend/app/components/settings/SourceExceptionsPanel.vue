@@ -7,22 +7,13 @@ import Skeleton from '../ui/Skeleton.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import SourceConfigurationGroup from './SourceConfigurationGroup.vue'
 import SourceExceptionSummaryRow from './SourceExceptionSummaryRow.vue'
-import type { NetworkEndpoint } from '../screens/settings.types'
+import type { NetworkEndpoint, SourceConfigurationRowKey } from '../screens/settings.types'
 import type { components } from '../../utils/api/schema.d.ts'
 
 type SourceIdentity = components['schemas']['SourceIdentity']
 type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
 type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
-type SourceConfigurationRowKey =
-  | 'downloadConcurrency'
-  | 'imageRequestDelay'
-  | 'byparr'
-  | 'reuseBypassSession'
-  | 'imageConnectionMode'
-  | 'imageProxy'
-  | 'socksBinding'
-  | 'bypassBinding'
 type RowActionKey = SourceConfigurationRowKey | 'routing'
 
 /**
@@ -44,6 +35,7 @@ const props = withDefaults(defineProps<{
   configurationPending?: boolean
   configurationError?: string | null
   highlightedSourceId?: string | null
+  highlightedSetting?: SourceConfigurationRowKey | null
   action?: {
     sourceId: string | null
     key: RowActionKey | null
@@ -64,6 +56,7 @@ const props = withDefaults(defineProps<{
   configurationPending: false,
   configurationError: null,
   highlightedSourceId: null,
+  highlightedSetting: null,
   action: () => ({ sourceId: null, key: null, saving: false, error: null }),
   headingLevel: 2,
 })
@@ -180,7 +173,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
               :exception-count="summaryBySource.get(source.sourceId)?.exceptionCount ?? 0"
               :runtime="summaryBySource.get(source.sourceId)?.runtime ?? null"
               :selected="source.sourceId === localSelectedSourceId"
-              :highlighted="source.sourceId === highlightedSourceId"
+              :highlighted="source.sourceId === highlightedSourceId && highlightedSetting == null"
               @select="selectSource"
             />
           </div>
@@ -208,6 +201,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
             :global-reuse-bypass-session="globalReuseBypassSession"
             :global-image-connection-mode="globalImageConnectionMode"
             :action="action"
+            :highlighted-setting="highlightedSetting"
             @set-override="forwardSetOverride"
             @use-global="forwardUseGlobal"
             @set-binding="emit('set-binding', $event)"

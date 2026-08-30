@@ -8,12 +8,9 @@ import NetworkEndpointRow from './NetworkEndpointRow.vue'
 import NetworkEndpointDialog from './NetworkEndpointDialog.vue'
 import {
   ADD_ACTION_ID,
-  type FlareMode,
   type NetworkEndpoint,
   type NetworkEndpointInput,
-  type NetworkSource,
   type RowActionState,
-  type SourceBinding,
 } from '../screens/settings.types'
 
 /**
@@ -39,27 +36,12 @@ const props = withDefaults(defineProps<{
   endpointsPending?: boolean
   /** An endpoint-list load failure, surfaced inline. */
   endpointsError?: string | null
-  /** Transitional screen prop; source routes render in Source exceptions. */
-  sources?: NetworkSource[]
-  /** The per-source bindings (a source absent here uses the global default). */
-  bindings?: SourceBinding[]
-  /** §16 state of the binding set/clear mutation (busy source + error). */
-  bindingAction?: RowActionState
-  /** Whether the sources/bindings are loading. */
-  bindingsPending?: boolean
-  /** A sources/bindings load failure, surfaced inline. */
-  bindingsError?: string | null
   /** Semantic heading level when nested below a host section. */
   headingLevel?: 2 | 3 | 4 | 5 | 6
 }>(), {
   endpointAction: () => ({ busyId: null }),
   endpointsPending: false,
   endpointsError: null,
-  sources: () => [],
-  bindings: () => [],
-  bindingAction: () => ({ busyId: null }),
-  bindingsPending: false,
-  bindingsError: null,
   headingLevel: 2,
 })
 
@@ -70,10 +52,6 @@ const emit = defineEmits<{
   'remove-endpoint': [id: string]
   /** Dismiss the lingering endpoint-action error banner. */
   'dismiss-endpoint-error': []
-  /** Set (upsert) a source's binding — carries the full merged binding. */
-  'set-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
-  /** Clear a source's binding (revert to global default). */
-  'clear-binding': [sourceId: string]
 }>()
 
 // ── Endpoint editor dialog (local UI state) ──────────────────────────────────

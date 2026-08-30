@@ -4,17 +4,19 @@ import Settings from './Settings.vue'
 import type { SettingsPane } from './settings.types'
 import {
   availableExtensions,
+  comicAsuraSourceConfiguration,
   engineInfo,
   extCheckInterval,
   flareSolverrConfig,
+  fullyInheritedSourceConfiguration,
+  hiveProxySourceConfiguration,
   impersonateConfig,
   installedExtensions,
   librarySettings,
   networkEndpoints,
-  networkSources,
+  pendingSourceException,
   repos,
   settingsCategories,
-  sourceBindings,
   sourcesSettings,
   systemInfo,
   upgradeStepsInProgress,
@@ -44,8 +46,14 @@ const baseProps = {
   extCheckInterval,
   sourcesSettings,
   networkEndpoints,
-  networkSources,
-  networkBindings: sourceBindings,
+  sourceCatalog: [
+    fullyInheritedSourceConfiguration.source,
+    comicAsuraSourceConfiguration.source,
+    hiveProxySourceConfiguration.source,
+  ],
+  sourceSummaries: [pendingSourceException],
+  selectedSourceId: comicAsuraSourceConfiguration.source.sourceId,
+  sourceConfiguration: comicAsuraSourceConfiguration,
 }
 
 const meta = {
@@ -83,7 +91,7 @@ const withPane = (startPane: SettingsPane, extra: Record<string, unknown> = {}) 
   `,
 })
 
-/** Library pane — Schedules & Behavior knobs + the read-only System card. */
+/** Library pane — metadata/system plus owner-triggered maintenance actions. */
 export const Library: Story = {
   render: () => withPane('library'),
 }
@@ -93,30 +101,27 @@ export const Categories: Story = {
   render: () => withPane('categories'),
 }
 
-/** Engine pane — embedded engine status with a mid-flight upgrade stepper. */
+/** Engine diagnostics — embedded engine status with a mid-flight upgrade stepper. */
 export const Engine: Story = {
   render: () => withPane('engine', { upgradeSteps: upgradeStepsInProgress, upgrading: true }),
 }
 
-/** Server config pane — the Tsundoku-owned FlareSolverr card (on). */
-export const ServerConfig: Story = {
-  render: () => withPane('serverConfig'),
+/** Consolidated Download engine with its complete source editor. */
+export const DownloadEngine: Story = {
+  render: () => withPane('download-engine'),
+}
+
+/** Contextual shortcut — selected source with its canonical pacing row focused. */
+export const DownloadEngineContext: Story = {
+  render: () => withPane('download-engine', {
+    highlightedSourceId: comicAsuraSourceConfiguration.source.sourceId,
+    highlightedSetting: 'imageRequestDelay',
+  }),
 }
 
 /** Sources & Extensions — installed / available / repositories segments. */
 export const Extensions: Story = {
   render: () => withPane('extensions'),
-}
-
-/** Sources pane — the warm-up/circuit-breaker CONFIG knobs + library-maintenance
- *  dedup sweep (the search-metrics report moved to the /health Source Health tab). */
-export const Sources: Story = {
-  render: () => withPane('sources'),
-}
-
-/** Network pane — per-source SOCKS/FlareSolverr routing (endpoints + assignment). */
-export const Network: Story = {
-  render: () => withPane('network'),
 }
 
 /**

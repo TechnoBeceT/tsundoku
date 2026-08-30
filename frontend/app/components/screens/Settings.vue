@@ -3,10 +3,9 @@ import SettingsNav from '../settings/SettingsNav.vue'
 import LibraryPane from '../settings/LibraryPane.vue'
 import CategoriesPane from '../settings/CategoriesPane.vue'
 import EnginePane from '../settings/EnginePane.vue'
-import SuwayomiPane from '../settings/SuwayomiPane.vue'
+import DownloadEnginePane from '../settings/DownloadEnginePane.vue'
 import ExtensionsPane from '../settings/ExtensionsPane.vue'
 import SourcesSettingsPane from '../settings/SourcesSettingsPane.vue'
-import NetworkPane from '../settings/NetworkPane.vue'
 import TrackersPane from '../settings/TrackersPane.vue'
 import NotificationsPane from '../settings/NotificationsPane.vue'
 import type {
@@ -19,8 +18,6 @@ import type {
   LibrarySettings,
   NetworkEndpoint,
   NetworkEndpointInput,
-  NetworkSource,
-  SourceOption,
   NotificationPermissionState,
   Repo,
   ReorderDirection,
@@ -28,7 +25,7 @@ import type {
   SaveState,
   SettingsCategory,
   SettingsPane,
-  SourceBinding,
+  SourceConfigurationRowKey,
   SourcesSettings,
   SystemInfo,
   TrackerActionState,
@@ -36,28 +33,25 @@ import type {
   UpgradeStep,
 } from './settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
-import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
+import type { SourceConfigurationAction } from '~/composables/useSourceEffectiveConfiguration'
+import type { components } from '~/utils/api/schema.d.ts'
+
+type SourceIdentity = components['schemas']['SourceIdentity']
+type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
+type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
+type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
 
 /**
  * Settings — the single-owner control panel. A thin container: a sticky sidebar
  * nav (SettingsNav) plus the one active pane, each pane extracted into its own
  * organism under `components/settings/`:
- *   - library     → LibraryPane     (schedules + the metadata.auto_identify
- *                   toggle + read-only System)
+ *   - library     → LibraryPane + SourcesSettingsPane (metadata/system plus
+ *                   owner-triggered maintenance and re-download actions)
  *   - categories  → CategoriesPane   (user-definable category CRUD)
- *   - engine      → EnginePane       (read-only status + upgrade stepper)
- *   - serverConfig → SuwayomiPane     (the Tsundoku-owned FlareSolverr card,
- *                   QCAT-238 — the proxied Suwayomi SOCKS card was RETIRED
- *                   with the P2 Suwayomi-removal backend cutover)
+ *   - download-engine → DownloadEnginePane (global scheduling/protection,
+ *                   access, routing endpoints, and one source editor)
+ *   - engine      → EnginePane       (read-only lifecycle diagnostics)
  *   - extensions  → ExtensionsPane    (installed / available / repositories)
- *   - sources     → SourcesSettingsPane (warm-up + circuit-breaker knobs +
- *                   the library-wide dedup-sweep trigger). The per-source search
- *                   metrics + Warm-now UI RELOCATED to the /health Source Health
- *                   tab (Source Health Console, slice 3); only the CONFIG knobs
- *                   remain here.
- *   - network     → NetworkPane      (per-source SOCKS/FlareSolverr routing:
- *                   the reusable-endpoint manager + the per-source assignment
- *                   table, two stacked cards, QCAT-283)
  *   - trackers    → TrackersPane (connect/disconnect AniList/MAL/Kitsu/
  *                   MangaUpdates + the Phase 4 auto-update-track toggle;
  *                   per-series bind + the tracking-sheet edit live on Series
@@ -100,8 +94,6 @@ withDefaults(defineProps<{
   impersonate: ImpersonateConfig
   /** §16 state of the impersonate Save button. */
   impersonateSave?: SaveState
-  /** Engine sources the impersonate card offers as per-source opt-ins (GAP-131). */
-  impersonateSources?: SourceOption[]
   /** Installed extensions (2e). */
   extensions: Extension[]
   /** Available (installable) extensions (2e). */
@@ -116,18 +108,27 @@ withDefaults(defineProps<{
   extCheckInterval: DurationValue
   /** Whether a "check for updates" call is in flight. */
   checkingUpdates?: boolean
-  /** The runtime-editable warm-up + circuit-breaker knobs (2f, Sources pane). */
+  /** The runtime-editable warm-up + circuit-breaker knobs (Download engine). */
   sourcesSettings: SourcesSettings
-  /** §16 state of the Sources-pane Save button. */
+  /** §16 state of the protection Save button. */
   sourcesSettingsSave?: SaveState
-  sourceThroughputPolicies?: SourceThroughputPolicy[]
-  sourceThroughputSources?: SourceOption[]
-  sourceThroughputGlobalConcurrency?: number
-  sourceThroughputLoading?: boolean
-  sourceThroughputReady?: boolean
-  sourceThroughputSavingSourceId?: string | null
-  sourceThroughputLoadError?: string | null
-  sourceThroughputError?: string | null
+  /** Full installed catalog for the canonical source exception search. */
+  sourceCatalog?: SourceIdentity[]
+  /** Exception-first summary rows. */
+  sourceSummaries?: SourceExceptionSummary[]
+  /** Lossless source identity currently selected in the editor. */
+  selectedSourceId?: string | null
+  /** Last confirmed server-composed source configuration. */
+  sourceConfiguration?: SourceEffectiveConfiguration | null
+  sourceExceptionsPending?: boolean
+  sourceConfigurationPending?: boolean
+  sourceConfigurationError?: string | null
+  /** External deep-link target in the source rail and editor. */
+  highlightedSourceId?: string | null
+  highlightedSetting?: SourceConfigurationRowKey | null
+  sourceAction?: SourceConfigurationAction
+  globalReuseBypassSession?: boolean
+  globalImageConnectionMode?: ImageConnectionMode
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -136,7 +137,7 @@ withDefaults(defineProps<{
   dedupAllError?: string | null
   /** Series the last dedup sweep skipped because a merge was already running. */
   dedupAllSkippedBusy?: number
-  /** The last bulk-re-download preview (Sources pane), or null when none is loaded. */
+  /** The last bulk-re-download preview (Library pane), or null when none is loaded. */
   redownloadPreview?: RedownloadPreview | null
   /** True while the re-download preview request is in flight. */
   redownloadPreviewBusy?: boolean
@@ -176,7 +177,7 @@ withDefaults(defineProps<{
   notifGlobalBusy?: boolean
   /** A global notifications toggle save failure, surfaced inline. */
   notifGlobalError?: string | null
-  /** The defined network-egress endpoints (2h, Network pane). */
+  /** The defined network-egress endpoints (Download engine Routing). */
   networkEndpoints?: NetworkEndpoint[]
   /** §16 state of the endpoint save/delete mutation (busy row + error). */
   networkEndpointAction?: RowActionState
@@ -184,16 +185,6 @@ withDefaults(defineProps<{
   networkEndpointsPending?: boolean
   /** An endpoint-list load failure, surfaced inline. */
   networkEndpointsError?: string | null
-  /** The engine sources shown in the per-source assignment table. */
-  networkSources?: NetworkSource[]
-  /** The per-source bindings (a source absent here uses the global default). */
-  networkBindings?: SourceBinding[]
-  /** §16 state of the binding set/clear mutation (busy source + error). */
-  networkBindingAction?: RowActionState
-  /** Whether the sources/bindings are loading (pane-owned, out of the global gate). */
-  networkBindingsPending?: boolean
-  /** A sources/bindings load failure, surfaced inline. */
-  networkBindingsError?: string | null
   /** When true, the whole screen renders as skeletons. */
   loading?: boolean
 }>(), {
@@ -206,19 +197,22 @@ withDefaults(defineProps<{
   upgrading: false,
   flareSolverrSave: () => ({ status: 'idle' }),
   impersonateSave: () => ({ status: 'idle' }),
-  impersonateSources: () => [],
   extensionAction: () => ({ busyId: null }),
   repoAction: () => ({ busyId: null }),
   checkingUpdates: false,
   sourcesSettingsSave: () => ({ status: 'idle' }),
-  sourceThroughputPolicies: () => [],
-  sourceThroughputSources: () => [],
-  sourceThroughputGlobalConcurrency: 5,
-  sourceThroughputLoading: false,
-  sourceThroughputReady: true,
-  sourceThroughputSavingSourceId: null,
-  sourceThroughputLoadError: null,
-  sourceThroughputError: null,
+  sourceCatalog: () => [],
+  sourceSummaries: () => [],
+  selectedSourceId: null,
+  sourceConfiguration: null,
+  sourceExceptionsPending: false,
+  sourceConfigurationPending: false,
+  sourceConfigurationError: null,
+  highlightedSourceId: null,
+  highlightedSetting: null,
+  sourceAction: () => ({ sourceId: null, key: null, saving: false, error: null }),
+  globalReuseBypassSession: true,
+  globalImageConnectionMode: 'reuse',
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -247,11 +241,6 @@ withDefaults(defineProps<{
   networkEndpointAction: () => ({ busyId: null }),
   networkEndpointsPending: false,
   networkEndpointsError: null,
-  networkSources: () => [],
-  networkBindings: () => [],
-  networkBindingAction: () => ({ busyId: null }),
-  networkBindingsPending: false,
-  networkBindingsError: null,
   loading: false,
 })
 
@@ -294,13 +283,13 @@ const emit = defineEmits<{
   'reorder-repo': [payload: { id: string, direction: ReorderDirection }]
   /** The extension update-check cadence was changed by the user. */
   'update:ext-check-interval': [DurationValue]
-  /** Persist the edited Sources-pane warm-up/circuit-breaker knobs. */
+  /** Persist the edited Download-engine protection knobs. */
   'save-sources-settings': [settings: SourcesSettings]
-  'save-source-concurrency': [sourceId: string, value: number]
-  'inherit-source-concurrency': [sourceId: string]
-  'save-source-image-delay': [sourceId: string, value: string]
-  'inherit-source-image-delay': [sourceId: string]
-  'reload-source-throughput': []
+  'select-source': [sourceId: string]
+  'set-source-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
+  'use-global-source-setting': [sourceId: string, key: SourceConfigurationRowKey]
+  'set-source-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
+  'clear-source-binding': [sourceId: string]
   /** Trigger the library-wide duplicate-source dedup sweep. */
   'dedup-all': []
   /** Load the bulk-re-download preview for this filter (reads only). */
@@ -331,14 +320,15 @@ const emit = defineEmits<{
   'remove-endpoint': [id: string]
   /** Dismiss the lingering endpoint-action error banner. */
   'dismiss-endpoint-error': []
-  /** Set (upsert) a source's binding — carries the full merged binding. */
-  'set-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
-  /** Clear a source's binding (revert to global default). */
-  'clear-binding': [sourceId: string]
 }>()
 
-const onSaveSourceConcurrency = (sourceId: string, value: number) => emit('save-source-concurrency', sourceId, value)
-const onSaveSourceImageDelay = (sourceId: string, value: string) => emit('save-source-image-delay', sourceId, value)
+function forwardSourceOverride(sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean): void {
+  emit('set-source-override', sourceId, key, value)
+}
+
+function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): void {
+  emit('use-global-source-setting', sourceId, key)
+}
 
 const skeletons = Array.from({ length: 5 }, (_, i) => i)
 </script>
@@ -354,16 +344,30 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
       <SettingsNav :active="activePane" @select="emit('set-pane', $event)" />
 
       <div class="pane">
-        <LibraryPane
-          v-if="activePane === 'library'"
-          :library="library"
-          :system="system"
-          :save="librarySave"
-          :auto-identify="autoIdentify"
-          :auto-identify-busy="autoIdentifyBusy"
-          @save="emit('save-library', $event)"
-          @toggle-auto-identify="emit('toggle-auto-identify', $event)"
-        />
+        <div v-if="activePane === 'library'" class="pane-stack">
+          <LibraryPane
+            :system="system"
+            :auto-identify="autoIdentify"
+            :auto-identify-busy="autoIdentifyBusy"
+            @toggle-auto-identify="emit('toggle-auto-identify', $event)"
+          />
+          <SourcesSettingsPane
+            :dedup-all-busy="dedupAllBusy"
+            :dedup-all-message="dedupAllMessage"
+            :dedup-all-error="dedupAllError"
+            :dedup-all-skipped-busy="dedupAllSkippedBusy"
+            :redownload-preview="redownloadPreview"
+            :redownload-preview-busy="redownloadPreviewBusy"
+            :redownload-preview-error="redownloadPreviewError"
+            :redownload-applying="redownloadApplying"
+            :redownload-message="redownloadMessage"
+            :redownload-error="redownloadError"
+            @dedup-all="emit('dedup-all')"
+            @redownload-preview="emit('redownload-preview', $event)"
+            @redownload="emit('redownload', $event)"
+            @redownload-reset="emit('redownload-reset')"
+          />
+        </div>
 
         <CategoriesPane
           v-else-if="activePane === 'categories'"
@@ -384,15 +388,44 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @start-upgrade="emit('start-upgrade')"
         />
 
-        <SuwayomiPane
-          v-else-if="activePane === 'serverConfig'"
+        <DownloadEnginePane
+          v-else-if="activePane === 'download-engine'"
+          :library="library"
+          :library-save="librarySave"
+          :sources="sourcesSettings"
+          :sources-save="sourcesSettingsSave"
           :flare-solverr="flareSolverr"
           :flare-solverr-save="flareSolverrSave"
           :impersonate="impersonate"
           :impersonate-save="impersonateSave"
-          :impersonate-sources="impersonateSources"
+          :endpoints="networkEndpoints"
+          :endpoint-action="networkEndpointAction"
+          :endpoints-pending="networkEndpointsPending"
+          :endpoints-error="networkEndpointsError"
+          :source-catalog="sourceCatalog"
+          :source-summaries="sourceSummaries"
+          :selected-source-id="selectedSourceId"
+          :source-configuration="sourceConfiguration"
+          :source-exceptions-pending="sourceExceptionsPending"
+          :source-configuration-pending="sourceConfigurationPending"
+          :source-configuration-error="sourceConfigurationError"
+          :highlighted-source-id="highlightedSourceId"
+          :highlighted-setting="highlightedSetting"
+          :source-action="sourceAction"
+          :global-reuse-bypass-session="globalReuseBypassSession"
+          :global-image-connection-mode="globalImageConnectionMode"
+          @save-library="emit('save-library', $event)"
+          @save-sources="emit('save-sources-settings', $event)"
           @save-flaresolverr="emit('save-flaresolverr', $event)"
           @save-impersonate="emit('save-impersonate', $event)"
+          @save-endpoint="emit('save-endpoint', $event)"
+          @remove-endpoint="emit('remove-endpoint', $event)"
+          @dismiss-endpoint-error="emit('dismiss-endpoint-error')"
+          @select-source="emit('select-source', $event)"
+          @set-source-override="forwardSourceOverride"
+          @use-global-source-setting="forwardUseGlobal"
+          @set-source-binding="emit('set-source-binding', $event)"
+          @clear-source-binding="emit('clear-source-binding', $event)"
         />
 
         <ExtensionsPane
@@ -413,59 +446,6 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @remove-repo="emit('remove-repo', $event)"
           @reorder-repo="emit('reorder-repo', $event)"
           @update:ext-check-interval="emit('update:ext-check-interval', $event)"
-        />
-
-        <div v-else-if="activePane === 'sources'" class="pane-stack">
-          <SourcesSettingsPane
-            :sources="sourcesSettings"
-            :save="sourcesSettingsSave"
-            :throughput-policies="sourceThroughputPolicies"
-            :throughput-sources="sourceThroughputSources"
-            :global-download-concurrency="sourceThroughputGlobalConcurrency"
-            :throughput-loading="sourceThroughputLoading"
-            :throughput-ready="sourceThroughputReady"
-            :throughput-saving-source-id="sourceThroughputSavingSourceId"
-            :throughput-load-error="sourceThroughputLoadError"
-            :throughput-error="sourceThroughputError"
-            :dedup-all-busy="dedupAllBusy"
-            :dedup-all-message="dedupAllMessage"
-            :dedup-all-error="dedupAllError"
-            :dedup-all-skipped-busy="dedupAllSkippedBusy"
-            :redownload-preview="redownloadPreview"
-            :redownload-preview-busy="redownloadPreviewBusy"
-            :redownload-preview-error="redownloadPreviewError"
-            :redownload-applying="redownloadApplying"
-            :redownload-message="redownloadMessage"
-            :redownload-error="redownloadError"
-            @save="emit('save-sources-settings', $event)"
-            @save-concurrency="onSaveSourceConcurrency"
-            @inherit-concurrency="emit('inherit-source-concurrency', $event)"
-            @save-image-delay="onSaveSourceImageDelay"
-            @inherit-image-delay="emit('inherit-source-image-delay', $event)"
-            @reload-throughput="emit('reload-source-throughput')"
-            @dedup-all="emit('dedup-all')"
-            @redownload-preview="emit('redownload-preview', $event)"
-            @redownload="emit('redownload', $event)"
-            @redownload-reset="emit('redownload-reset')"
-          />
-        </div>
-
-        <NetworkPane
-          v-else-if="activePane === 'network'"
-          :endpoints="networkEndpoints"
-          :endpoint-action="networkEndpointAction"
-          :endpoints-pending="networkEndpointsPending"
-          :endpoints-error="networkEndpointsError"
-          :sources="networkSources"
-          :bindings="networkBindings"
-          :binding-action="networkBindingAction"
-          :bindings-pending="networkBindingsPending"
-          :bindings-error="networkBindingsError"
-          @save-endpoint="emit('save-endpoint', $event)"
-          @remove-endpoint="emit('remove-endpoint', $event)"
-          @dismiss-endpoint-error="emit('dismiss-endpoint-error')"
-          @set-binding="emit('set-binding', $event)"
-          @clear-binding="emit('clear-binding', $event)"
         />
 
         <TrackersPane
@@ -521,9 +501,8 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 }
 
 @media (max-width: 900px) {
-  /* The fixed 236px sidebar + content grid has no room on a phone (SettingsNav's
-   * "Schedules & Behavior" label alone needs more than the ~154px that would be
-   * left). Stack: SettingsNav becomes a wrapping top row of pills (see its own
+  /* The fixed 236px sidebar + content grid has no room on a phone. Stack:
+   * SettingsNav becomes a wrapping top row of pills (see its own
    * media query) and the pane takes the full width below it. */
   .settings {
     padding: 16px 16px 56px;
@@ -535,9 +514,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
   }
 }
 
-/* The Sources pane hosts SourcesSettingsPane, whose two SurfaceCards
-   (anti-block knobs + library maintenance) get the shared 16px inter-card
-   rhythm from this flex gap — same shape as LibraryPane's own pane-stack. */
+/* Library composes its settings and maintenance cards with one shared rhythm. */
 .pane-stack {
   display: flex;
   flex-direction: column;

@@ -3,7 +3,7 @@ import { computed, reactive, watch } from 'vue'
 import SaveFooter from '../ui/SaveFooter.vue'
 import FlareSolverrCard from './FlareSolverrCard.vue'
 import ImpersonateCard from './ImpersonateCard.vue'
-import type { FlareSolverrConfig, ImpersonateConfig, SaveState, SourceOption } from '../screens/settings.types'
+import type { FlareSolverrConfig, ImpersonateConfig, SaveState } from '../screens/settings.types'
 
 /**
  * Global Access & bypass controls. Holds two Tsundoku-owned
@@ -28,9 +28,6 @@ import type { FlareSolverrConfig, ImpersonateConfig, SaveState, SourceOption } f
  *   - `flareSolverrSave`: the §16 save lifecycle for the FlareSolverr card.
  *   - `impersonate`: the Tsundoku-owned impersonate-gateway config.
  *   - `impersonateSave`: the §16 save lifecycle for the impersonate card.
- *   - `impersonateSources`: transitional screen prop only; membership moved to
- *     the canonical Source exceptions panel.
- *
  * Emits `save-flaresolverr` / `save-impersonate` with the full merged config.
  */
 const props = withDefaults(defineProps<{
@@ -42,14 +39,11 @@ const props = withDefaults(defineProps<{
   impersonate: ImpersonateConfig
   /** §16 state of the impersonate Save button. */
   impersonateSave?: SaveState
-  /** Transitional screen prop; membership is no longer rendered here. */
-  impersonateSources?: SourceOption[]
   /** Semantic heading level for cards nested inside a host section. */
   headingLevel?: 2 | 3 | 4 | 5 | 6
 }>(), {
   flareSolverrSave: () => ({ status: 'idle' }),
   impersonateSave: () => ({ status: 'idle' }),
-  impersonateSources: () => [],
   headingLevel: 2,
 })
 

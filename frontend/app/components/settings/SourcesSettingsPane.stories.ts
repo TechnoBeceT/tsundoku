@@ -1,6 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
 import SourcesSettingsPane from './SourcesSettingsPane.vue'
-import { sourcesSettings } from '../../fixtures/settings'
 // Load this screen's status tokens directly: index.css does not @import them yet
 // (a coordinator wires that line to avoid parallel-worker conflicts), so the
 // side-effect import keeps every story rendering with the real palette.
@@ -14,9 +13,6 @@ const meta = {
   title: 'Settings/SourcesSettingsPane',
   component: SourcesSettingsPane,
   parameters: { layout: 'padded' },
-  args: {
-    sources: sourcesSettings,
-  },
 } satisfies Meta<typeof SourcesSettingsPane>
 
 export default meta

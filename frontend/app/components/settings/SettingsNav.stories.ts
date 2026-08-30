@@ -23,7 +23,7 @@ export const Library: Story = {
   args: { active: 'library' },
 }
 
-/** The Extensions pane selected. */
-export const Extensions: Story = {
-  args: { active: 'extensions' },
+/** The consolidated Download engine pane selected. */
+export const DownloadEngine: Story = {
+  args: { active: 'download-engine' },
 }

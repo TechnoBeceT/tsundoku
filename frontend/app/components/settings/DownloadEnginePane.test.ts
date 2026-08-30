@@ -16,7 +16,6 @@ import NetworkEndpointRow from './NetworkEndpointRow.vue'
 import RedownloadDialog from './RedownloadDialog.vue'
 import SourceBindingRow from './SourceBindingRow.vue'
 import SourceExceptionsPanel from './SourceExceptionsPanel.vue'
-import SourceThroughputControl from './SourceThroughputControl.vue'
 import SourcesSettingsPane from './SourcesSettingsPane.vue'
 import {
   comicAsuraSourceConfiguration,
@@ -131,7 +130,6 @@ describe('DownloadEnginePane', () => {
       expect(globalSections.split(label)).toHaveLength(2)
     }
 
-    expect(wrapper.findComponent(SourceThroughputControl).exists()).toBe(false)
     expect(wrapper.findAll('[aria-label^="Use the image proxy for "]')).toHaveLength(0)
     expect(wrapper.text()).not.toContain('Per-source download pace')
     expect(wrapper.text()).not.toContain('Sources using the proxy')
@@ -165,7 +163,7 @@ describe('DownloadEnginePane', () => {
     expect(wrapper.findComponent(LibraryDedupDialog).exists()).toBe(false)
     expect(wrapper.findComponent(RedownloadDialog).exists()).toBe(false)
 
-    const maintenance = mount(SourcesSettingsPane, { props: { sources: sourcesSettings } })
+    const maintenance = mount(SourcesSettingsPane)
     expect(maintenance.findComponent(LibraryDedupDialog).exists()).toBe(true)
     expect(maintenance.findComponent(RedownloadDialog).exists()).toBe(true)
   })

@@ -2,15 +2,11 @@
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import LibraryDedupDialog from './LibraryDedupDialog.vue'
 import RedownloadDialog from './RedownloadDialog.vue'
-import type { SaveState, SourceOption, SourcesSettings } from '../screens/settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
-import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
 
 /**
  * Owner-triggered library actions that deliberately remain outside the
- * Download engine and its Source exceptions editor. The legacy protection and
- * throughput props stay declared for compatibility while the Settings container
- * adopts the consolidated pane; this pane no longer renders or mutates them.
+ * Download engine and its Source exceptions editor.
  *
  * Renders a "Library maintenance" card, which COMPOSES
  * LibraryDedupDialog: the trigger for the library-wide duplicate-source dedup
@@ -35,18 +31,6 @@ import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
  * `redownload` / `redownloadReset` for the re-download.
  */
 withDefaults(defineProps<{
-  /** Transitional prop; global protection now belongs to DownloadEnginePane. */
-  sources: SourcesSettings
-  throughputPolicies?: SourceThroughputPolicy[]
-  throughputSources?: SourceOption[]
-  globalDownloadConcurrency?: number
-  throughputLoading?: boolean
-  throughputReady?: boolean
-  throughputSavingSourceId?: string | null
-  throughputLoadError?: string | null
-  throughputError?: string | null
-  /** §16 state of the Save button. */
-  save?: SaveState
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -68,15 +52,6 @@ withDefaults(defineProps<{
   /** Failure line from the last re-download apply, or null. */
   redownloadError?: string | null
 }>(), {
-  save: () => ({ status: 'idle' }),
-  throughputPolicies: () => [],
-  throughputSources: () => [],
-  globalDownloadConcurrency: 5,
-  throughputLoading: false,
-  throughputReady: true,
-  throughputSavingSourceId: null,
-  throughputLoadError: null,
-  throughputError: null,
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -90,13 +65,6 @@ withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  /** Transitional events retained until the screen wiring migration. */
-  save: [settings: SourcesSettings]
-  saveConcurrency: [sourceId: string, value: number]
-  inheritConcurrency: [sourceId: string]
-  saveImageDelay: [sourceId: string, value: string]
-  inheritImageDelay: [sourceId: string]
-  reloadThroughput: []
   /** Trigger the library-wide duplicate-source dedup sweep. */
   dedupAll: []
   /** Load the bulk-re-download preview for this filter (reads only). */

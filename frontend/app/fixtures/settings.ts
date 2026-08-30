@@ -4,9 +4,7 @@
  *
  * Mirrors the design prototype's seed state: the M12 library knobs, the
  * five seed categories (Other is the default landing), an embedded engine with an
- * upgrade available, the Tsundoku-owned FlareSolverr config (on, QCAT-238 —
- * the only card left in the "Server config" pane; the proxied Suwayomi SOCKS
- * card was RETIRED with the P2 Suwayomi-removal backend cutover), and the
+ * upgrade available, the Tsundoku-owned FlareSolverr config (on, QCAT-238), and the
  * installed/available/repo extension sets.
  */
 import type {
@@ -17,18 +15,14 @@ import type {
   ImpersonateConfig,
   LibrarySettings,
   NetworkEndpoint,
-  NetworkSource,
-  SourceOption,
   Repo,
   SettingsCategory,
-  SourceBinding,
   SourcesSettings,
   SystemInfo,
   TrackerStatus,
   UpgradeStep,
 } from '../components/screens/settings.types'
 import type { SourceMetric } from '../components/screens/sourceHealth.types'
-import type { SourceThroughputPolicy } from '../composables/useSourceThroughput'
 import type { components } from '../utils/api/schema.d.ts'
 
 /** The runtime-editable library knobs (2a). */
@@ -83,7 +77,7 @@ export const upgradeStepsInProgress: UpgradeStep[] = [
 
 /**
  * The Tsundoku-owned FlareSolverr config (QCAT-238) — served/saved through its
- * own endpoint, the only editable card left in the "Server config" pane.
+ * own endpoint in Download engine's Access & bypass section.
  */
 export const flareSolverrConfig: FlareSolverrConfig = {
   enabled: true,
@@ -97,7 +91,7 @@ export const flareSolverrConfig: FlareSolverrConfig = {
 /**
  * The Tsundoku-owned impersonate-gateway config (GAP-111, scoped per source by
  * GAP-131) — the Chrome-fingerprint image proxy card that sits next to the
- * FlareSolverr card in the "Server config" pane. On, pointing at the
+ * FlareSolverr card in Download engine's Access & bypass section. On, pointing at the
  * compose-network gateway, with ONE source opted in (the realistic shape: the
  * proxy exists for the rare source whose CDN blocks the default client).
  */
@@ -106,16 +100,6 @@ export const impersonateConfig: ImpersonateConfig = {
   url: 'http://impersonate-gateway:8788',
   sourceIds: ['1998416842837112832'],
 }
-
-/**
- * The engine sources the impersonate card offers as per-source opt-ins. Reuses
- * the same ids as [networkSources] so a story showing both panes stays coherent.
- */
-export const impersonateSources: SourceOption[] = [
-  { id: '1998416842837112832', name: 'Source A', lang: 'en' },
-  { id: '2035199668263834297', name: 'Source B', lang: 'en' },
-  { id: '9127482910938471028', name: 'Source C', lang: 'en' },
-]
 
 /**
  * Installed extensions — two carry an available update (UPDATE badge). No
@@ -372,18 +356,6 @@ export const longNameSourceException = {
   },
 } satisfies components['schemas']['SourceExceptionSummary']
 
-export const inheritedThroughputPolicy: SourceThroughputPolicy = {
-  sourceId: '1998416842837112832',
-  downloadConcurrency: { override: null, effective: 5 },
-  imageRequestDelay: { override: null, effective: '500ms' },
-}
-
-export const overriddenThroughputPolicy: SourceThroughputPolicy = {
-  sourceId: '2035199668263834297',
-  downloadConcurrency: { override: 1, effective: 1 },
-  imageRequestDelay: { override: '750ms', effective: '750ms' },
-}
-
 /* ---- 2f. Source metrics --------------------------------------------------- */
 
 // Warm/cold is derived from `lastWarmedAt` age against Date.now(), so the
@@ -536,26 +508,5 @@ export const networkEndpoints: NetworkEndpoint[] = [
     sessionTtl: 15,
     timeout: 60,
     asResponseFallback: false,
-  },
-]
-
-/** The engine sources shown in the assignment table. */
-export const networkSources: NetworkSource[] = [
-  { id: '1998416842837112832', name: 'Source A', lang: 'en' },
-  { id: '2035199668263834297', name: 'Source B', lang: 'en' },
-  { id: '9127482910938471028', name: 'Source C', lang: 'en' },
-]
-
-/**
- * One explicit binding: Source C routes through both VPN endpoints. The other
- * two sources have no binding → they use the global default (shown by the row's
- * "Global default" tag + default select options).
- */
-export const sourceBindings: SourceBinding[] = [
-  {
-    sourceId: '9127482910938471028',
-    socksEndpointId: 'ep-vpn-socks',
-    flareMode: 'endpoint',
-    flareEndpointId: 'ep-vpn-flare',
   },
 ]

@@ -1,25 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import FormError from '../ui/FormError.vue'
 import SourceApplyStatus from './SourceApplyStatus.vue'
 import SourceBindingRow from './SourceBindingRow.vue'
 import SourceOverrideRow from './SourceOverrideRow.vue'
 import SourceProxyOptInRow from './SourceProxyOptInRow.vue'
-import type { NetworkEndpoint, SourceBinding } from '../screens/settings.types'
+import type { NetworkEndpoint, SourceBinding, SourceConfigurationRowKey } from '../screens/settings.types'
 import type { components } from '../../utils/api/schema.d.ts'
 
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
 type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
-type SourceConfigurationRowKey =
-  | 'downloadConcurrency'
-  | 'imageRequestDelay'
-  | 'byparr'
-  | 'reuseBypassSession'
-  | 'imageConnectionMode'
-  | 'imageProxy'
-  | 'socksBinding'
-  | 'bypassBinding'
 type RowActionKey = SourceConfigurationRowKey | 'routing'
+type FocusTargetKey = 'downloadConcurrency' | 'imageRequestDelay' | 'byparr' | 'reuseBypassSession' | 'imageConnectionMode' | 'imageProxy' | 'routing'
 
 /**
  * The app's one complete source-configuration editor. It composes the existing
@@ -39,6 +31,7 @@ const props = withDefaults(defineProps<{
     saving?: boolean
     error?: string | null
   }
+  highlightedSetting?: SourceConfigurationRowKey | null
 }>(), {
   endpoints: () => [],
   globalDownloadConcurrency: 5,
@@ -46,6 +39,7 @@ const props = withDefaults(defineProps<{
   globalReuseBypassSession: true,
   globalImageConnectionMode: 'reuse',
   action: () => ({ sourceId: null, key: null, saving: false, error: null }),
+  highlightedSetting: null,
 })
 
 const emit = defineEmits<{
@@ -56,6 +50,20 @@ const emit = defineEmits<{
 }>()
 
 const sourceId = computed(() => props.configuration.source.sourceId)
+const configurationRoot = ref<HTMLElement | null>(null)
+const focusTarget = computed<FocusTargetKey | null>(() => {
+  if (props.highlightedSetting === 'socksBinding' || props.highlightedSetting === 'bypassBinding') return 'routing'
+  return props.highlightedSetting
+})
+
+watch([focusTarget, sourceId], async ([target]) => {
+  if (target == null) return
+  await nextTick()
+  const row = configurationRoot.value?.querySelector<HTMLElement>(`[data-source-setting-target="${target}"]`)
+  row?.focus({ preventScroll: true })
+  const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  row?.scrollIntoView?.({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'center' })
+}, { immediate: true })
 const statusRuntime = computed(() => ({
   ...props.configuration.runtime,
   // The diagnostic is deliberately revealed only by Advanced diagnostics.
@@ -98,7 +106,7 @@ function useGlobal(key: SourceConfigurationRowKey): void {
 </script>
 
 <template>
-  <section class="configuration" data-testid="source-editor" :aria-labelledby="`source-configuration-${sourceId}`">
+  <section ref="configurationRoot" class="configuration" data-testid="source-editor" :aria-labelledby="`source-configuration-${sourceId}`">
     <header class="configuration__header">
       <div class="configuration__heading">
         <p class="configuration__eyebrow">Focused source</p>
@@ -114,6 +122,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         <p>Effective values are always shown; overrides apply only to this source.</p>
       </div>
       <SourceOverrideRow
+        data-source-setting-target="downloadConcurrency"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'downloadConcurrency' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'downloadConcurrency' }"
         setting-key="downloadConcurrency"
         name="Chapter concurrency"
         hint="Maximum chapter downloads this source may run at once"
@@ -127,6 +139,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         @use-global="useGlobal"
       />
       <SourceOverrideRow
+        data-source-setting-target="imageRequestDelay"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'imageRequestDelay' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'imageRequestDelay' }"
         setting-key="imageRequestDelay"
         name="Image request delay"
         hint="Gap between individual image requests; 0s disables pacing"
@@ -152,7 +168,14 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         <div><dt>Failure threshold</dt><dd>{{ configuration.protection.failureThreshold }}</dd></div>
         <div><dt>Source cooldown</dt><dd>{{ configuration.protection.sourceCooldown }}</dd></div>
         <div><dt>Politeness delay</dt><dd>{{ configuration.protection.politenessDelay }}</dd></div>
-        <div><dt>Bypass service</dt><dd>{{ configuration.bypassEnabled ? 'Enabled' : 'Disabled' }}</dd></div>
+        <div
+          data-source-setting-target="byparr"
+          tabindex="-1"
+          :data-highlighted-setting="focusTarget === 'byparr' ? 'true' : undefined"
+          :class="{ 'source-setting-target--highlighted': focusTarget === 'byparr' }"
+        >
+          <dt>Bypass service</dt><dd>{{ configuration.bypassEnabled ? 'Enabled' : 'Disabled' }}</dd>
+        </div>
       </dl>
     </div>
 
@@ -162,6 +185,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         <p>Keep inherited transport behavior unless this source needs isolation.</p>
       </div>
       <SourceOverrideRow
+        data-source-setting-target="reuseBypassSession"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'reuseBypassSession' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'reuseBypassSession' }"
         setting-key="reuseBypassSession"
         name="Reuse bypass session"
         :hint="`Effective mode: ${configuration.reuseBypassSession.mode}`"
@@ -175,6 +202,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         @use-global="useGlobal"
       />
       <SourceOverrideRow
+        data-source-setting-target="imageConnectionMode"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'imageConnectionMode' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'imageConnectionMode' }"
         setting-key="imageConnectionMode"
         name="Image connection"
         hint="Reuse a connection or open a fresh one for each image"
@@ -192,6 +223,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         @use-global="useGlobal"
       />
       <SourceProxyOptInRow
+        data-source-setting-target="imageProxy"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'imageProxy' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'imageProxy' }"
         :enabled="configuration.imageProxy.optedIn"
         :effective-available="configuration.imageProxy.effectiveAvailable"
         :saving="rowSaving('imageProxy')"
@@ -210,6 +245,10 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         <p>Choose reusable endpoints without leaving this source editor.</p>
       </div>
       <SourceBindingRow
+        data-source-setting-target="routing"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'routing' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'routing' }"
         :source="source"
         :binding="binding"
         :socks-endpoints="socksEndpoints"
@@ -241,6 +280,12 @@ function useGlobal(key: SourceConfigurationRowKey): void {
   gap: var(--space-lg);
   min-width: 0;
   max-width: 100%;
+}
+
+.configuration :deep(.source-setting-target--highlighted) {
+  border-radius: var(--radius-lg);
+  box-shadow: var(--ring-focus);
+  scroll-margin-block: var(--space-xl);
 }
 
 .configuration__header {

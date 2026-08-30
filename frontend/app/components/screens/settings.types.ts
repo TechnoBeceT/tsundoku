@@ -10,8 +10,19 @@
  * this `.ts` (never exported from a `.vue`) so stories + fixtures import freely.
  */
 
-/** The settings panes, selected from the sticky sidebar nav. */
-export type SettingsPane = 'library' | 'categories' | 'engine' | 'serverConfig' | 'extensions' | 'sources' | 'network' | 'trackers' | 'notifications'
+/** The canonical settings panes, selected from the sticky sidebar nav. */
+export type SettingsPane = 'library' | 'categories' | 'download-engine' | 'engine' | 'extensions' | 'trackers' | 'notifications'
+
+/** Stable source-setting row keys used by mutations and contextual deep links. */
+export type SourceConfigurationRowKey =
+  | 'downloadConcurrency'
+  | 'imageRequestDelay'
+  | 'byparr'
+  | 'reuseBypassSession'
+  | 'imageConnectionMode'
+  | 'imageProxy'
+  | 'socksBinding'
+  | 'bypassBinding'
 
 /** NotificationPermission is this device's honest Web Push status (Notifications pane). */
 export type NotificationPermissionState = 'unsupported' | 'blocked' | 'granted' | 'default'
@@ -93,8 +104,7 @@ export interface SystemInfo {
 /**
  * SourcesSettings — the anti-IP-block runtime knobs (source-politeness spec):
  * the warm-up job's cadence/threshold plus the per-source circuit-breaker and
- * politeness-delay tunables. Surfaced in the Sources pane alongside the
- * existing per-source search metrics.
+ * politeness-delay tunables. Surfaced in Download engine's Protection section.
  */
 export interface SourcesSettings {
   /** How often to keep anti-bot source sessions warm; 0 disables. */
@@ -199,8 +209,8 @@ export interface FlareSolverrConfig {
  * Editable impersonate-gateway (Chrome-fingerprint image proxy) config, gated
  * behind the toggle. Tsundoku-owned config served by its own endpoint
  * (GAP-111) — routes engine image fetches through a browser-fingerprint proxy
- * for sources whose CDN blocks the default client. Sits in the Server config
- * pane alongside the FlareSolverr card.
+ * for sources whose CDN blocks the default client. Sits in Download engine's
+ * Access & bypass section alongside the FlareSolverr card.
  */
 export interface ImpersonateConfig {
   /**
@@ -346,7 +356,7 @@ export type NetworkEndpointKind = 'socks' | 'flaresolverr'
 export type FlareMode = 'none' | 'global' | 'endpoint'
 
 /**
- * NetworkEndpoint — one named, reusable egress endpoint (Network pane). Screen
+ * NetworkEndpoint — one named, reusable egress endpoint (Download engine Routing). Screen
  * mirror of the backend `NetworkEndpoint` DTO. `kind` selects which field-group
  * is meaningful: the SOCKS group (host/port/socksVersion/username) for `socks`,
  * or the FlareSolverr group (url/session/sessionTtl/timeout/asResponseFallback)
@@ -421,8 +431,8 @@ export interface NetworkEndpointInput {
 }
 
 /**
- * SourceBinding — one source's network-routing assignment (Network pane
- * assignment table). Screen mirror of the backend `SourceNetworkBinding` DTO;
+ * SourceBinding — one source's network-routing assignment in Source exceptions.
+ * Screen mirror of the backend `SourceNetworkBinding` DTO;
  * the two nullable endpoint ids normalise absent → null (mapper parity with the
  * other composables). A source WITHOUT a binding is not represented here at all —
  * its absence means "use the global default".
@@ -453,8 +463,8 @@ export interface SourceOption {
 }
 
 /**
- * NetworkSource — one engine source shown as a row in the Network pane's
- * assignment table. Structurally a [SourceOption]; the alias keeps that pane's
- * own vocabulary without duplicating the shape.
+ * NetworkSource — one engine source shown in a routing control. Structurally a
+ * [SourceOption]; the alias preserves that control's vocabulary without
+ * duplicating the shape.
  */
 export type NetworkSource = SourceOption

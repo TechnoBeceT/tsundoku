@@ -7,16 +7,9 @@ import SelectField from '../ui/SelectField.vue'
 import TextField from '../ui/TextField.vue'
 import Toggle from '../ui/Toggle.vue'
 import type { SelectOption } from '../ui/forms.types'
+import type { SourceConfigurationRowKey } from '../screens/settings.types'
 
-export type SourceConfigurationRowKey =
-  | 'downloadConcurrency'
-  | 'imageRequestDelay'
-  | 'byparr'
-  | 'reuseBypassSession'
-  | 'imageConnectionMode'
-  | 'imageProxy'
-  | 'socksBinding'
-  | 'bypassBinding'
+export type { SourceConfigurationRowKey } from '../screens/settings.types'
 
 type SourceOverrideControl = 'number' | 'text' | 'select' | 'toggle'
 type SourceConfigurationRowValue = string | number | boolean

@@ -17,6 +17,7 @@ import type {
   NetworkEndpointInput,
   RowActionState,
   SaveState,
+  SourceConfigurationRowKey,
   SourcesSettings,
 } from '../screens/settings.types'
 import type { components } from '../../utils/api/schema.d.ts'
@@ -25,15 +26,6 @@ type SourceIdentity = components['schemas']['SourceIdentity']
 type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
 type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
-type SourceConfigurationRowKey =
-  | 'downloadConcurrency'
-  | 'imageRequestDelay'
-  | 'byparr'
-  | 'reuseBypassSession'
-  | 'imageConnectionMode'
-  | 'imageProxy'
-  | 'socksBinding'
-  | 'bypassBinding'
 type RowActionKey = SourceConfigurationRowKey | 'routing'
 type ImpersonateGatewayConfig = Pick<ImpersonateConfig, 'enabled' | 'url'>
 
@@ -64,6 +56,7 @@ const props = withDefaults(defineProps<{
   sourceConfigurationPending?: boolean
   sourceConfigurationError?: string | null
   highlightedSourceId?: string | null
+  highlightedSetting?: SourceConfigurationRowKey | null
   sourceAction?: {
     sourceId: string | null
     key: RowActionKey | null
@@ -86,6 +79,7 @@ const props = withDefaults(defineProps<{
   sourceConfigurationPending: false,
   sourceConfigurationError: null,
   highlightedSourceId: null,
+  highlightedSetting: null,
   sourceAction: () => ({ sourceId: null, key: null, saving: false, error: null }),
   globalReuseBypassSession: true,
   globalImageConnectionMode: 'reuse',
@@ -337,6 +331,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             :configuration-pending="sourceConfigurationPending"
             :configuration-error="sourceConfigurationError"
             :highlighted-source-id="highlightedSourceId"
+            :highlighted-setting="highlightedSetting"
             :action="sourceAction"
             @select-source="emit('select-source', $event)"
             @set-override="setSourceOverride"

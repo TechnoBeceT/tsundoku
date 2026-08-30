@@ -1,124 +1,26 @@
 <script setup lang="ts">
 /**
- * Settings page — route "/settings".
+ * Settings page — route `/settings` and composition root for the seven settings
+ * destinations. Download engine owns global scheduling/protection, shared
+ * access/routing, and the single per-source editor. Library retains metadata,
+ * system facts, maintenance, and bulk re-download; engine lifecycle diagnostics
+ * remain separate.
  *
- * Assembles the 7-pane Settings screen from six composables:
- *   useSettings()         → library knobs + system info + saveLibrary
- *                           + extensionCheckInterval + saveExtensionCheckInterval
- *                           + autoUpdateTrack + saveAutoUpdateTrack (Phase 4
- *                           reading-triggered tracker-sync gate, Trackers pane)
- *                           + metadataAutoIdentify + saveMetadataAutoIdentify
- *                           (metadata-engine background auto-identify gate,
- *                           Library pane)
- *                           + sourcesSettings + saveSourcesSettings (warm-up +
- *                           circuit-breaker knobs, source-politeness spec)
- *   useCategories()       → settingsCategories + categoryAction + CRUD methods
- *   useFlareSolverrSettings() → config + flareSolverrSave + save (Tsundoku-owned,
- *                           QCAT-238 — a card in SuwayomiPane; the proxied SOCKS
- *                           card/composable was RETIRED with the P2 Suwayomi-removal
- *                           backend cutover)
- *   useImpersonateSettings() → config + sources + impersonateSave + save (Tsundoku-owned,
- *                           GAP-111 — the Chrome-fingerprint image-proxy card in
- *                           SuwayomiPane, alongside the FlareSolverr card)
- *   useExtensions()       → extensions + repos + mutations (no longer the source of
- *                           extCheckInterval — that moved to useSettings)
- *   useLibraryMaintenance() → dedupAllBusy/Message/Error/SkippedBusy + dedupAllProviders
- *   useRedownload()       → the previewed bulk re-download (Sources pane)
- *                           (library-wide duplicate-source dedup sweep)
- *   useTrackers()         → trackers + trackerAction (busyId/error) + misconfigured
- *                           + connect/loginCredentials/logout (Trackers pane)
- *   useNetworkEndpoints() → networkEndpoints + endpointAction + saveEndpoint/
- *                           removeEndpoint (Network pane, endpoints card)
- *   useSourceNetworkBindings() → networkSources + networkBindings + bindingAction
- *                           + setBinding/clearBinding (Network pane, assignment table)
+ * Query state is durable and history-driven. A contextual link has the form
+ * `/settings?pane=download-engine&source=<string-id>&setting=<row-key>`.
+ * Parsing never coerces source identities, and the route watcher only consumes
+ * history state; user selections write through `router.push`, preventing
+ * replace/watch feedback loops while preserving reload, back, and forward.
+ * Source summary/detail reads and failures stay pane-local and never participate
+ * in the unrelated global Settings loading gate.
  *
- * Prop wiring:
- *   :active-pane          — local activePane ref (default 'library')
- *   :library              — library from useSettings
- *   :system               — system from useSettings
- *   :library-save         — librarySave from useSettings
- *   :auto-identify        — metadataAutoIdentify from useSettings (Library pane)
- *   :auto-identify-busy   — computed, metadataAutoIdentifySave.status === 'saving'
- *   :categories           — settingsCategories from useCategories
- *   :category-action      — categoryAction from useCategories
- *   :engine               — ENGINE_PLACEHOLDER (engine upgrade flow is deferred;
- *                           start-upgrade is no-op)
- *   :upgrade-steps        — [] static
- *   :upgrading            — false static
- *   :flare-solverr        — config from useFlareSolverrSettings (QCAT-238)
- *   :flare-solverr-save   — flareSolverrSave from useFlareSolverrSettings
- *   :impersonate          — config from useImpersonateSettings (GAP-111)
- *   :impersonate-save     — impersonateSave from useImpersonateSettings
- *   :impersonate-sources  — sources from useImpersonateSettings (the per-source
- *                           opt-in picker's labels, GAP-131)
- *   :extensions           — extensions from useExtensions
- *   :available-extensions — availableExtensions from useExtensions
- *   :repos                — repos from useExtensions
- *   :extension-action     — extensionAction from useExtensions
- *   :repo-action          — repoAction from useExtensions
- *   :ext-check-interval   — extensionCheckInterval from useSettings (live tunable)
- *   :checking-updates     — checkingUpdates from useExtensions
- *   :sources-settings     — sourcesSettings from useSettings (shares its `pending`
- *                           with library/system — same GET /api/settings call, so
- *                           it stays in the global loading gate)
- *   :sources-settings-save — sourcesSettingsSave from useSettings
- *   :dedup-all-busy       — dedupAllBusy from useLibraryMaintenance
- *   :dedup-all-message    — dedupAllMessage from useLibraryMaintenance
- *   :dedup-all-error      — dedupAllError from useLibraryMaintenance
- *   :dedup-all-skipped-busy — dedupAllSkippedBusy from useLibraryMaintenance
- *   :redownload-*         — the useRedownload §16 state (preview + apply)
- *   :trackers             — trackers from useTrackers
- *   :tracker-action       — { busyId: actionBusyId, error: actionError } from useTrackers
- *   :misconfigured-tracker-ids — [...misconfigured] from useTrackers
- *   :tracker-redirect-url — trackerRedirectUrl (computed, this instance's OAuth callback URL)
- *   :trackers-pending     — pending from useTrackers (pane-owned, NOT in the
- *                           global loading gate — its own pane-local skeleton)
- *   :trackers-error       — error from useTrackers
- *   :auto-update-track    — autoUpdateTrack from useSettings (Phase 4)
- *   :auto-update-track-busy — computed, autoUpdateTrackSave.status === 'saving'
- *   :loading              — true while any primary dataset is still fetching
- *
- * Emit wiring:
- *   @set-pane                    → setPane (updates local activePane ref)
- *   @save-library                → saveLibrary
- *   @toggle-auto-identify        → saveMetadataAutoIdentify
- *   @save-flaresolverr           → saveFlareSolverr (QCAT-238)
- *   @save-impersonate            → saveImpersonate (GAP-111)
- *   @add-category                → addCategory
- *   @rename-category             → renameCategory
- *   @reorder-category            → reorderCategory
- *   @delete-category             → deleteCategory
- *   @set-default-category        → setDefaultCategory
- *   @start-upgrade               → no-op (engine deferred)
- *   @install-extension           → installExtension
- *   @update-extension            → updateExtension
- *   @uninstall-extension         → uninstallExtension
- *   @check-updates               → checkUpdates
- *   @add-repo                    → addRepo
- *   @remove-repo                 → removeRepo
- *   @reorder-repo                → reorderRepo
- *   @update:ext-check-interval   → saveExtensionCheckInterval
- *   @save-sources-settings       → saveSourcesSettings
- *   @dedup-all                   → dedupAllProviders
- *   @redownload-preview          → loadRedownloadPreview (reads only)
- *   @redownload                  → applyRedownload
- *   @redownload-reset            → resetRedownload
- *   @connect-tracker             → onConnectTracker (authUrl() → full-tab redirect;
- *                                   stashes the tracker id first — see trackerCallback.ts)
- *   @login-tracker-credentials   → onLoginTrackerCredentials
- *   @logout-tracker              → logoutTracker
- *   @toggle-auto-update-track    → saveAutoUpdateTrack
- *
- * OAuth flash handling: the callback route (`pages/auth/tracker/callback.vue`)
- * redirects back here with `?trackersFlash=connected` or
- * `?trackersFlash=error&trackersFlashMessage=...`. On mount, a present
- * `trackersFlash` opens the Trackers pane and — for the error case — writes
- * straight into `useTrackers`'s own `actionError` ref so it renders through the
- * SAME pane-level FormError a live connect failure would use (no separate flash
- * state to keep in sync). The query is stripped via `router.replace` so a page
- * refresh never replays the flash.
+ * Tracker OAuth callbacks are the one temporary query shape. They open Trackers,
+ * publish any connection error through the existing tracker action state, then
+ * replace the callback query with the canonical Trackers route so refresh cannot
+ * replay the flash.
  */
-import type { EngineInfo, FlareMode, SettingsPane } from '~/components/screens/settings.types'
+import type { EngineInfo, SettingsPane, SourceConfigurationRowKey } from '~/components/screens/settings.types'
+import { buildSettingsQuery, parseSettingsHighlight } from '~/utils/settingsHighlight'
 import { stashPendingTrackerId } from '~/utils/trackerCallback'
 
 const {
@@ -160,7 +62,7 @@ const {
 
 const {
   config: impersonate,
-  sources: impersonateSources,
+  sources: sourceOptions,
   impersonateSave,
   pending: impersonatePending,
   save: saveImpersonate,
@@ -197,7 +99,7 @@ const {
   dedupAllProviders,
 } = useLibraryMaintenance()
 
-// The previewed bulk re-download (Sources pane). Kept in its own composable
+// The previewed bulk re-download (Library pane). Kept in its own composable
 // because it is a two-step read-then-write, unlike the fire-and-forget dedup
 // sweep beside it.
 const {
@@ -247,42 +149,67 @@ const {
 } = useNetworkEndpoints()
 
 const {
-  sources: networkSources,
-  bindings: networkBindings,
-  pending: networkBindingsPending,
-  error: networkBindingsError,
-  bindingAction: networkBindingAction,
-  setBinding,
-  clearBinding,
-} = useSourceNetworkBindings()
+  summaries: sourceSummaries,
+  selected: sourceConfiguration,
+  selectedSourceId,
+  summariesPending: sourceExceptionsPending,
+  selectedPending: sourceConfigurationPending,
+  selectedError: sourceConfigurationError,
+  action: sourceAction,
+  loadSummaries: loadSourceSummaries,
+  selectSource,
+  setTransport: setSourceTransport,
+  setThroughput: setSourceThroughput,
+  setProxy: setSourceProxy,
+  setBinding: setSourceBinding,
+} = useSourceEffectiveConfiguration()
 
-const {
-  policies: storedThroughputPolicies,
-  loading: sourceThroughputLoading,
-  savingSourceId: sourceThroughputSavingSourceId,
-  loadError: sourceThroughputLoadError,
-  error: sourceThroughputError,
-  load: loadSourceThroughput,
-  saveConcurrencyOverride,
-  inheritConcurrency,
-  saveImageDelayOverride,
-  inheritImageDelay,
-} = useSourceThroughput()
+const sourceCatalog = computed(() => sourceOptions.value.map(source => ({
+  sourceId: source.id,
+  name: source.name,
+  language: source.lang,
+})))
 
-const sourceThroughputPolicies = computed(() => storedThroughputPolicies.value === null
-  ? []
-  : composeSourceThroughputPolicies(networkSources.value, storedThroughputPolicies.value, {
-      downloadConcurrency: library.value.downloadConcurrency,
-      imageRequestDelay: `${sourcesSettings.value.imageRequestDelayMs}ms`,
-    }))
-const sourceThroughputReady = computed(() => storedThroughputPolicies.value !== null)
+function onSetSourceOverride(sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean): void {
+  if (key === 'downloadConcurrency' && typeof value === 'number') {
+    void setSourceThroughput(sourceId, key, { mode: 'override', value })
+  }
+  else if (key === 'imageRequestDelay' && typeof value === 'string') {
+    void setSourceThroughput(sourceId, key, { mode: 'override', value })
+  }
+  else if (key === 'reuseBypassSession' && typeof value === 'boolean') {
+    void setSourceTransport(sourceId, key, { mode: 'override', value })
+  }
+  else if (key === 'imageConnectionMode' && (value === 'fresh' || value === 'reuse')) {
+    void setSourceTransport(sourceId, key, { mode: 'override', value })
+  }
+  else if (key === 'imageProxy' && typeof value === 'boolean') {
+    void setSourceProxy(sourceId, value)
+  }
+}
 
-void loadSourceThroughput()
+function onUseGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey): void {
+  if (key === 'downloadConcurrency') {
+    void setSourceThroughput(sourceId, key, { mode: 'inherit' })
+  }
+  else if (key === 'imageRequestDelay') {
+    void setSourceThroughput(sourceId, key, { mode: 'inherit' })
+  }
+  else if (key === 'reuseBypassSession') {
+    void setSourceTransport(sourceId, key, { mode: 'inherit' })
+  }
+  else if (key === 'imageConnectionMode') {
+    void setSourceTransport(sourceId, key, { mode: 'inherit' })
+  }
+}
 
-/** Unpack the row's full merged binding payload and PUT it for the source. */
-function onSetBinding(payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }): void {
+function onSetSourceBinding(payload: { sourceId: string, socksEndpointId: string | null, flareMode: 'none' | 'global' | 'endpoint', flareEndpointId: string | null }): void {
   const { sourceId, ...update } = payload
-  void setBinding(sourceId, update)
+  void setSourceBinding(sourceId, update)
+}
+
+function onClearSourceBinding(sourceId: string): void {
+  void setSourceBinding(sourceId, null)
 }
 
 /** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
@@ -336,25 +263,66 @@ const ENGINE_PLACEHOLDER: EngineInfo = {
   availableVersion: '',
 }
 
-/** Controlled pane selection — defaults to 'library'; updated by @set-pane. */
-const activePane = ref<SettingsPane>('library')
-
-/** Update the active pane; called by @set-pane from the Settings sidebar nav. */
-function setPane(p: SettingsPane): void {
-  activePane.value = p
-}
-
-// ---- OAuth callback flash (see the doc comment above) ----------------------
 const route = useRoute()
 const router = useRouter()
-if (route.query.trackersFlash) {
-  activePane.value = 'trackers'
-  if (route.query.trackersFlash === 'error') {
-    trackerActionError.value = typeof route.query.trackersFlashMessage === 'string'
-      ? route.query.trackersFlashMessage
-      : 'The tracker connection failed — try again.'
+
+const initialRouteState = parseSettingsHighlight(route.query)
+const activePane = ref<SettingsPane>(initialRouteState.pane)
+const highlightedSourceId = ref<string | null>(initialRouteState.source)
+const highlightedSetting = ref<SourceConfigurationRowKey | null>(initialRouteState.setting)
+let summariesLoaded = false
+let trackerFlashHandled = false
+
+function ensureSourceSummaries(): void {
+  if (summariesLoaded) return
+  summariesLoaded = true
+  void loadSourceSummaries()
+}
+
+/** Route state is the sole back/forward authority; this watcher never writes it. */
+watch(() => route.query, (query) => {
+  if (!trackerFlashHandled && query.trackersFlash) {
+    trackerFlashHandled = true
+    activePane.value = 'trackers'
+    highlightedSourceId.value = null
+    highlightedSetting.value = null
+    if (query.trackersFlash === 'error') {
+      trackerActionError.value = typeof query.trackersFlashMessage === 'string'
+        ? query.trackersFlashMessage
+        : 'The tracker connection failed — try again.'
+    }
+    void router.replace({
+      path: '/settings',
+      query: buildSettingsQuery({ pane: 'trackers', source: null, setting: null }),
+    })
+    return
   }
-  void router.replace({ path: '/settings', query: {} })
+
+  const state = parseSettingsHighlight(query)
+  activePane.value = state.pane
+  highlightedSourceId.value = state.source
+  highlightedSetting.value = state.setting
+
+  if (state.pane !== 'download-engine') return
+  ensureSourceSummaries()
+  if (state.source != null) void selectSource(state.source)
+}, { deep: true, immediate: true })
+
+/** Nav changes create history entries; route observation applies the state. */
+function setPane(pane: SettingsPane): void {
+  const source = pane === 'download-engine' ? selectedSourceId.value : null
+  void router.push({
+    path: '/settings',
+    query: buildSettingsQuery({ pane, source, setting: null }),
+  })
+}
+
+/** Source selection becomes durable URL state and is then loaded by the watcher. */
+function setSelectedSource(source: string): void {
+  void router.push({
+    path: '/settings',
+    query: buildSettingsQuery({ pane: 'download-engine', source, setting: null }),
+  })
 }
 
 /**
@@ -387,7 +355,6 @@ const loading = computed(
       :flare-solverr-save="flareSolverrSave"
       :impersonate="impersonate"
       :impersonate-save="impersonateSave"
-      :impersonate-sources="impersonateSources"
       :extensions="extensions"
       :available-extensions="availableExtensions"
       :repos="repos"
@@ -397,14 +364,16 @@ const loading = computed(
       :checking-updates="checkingUpdates"
       :sources-settings="sourcesSettings"
       :sources-settings-save="sourcesSettingsSave"
-      :source-throughput-policies="sourceThroughputPolicies"
-      :source-throughput-sources="networkSources"
-      :source-throughput-global-concurrency="library.downloadConcurrency"
-      :source-throughput-loading="sourceThroughputLoading"
-      :source-throughput-ready="sourceThroughputReady"
-      :source-throughput-saving-source-id="sourceThroughputSavingSourceId"
-      :source-throughput-load-error="sourceThroughputLoadError"
-      :source-throughput-error="sourceThroughputError"
+      :source-catalog="sourceCatalog"
+      :source-summaries="sourceSummaries"
+      :selected-source-id="selectedSourceId"
+      :source-configuration="sourceConfiguration"
+      :source-exceptions-pending="sourceExceptionsPending"
+      :source-configuration-pending="sourceConfigurationPending"
+      :source-configuration-error="sourceConfigurationError"
+      :highlighted-source-id="highlightedSourceId"
+      :highlighted-setting="highlightedSetting"
+      :source-action="sourceAction"
       :dedup-all-busy="dedupAllBusy"
       :dedup-all-message="dedupAllMessage"
       :dedup-all-error="dedupAllError"
@@ -433,11 +402,6 @@ const loading = computed(
       :network-endpoint-action="networkEndpointAction"
       :network-endpoints-pending="networkEndpointsPending"
       :network-endpoints-error="networkEndpointsError"
-      :network-sources="networkSources"
-      :network-bindings="networkBindings"
-      :network-binding-action="networkBindingAction"
-      :network-bindings-pending="networkBindingsPending"
-      :network-bindings-error="networkBindingsError"
       :loading="loading"
       @set-pane="setPane"
       @save-library="saveLibrary"
@@ -460,11 +424,11 @@ const loading = computed(
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
-      @save-source-concurrency="saveConcurrencyOverride"
-      @inherit-source-concurrency="inheritConcurrency"
-      @save-source-image-delay="saveImageDelayOverride"
-      @inherit-source-image-delay="inheritImageDelay"
-      @reload-source-throughput="loadSourceThroughput"
+      @select-source="setSelectedSource"
+      @set-source-override="onSetSourceOverride"
+      @use-global-source-setting="onUseGlobalSourceSetting"
+      @set-source-binding="onSetSourceBinding"
+      @clear-source-binding="onClearSourceBinding"
       @dedup-all="dedupAllProviders"
       @redownload-preview="loadRedownloadPreview"
       @redownload="applyRedownload"
@@ -479,8 +443,6 @@ const loading = computed(
       @save-endpoint="saveEndpoint"
       @remove-endpoint="removeEndpoint"
       @dismiss-endpoint-error="clearEndpointActionError"
-      @set-binding="onSetBinding"
-      @clear-binding="clearBinding"
     />
   </div>
 </template>

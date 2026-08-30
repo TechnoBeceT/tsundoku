@@ -1,10 +1,10 @@
 /**
- * useImpersonateSettings — data layer for the Settings → Server config pane's
+ * useImpersonateSettings — data layer for Download engine's global
  * impersonate-gateway card (GAP-111).
  *
  * Fetches GET /api/impersonate and GET /api/sources in parallel, mapping the
  * backend ImpersonateSettings DTO onto the screen's ImpersonateConfig and the
- * engine source list onto display options. Exposes save() for the gateway-wide
+ * engine source list onto canonical source-catalog options. Exposes save() for the gateway-wide
  * enabled/url pair with the §16 SaveState lifecycle: idle → saving →
  * success/error. Per-source membership writes use the narrow image-proxy
  * endpoint owned by useSourceEffectiveConfiguration.
@@ -39,7 +39,7 @@ function mapSettings(dto: ImpersonateSettingsDTO): ImpersonateConfig {
   }
 }
 
-/** Maps an engine Source DTO → the minimal picker option (id/name/lang). */
+/** Maps an engine Source DTO → the minimal source-catalog option (id/name/lang). */
 function mapSource(dto: SourceDTO): SourceOption {
   return { id: dto.id, name: dto.name, lang: dto.lang }
 }
@@ -82,7 +82,7 @@ export function useImpersonateSettings() {
       ])
       if (cfgRes.error || !cfgRes.data) throw new Error('Failed to load impersonate settings')
       config.value = mapSettings(cfgRes.data)
-      // The source list is only the picker's LABELS — an engine that cannot list
+      // The source list supplies only catalog LABELS — an engine that cannot list
       // its sources must not blank the saved gating set, so this never throws.
       sources.value = (srcRes.data ?? []).map(mapSource)
     }
