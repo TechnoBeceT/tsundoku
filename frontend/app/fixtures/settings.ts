@@ -175,13 +175,15 @@ export const fullyInheritedSourceConfiguration = {
   bypassEnabled: true,
   reuseBypassSession: {
     override: null,
-    effective: true,
+    global: false,
+    effective: false,
     inherited: true,
-    mode: 'reusable',
+    mode: 'disposable',
   },
   imageConnectionMode: {
     override: null,
-    effective: 'reuse',
+    global: 'fresh',
+    effective: 'fresh',
     inherited: true,
   },
   imageProxy: {
@@ -225,13 +227,15 @@ export const comicAsuraSourceConfiguration = {
   bypassEnabled: true,
   reuseBypassSession: {
     override: false,
+    global: true,
     effective: false,
     inherited: false,
     mode: 'disposable',
   },
   imageConnectionMode: {
-    override: 'fresh',
-    effective: 'fresh',
+    override: 'reuse',
+    global: 'fresh',
+    effective: 'reuse',
     inherited: false,
   },
   imageProxy: {
@@ -275,13 +279,15 @@ export const hiveProxySourceConfiguration = {
   bypassEnabled: true,
   reuseBypassSession: {
     override: null,
+    global: true,
     effective: true,
     inherited: true,
     mode: 'reusable',
   },
   imageConnectionMode: {
     override: null,
-    effective: 'reuse',
+    global: 'fresh',
+    effective: 'fresh',
     inherited: true,
   },
   imageProxy: {

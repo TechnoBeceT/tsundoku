@@ -46,12 +46,14 @@ const configuration: EffectiveConfiguration = {
   bypassEnabled: true,
   reuseBypassSession: {
     override: null,
+    global: true,
     effective: true,
     inherited: true,
     mode: 'reusable',
   },
   imageConnectionMode: {
     override: 'fresh',
+    global: 'fresh',
     effective: 'fresh',
     inherited: false,
   },

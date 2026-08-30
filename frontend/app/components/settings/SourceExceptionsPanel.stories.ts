@@ -44,8 +44,6 @@ const baseArgs = {
   endpoints: networkEndpoints,
   globalDownloadConcurrency: 5,
   globalImageRequestDelay: '500ms',
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse' as const,
   pending: false,
   configurationPending: false,
   configurationError: null,

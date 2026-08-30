@@ -25,7 +25,6 @@ import type { components } from '../../utils/api/schema.d.ts'
 type SourceIdentity = components['schemas']['SourceIdentity']
 type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
-type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
 type RowActionKey = SourceConfigurationRowKey | 'routing'
 type ImpersonateGatewayConfig = Pick<ImpersonateConfig, 'enabled' | 'url'>
 
@@ -50,6 +49,7 @@ const props = withDefaults(defineProps<{
   endpointsError?: string | null
   sourceCatalog: SourceIdentity[]
   sourceSummaries: SourceExceptionSummary[]
+  sourceSummariesError?: string | null
   selectedSourceId?: string | null
   sourceConfiguration?: SourceEffectiveConfiguration | null
   sourceExceptionsPending?: boolean
@@ -63,8 +63,6 @@ const props = withDefaults(defineProps<{
     saving?: boolean
     error?: string | null
   }
-  globalReuseBypassSession?: boolean
-  globalImageConnectionMode?: ImageConnectionMode
 }>(), {
   librarySave: () => ({ status: 'idle' }),
   sourcesSave: () => ({ status: 'idle' }),
@@ -73,6 +71,7 @@ const props = withDefaults(defineProps<{
   endpointAction: () => ({ busyId: null }),
   endpointsPending: false,
   endpointsError: null,
+  sourceSummariesError: null,
   selectedSourceId: null,
   sourceConfiguration: null,
   sourceExceptionsPending: false,
@@ -81,8 +80,6 @@ const props = withDefaults(defineProps<{
   highlightedSourceId: null,
   highlightedSetting: null,
   sourceAction: () => ({ sourceId: null, key: null, saving: false, error: null }),
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse',
 })
 
 const emit = defineEmits<{
@@ -94,6 +91,7 @@ const emit = defineEmits<{
   'remove-endpoint': [id: string]
   'dismiss-endpoint-error': []
   'select-source': [sourceId: string]
+  'retry-source-summaries': []
   'set-source-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global-source-setting': [sourceId: string, key: SourceConfigurationRowKey]
   'set-source-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
@@ -320,13 +318,12 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             :heading-level="3"
             :sources="sourceCatalog"
             :summaries="sourceSummaries"
+            :summaries-error="sourceSummariesError"
             :selected-source-id="selectedSourceId"
             :configuration="sourceConfiguration"
             :endpoints="endpoints"
             :global-download-concurrency="library.downloadConcurrency"
             :global-image-request-delay="`${sources.imageRequestDelayMs}ms`"
-            :global-reuse-bypass-session="globalReuseBypassSession"
-            :global-image-connection-mode="globalImageConnectionMode"
             :pending="sourceExceptionsPending"
             :configuration-pending="sourceConfigurationPending"
             :configuration-error="sourceConfigurationError"
@@ -334,6 +331,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             :highlighted-setting="highlightedSetting"
             :action="sourceAction"
             @select-source="emit('select-source', $event)"
+            @retry-summaries="emit('retry-source-summaries')"
             @set-override="setSourceOverride"
             @use-global="useGlobalSourceSetting"
             @set-binding="emit('set-source-binding', $event)"

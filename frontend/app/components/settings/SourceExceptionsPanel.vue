@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import AppButton from '../ui/AppButton.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import FormError from '../ui/FormError.vue'
 import SearchInput from '../ui/SearchInput.vue'
@@ -13,7 +14,6 @@ import type { components } from '../../utils/api/schema.d.ts'
 type SourceIdentity = components['schemas']['SourceIdentity']
 type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
-type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
 type RowActionKey = SourceConfigurationRowKey | 'routing'
 
 /**
@@ -29,9 +29,8 @@ const props = withDefaults(defineProps<{
   endpoints?: NetworkEndpoint[]
   globalDownloadConcurrency?: number
   globalImageRequestDelay?: string
-  globalReuseBypassSession?: boolean
-  globalImageConnectionMode?: ImageConnectionMode
   pending?: boolean
+  summariesError?: string | null
   configurationPending?: boolean
   configurationError?: string | null
   highlightedSourceId?: string | null
@@ -50,9 +49,8 @@ const props = withDefaults(defineProps<{
   endpoints: () => [],
   globalDownloadConcurrency: 5,
   globalImageRequestDelay: '500ms',
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse',
   pending: false,
+  summariesError: null,
   configurationPending: false,
   configurationError: null,
   highlightedSourceId: null,
@@ -63,6 +61,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'select-source': [sourceId: string]
+  'retry-summaries': []
   'set-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global': [sourceId: string, key: SourceConfigurationRowKey]
   'set-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: 'none' | 'global' | 'endpoint', flareEndpointId: string | null }]
@@ -127,6 +126,18 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
     title="Source exceptions"
     sub="Start with sources that differ from global behavior, then search the full installed catalog."
   >
+    <div v-if="summariesError" class="source-exceptions__error" role="alert">
+      <FormError :message="summariesError" />
+      <AppButton
+        data-testid="retry-source-summaries"
+        variant="ghost"
+        size="sm"
+        @click="emit('retry-summaries')"
+      >
+        Retry exception list
+      </AppButton>
+    </div>
+
     <div v-if="pending" class="source-exceptions__loading" role="status" aria-label="Loading source exceptions">
       <Skeleton variant="line" height="42px" />
       <div class="source-exceptions__workspace">
@@ -181,6 +192,9 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
           <p v-else-if="normalizedQuery" class="source-exceptions__empty-result">
             No sources match “{{ query.trim() }}”.
           </p>
+          <p v-else-if="summariesError" class="source-exceptions__empty-result">
+            Exception-first ordering is unavailable. Search the installed catalog to inspect a source.
+          </p>
           <p v-else class="source-exceptions__empty-result">
             Every source currently inherits the global settings. Search the catalog to inspect one.
           </p>
@@ -198,8 +212,6 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
             :endpoints="endpoints"
             :global-download-concurrency="globalDownloadConcurrency"
             :global-image-request-delay="globalImageRequestDelay"
-            :global-reuse-bypass-session="globalReuseBypassSession"
-            :global-image-connection-mode="globalImageConnectionMode"
             :action="action"
             :highlighted-setting="highlightedSetting"
             @set-override="forwardSetOverride"
@@ -226,6 +238,14 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
 .source-exceptions__loading {
   display: grid;
   gap: var(--space-base);
+}
+
+.source-exceptions__error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-base);
+  margin: var(--space-sm) 0 var(--space-lg);
 }
 
 .source-exceptions__counts {

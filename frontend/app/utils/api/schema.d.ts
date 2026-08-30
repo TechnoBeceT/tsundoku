@@ -4218,12 +4218,19 @@ export interface components {
         ImageConnectionPolicyValue: {
             /** @enum {string|null} */
             override: "fresh" | "reuse" | null;
+            /**
+             * @description Current inherited baseline composed by the server for this source.
+             * @enum {string}
+             */
+            global: "fresh" | "reuse";
             /** @enum {string} */
             effective: "fresh" | "reuse";
             inherited: boolean;
         };
         BypassSessionPolicyValue: {
             override: boolean | null;
+            /** @description Current inherited baseline composed by the server for this source and route. */
+            global: boolean;
             effective: boolean;
             inherited: boolean;
             /** @enum {string} */

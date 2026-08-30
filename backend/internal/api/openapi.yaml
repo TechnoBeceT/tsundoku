@@ -2372,11 +2372,15 @@ components:
 
     ImageConnectionPolicyValue:
       type: object
-      required: [override, effective, inherited]
+      required: [override, global, effective, inherited]
       properties:
         override:
           type: [string, "null"]
           enum: [fresh, reuse, null]
+        global:
+          type: string
+          enum: [fresh, reuse]
+          description: Current inherited baseline composed by the server for this source.
         effective:
           type: string
           enum: [fresh, reuse]
@@ -2385,10 +2389,13 @@ components:
 
     BypassSessionPolicyValue:
       type: object
-      required: [override, effective, inherited, mode]
+      required: [override, global, effective, inherited, mode]
       properties:
         override:
           type: [boolean, "null"]
+        global:
+          type: boolean
+          description: Current inherited baseline composed by the server for this source and route.
         effective:
           type: boolean
         inherited:

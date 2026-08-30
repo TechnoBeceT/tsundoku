@@ -20,6 +20,14 @@ import SourceProxyOptInRow from './SourceProxyOptInRow.vue'
 import type { components } from '../../utils/api/schema.d.ts'
 import type { NetworkEndpoint } from '../screens/settings.types'
 
+vi.mock('~/utils/api/client', () => ({
+  apiClient: {
+    GET: vi.fn().mockResolvedValue({ data: { authenticated: true, ownerId: 'owner' }, error: null, response: new Response() }),
+    use: vi.fn(),
+  },
+  setUnauthorizedHandler: vi.fn(),
+}))
+
 type SourceConfiguration = components['schemas']['SourceEffectiveConfiguration']
 type SourceException = components['schemas']['SourceExceptionSummary']
 
@@ -32,8 +40,8 @@ const inherited: SourceConfiguration = {
     sourceCooldown: '30m0s', politenessDelay: '500ms',
   },
   bypassEnabled: true,
-  reuseBypassSession: { override: null, effective: true, inherited: true, mode: 'reusable' },
-  imageConnectionMode: { override: null, effective: 'reuse', inherited: true },
+  reuseBypassSession: { override: null, global: false, effective: false, inherited: true, mode: 'disposable' },
+  imageConnectionMode: { override: null, global: 'fresh', effective: 'fresh', inherited: true },
   imageProxy: { optedIn: false, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: false },
   routing: {
     socksMode: 'global', socks: { endpointId: null, name: null },
@@ -51,8 +59,8 @@ const overridden: SourceConfiguration = {
   source: { sourceId: 'source-overridden', name: 'Comic Asura', language: 'en' },
   downloadConcurrency: { override: 1, effective: 1, inherited: false },
   imageRequestDelay: { override: '1250ms', effective: '1250ms', inherited: false },
-  reuseBypassSession: { override: false, effective: false, inherited: false, mode: 'disposable' },
-  imageConnectionMode: { override: 'fresh', effective: 'fresh', inherited: false },
+  reuseBypassSession: { override: false, global: true, effective: false, inherited: false, mode: 'disposable' },
+  imageConnectionMode: { override: 'reuse', global: 'fresh', effective: 'reuse', inherited: false },
   imageProxy: { optedIn: true, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: true },
   routing: {
     socksMode: 'endpoint', socks: { endpointId: 'ep-socks', name: 'VPN SOCKS' },
@@ -100,8 +108,6 @@ const baseProps = {
   endpoints,
   globalDownloadConcurrency: 5,
   globalImageRequestDelay: '500ms',
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse' as const,
 }
 
 function definitionValue(root: Element, label: string): string {
@@ -193,7 +199,7 @@ describe('SourceExceptionsPanel', () => {
     const editor = wrapper.getComponent(SourceConfigurationGroup)
     const editorElement = editor.element as Element
 
-    for (const value of ['5', '500ms', 'reusable', 'reuse', 'Off', 'Global default']) {
+    for (const value of ['5', '500ms', 'disposable', 'fresh', 'Off', 'Global default']) {
       expect(editor.text()).toContain(value)
     }
     expect(definitionValue(editorElement, 'Warm-up interval')).toBe('15m0s')
@@ -227,6 +233,35 @@ describe('SourceExceptionsPanel', () => {
     expect(overriddenRows.every(row => row.text().includes('Override'))).toBe(true)
     expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).toContain('On · active')
     expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
+  })
+
+  it('renders the server-composed global transport baseline for inherited and overridden rows', () => {
+    const inheritedWrapper = mount(SourceExceptionsPanel, {
+      props: { ...baseProps, selectedSourceId: inherited.source.sourceId, configuration: inherited },
+    })
+    const inheritedRows = inheritedWrapper.findAllComponents(SourceOverrideRow)
+    expect(inheritedRows[2]!.text()).toContain('Global Off')
+    expect(inheritedRows[2]!.text()).toContain('Effective Off')
+    expect(inheritedRows[3]!.text()).toContain('Global fresh')
+    expect(inheritedRows[3]!.text()).toContain('Effective fresh')
+
+    const overriddenRows = mount(SourceExceptionsPanel, { props: baseProps }).findAllComponents(SourceOverrideRow)
+    expect(overriddenRows[2]!.text()).toContain('Global On')
+    expect(overriddenRows[2]!.text()).toContain('Effective Off')
+    expect(overriddenRows[3]!.text()).toContain('Global fresh')
+    expect(overriddenRows[3]!.text()).toContain('Effective reuse')
+  })
+
+  it('shows a retryable local summary failure without claiming every source inherits', async () => {
+    const wrapper = mount(SourceExceptionsPanel, {
+      props: { ...baseProps, summaries: [], summariesError: 'Source exceptions could not be loaded.' },
+    })
+
+    expect(wrapper.text()).toContain('Source exceptions could not be loaded.')
+    expect(wrapper.text()).not.toContain('Every source currently inherits the global settings.')
+
+    await wrapper.get('[data-testid="retry-source-summaries"]').trigger('click')
+    expect(wrapper.emitted('retry-summaries')).toHaveLength(1)
   })
 
   it('focuses an externally highlighted row and scrolls it into view', async () => {

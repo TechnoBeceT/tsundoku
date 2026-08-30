@@ -44,6 +44,7 @@ type BooleanPolicyValue struct {
 // ImageConnectionPolicyValue resolves the source image-connection policy.
 type ImageConnectionPolicyValue struct {
 	Override  *sourcetransport.ImageConnectionMode
+	Global    sourcetransport.ImageConnectionMode
 	Effective sourcetransport.ImageConnectionMode
 	Inherited bool
 }
@@ -51,6 +52,7 @@ type ImageConnectionPolicyValue struct {
 // BypassSessionPolicyValue resolves bypass-session reuse and its runtime mode.
 type BypassSessionPolicyValue struct {
 	Override  *bool
+	Global    bool
 	Effective bool
 	Inherited bool
 	Mode      sourcetransport.BypassSessionMode

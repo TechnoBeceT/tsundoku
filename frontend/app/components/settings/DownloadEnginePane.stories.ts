@@ -78,6 +78,23 @@ export const Desktop: Story = {
   },
 }
 
+/** Summary read failed locally; global controls and an explicit retry remain. */
+export const SummaryFailure: Story = {
+  args: {
+    sourceSummaries: [],
+    sourceSummariesError: 'Source exceptions could not be loaded.',
+    selectedSourceId: null,
+    sourceConfiguration: null,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('heading', { name: 'Scheduling', level: 2 })).toBeVisible()
+    await expect(canvas.getByText('Source exceptions could not be loaded.')).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Retry exception list' })).toBeVisible()
+    await expect(canvas.queryByText(/Every source currently inherits/)).toBeNull()
+  },
+}
+
 /** Narrow: spine and sections stack, long source values wrap, and no pane overflows. */
 export const Narrow: Story = {
   parameters: { viewport: { defaultViewport: 'mobile1' } },

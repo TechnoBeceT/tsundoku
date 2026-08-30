@@ -150,6 +150,7 @@ const {
 
 const {
   summaries: sourceSummaries,
+  summariesError: sourceSummariesError,
   selected: sourceConfiguration,
   selectedSourceId,
   summariesPending: sourceExceptionsPending,
@@ -366,6 +367,7 @@ const loading = computed(
       :sources-settings-save="sourcesSettingsSave"
       :source-catalog="sourceCatalog"
       :source-summaries="sourceSummaries"
+      :source-summaries-error="sourceSummariesError"
       :selected-source-id="selectedSourceId"
       :source-configuration="sourceConfiguration"
       :source-exceptions-pending="sourceExceptionsPending"
@@ -425,6 +427,7 @@ const loading = computed(
       @update:ext-check-interval="saveExtensionCheckInterval"
       @save-sources-settings="saveSourcesSettings"
       @select-source="setSelectedSource"
+      @retry-source-summaries="loadSourceSummaries"
       @set-source-override="onSetSourceOverride"
       @use-global-source-setting="onUseGlobalSourceSetting"
       @set-source-binding="onSetSourceBinding"

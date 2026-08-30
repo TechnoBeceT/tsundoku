@@ -39,7 +39,6 @@ import type { components } from '~/utils/api/schema.d.ts'
 type SourceIdentity = components['schemas']['SourceIdentity']
 type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
-type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
 
 /**
  * Settings — the single-owner control panel. A thin container: a sticky sidebar
@@ -116,6 +115,8 @@ withDefaults(defineProps<{
   sourceCatalog?: SourceIdentity[]
   /** Exception-first summary rows. */
   sourceSummaries?: SourceExceptionSummary[]
+  /** Pane-local summary-list failure; unrelated global controls stay available. */
+  sourceSummariesError?: string | null
   /** Lossless source identity currently selected in the editor. */
   selectedSourceId?: string | null
   /** Last confirmed server-composed source configuration. */
@@ -127,8 +128,6 @@ withDefaults(defineProps<{
   highlightedSourceId?: string | null
   highlightedSetting?: SourceConfigurationRowKey | null
   sourceAction?: SourceConfigurationAction
-  globalReuseBypassSession?: boolean
-  globalImageConnectionMode?: ImageConnectionMode
   /** True while the library-wide dedup sweep request is in flight. */
   dedupAllBusy?: boolean
   /** Started/success message from the last dedup sweep trigger. */
@@ -203,6 +202,7 @@ withDefaults(defineProps<{
   sourcesSettingsSave: () => ({ status: 'idle' }),
   sourceCatalog: () => [],
   sourceSummaries: () => [],
+  sourceSummariesError: null,
   selectedSourceId: null,
   sourceConfiguration: null,
   sourceExceptionsPending: false,
@@ -211,8 +211,6 @@ withDefaults(defineProps<{
   highlightedSourceId: null,
   highlightedSetting: null,
   sourceAction: () => ({ sourceId: null, key: null, saving: false, error: null }),
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse',
   dedupAllBusy: false,
   dedupAllMessage: null,
   dedupAllError: null,
@@ -286,6 +284,7 @@ const emit = defineEmits<{
   /** Persist the edited Download-engine protection knobs. */
   'save-sources-settings': [settings: SourcesSettings]
   'select-source': [sourceId: string]
+  'retry-source-summaries': []
   'set-source-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global-source-setting': [sourceId: string, key: SourceConfigurationRowKey]
   'set-source-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
@@ -404,6 +403,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :endpoints-error="networkEndpointsError"
           :source-catalog="sourceCatalog"
           :source-summaries="sourceSummaries"
+          :source-summaries-error="sourceSummariesError"
           :selected-source-id="selectedSourceId"
           :source-configuration="sourceConfiguration"
           :source-exceptions-pending="sourceExceptionsPending"
@@ -412,8 +412,6 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :highlighted-source-id="highlightedSourceId"
           :highlighted-setting="highlightedSetting"
           :source-action="sourceAction"
-          :global-reuse-bypass-session="globalReuseBypassSession"
-          :global-image-connection-mode="globalImageConnectionMode"
           @save-library="emit('save-library', $event)"
           @save-sources="emit('save-sources-settings', $event)"
           @save-flaresolverr="emit('save-flaresolverr', $event)"
@@ -422,6 +420,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @remove-endpoint="emit('remove-endpoint', $event)"
           @dismiss-endpoint-error="emit('dismiss-endpoint-error')"
           @select-source="emit('select-source', $event)"
+          @retry-source-summaries="emit('retry-source-summaries')"
           @set-source-override="forwardSourceOverride"
           @use-global-source-setting="forwardUseGlobal"
           @set-source-binding="emit('set-source-binding', $event)"

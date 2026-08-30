@@ -23,6 +23,7 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		imageMode = *transportOverride.ImageConnectionMode
 	}
 	binding := effectiveBinding(sourceID, snapshot.routing)
+	reuseGlobal, _ := resolveBypassSession(snapshot.globals.BypassSession, binding, nil)
 	reuse, sessionMode := resolveBypassSession(snapshot.globals.BypassSession, binding, transportOverride.ReuseBypassSession)
 	optedIn := containsSourceID(snapshot.globals.ProxySourceIDs, sourceID)
 	proxyConfigured := snapshot.globals.ProxyURL != ""
@@ -44,11 +45,11 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		},
 		BypassEnabled: bypassEnabled(binding, snapshot.globals),
 		ReuseBypassSession: BypassSessionPolicyValue{
-			Override: transportOverride.ReuseBypassSession, Effective: reuse,
+			Override: transportOverride.ReuseBypassSession, Global: reuseGlobal, Effective: reuse,
 			Inherited: transportOverride.ReuseBypassSession == nil, Mode: sessionMode,
 		},
 		ImageConnectionMode: ImageConnectionPolicyValue{
-			Override: transportOverride.ImageConnectionMode, Effective: imageMode,
+			Override: transportOverride.ImageConnectionMode, Global: snapshot.transport.DefaultImageConnectionMode, Effective: imageMode,
 			Inherited: transportOverride.ImageConnectionMode == nil,
 		},
 		ImageProxy: ImageProxyState{

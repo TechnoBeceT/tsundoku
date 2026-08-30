@@ -226,8 +226,14 @@ func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *
 	if exception.ReuseBypassSession.Override == nil || *exception.ReuseBypassSession.Override || exception.ReuseBypassSession.Effective || exception.ReuseBypassSession.Mode != sourcetransport.BypassSessionDisposable {
 		t.Errorf("explicit false session = %+v", exception.ReuseBypassSession)
 	}
+	if !exception.ReuseBypassSession.Global {
+		t.Errorf("explicit session global baseline = false, want true from selected endpoint session")
+	}
 	if got, want := exception.ImageConnectionMode.Effective, sourcetransport.ImageConnectionReuse; got != want || exception.ImageConnectionMode.Inherited {
 		t.Errorf("explicit image mode = %+v", exception.ImageConnectionMode)
+	}
+	if exception.ImageConnectionMode.Global != sourcetransport.ImageConnectionFresh {
+		t.Errorf("explicit image global baseline = %q, want fresh", exception.ImageConnectionMode.Global)
 	}
 	if got, want := exception.ImageProxy, (ImageProxyState{OptedIn: true, GatewayEnabled: true, GatewayConfigured: true, EffectiveAvailable: true}); got != want {
 		t.Errorf("image proxy = %+v, want %+v", got, want)

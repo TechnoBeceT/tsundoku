@@ -9,7 +9,6 @@ import type { NetworkEndpoint, SourceBinding, SourceConfigurationRowKey } from '
 import type { components } from '../../utils/api/schema.d.ts'
 
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
-type ImageConnectionMode = components['schemas']['ImageConnectionPolicyValue']['effective']
 type RowActionKey = SourceConfigurationRowKey | 'routing'
 type FocusTargetKey = 'downloadConcurrency' | 'imageRequestDelay' | 'byparr' | 'reuseBypassSession' | 'imageConnectionMode' | 'imageProxy' | 'routing'
 
@@ -23,8 +22,6 @@ const props = withDefaults(defineProps<{
   endpoints?: NetworkEndpoint[]
   globalDownloadConcurrency?: number
   globalImageRequestDelay?: string
-  globalReuseBypassSession?: boolean
-  globalImageConnectionMode?: ImageConnectionMode
   action?: {
     sourceId: string | null
     key: RowActionKey | null
@@ -36,8 +33,6 @@ const props = withDefaults(defineProps<{
   endpoints: () => [],
   globalDownloadConcurrency: 5,
   globalImageRequestDelay: '500ms',
-  globalReuseBypassSession: true,
-  globalImageConnectionMode: 'reuse',
   action: () => ({ sourceId: null, key: null, saving: false, error: null }),
   highlightedSetting: null,
 })
@@ -194,7 +189,7 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         :hint="`Effective mode: ${configuration.reuseBypassSession.mode}`"
         control="toggle"
         :model-value="configuration.reuseBypassSession.effective"
-        :global-value="globalReuseBypassSession"
+        :global-value="configuration.reuseBypassSession.global"
         :inherited="configuration.reuseBypassSession.inherited"
         :saving="rowSaving('reuseBypassSession')"
         :error="rowError('reuseBypassSession')"
@@ -211,7 +206,7 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         hint="Reuse a connection or open a fresh one for each image"
         control="select"
         :model-value="configuration.imageConnectionMode.effective"
-        :global-value="globalImageConnectionMode"
+        :global-value="configuration.imageConnectionMode.global"
         :inherited="configuration.imageConnectionMode.inherited"
         :options="[
           { value: 'reuse', label: 'Reuse connection' },

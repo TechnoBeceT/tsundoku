@@ -32,6 +32,7 @@ type DurationPolicyValueDTO struct {
 // ImageConnectionPolicyValueDTO is the resolved image-connection policy value.
 type ImageConnectionPolicyValueDTO struct {
 	Override  *sourcetransport.ImageConnectionMode `json:"override"`
+	Global    sourcetransport.ImageConnectionMode  `json:"global"`
 	Effective sourcetransport.ImageConnectionMode  `json:"effective"`
 	Inherited bool                                 `json:"inherited"`
 }
@@ -39,6 +40,7 @@ type ImageConnectionPolicyValueDTO struct {
 // BypassSessionPolicyValueDTO is the resolved bypass-session policy value.
 type BypassSessionPolicyValueDTO struct {
 	Override  *bool                             `json:"override"`
+	Global    bool                              `json:"global"`
 	Effective bool                              `json:"effective"`
 	Inherited bool                              `json:"inherited"`
 	Mode      sourcetransport.BypassSessionMode `json:"mode"`
@@ -120,11 +122,12 @@ func newConfigurationDTO(value configuration.Configuration) ConfigurationDTO {
 		},
 		BypassEnabled: value.BypassEnabled,
 		ReuseBypassSession: BypassSessionPolicyValueDTO{
-			Override: value.ReuseBypassSession.Override, Effective: value.ReuseBypassSession.Effective,
+			Override: value.ReuseBypassSession.Override, Global: value.ReuseBypassSession.Global, Effective: value.ReuseBypassSession.Effective,
 			Inherited: value.ReuseBypassSession.Inherited, Mode: value.ReuseBypassSession.Mode,
 		},
 		ImageConnectionMode: ImageConnectionPolicyValueDTO{
-			Override: value.ImageConnectionMode.Override, Effective: value.ImageConnectionMode.Effective, Inherited: value.ImageConnectionMode.Inherited,
+			Override: value.ImageConnectionMode.Override, Global: value.ImageConnectionMode.Global,
+			Effective: value.ImageConnectionMode.Effective, Inherited: value.ImageConnectionMode.Inherited,
 		},
 		ImageProxy: ImageProxyStateDTO{
 			OptedIn: value.ImageProxy.OptedIn, GatewayEnabled: value.ImageProxy.GatewayEnabled,
