@@ -1,11 +1,17 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment node
+
+import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type { components, operations, paths } from './schema'
 
 type Schemas = components['schemas']
+type EffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
+type TransportUpdate = components['schemas']['SourceTransportPolicyUpdate']
+type ImageProxyMembershipUpdate = components['schemas']['SourceImageProxyMembershipUpdate']
 type EffectiveResponse = operations['getSourceEffectiveConfiguration']['responses'][200]['content']['application/json']
 type ExceptionsResponse = operations['listSourceExceptions']['responses'][200]['content']['application/json']
 type TransportRequest = operations['updateSourceTransport']['requestBody']['content']['application/json']
+type ImageProxyMembershipRequest = operations['updateSourceImageProxy']['requestBody']['content']['application/json']
 type MutationResponse = operations['updateSourceTransport']['responses'][200]['content']['application/json']
 type BindingPut = NonNullable<paths['/api/network/bindings/{sourceId}']['put']>
 type BindingDelete = NonNullable<paths['/api/network/bindings/{sourceId}']['delete']>
@@ -22,7 +28,7 @@ const runtime: Schemas['SourceRuntimeStatus'] = {
   lastApplyError: 'engine unavailable',
 }
 
-const configuration: EffectiveResponse = {
+const configuration: EffectiveConfiguration = {
   source: {
     sourceId: '1998416842837112832',
     name: 'Comix',
@@ -66,6 +72,12 @@ const configuration: EffectiveResponse = {
 }
 
 describe('source configuration generated contract', () => {
+  it('exposes the exact generated schemas used by source settings', () => {
+    expectTypeOf<EffectiveResponse>().toEqualTypeOf<EffectiveConfiguration>()
+    expectTypeOf<TransportRequest>().toEqualTypeOf<TransportUpdate>()
+    expectTypeOf<ImageProxyMembershipRequest>().toEqualTypeOf<ImageProxyMembershipUpdate>()
+  })
+
   it('keeps signed int64 source ids as exact path strings', () => {
     const transportSourceId: operations['updateSourceTransport']['parameters']['path']['sourceId'] = '-42'
     const bindingSourceId: BindingPut['parameters']['path']['sourceId'] = '1998416842837112832'
@@ -76,6 +88,7 @@ describe('source configuration generated contract', () => {
       '1998416842837112832',
       '-42',
     ])
+    expect(configuration.source.sourceId).toBe('1998416842837112832')
   })
 
   it('preserves nullable inherited values and transport patch enums', () => {
@@ -93,14 +106,41 @@ describe('source configuration generated contract', () => {
     })
   })
 
+  it('keeps image proxy membership explicit and reports effective availability separately', () => {
+    const update: ImageProxyMembershipUpdate = { enabled: false }
+
+    expect(update.enabled).toBe(false)
+    expect(configuration.imageProxy).toEqual({
+      optedIn: true,
+      gatewayEnabled: true,
+      gatewayConfigured: true,
+      effectiveAvailable: true,
+    })
+  })
+
+  it('resolves SOCKS and bypass routing without collapsing their modes', () => {
+    expect(configuration.routing).toEqual({
+      socksMode: 'endpoint',
+      socks: { endpointId: 'socks-id', name: 'VPN' },
+      bypassMode: 'global',
+      bypass: { endpointId: null, name: null },
+    })
+  })
+
   it('returns the effective configuration and runtime from every mutation', () => {
     const transport: MutationResponse = { configuration, runtime }
     const bindingPut: BindingPut['responses'][200]['content']['application/json'] = transport
     const bindingDelete: BindingDelete['responses'][200]['content']['application/json'] = transport
 
     expect(transport.configuration.profileKey).toBe('source-1998416842837112832')
-    expect(bindingPut.runtime.status).toBe('pending')
-    expect(bindingDelete.runtime.desiredRevision).toBe(9)
+    expect(bindingPut.runtime).toEqual({
+      status: 'pending',
+      desiredRevision: 9,
+      appliedRevision: 8,
+      lastApplyAttempt: null,
+      lastApplyError: 'engine unavailable',
+    })
+    expect(bindingDelete.runtime.appliedRevision).toBe(8)
     expect(bindingPutNotFound.message).toBe('source not found')
   })
 

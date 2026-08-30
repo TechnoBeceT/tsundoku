@@ -29,6 +29,7 @@ import type {
 } from '../components/screens/settings.types'
 import type { SourceMetric } from '../components/screens/sourceHealth.types'
 import type { SourceThroughputPolicy } from '../composables/useSourceThroughput'
+import type { components } from '../utils/api/schema.d.ts'
 
 /** The runtime-editable library knobs (2a). */
 export const librarySettings: LibrarySettings = {
@@ -168,6 +169,208 @@ export const sourcesSettingsWarmupDisabled: SourcesSettings = {
   ...sourcesSettings,
   warmupInterval: { value: 0, unit: 's' },
 }
+
+/* ---- Source configuration and exception states -------------------------- */
+
+/** A healthy source using every global download-engine setting unchanged. */
+export const fullyInheritedSourceConfiguration = {
+  source: {
+    sourceId: '2499283573021220255',
+    name: 'MangaDex',
+    language: 'en',
+  },
+  downloadConcurrency: { override: null, effective: 5, inherited: true },
+  imageRequestDelay: { override: null, effective: '500ms', inherited: true },
+  protection: {
+    warmupInterval: '15m0s',
+    warmupSlowThresholdMs: 5000,
+    failureThreshold: 5,
+    sourceCooldown: '30m0s',
+    politenessDelay: '500ms',
+  },
+  bypassEnabled: true,
+  reuseBypassSession: {
+    override: null,
+    effective: true,
+    inherited: true,
+    mode: 'reusable',
+  },
+  imageConnectionMode: {
+    override: null,
+    effective: 'reuse',
+    inherited: true,
+  },
+  imageProxy: {
+    optedIn: false,
+    gatewayEnabled: true,
+    gatewayConfigured: true,
+    effectiveAvailable: false,
+  },
+  routing: {
+    socksMode: 'global',
+    socks: { endpointId: null, name: null },
+    bypassMode: 'global',
+    bypass: { endpointId: null, name: null },
+  },
+  profileKey: 'default',
+  runtime: {
+    status: 'applied',
+    desiredRevision: 12,
+    appliedRevision: 12,
+    lastApplyAttempt: '2026-08-30T14:10:00Z',
+    lastApplyError: '',
+  },
+} satisfies components['schemas']['SourceEffectiveConfiguration']
+
+/** Comic Asura tuned conservatively and routed through dedicated VPN services. */
+export const comicAsuraSourceConfiguration = {
+  source: {
+    sourceId: '1024627298672457456',
+    name: 'Comic Asura',
+    language: 'en',
+  },
+  downloadConcurrency: { override: 1, effective: 1, inherited: false },
+  imageRequestDelay: { override: '1250ms', effective: '1250ms', inherited: false },
+  protection: {
+    warmupInterval: '15m0s',
+    warmupSlowThresholdMs: 5000,
+    failureThreshold: 5,
+    sourceCooldown: '30m0s',
+    politenessDelay: '500ms',
+  },
+  bypassEnabled: true,
+  reuseBypassSession: {
+    override: false,
+    effective: false,
+    inherited: false,
+    mode: 'disposable',
+  },
+  imageConnectionMode: {
+    override: 'fresh',
+    effective: 'fresh',
+    inherited: false,
+  },
+  imageProxy: {
+    optedIn: false,
+    gatewayEnabled: true,
+    gatewayConfigured: true,
+    effectiveAvailable: false,
+  },
+  routing: {
+    socksMode: 'endpoint',
+    socks: { endpointId: 'ep-vpn-socks', name: 'VPN SOCKS' },
+    bypassMode: 'endpoint',
+    bypass: { endpointId: 'ep-vpn-flare', name: 'VPN FlareSolverr' },
+  },
+  profileKey: 'vpn-comic-asura',
+  runtime: {
+    status: 'applied',
+    desiredRevision: 18,
+    appliedRevision: 18,
+    lastApplyAttempt: '2026-08-30T14:24:00Z',
+    lastApplyError: '',
+  },
+} satisfies components['schemas']['SourceEffectiveConfiguration']
+
+/** Hive Scans explicitly opted into the image proxy while transport stays inherited. */
+export const hiveProxySourceConfiguration = {
+  source: {
+    sourceId: '1998416842837112832',
+    name: 'Hive Scans',
+    language: 'en',
+  },
+  downloadConcurrency: { override: null, effective: 5, inherited: true },
+  imageRequestDelay: { override: null, effective: '500ms', inherited: true },
+  protection: {
+    warmupInterval: '15m0s',
+    warmupSlowThresholdMs: 5000,
+    failureThreshold: 5,
+    sourceCooldown: '30m0s',
+    politenessDelay: '500ms',
+  },
+  bypassEnabled: true,
+  reuseBypassSession: {
+    override: null,
+    effective: true,
+    inherited: true,
+    mode: 'reusable',
+  },
+  imageConnectionMode: {
+    override: null,
+    effective: 'reuse',
+    inherited: true,
+  },
+  imageProxy: {
+    optedIn: true,
+    gatewayEnabled: true,
+    gatewayConfigured: true,
+    effectiveAvailable: true,
+  },
+  routing: {
+    socksMode: 'global',
+    socks: { endpointId: null, name: null },
+    bypassMode: 'global',
+    bypass: { endpointId: null, name: null },
+  },
+  profileKey: 'default',
+  runtime: {
+    status: 'applied',
+    desiredRevision: 20,
+    appliedRevision: 20,
+    lastApplyAttempt: '2026-08-30T14:29:00Z',
+    lastApplyError: '',
+  },
+} satisfies components['schemas']['SourceEffectiveConfiguration']
+
+/** A source whose latest configuration revision is still converging. */
+export const pendingSourceException = {
+  source: comicAsuraSourceConfiguration.source,
+  exceptionCount: 6,
+  runtime: {
+    status: 'pending',
+    desiredRevision: 19,
+    appliedRevision: 18,
+    lastApplyAttempt: null,
+    lastApplyError: '',
+  },
+} satisfies components['schemas']['SourceExceptionSummary']
+
+/** A pending source that retains the latest failed runtime-apply diagnosis. */
+export const errorSourceException = {
+  source: {
+    sourceId: '9127482910938471028',
+    name: 'Comix',
+    language: 'en',
+  },
+  exceptionCount: 2,
+  runtime: {
+    status: 'pending',
+    desiredRevision: 27,
+    appliedRevision: 26,
+    lastApplyAttempt: '2026-08-30T14:32:00Z',
+    lastApplyError: 'engine profile did not become healthy before the apply deadline',
+  },
+} satisfies components['schemas']['SourceExceptionSummary']
+
+/** Empty exception-list response for an install with no source-specific settings. */
+export const noSourceExceptions = [] satisfies components['schemas']['SourceExceptionSummary'][]
+
+/** A deliberately long source label that exercises wrapping in compact settings rows. */
+export const longNameSourceException = {
+  source: {
+    sourceId: '-9223372036854775808',
+    name: 'The Extremely Long Source Name for Alternate English Releases and Archival Mirrors',
+    language: 'en',
+  },
+  exceptionCount: 1,
+  runtime: {
+    status: 'applied',
+    desiredRevision: 31,
+    appliedRevision: 31,
+    lastApplyAttempt: '2026-08-30T14:40:00Z',
+    lastApplyError: '',
+  },
+} satisfies components['schemas']['SourceExceptionSummary']
 
 export const inheritedThroughputPolicy: SourceThroughputPolicy = {
   sourceId: '1998416842837112832',
