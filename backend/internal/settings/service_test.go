@@ -1514,7 +1514,7 @@ func TestFlareSolverrSetAndResolve_URL(t *testing.T) {
 }
 
 // TestFlareSolverrSetAndResolve_TimeoutAndSession proves the timeout, session
-// name (trimmed), and session TTL round-trip through their accessors.
+// name (preserved exactly), and session TTL round-trip through their accessors.
 func TestFlareSolverrSetAndResolve_TimeoutAndSession(t *testing.T) {
 	db := testdb.New(t)
 	svc := settings.NewService(db, testDefaults())
@@ -1539,6 +1539,21 @@ func TestFlareSolverrSetAndResolve_TimeoutAndSession(t *testing.T) {
 	}
 	if got := svc.FlareSolverrSessionTTL(ctx); got != 30 {
 		t.Errorf("FlareSolverrSessionTTL after Set = %d, want 30", got)
+	}
+}
+
+func TestRuntimeConfigSnapshotPreservesLegacyWhitespaceSession(t *testing.T) {
+	db := testdb.New(t)
+	ctx := context.Background()
+	if _, err := db.Settings.Create().SetKey(settings.KeyFlareSolverrSessionName).SetValue("   ").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := settings.NewService(db, testDefaults()).RuntimeConfigSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.FlareSolverrSessionName != "   " {
+		t.Fatalf("session = %q, want exact whitespace", snapshot.FlareSolverrSessionName)
 	}
 }
 

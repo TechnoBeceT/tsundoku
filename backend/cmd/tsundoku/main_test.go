@@ -61,6 +61,36 @@ func TestRuntimePendingGroupAttemptsBothDomainsAfterFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimePendingGroupContainsDomainPanicsAndContinues(t *testing.T) {
+	for _, panicDomain := range []string{"global", "source"} {
+		t.Run(panicDomain, func(t *testing.T) {
+			calls := 0
+			group := runtimePendingGroup{
+				global: pendingRuntimeFunc(func(context.Context) error {
+					calls++
+					if panicDomain == "global" {
+						panic("global")
+					}
+					return nil
+				}),
+				sources: pendingRuntimeFunc(func(context.Context) error {
+					calls++
+					if panicDomain == "source" {
+						panic("source")
+					}
+					return nil
+				}),
+			}
+			if err := group.ReconcilePending(context.Background()); err == nil {
+				t.Fatal("panic produced nil error")
+			}
+			if calls != 2 {
+				t.Fatalf("calls = %d, want both domains attempted", calls)
+			}
+		})
+	}
+}
+
 type shutdownRecorder struct {
 	steps *[]string
 	step  string

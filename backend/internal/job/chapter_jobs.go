@@ -541,11 +541,20 @@ func (r *Runner) runRuntimeRetryLoop(generation *runtimeRetryGeneration) {
 			if generation.ctx.Err() != nil {
 				return
 			}
-			if err := r.runtimeReconciler.ReconcilePending(generation.ctx); err != nil {
+			if err := r.runRuntimeRetryPass(generation.ctx); err != nil {
 				slog.WarnContext(generation.ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
 			}
 		}
 	}
+}
+
+func (r *Runner) runRuntimeRetryPass(ctx context.Context) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("runtime retry panic recovered: %v", recovered)
+		}
+	}()
+	return r.runtimeReconciler.ReconcilePending(ctx)
 }
 
 func (r *Runner) finishRuntimeRetryGeneration(generation *runtimeRetryGeneration) {

@@ -784,7 +784,7 @@ func defaultsFromConfig(cfg *config.Config) settings.Defaults {
 // It also launches the one-shot engine-topology reconcile + seed
 // (enginetopo.Reconcile then enginetopo.RunSeed) in a detached, non-blocking
 // background goroutine — see startEngineTopo. This can never delay the HTTP
-// server or the tickers (it is a fire-and-forget goroutine, reachability-
+// server or the tickers (it is a shutdown-tracked goroutine, reachability-
 // gated, panic-safe, and idempotent).
 func startEngine(
 	ctx context.Context,
@@ -1063,7 +1063,7 @@ type runtimePendingGroup struct {
 }
 
 func (g runtimePendingGroup) ReconcilePending(ctx context.Context) error {
-	return errors.Join(g.global.ReconcilePending(ctx), g.sources.ReconcilePending(ctx))
+	return errors.Join(runPendingStage(ctx, g.global), runPendingStage(ctx, g.sources))
 }
 
 func runSourceRuntimeReconcile(
