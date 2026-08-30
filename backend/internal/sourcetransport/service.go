@@ -7,7 +7,9 @@ import (
 	"sort"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"golang.org/x/sync/semaphore"
@@ -273,6 +275,100 @@ func (s *Service) MarkPending(ctx context.Context, sourceID, revision int64, app
 	return nil
 }
 
+func (s *Service) markRevisionsApplied(ctx context.Context, intents []Intent) error {
+	return s.markRevisions(ctx, intents, "", true)
+}
+
+func (s *Service) markRevisionsPending(ctx context.Context, intents []Intent, applyError string) error {
+	return s.markRevisions(ctx, intents, sanitizeApplyError(applyError), false)
+}
+
+// markRevisions locks and re-checks the batch immediately before its one
+// exact-revision-guarded write. A row deleted or superseded during runtime
+// convergence is excluded without being recreated. The upsert update takes
+// each row's revision from its own excluded row, so heterogeneous desired
+// revisions remain one bounded database operation.
+func (s *Service) markRevisions(ctx context.Context, intents []Intent, applyError string, applied bool) error {
+	if len(intents) == 0 {
+		return nil
+	}
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("sourcetransport mark runtime revisions: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	intents, err = lockExactPendingRevisions(ctx, tx, intents)
+	if err != nil {
+		return fmt.Errorf("sourcetransport mark runtime revisions: %w", err)
+	}
+	if len(intents) == 0 {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("sourcetransport mark runtime revisions: commit empty batch: %w", err)
+		}
+		return nil
+	}
+	if err := writeRevisionMarks(ctx, tx, intents, applyError, applied); err != nil {
+		return fmt.Errorf("sourcetransport mark runtime revisions: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sourcetransport mark runtime revisions: commit: %w", err)
+	}
+	return nil
+}
+
+func lockExactPendingRevisions(ctx context.Context, tx *ent.Tx, intents []Intent) ([]Intent, error) {
+	sourceIDs, requested := normalizeRevisionRequests(intents)
+	rows, err := tx.SourceRuntimeIntent.Query().Where(
+		entintent.SourceIDIn(sourceIDs...),
+		predicate.SourceRuntimeIntent(func(selector *sql.Selector) { selector.ForUpdate() }),
+	).Order(entintent.BySourceID()).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("lock current intents: %w", err)
+	}
+	current := make([]Intent, len(rows))
+	for i, row := range rows {
+		current[i] = intentFromRow(row)
+	}
+	return exactPendingRevisions(current, requested), nil
+}
+
+func writeRevisionMarks(ctx context.Context, tx *ent.Tx, intents []Intent, applyError string, applied bool) error {
+	now := time.Now()
+	builders := make([]*ent.SourceRuntimeIntentCreate, 0, len(intents))
+	for _, intent := range intents {
+		builder := tx.SourceRuntimeIntent.Create().
+			SetSourceID(intent.SourceID).
+			SetDesiredRevision(intent.DesiredRevision).
+			SetAppliedRevision(intent.AppliedRevision).
+			SetLastApplyAttempt(now).
+			SetLastApplyError(applyError).
+			SetUpdatedAt(now)
+		if applied {
+			builder.SetAppliedRevision(intent.DesiredRevision)
+		}
+		builders = append(builders, builder)
+	}
+	exactCurrentPending := sql.ExprP(
+		`"source_runtime_intents"."desired_revision" = "excluded"."desired_revision" AND ` +
+			`"source_runtime_intents"."desired_revision" > "source_runtime_intents"."applied_revision"`,
+	)
+	upsert := tx.SourceRuntimeIntent.CreateBulk(builders...).OnConflict(
+		sql.ConflictColumns(entintent.FieldSourceID),
+		sql.UpdateWhere(exactCurrentPending),
+	).Update(func(update *ent.SourceRuntimeIntentUpsert) {
+		update.UpdateLastApplyAttempt()
+		update.UpdateLastApplyError()
+		update.UpdateUpdatedAt()
+		if applied {
+			update.UpdateAppliedRevision()
+		}
+	})
+	if err := upsert.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
 // Pending returns intents whose desired revision still exceeds the applied one.
 func (s *Service) Pending(ctx context.Context) ([]Intent, error) {
 	rows, err := s.client.SourceRuntimeIntent.Query().Where(
@@ -286,6 +382,32 @@ func (s *Service) Pending(ctx context.Context) ([]Intent, error) {
 		if row.DesiredRevision > row.AppliedRevision {
 			intents = append(intents, intentFromRow(row))
 		}
+	}
+	return intents, nil
+}
+
+func (s *Service) loadIntents(ctx context.Context, sourceIDs []int64) ([]Intent, error) {
+	if len(sourceIDs) == 0 {
+		return []Intent{}, nil
+	}
+	rows, err := s.client.SourceRuntimeIntent.Query().
+		Where(entintent.SourceIDIn(sourceIDs...)).
+		Order(entintent.BySourceID()).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("query source runtime intents %v: %w", sourceIDs, err)
+	}
+	bySource := make(map[int64]Intent, len(rows))
+	for _, row := range rows {
+		bySource[row.SourceID] = intentFromRow(row)
+	}
+	intents := make([]Intent, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		intent, ok := bySource[sourceID]
+		if !ok {
+			intent = Intent{SourceID: sourceID}
+		}
+		intents = append(intents, intent)
 	}
 	return intents, nil
 }

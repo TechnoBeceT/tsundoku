@@ -11,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
+	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
@@ -24,6 +25,21 @@ func (f runtimeApplierFunc) ApplySourceRuntime(ctx context.Context, sourceID int
 type lifecycleRuntimeApplier struct {
 	coordinator *enginetopo.SourceRuntimeApplier
 	apply       func(context.Context, int64) error
+}
+
+type countedLifecycleRuntimeApplier struct {
+	admissions int
+	applies    []int64
+}
+
+func (a *countedLifecycleRuntimeApplier) ApplySourceRuntime(_ context.Context, sourceID int64) error {
+	a.applies = append(a.applies, sourceID)
+	return nil
+}
+
+func (a *countedLifecycleRuntimeApplier) RunRuntime(ctx context.Context, run func(context.Context) error) error {
+	a.admissions++
+	return run(ctx)
 }
 
 func (a lifecycleRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
@@ -143,6 +159,243 @@ func TestApplyRevisionNeverAppliesOrAcknowledgesAnotherCommittedRevision(t *test
 	}
 	if got.DesiredRevision != 2 || got.AppliedRevision != 0 {
 		t.Fatalf("intent = %+v, want newer revision 2 pending", got)
+	}
+}
+
+func TestApplyRevisionsConvergesManyExactPendingRevisionsOnceInStableOrder(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 3, 2, 2)
+	seedRuntimeIntent(t, client, 2, 7, 4)
+	seedRuntimeIntent(t, client, 1, 3, 1)
+
+	var applied []int64
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(_ context.Context, sourceID int64) error {
+			applied = append(applied, sourceID)
+			return nil
+		}))
+	got, err := svc.ApplyRevisions(ctx, []sourcetransport.Intent{
+		{SourceID: 3, DesiredRevision: 2},
+		{SourceID: 2, DesiredRevision: 7},
+		{SourceID: 1, DesiredRevision: 3},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != 1 {
+		t.Fatalf("runtime applications = %v, want one stable source-1 diagnostic apply", applied)
+	}
+	if len(got) != 3 {
+		t.Fatalf("applied intents = %+v, want 3 source-ordered current revisions", got)
+	}
+	assertIntentRevision(t, got[0], 1, 3, 3)
+	assertIntentRevision(t, got[1], 2, 7, 7)
+	assertIntentRevision(t, got[2], 3, 2, 2)
+}
+
+func TestApplyRevisionsUsesOneSharedRuntimeLifecycleAdmission(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 7, 4, 0)
+	seedRuntimeIntent(t, client, 8, 9, 3)
+	applier := &countedLifecycleRuntimeApplier{}
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(applier)
+
+	if _, err := svc.ApplyRevisions(ctx, []sourcetransport.Intent{
+		{SourceID: 8, DesiredRevision: 9},
+		{SourceID: 7, DesiredRevision: 4},
+	}); err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if applier.admissions != 1 || len(applier.applies) != 1 || applier.applies[0] != 7 {
+		t.Fatalf("runtime lifecycle: admissions=%d applies=%v, want one admission and one stable apply", applier.admissions, applier.applies)
+	}
+}
+
+func TestApplyRevisionsSkipsStalePairsButConvergesAndAcknowledgesExactPeers(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 11, 2, 0)
+	seedRuntimeIntent(t, client, 12, 1, 0)
+
+	var applied []int64
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(_ context.Context, sourceID int64) error {
+			applied = append(applied, sourceID)
+			return nil
+		}))
+	got, err := svc.ApplyRevisions(ctx, []sourcetransport.Intent{
+		{SourceID: 12, DesiredRevision: 1},
+		{SourceID: 11, DesiredRevision: 1},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if len(applied) != 1 || applied[0] != 12 {
+		t.Fatalf("runtime applications = %v, want one exact source-12 apply", applied)
+	}
+	if len(got) != 2 {
+		t.Fatalf("current intents = %+v, want stale source 11 and exact source 12", got)
+	}
+	assertIntentRevision(t, got[0], 11, 2, 0)
+	if got[0].LastApplyAttempt != nil {
+		t.Fatalf("stale intent attempt = %v, want untouched", got[0].LastApplyAttempt)
+	}
+	assertIntentRevision(t, got[1], 12, 1, 1)
+}
+
+func TestApplyRevisionsExactGuardsEachAcknowledgementAgainstMidApplyStaleness(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 21, 2, 0)
+	seedRuntimeIntent(t, client, 22, 5, 1)
+
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error {
+			client.SourceRuntimeIntent.Update().
+				Where(entintent.SourceID(21)).
+				AddDesiredRevision(1).
+				ExecX(ctx)
+			return nil
+		}))
+	got, err := svc.ApplyRevisions(ctx, []sourcetransport.Intent{
+		{SourceID: 21, DesiredRevision: 2},
+		{SourceID: 22, DesiredRevision: 5},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if len(got) != 2 || got[0].DesiredRevision != 3 || got[0].AppliedRevision != 0 || got[0].LastApplyAttempt != nil || got[1].DesiredRevision != 5 || got[1].AppliedRevision != 5 {
+		t.Fatalf("current intents = %+v, want newer source 21 pending and source 22 acknowledged", got)
+	}
+}
+
+func TestApplyRevisionsDoesNotRecreateIntentDeletedDuringConvergence(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 23, 2, 0)
+	seedRuntimeIntent(t, client, 24, 5, 1)
+
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error {
+			client.SourceRuntimeIntent.Delete().Where(entintent.SourceID(23)).ExecX(ctx)
+			return nil
+		}))
+	got, err := svc.ApplyRevisions(ctx, []sourcetransport.Intent{
+		{SourceID: 23, DesiredRevision: 2},
+		{SourceID: 24, DesiredRevision: 5},
+	})
+	if err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if client.SourceRuntimeIntent.Query().Where(entintent.SourceID(23)).ExistX(ctx) {
+		t.Fatal("deleted source 23 intent was recreated by a stale acknowledgement")
+	}
+	if len(got) != 2 {
+		t.Fatalf("current intents = %+v, want missing source 23 and exact source 24", got)
+	}
+	assertIntentRevision(t, got[0], 23, 0, 0)
+	assertIntentRevision(t, got[1], 24, 5, 5)
+}
+
+func TestApplyRevisionsFailureAndCancellationLeaveEveryExactRevisionPending(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		apply        func(context.Context) error
+		cancelDuring bool
+	}{
+		{name: "failure", apply: func(context.Context) error { return errors.New(" engine failed\r\nretry ") }},
+		{
+			name:         "cancellation",
+			apply:        func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() },
+			cancelDuring: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertApplyRevisionsFailure(t, tc.apply, tc.cancelDuring)
+		})
+	}
+}
+
+func assertApplyRevisionsFailure(t *testing.T, apply func(context.Context) error, cancelDuring bool) {
+	t.Helper()
+	ctx := context.Background()
+	client := testdb.New(t)
+	seedRuntimeIntent(t, client, 31, 4, 1)
+	seedRuntimeIntent(t, client, 32, 8, 2)
+	started := make(chan struct{})
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(ctx context.Context, _ int64) error {
+			close(started)
+			return apply(ctx)
+		}))
+
+	applyCtx := ctx
+	cancel := func() {}
+	if cancelDuring {
+		applyCtx, cancel = context.WithCancel(ctx)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.ApplyRevisions(applyCtx, []sourcetransport.Intent{
+			{SourceID: 32, DesiredRevision: 8},
+			{SourceID: 31, DesiredRevision: 4},
+		})
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("ApplyRevisions error = nil, want convergence failure")
+	}
+
+	rows := client.SourceRuntimeIntent.Query().Order(entintent.BySourceID()).AllX(ctx)
+	if len(rows) != 2 {
+		t.Fatalf("runtime intents = %d, want 2", len(rows))
+	}
+	for _, row := range rows {
+		assertFailedRuntimeIntent(t, row)
+	}
+}
+
+func assertFailedRuntimeIntent(t *testing.T, row *ent.SourceRuntimeIntent) {
+	t.Helper()
+	if row.AppliedRevision >= row.DesiredRevision || row.LastApplyAttempt == nil ||
+		row.LastApplyError == "" || strings.ContainsAny(row.LastApplyError, "\r\n") {
+		t.Fatalf("failed intent = %+v, want pending with sanitized attempt metadata", row)
+	}
+}
+
+func TestApplyRevisionsEmptyBatchDoesNoRuntimeWork(t *testing.T) {
+	called := false
+	svc, _ := newRuntimeService(t, runtimeApplierFunc(func(context.Context, int64) error {
+		called = true
+		return nil
+	}))
+	got, err := svc.ApplyRevisions(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ApplyRevisions: %v", err)
+	}
+	if called || len(got) != 0 {
+		t.Fatalf("empty batch: called=%v intents=%+v, want no work", called, got)
+	}
+}
+
+func seedRuntimeIntent(t *testing.T, client *ent.Client, sourceID, desired, applied int64) {
+	t.Helper()
+	client.SourceRuntimeIntent.Create().
+		SetSourceID(sourceID).
+		SetDesiredRevision(desired).
+		SetAppliedRevision(applied).
+		ExecX(context.Background())
+}
+
+func assertIntentRevision(t *testing.T, got sourcetransport.Intent, sourceID, desired, applied int64) {
+	t.Helper()
+	if got.SourceID != sourceID || got.DesiredRevision != desired || got.AppliedRevision != applied {
+		t.Fatalf("intent = %+v, want source %d revision %d/%d", got, sourceID, applied, desired)
 	}
 }
 

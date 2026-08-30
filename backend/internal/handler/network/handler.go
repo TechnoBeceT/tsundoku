@@ -15,6 +15,7 @@ import (
 
 type runtimeApplier interface {
 	ApplyRevision(context.Context, int64, int64) (sourcetransport.Intent, error)
+	ApplyRevisions(context.Context, []sourcetransport.Intent) ([]sourcetransport.Intent, error)
 }
 
 type configurationReader interface {
@@ -204,9 +205,7 @@ func (h *Handler) applyCommitted(ctx context.Context, sourceID int64, result net
 }
 
 func (h *Handler) applyEndpointCommitted(ctx context.Context, intents []sourcetransport.Intent) {
-	for _, intent := range intents {
-		_, _ = h.runtime.ApplyRevision(ctx, intent.SourceID, intent.DesiredRevision)
-	}
+	_, _ = h.runtime.ApplyRevisions(ctx, intents)
 }
 
 // mapServiceError translates a network.Service sentinel into the matching HTTP

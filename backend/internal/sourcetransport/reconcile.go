@@ -41,6 +41,30 @@ func (s *Service) ApplyRevision(ctx context.Context, sourceID, revision int64) (
 	return s.applyWithLifecycle(ctx, sourceID, &revision)
 }
 
+// ApplyRevisions converges a set of exact committed source revisions with at
+// most one full runtime apply. Requested sources and returned current intents
+// are source-ordered. Revisions that are already applied or no longer current
+// are excluded before convergence; exact-revision guards on the final bulk
+// metadata write keep a revision changed during convergence pending.
+func (s *Service) ApplyRevisions(ctx context.Context, revisions []Intent) ([]Intent, error) {
+	sourceIDs, requested := normalizeRevisionRequests(revisions)
+	if len(sourceIDs) == 0 {
+		return []Intent{}, nil
+	}
+	if lifecycle, ok := s.applier.(interface {
+		RunRuntime(context.Context, func(context.Context) error) error
+	}); ok {
+		var intents []Intent
+		err := lifecycle.RunRuntime(ctx, func(ctx context.Context) error {
+			var applyErr error
+			intents, applyErr = s.applyRevisions(ctx, sourceIDs, requested)
+			return applyErr
+		})
+		return intents, err
+	}
+	return s.applyRevisions(ctx, sourceIDs, requested)
+}
+
 func (s *Service) applyWithLifecycle(ctx context.Context, sourceID int64, requiredRevision *int64) (Intent, error) {
 	if lifecycle, ok := s.applier.(interface {
 		RunRuntime(context.Context, func(context.Context) error) error
@@ -92,6 +116,70 @@ func (s *Service) applyPending(ctx context.Context, sourceID int64, requiredRevi
 		return Intent{}, fmt.Errorf("sourcetransport.ApplyPending source %d: reload intent: %w", sourceID, err)
 	}
 	return current, nil
+}
+
+func (s *Service) applyRevisions(ctx context.Context, sourceIDs []int64, requested map[int64]map[int64]struct{}) ([]Intent, error) {
+	if err := s.applySem.Acquire(ctx, 1); err != nil {
+		return nil, fmt.Errorf("sourcetransport.ApplyRevisions sources %v acquire runtime apply: %w", sourceIDs, err)
+	}
+	defer s.applySem.Release(1)
+
+	current, err := s.loadIntents(ctx, sourceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sourcetransport.ApplyRevisions sources %v: %w", sourceIDs, err)
+	}
+	pending := exactPendingRevisions(current, requested)
+	if len(pending) == 0 {
+		return current, nil
+	}
+	if s.applier == nil {
+		return current, fmt.Errorf("sourcetransport.ApplyRevisions sources %v: runtime applier is not configured", sourceIDs)
+	}
+
+	if applyErr := s.applier.ApplySourceRuntime(ctx, pending[0].SourceID); applyErr != nil {
+		metadataCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataWriteTimeout)
+		markErr := s.markRevisionsPending(metadataCtx, pending, applyErr.Error())
+		cancel()
+		latest, loadErr := s.loadIntents(ctx, sourceIDs)
+		return latest, errors.Join(applyErr, markErr, loadErr)
+	}
+	if err := s.markRevisionsApplied(ctx, pending); err != nil {
+		return nil, err
+	}
+	latest, err := s.loadIntents(ctx, sourceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("sourcetransport.ApplyRevisions sources %v: reload intents: %w", sourceIDs, err)
+	}
+	return latest, nil
+}
+
+func normalizeRevisionRequests(revisions []Intent) ([]int64, map[int64]map[int64]struct{}) {
+	requested := make(map[int64]map[int64]struct{}, len(revisions))
+	sourceIDs := make([]int64, 0, len(revisions))
+	for _, intent := range revisions {
+		byRevision, ok := requested[intent.SourceID]
+		if !ok {
+			byRevision = make(map[int64]struct{})
+			requested[intent.SourceID] = byRevision
+			sourceIDs = append(sourceIDs, intent.SourceID)
+		}
+		byRevision[intent.DesiredRevision] = struct{}{}
+	}
+	sourceIDs = sortedUniqueSourceIDs(sourceIDs)
+	return sourceIDs, requested
+}
+
+func exactPendingRevisions(current []Intent, requested map[int64]map[int64]struct{}) []Intent {
+	pending := make([]Intent, 0, len(current))
+	for _, intent := range current {
+		if intent.DesiredRevision <= intent.AppliedRevision {
+			continue
+		}
+		if _, exact := requested[intent.SourceID][intent.DesiredRevision]; exact {
+			pending = append(pending, intent)
+		}
+	}
+	return pending
 }
 
 // ReconcilePending performs one bounded, source-ordered retry pass over the

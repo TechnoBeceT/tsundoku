@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -286,23 +287,29 @@ func TestUpdateEndpoint_NotFound(t *testing.T) {
 	}
 }
 
-func TestUpdateEndpointAppliesExactCommittedRevisionsForEveryBoundSource(t *testing.T) {
+func TestUpdateEndpointConvergesAllExactCommittedRevisionsInOneRuntimeApply(t *testing.T) {
 	var applied []int64
 	env := newTestEnvWithApplier(t, runtimeApplierFunc(func(_ context.Context, sourceID int64) error {
 		applied = append(applied, sourceID)
 		return nil
 	}))
 	endpointID := createSocksEndpoint(t, env)
-	bindSources(t, env, endpointID, "41", "42")
+	bound := make([]string, 0, 25)
+	sourceIDs := make([]int64, 0, 25)
+	for sourceID := int64(41); sourceID <= 65; sourceID++ {
+		bound = append(bound, strconv.FormatInt(sourceID, 10))
+		sourceIDs = append(sourceIDs, sourceID)
+	}
+	bindSources(t, env, endpointID, bound...)
 	applied = nil
 	patch := env.do(http.MethodPatch, "/api/network/endpoints/"+endpointID, `{"name":"VPN changed"}`)
 	if patch.Code != http.StatusOK {
 		t.Fatalf("PATCH status = %d (%s)", patch.Code, patch.Body.String())
 	}
-	if len(applied) != 2 || applied[0] != 41 || applied[1] != 42 {
-		t.Fatalf("runtime applies = %v, want [41 42]", applied)
+	if len(applied) != 1 || applied[0] != 41 {
+		t.Fatalf("runtime applies = %v, want one stable source-41 diagnostic apply", applied)
 	}
-	assertSourceIntentRevisions(t, env, 2, 2, 41, 42)
+	assertSourceIntentRevisions(t, env, 2, 2, sourceIDs...)
 }
 
 func TestUpdateEndpointFailedApplyStaysPendingAndRetries(t *testing.T) {
