@@ -14,6 +14,7 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import SourceExceptionsPanel from './SourceExceptionsPanel.vue'
 import SourceConfigurationGroup from './SourceConfigurationGroup.vue'
+import SourceBindingRow from './SourceBindingRow.vue'
 import SourceOverrideRow from './SourceOverrideRow.vue'
 import SourceProxyOptInRow from './SourceProxyOptInRow.vue'
 import type { components } from '../../utils/api/schema.d.ts'
@@ -103,6 +104,14 @@ const baseProps = {
   globalImageConnectionMode: 'reuse' as const,
 }
 
+function definitionValue(root: Element, label: string): string {
+  const term = Array.from(root.querySelectorAll('dt')).find(candidate => candidate.textContent?.trim() === label)
+  expect(term, `definition term ${label}`).toBeDefined()
+  const value = term!.parentElement?.querySelector('dd')?.textContent?.trim()
+  expect(value, `definition value for ${label}`).toBeDefined()
+  return value!
+}
+
 describe('SourceExceptionsPanel', () => {
   const fetchSpy = vi.fn()
 
@@ -117,6 +126,7 @@ describe('SourceExceptionsPanel', () => {
 
   it('searches the complete catalog so a fully inherited source is discoverable', async () => {
     const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
+    expect(wrapper.get('input[type="search"]').attributes('aria-label')).toBe('Search installed sources')
 
     await wrapper.get('input[type="search"]').setValue('mangadex')
 
@@ -138,6 +148,36 @@ describe('SourceExceptionsPanel', () => {
     expect(wrapper.getComponent(SourceConfigurationGroup).text()).toContain('MangaDex')
   })
 
+  it('discards unsaved drafts when selection changes to a same-valued source', async () => {
+    const sameValued: SourceConfiguration = {
+      ...overridden,
+      source: { sourceId: 'source-same-values', name: 'Asura Mirror', language: 'en' },
+      runtime: { ...overridden.runtime, desiredRevision: 22, appliedRevision: 21 },
+    }
+    const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
+    const concurrency = wrapper.get('input[type="number"]')
+
+    await concurrency.setValue('9')
+    expect((concurrency.element as HTMLInputElement).value).toBe('9')
+
+    await wrapper.setProps({
+      sources: [...baseProps.sources, sameValued.source],
+      selectedSourceId: sameValued.source.sourceId,
+      configuration: sameValued,
+    })
+
+    const resetConcurrency = wrapper.get('input[type="number"]')
+    expect((resetConcurrency.element as HTMLInputElement).value).toBe('1')
+    expect(wrapper.findAll('[data-testid="confirmed-value"]')[0]!.text()).toBe('1')
+
+    await wrapper.findAll('[data-testid="set-override"]')[0]!.trigger('click')
+    expect(wrapper.emitted('set-override')?.[0]).toEqual([
+      sameValued.source.sourceId,
+      'downloadConcurrency',
+      1,
+    ])
+  })
+
   it('summarises exception-bearing sources, explicit fields, and pending applies', () => {
     const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
 
@@ -151,10 +191,17 @@ describe('SourceExceptionsPanel', () => {
       props: { ...baseProps, selectedSourceId: inherited.source.sourceId, configuration: inherited },
     })
     const editor = wrapper.getComponent(SourceConfigurationGroup)
+    const editorElement = editor.element as Element
 
-    for (const value of ['5', '500ms', '15m0s', '5000', '30m0s', 'reusable', 'reuse', 'Off', 'Global default']) {
+    for (const value of ['5', '500ms', 'reusable', 'reuse', 'Off', 'Global default']) {
       expect(editor.text()).toContain(value)
     }
+    expect(definitionValue(editorElement, 'Warm-up interval')).toBe('15m0s')
+    expect(definitionValue(editorElement, 'Slow threshold')).toBe('5000 ms')
+    expect(definitionValue(editorElement, 'Failure threshold')).toBe('5')
+    expect(definitionValue(editorElement, 'Source cooldown')).toBe('30m0s')
+    expect(definitionValue(editorElement, 'Politeness delay')).toBe('500ms')
+    expect(definitionValue(editorElement, 'Bypass service')).toBe('Enabled')
 
     await editor.get('summary').trigger('click')
     for (const field of ['Profile key', 'Desired revision', 'Applied revision', 'Status', 'Last attempt', 'Sanitized error']) {
@@ -164,14 +211,22 @@ describe('SourceExceptionsPanel', () => {
     expect(editor.text()).not.toContain('Engine response')
   })
 
-  it('labels inherited and overridden policy rows and keeps proxy membership explicit', () => {
-    const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
-    const rows = wrapper.findAllComponents(SourceOverrideRow)
+  it('labels both inherited and overridden policy states and keeps proxy membership explicit', () => {
+    const inheritedWrapper = mount(SourceExceptionsPanel, {
+      props: { ...baseProps, selectedSourceId: inherited.source.sourceId, configuration: inherited },
+    })
+    const inheritedRows = inheritedWrapper.findAllComponents(SourceOverrideRow)
+    expect(inheritedRows).toHaveLength(4)
+    expect(inheritedRows.every(row => row.text().includes('Inherited'))).toBe(true)
+    expect(inheritedWrapper.getComponent(SourceProxyOptInRow).text()).toContain('Off')
+    expect(inheritedWrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
 
-    expect(rows).toHaveLength(4)
-    expect(rows.every(row => row.text().includes('Override'))).toBe(true)
-    expect(wrapper.getComponent(SourceProxyOptInRow).text()).toContain('On · active')
-    expect(wrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
+    const overriddenWrapper = mount(SourceExceptionsPanel, { props: baseProps })
+    const overriddenRows = overriddenWrapper.findAllComponents(SourceOverrideRow)
+    expect(overriddenRows).toHaveLength(4)
+    expect(overriddenRows.every(row => row.text().includes('Override'))).toBe(true)
+    expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).toContain('On · active')
+    expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
   })
 
   it('focuses an externally highlighted row and scrolls it into view', async () => {
@@ -185,6 +240,8 @@ describe('SourceExceptionsPanel', () => {
       props: { ...baseProps, highlightedSourceId: null },
     })
 
+    await wrapper.get('input[type="search"]').setValue('comic asura')
+    expect(wrapper.text()).not.toContain('Hive Scans')
     await wrapper.setProps({ highlightedSourceId: summaries[1]!.source.sourceId })
     await nextTick()
 
@@ -192,6 +249,29 @@ describe('SourceExceptionsPanel', () => {
     expect(document.activeElement).toBe(highlighted.element)
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'nearest' })
     wrapper.unmount()
+  })
+
+  it('forwards proxy membership and both routing mutation payloads for the selected source', async () => {
+    const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
+
+    await wrapper.getComponent(SourceProxyOptInRow).get('[role="switch"]').trigger('click')
+    expect(wrapper.emitted('set-override')?.[0]).toEqual([
+      overridden.source.sourceId,
+      'imageProxy',
+      false,
+    ])
+
+    const routing = wrapper.getComponent(SourceBindingRow)
+    await routing.get(`select[aria-label="SOCKS route for ${overridden.source.name}"]`).setValue('')
+    expect(wrapper.emitted('set-binding')?.[0]).toEqual([{
+      sourceId: overridden.source.sourceId,
+      socksEndpointId: null,
+      flareMode: 'endpoint',
+      flareEndpointId: 'ep-flare',
+    }])
+
+    await routing.findAll('button').find(button => button.text() === 'Use global default')!.trigger('click')
+    expect(wrapper.emitted('clear-binding')?.[0]).toEqual([overridden.source.sourceId])
   })
 
   it('emits keyed row mutations upward and isolates saving/error state to that row', () => {

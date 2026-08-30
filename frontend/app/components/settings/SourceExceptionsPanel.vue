@@ -89,7 +89,10 @@ const pendingApplyCount = computed(() => props.summaries.filter(summary => summa
 
 const visibleSources = computed(() => {
   if (normalizedQuery.value) {
-    return props.sources.filter(source => `${source.name} ${source.language}`.toLocaleLowerCase().includes(normalizedQuery.value))
+    const sources = props.sources.filter(source => `${source.name} ${source.language}`.toLocaleLowerCase().includes(normalizedQuery.value))
+    const highlighted = props.highlightedSourceId ? sourceById.value.get(props.highlightedSourceId) : null
+    if (highlighted && !sources.some(source => source.sourceId === highlighted.sourceId)) sources.push(highlighted)
+    return sources
   }
 
   const sources = props.summaries.map(summary => summary.source)
@@ -161,7 +164,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
 
       <div class="source-exceptions__workspace">
         <aside class="source-exceptions__rail" aria-label="Sources">
-          <SearchInput v-model="query" placeholder="Search every installed source" />
+          <SearchInput v-model="query" label="Search installed sources" placeholder="Search every installed source" />
           <p v-if="!normalizedQuery" class="source-exceptions__rail-label">Exceptions first</p>
           <p v-else class="source-exceptions__rail-label">Catalog results</p>
 
@@ -193,6 +196,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
           <FormError v-else-if="configurationError" :message="configurationError" />
           <SourceConfigurationGroup
             v-else-if="currentConfiguration"
+            :key="currentConfiguration.source.sourceId"
             :configuration="currentConfiguration"
             :endpoints="endpoints"
             :global-download-concurrency="globalDownloadConcurrency"

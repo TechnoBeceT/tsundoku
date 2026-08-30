@@ -6,6 +6,7 @@
  * input frame and the value indents past it.
  *
  *   - `modelValue` (v-model): the search string.
+ *   - `label` (default "Search"): accessible name for the native search field.
  *   - `placeholder`: the empty-state hint text.
  *   - `clearable` (default true): show a × button to clear the field when it has text.
  *
@@ -15,11 +16,14 @@
 withDefaults(defineProps<{
   /** The search value (v-model). */
   modelValue: string
+  /** Accessible name for the native search field. */
+  label?: string
   /** Empty-state placeholder. */
   placeholder?: string
   /** Show the clear (×) button when the field has text. */
   clearable?: boolean
 }>(), {
+  label: 'Search',
   clearable: true,
 })
 
@@ -44,6 +48,7 @@ function onInput(event: Event) {
     <input
       class="search__input"
       type="search"
+      :aria-label="label"
       :value="modelValue"
       :placeholder="placeholder"
       @input="onInput"
