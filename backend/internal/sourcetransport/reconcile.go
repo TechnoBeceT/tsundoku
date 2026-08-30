@@ -27,8 +27,10 @@ func (s *Service) WithRuntimeApplier(applier RuntimeApplier) *Service {
 // cannot be falsely acknowledged because MarkApplied is guarded by the exact
 // attempted desired revision.
 func (s *Service) ApplyPending(ctx context.Context, sourceID int64) (Intent, error) {
-	s.applyMu.Lock()
-	defer s.applyMu.Unlock()
+	if err := s.applySem.Acquire(ctx, 1); err != nil {
+		return Intent{}, fmt.Errorf("sourcetransport.ApplyPending source %d acquire runtime apply: %w", sourceID, err)
+	}
+	defer s.applySem.Release(1)
 
 	intent, err := s.loadIntent(ctx, sourceID)
 	if err != nil {

@@ -44,6 +44,61 @@ type imageTransportSourceProvider interface {
 	ImageTransportSources(context.Context) []int64
 }
 
+type frozenConfig struct {
+	flareEnabled       bool
+	flareURL           string
+	flareTimeout       int
+	flareSessionName   string
+	flareSessionTTL    int
+	flareFallback      bool
+	socksEnabled       bool
+	socksHost          string
+	socksPort          int
+	socksVersion       int
+	impersonateEnabled bool
+	impersonateURL     string
+	impersonateSources []int64
+	imageSources       []int64
+}
+
+func freezeConfig(ctx context.Context, cfg ConfigProvider) frozenConfig {
+	return frozenConfig{
+		flareEnabled:       cfg.FlareSolverrEnabled(ctx),
+		flareURL:           cfg.FlareSolverrURL(ctx),
+		flareTimeout:       cfg.FlareSolverrTimeout(ctx),
+		flareSessionName:   cfg.FlareSolverrSessionName(ctx),
+		flareSessionTTL:    cfg.FlareSolverrSessionTTL(ctx),
+		flareFallback:      cfg.FlareSolverrResponseFallback(ctx),
+		socksEnabled:       cfg.EngineSocksEnabled(ctx),
+		socksHost:          cfg.EngineSocksHost(ctx),
+		socksPort:          cfg.EngineSocksPort(ctx),
+		socksVersion:       cfg.EngineSocksVersion(ctx),
+		impersonateEnabled: cfg.ImpersonateEnabled(ctx),
+		impersonateURL:     cfg.ImpersonateURL(ctx),
+		impersonateSources: append([]int64(nil), cfg.ImpersonateSources(ctx)...),
+		imageSources:       imageTransportSources(ctx, cfg),
+	}
+}
+
+func (c frozenConfig) FlareSolverrEnabled(context.Context) bool          { return c.flareEnabled }
+func (c frozenConfig) FlareSolverrURL(context.Context) string            { return c.flareURL }
+func (c frozenConfig) FlareSolverrTimeout(context.Context) int           { return c.flareTimeout }
+func (c frozenConfig) FlareSolverrSessionName(context.Context) string    { return c.flareSessionName }
+func (c frozenConfig) FlareSolverrSessionTTL(context.Context) int        { return c.flareSessionTTL }
+func (c frozenConfig) FlareSolverrResponseFallback(context.Context) bool { return c.flareFallback }
+func (c frozenConfig) EngineSocksEnabled(context.Context) bool           { return c.socksEnabled }
+func (c frozenConfig) EngineSocksHost(context.Context) string            { return c.socksHost }
+func (c frozenConfig) EngineSocksPort(context.Context) int               { return c.socksPort }
+func (c frozenConfig) EngineSocksVersion(context.Context) int            { return c.socksVersion }
+func (c frozenConfig) ImpersonateEnabled(context.Context) bool           { return c.impersonateEnabled }
+func (c frozenConfig) ImpersonateURL(context.Context) string             { return c.impersonateURL }
+func (c frozenConfig) ImpersonateSources(context.Context) []int64 {
+	return append([]int64(nil), c.impersonateSources...)
+}
+func (c frozenConfig) ImageTransportSources(context.Context) []int64 {
+	return append([]int64(nil), c.imageSources...)
+}
+
 func withImageTransportSources(base ConfigProvider, sourceIDs []int64) ConfigProvider {
 	ids := append([]int64(nil), sourceIDs...)
 	slices.Sort(ids)

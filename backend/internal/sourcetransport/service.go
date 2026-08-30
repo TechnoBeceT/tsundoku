@@ -3,11 +3,11 @@ package sourcetransport
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
+	"golang.org/x/sync/semaphore"
 )
 
 // Service persists and resolves per-source transport policy and runtime intent.
@@ -16,12 +16,17 @@ type Service struct {
 	defaults Defaults
 	catalog  SourceCatalog
 	applier  RuntimeApplier
-	applyMu  sync.Mutex
+	applySem *semaphore.Weighted
 }
 
 // NewService constructs a source transport service.
 func NewService(client *ent.Client, defaults Defaults, catalog SourceCatalog) *Service {
-	return &Service{client: client, defaults: defaults, catalog: catalog}
+	return &Service{
+		client:   client,
+		defaults: defaults,
+		catalog:  catalog,
+		applySem: semaphore.NewWeighted(1),
+	}
 }
 
 // Resolve returns one source's stored overrides resolved through the current

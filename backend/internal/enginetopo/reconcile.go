@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"slices"
 	"strconv"
-	"sync"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -17,34 +16,42 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
+	"golang.org/x/sync/semaphore"
 )
 
 // SourceRuntimeApplier serializes topology and source-runtime convergence over
 // one shared launcher/router lifecycle. Runtime applies capture transport
-// policy once, push the full image/proxy configuration to the default and every
-// desired profile, then activate the final routing map. A profile fallback is
-// returned as an error so its desired revision stays pending.
+// policy and every global config dimension once, push that immutable full
+// image/proxy configuration to the default and every desired profile, then
+// activate the final routing map. A profile fallback is returned as an error so
+// its desired revision stays pending.
 type SourceRuntimeApplier struct {
 	defaultClient sourceengine.Client
 	network       NetworkReconcileDeps
-	mu            sync.Mutex
+	lifecycle     *semaphore.Weighted
 }
 
 // NewSourceRuntimeApplier constructs the shared runtime/topology coordinator.
 func NewSourceRuntimeApplier(defaultClient sourceengine.Client, network NetworkReconcileDeps) *SourceRuntimeApplier {
-	return &SourceRuntimeApplier{defaultClient: defaultClient, network: network}
+	return &SourceRuntimeApplier{
+		defaultClient: defaultClient,
+		network:       network,
+		lifecycle:     semaphore.NewWeighted(1),
+	}
 }
 
 // ReconcileNetwork serializes an ordinary topology pass with source-runtime
 // applies so both paths use the same non-overlapping launcher/router lifecycle.
 func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkReconcileResult, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+		return NetworkReconcileResult{}, fmt.Errorf("enginetopo.SourceRuntimeApplier.ReconcileNetwork: acquire lifecycle: %w", err)
+	}
+	defer a.lifecycle.Release(1)
 	policies, err := a.transportPolicies(ctx)
 	if err != nil {
 		return NetworkReconcileResult{}, err
 	}
-	deps, _ := a.runtimeNetworkDeps(policies)
+	deps, _ := a.runtimeNetworkDeps(ctx, policies)
 	return ReconcileNetwork(ctx, deps)
 }
 
@@ -52,14 +59,16 @@ func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkRec
 // retained for diagnostics; replace-set configuration necessarily converges all
 // active profiles together rather than mutating only one engine instance.
 func (a *SourceRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d acquire lifecycle: %w", sourceID, err)
+	}
+	defer a.lifecycle.Release(1)
 
 	policies, err := a.transportPolicies(ctx)
 	if err != nil {
 		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
 	}
-	deps, cfg := a.runtimeNetworkDeps(policies)
+	deps, cfg := a.runtimeNetworkDeps(ctx, policies)
 	defaultErr := ApplyRuntimeConfig(ctx, a.defaultClient, cfg)
 
 	result, networkErr := ReconcileNetwork(ctx, deps)
@@ -81,7 +90,7 @@ func (a *SourceRuntimeApplier) transportPolicies(ctx context.Context) (map[int64
 	return policies, nil
 }
 
-func (a *SourceRuntimeApplier) runtimeNetworkDeps(policies map[int64]sourcetransport.Override) (NetworkReconcileDeps, ConfigProvider) {
+func (a *SourceRuntimeApplier) runtimeNetworkDeps(ctx context.Context, policies map[int64]sourcetransport.Override) (NetworkReconcileDeps, ConfigProvider) {
 	reuseSourceIDs := make([]int64, 0, len(policies))
 	for id, policy := range policies {
 		if policy.ImageConnectionMode != nil && *policy.ImageConnectionMode == sourcetransport.ImageConnectionReuse {
@@ -90,7 +99,7 @@ func (a *SourceRuntimeApplier) runtimeNetworkDeps(policies map[int64]sourcetrans
 	}
 	slices.Sort(reuseSourceIDs)
 
-	cfg := withImageTransportSources(a.network.BaseConfig, reuseSourceIDs)
+	cfg := freezeConfig(ctx, withImageTransportSources(a.network.BaseConfig, reuseSourceIDs))
 	deps := a.network
 	deps.TransportSnapshot = frozenTransportSnapshot(policies)
 	deps.BaseConfig = cfg

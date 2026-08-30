@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -177,5 +178,45 @@ func TestConcurrentApplyPendingCoalescesAlreadyAppliedRevision(t *testing.T) {
 	defer mu.Unlock()
 	if calls != 1 {
 		t.Fatalf("runtime apply calls = %d, want 1 coalesced call", calls)
+	}
+}
+
+func TestApplyPendingQueuedWaitHonorsContextCancellation(t *testing.T) {
+	ctx := context.Background()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client := testdb.New(t)
+	base := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	if _, err := base.Update(ctx, 505, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(false)}); err != nil {
+		t.Fatalf("persist pending policy: %v", err)
+	}
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error {
+			close(started)
+			<-release
+			return nil
+		}))
+	firstDone := make(chan error, 1)
+	go func() { _, err := svc.ApplyPending(ctx, 505); firstDone <- err }()
+	<-started
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	secondDone := make(chan error, 1)
+	go func() { _, err := svc.ApplyPending(cancelled, 505); secondDone <- err }()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queued ApplyPending error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		<-firstDone
+		<-secondDone
+		t.Fatal("queued ApplyPending did not return while the runtime serializer was occupied")
+	}
+	close(release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first ApplyPending: %v", err)
 	}
 }

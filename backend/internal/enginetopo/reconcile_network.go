@@ -131,10 +131,13 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 		res.SourcesRouted += len(p.SourceIDs)
 	}
 
-	// Retire instances no longer needed (a binding was removed/re-pointed), then
-	// swap in the freshly-built routing table.
-	deps.Launcher.Retire(ctx, keep)
+	// Publish the final routing table before retiring anything it no longer
+	// references. SetRoutes is an in-memory atomic replacement with no failure
+	// path; once it returns, no new request can resolve to an obsolete instance.
+	// A cancelled or slow retirement can therefore only leave an unreferenced
+	// process lingering, never a route aimed at a terminating process.
 	deps.Router.SetRoutes(routes)
+	deps.Launcher.Retire(ctx, keep)
 	return res, nil
 }
 

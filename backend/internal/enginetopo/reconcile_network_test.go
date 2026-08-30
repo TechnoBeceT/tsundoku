@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/engineroute"
@@ -57,6 +58,24 @@ type runtimeConfigClient struct {
 	proxySourceIDs  []int64
 	flareSession    string
 	beforeImagePush func()
+}
+
+type mutableRuntimeConfig struct {
+	fakeConfig
+	mu         sync.Mutex
+	impSources []int64
+}
+
+func (c *mutableRuntimeConfig) ImpersonateSources(context.Context) []int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]int64(nil), c.impSources...)
+}
+
+func (c *mutableRuntimeConfig) setImpersonateSources(sourceIDs []int64) {
+	c.mu.Lock()
+	c.impSources = append([]int64(nil), sourceIDs...)
+	c.mu.Unlock()
 }
 
 func (c *runtimeConfigClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
@@ -110,6 +129,49 @@ type lifecycleLauncher struct {
 	retired   []string
 	lastKeep  map[string]bool
 	onCreate  func(engineroute.Profile, *runtimeConfigClient)
+}
+
+type blockingRetireLauncher struct {
+	instance *sourceenginefake.Client
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (l *blockingRetireLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
+	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
+}
+
+func (l *blockingRetireLauncher) Retire(ctx context.Context, _ map[string]bool) {
+	close(l.entered)
+	select {
+	case <-l.release:
+	case <-ctx.Done():
+	}
+}
+
+type blockingTransportSnapshotter struct {
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingTransportSnapshotter) Snapshot(ctx context.Context) (map[int64]sourcetransport.Override, error) {
+	first := false
+	s.once.Do(func() {
+		first = true
+		close(s.entered)
+	})
+	if first {
+		select {
+		case <-s.release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return map[int64]sourcetransport.Override{}, nil
 }
 
 func (l *lifecycleLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
@@ -457,4 +519,111 @@ func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testi
 	assertRoutedTo(t, router, 11, keys[11])
 	assertRoutedTo(t, router, 22, "reused")
 	assertRoutedTo(t, router, 33, "default")
+}
+
+func TestSourceRuntimeApplierFreezesFullConfigAcrossDefaultAndProfiles(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	defaultClient := &runtimeConfigClient{Client: sourceenginefake.New()}
+	var profileClient *runtimeConfigClient
+	launcher := &lifecycleLauncher{instances: map[string]*runtimeConfigClient{}}
+
+	base := &mutableRuntimeConfig{fakeConfig: baseConfig(), impSources: []int64{11}}
+	defaultClient.beforeImagePush = func() {
+		base.setImpersonateSources([]int64{22})
+	}
+	launcher.onCreate = func(_ engineroute.Profile, client *runtimeConfigClient) {
+		profileClient = client
+	}
+	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
+		Snapshot:   fakeSnapshotter{bindings: []network.ResolvedBinding{socksBinding(11)}},
+		Router:     engineroute.NewRouter(defaultClient),
+		Launcher:   launcher,
+		DB:         db,
+		Cache:      apkcache.New(t.TempDir()),
+		BaseConfig: base,
+	})
+
+	if err := applier.ApplySourceRuntime(ctx, 11); err != nil {
+		t.Fatalf("ApplySourceRuntime: %v", err)
+	}
+	if profileClient == nil {
+		t.Fatal("profile instance was not created")
+	}
+	_, defaultProxy := defaultClient.runtimeSets()
+	_, profileProxy := profileClient.runtimeSets()
+	if !slices.Equal(defaultProxy, []int64{11}) || !slices.Equal(profileProxy, []int64{11}) {
+		t.Fatalf("impersonate snapshots default=%v profile=%v, want one captured [11] snapshot", defaultProxy, profileProxy)
+	}
+}
+
+func TestReconcileNetworkPublishesRoutesBeforeRetiringObsoleteInstance(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	oldClient := sourceenginefake.New(
+		sourceenginefake.WithSearchResult(42, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "obsolete"}}}),
+	)
+	newClient := sourceenginefake.New(
+		sourceenginefake.WithSearchResult(42, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "current"}}}),
+	)
+	router := engineroute.NewRouter(sourceenginefake.New())
+	router.SetRoutes(map[int64]sourceengine.Client{42: oldClient})
+	launcher := &blockingRetireLauncher{
+		instance: newClient,
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := enginetopo.ReconcileNetwork(ctx, enginetopo.NetworkReconcileDeps{
+			Snapshot:   fakeSnapshotter{bindings: []network.ResolvedBinding{socksBinding(42)}},
+			Router:     router,
+			Launcher:   launcher,
+			DB:         db,
+			Cache:      cache,
+			BaseConfig: baseConfig(),
+		})
+		done <- err
+	}()
+	<-launcher.entered
+	assertRoutedTo(t, router, 42, "current")
+	close(launcher.release)
+	if err := <-done; err != nil {
+		t.Fatalf("ReconcileNetwork: %v", err)
+	}
+}
+
+func TestSourceRuntimeApplierQueuedWaitHonorsContextCancellation(t *testing.T) {
+	snapshot := &blockingTransportSnapshotter{entered: make(chan struct{}), release: make(chan struct{})}
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{
+		Snapshot:          fakeSnapshotter{},
+		TransportSnapshot: snapshot,
+		Router:            engineroute.NewRouter(sourceenginefake.New()),
+		Launcher:          &fakeLauncher{},
+		BaseConfig:        baseConfig(),
+	})
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- applier.ApplySourceRuntime(context.Background(), 11) }()
+	<-snapshot.entered
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- applier.ApplySourceRuntime(cancelled, 22) }()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("queued ApplySourceRuntime error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(snapshot.release)
+		<-firstDone
+		<-secondDone
+		t.Fatal("queued ApplySourceRuntime did not return while the lifecycle serializer was occupied")
+	}
+	close(snapshot.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first ApplySourceRuntime: %v", err)
+	}
 }
