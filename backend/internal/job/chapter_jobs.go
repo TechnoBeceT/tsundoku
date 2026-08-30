@@ -15,8 +15,9 @@
 //     interval measured from the previous cycle's START, ticks landing mid-cycle
 //     are skipped, and cycles never overlap.
 //   - SetRuntimeReconciler: a bounded durable runtime-intent scan dispatched
-//     asynchronously from that same download cadence through one context-owned,
-//     cap-1 worker, so retries coalesce without delaying chapter cycles.
+//     asynchronously from that same download cadence through one epoch-owned,
+//     cap-1 worker. Multiple live Start loops share it, shutdown joins it, and
+//     retries coalesce without delaying chapter cycles.
 //   - ScheduleSnapshot: the race-free read model behind GET /api/engine/schedule
 //     (schedule.go) — is a cycle running, and when may the next one start.
 //   - Reconcile: thin wrapper around disk.Reconcile for the on-demand trigger.
@@ -132,23 +133,27 @@ type Runner struct {
 	healer ProviderHealer
 	// runtimeReconciler retries durable global and per-source engine-runtime
 	// revisions when the existing download cadence requests a pass. It is wired
-	// before Start and owned by one context-bound worker, keeping retries
+	// before Start and owned by one Start-epoch worker, keeping retries
 	// single-flight without redefining the download loop's running state.
 	runtimeReconciler interface {
 		ReconcilePending(context.Context) error
 	}
-	// runtimeMu owns the retry generation. Other Runner loops retain their
-	// historical Start semantics; runtime retry alone is idempotent so repeated
-	// Start calls share one consumer and one generation-scoped cap-1 signal.
+	// runtimeMu owns the retry generation and current Start epoch. Multiple live
+	// Start loops in one epoch share one consumer; shutdown advances the epoch so
+	// old loops cannot signal a replacement generation.
 	runtimeMu         sync.Mutex
 	runtimeGeneration *runtimeRetryGeneration
+	runtimeEpoch      uint64
+	runtimeStarts     int
+	runtimeStopping   bool
+	runtimeStopped    bool
+	runtimeStopDone   chan struct{}
 }
 
 type runtimeRetryGeneration struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	retry  chan struct{}
-	done   chan struct{}
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -389,30 +394,36 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context) {
-	runtimeGeneration := r.startRuntimeRetry(ctx)
-	periodLoop{
+	runtimeEpoch, registered := r.startRuntimeRetry(ctx)
+	loop := periodLoop{
 		name:     "download",
 		interval: r.intervals.DownloadInterval,
 		trigger:  r.trigger,
 		run: func(ctx context.Context, triggered bool) {
-			r.runDownloadCycleLogging(ctx, triggered, runtimeGeneration)
+			r.runDownloadCycleLogging(ctx, triggered, runtimeEpoch)
 		},
 		mark: r.schedule.markDownload,
-	}.start(ctx)
+	}
+	go func() {
+		if registered {
+			defer r.stopRuntimeRetry(runtimeEpoch)
+		}
+		loop.loop(ctx)
+	}()
 }
 
 // runDownloadCycleLogging runs one download cycle and logs (without aborting the
 // loop) any hard error, tagged so triggered vs ticked cycles are distinguishable
 // in the logs.
-func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, runtimeGeneration *runtimeRetryGeneration) {
+func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, runtimeEpoch uint64) {
 	msg := "download cycle error"
 	if triggered {
 		msg = "triggered download cycle error"
 	}
-	r.requestRuntimeRetry(runtimeGeneration)
 	if ctx.Err() != nil {
 		return
 	}
+	r.requestRuntimeRetry(runtimeEpoch)
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)
 	}
@@ -421,7 +432,13 @@ func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, ru
 // requestRuntimeRetry attaches one retry request to a download-cycle start
 // without waiting for engine convergence. The cap-1 channel collapses requests
 // arriving while the single worker is busy into at most one later pass.
-func (r *Runner) requestRuntimeRetry(generation *runtimeRetryGeneration) {
+func (r *Runner) requestRuntimeRetry(epoch uint64) {
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if epoch != r.runtimeEpoch || r.runtimeStopped || r.runtimeStopping || r.runtimeStarts == 0 {
+		return
+	}
+	generation := r.ensureRuntimeRetryLocked()
 	if generation == nil || generation.ctx.Err() != nil {
 		return
 	}
@@ -431,37 +448,65 @@ func (r *Runner) requestRuntimeRetry(generation *runtimeRetryGeneration) {
 	}
 }
 
-func (r *Runner) startRuntimeRetry(parent context.Context) *runtimeRetryGeneration {
+func (r *Runner) startRuntimeRetry(ctx context.Context) (uint64, bool) {
 	if r.runtimeReconciler == nil {
-		return nil
+		return 0, false
 	}
-	r.runtimeMu.Lock()
-	defer r.runtimeMu.Unlock()
-	if current := r.runtimeGeneration; current != nil {
+	for {
+		r.runtimeMu.Lock()
+		if !r.runtimeStopping {
+			r.runtimeStopped = false
+			r.runtimeStarts++
+			epoch := r.runtimeEpoch
+			r.ensureRuntimeRetryLocked()
+			r.runtimeMu.Unlock()
+			return epoch, true
+		}
+		stopped := r.runtimeStopDone
+		r.runtimeMu.Unlock()
 		select {
-		case <-current.done:
-			r.runtimeGeneration = nil
-		default:
-			return current
+		case <-ctx.Done():
+			return 0, false
+		case <-stopped:
 		}
 	}
-	ctx, cancel := context.WithCancel(parent)
+}
+
+func (r *Runner) ensureRuntimeRetryLocked() *runtimeRetryGeneration {
+	if r.runtimeStopped || r.runtimeStopping || r.runtimeStarts == 0 {
+		return nil
+	}
+	if generation := r.runtimeGeneration; generation != nil {
+		return generation
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	generation := &runtimeRetryGeneration{
 		ctx:    ctx,
 		cancel: cancel,
 		retry:  make(chan struct{}, 1),
-		done:   make(chan struct{}),
 	}
 	r.runtimeGeneration = generation
 	go r.runRuntimeRetryLoop(generation)
 	return generation
 }
 
+func (r *Runner) stopRuntimeRetry(epoch uint64) {
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if epoch != r.runtimeEpoch {
+		return
+	}
+	r.runtimeStarts--
+	if r.runtimeStarts == 0 && r.runtimeGeneration != nil {
+		r.runtimeGeneration.cancel()
+	}
+}
+
 // runRuntimeRetryLoop owns one immutable retry generation. Its private signal
-// prevents a canceled generation's buffered request from replaying after a
-// later Start, while one consumer keeps passes single-flight.
+// prevents a canceled epoch's buffered request from replaying after a later
+// Start, while one consumer keeps passes single-flight.
 func (r *Runner) runRuntimeRetryLoop(generation *runtimeRetryGeneration) {
-	defer close(generation.done)
+	defer r.finishRuntimeRetryGeneration(generation)
 	for {
 		if generation.ctx.Err() != nil {
 			return
@@ -480,27 +525,58 @@ func (r *Runner) runRuntimeRetryLoop(generation *runtimeRetryGeneration) {
 	}
 }
 
-// ShutdownRuntimeRetry cancels and joins the current retry generation. It is
-// safe to call repeatedly or concurrently with Start: a generation is fully
-// registered before its goroutine is launched, and its close-only done channel
-// avoids WaitGroup Add/Wait races. A timed-out caller may retry the join later.
+func (r *Runner) finishRuntimeRetryGeneration(generation *runtimeRetryGeneration) {
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if r.runtimeGeneration != generation {
+		return
+	}
+	r.runtimeGeneration = nil
+	if r.runtimeStopping {
+		runtimeStopping := r.runtimeStopDone
+		r.runtimeStopping = false
+		close(runtimeStopping)
+		return
+	}
+	if r.runtimeStarts > 0 && !r.runtimeStopped {
+		r.ensureRuntimeRetryLocked()
+	}
+}
+
+// ShutdownRuntimeRetry invalidates the current Start epoch, cancels and joins
+// its retry generation, and drops its coalesced signal. It is safe to call
+// repeatedly or concurrently with Start: a racing Start waits for the old
+// generation to finish before registering a fresh epoch, and the mutex-owned
+// stop channel avoids WaitGroup Add/Wait races. A timed-out caller may retry the
+// same join later.
 func (r *Runner) ShutdownRuntimeRetry(ctx context.Context) error {
 	r.runtimeMu.Lock()
-	generation := r.runtimeGeneration
-	if generation == nil {
+	if r.runtimeStopping {
+		stopped := r.runtimeStopDone
 		r.runtimeMu.Unlock()
-		return nil
+		select {
+		case <-stopped:
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("job.Runner.ShutdownRuntimeRetry: %w", ctx.Err())
+		}
 	}
-	generation.cancel()
+	r.runtimeStopping = true
+	r.runtimeStopped = true
+	r.runtimeEpoch++
+	r.runtimeStarts = 0
+	r.runtimeStopDone = make(chan struct{})
+	stopped := r.runtimeStopDone
+	if generation := r.runtimeGeneration; generation == nil {
+		r.runtimeStopping = false
+		close(r.runtimeStopDone)
+	} else {
+		generation.cancel()
+	}
 	r.runtimeMu.Unlock()
 
 	select {
-	case <-generation.done:
-		r.runtimeMu.Lock()
-		if r.runtimeGeneration == generation {
-			r.runtimeGeneration = nil
-		}
-		r.runtimeMu.Unlock()
+	case <-stopped:
 		return nil
 	case <-ctx.Done():
 		return fmt.Errorf("job.Runner.ShutdownRuntimeRetry: %w", ctx.Err())

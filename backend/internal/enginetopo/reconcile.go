@@ -23,12 +23,14 @@ import (
 // one shared launcher/router lifecycle. Runtime applies capture transport
 // policy and every global config dimension once, push that immutable full
 // image/proxy configuration to the default and every desired profile, then
-// activate the final routing map. A profile fallback is returned as an error so
-// its desired revision stays pending.
+// activate the final routing map. Its admission gate also closes, cancels, and
+// joins complete convergence calls during process shutdown. A profile fallback
+// is returned as an error so its desired revision stays pending.
 type SourceRuntimeApplier struct {
 	defaultClient sourceengine.Client
 	network       NetworkReconcileDeps
 	lifecycle     *semaphore.Weighted
+	admissions    *runtimeConvergenceLifecycle
 }
 
 // NewSourceRuntimeApplier constructs the shared runtime/topology coordinator.
@@ -37,49 +39,59 @@ func NewSourceRuntimeApplier(defaultClient sourceengine.Client, network NetworkR
 		defaultClient: defaultClient,
 		network:       network,
 		lifecycle:     semaphore.NewWeighted(1),
+		admissions:    newRuntimeConvergenceLifecycle(),
 	}
 }
 
 // ReconcileNetwork serializes an ordinary topology pass with source-runtime
 // applies so both paths use the same non-overlapping launcher/router lifecycle.
 func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkReconcileResult, error) {
-	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-		return NetworkReconcileResult{}, fmt.Errorf("enginetopo.SourceRuntimeApplier.ReconcileNetwork: acquire lifecycle: %w", err)
-	}
-	defer a.lifecycle.Release(1)
-	policies, err := a.transportPolicies(ctx)
-	if err != nil {
-		return NetworkReconcileResult{}, err
-	}
-	deps, _, err := a.runtimeNetworkDeps(ctx, policies)
-	if err != nil {
-		return NetworkReconcileResult{}, err
-	}
-	return ReconcileNetwork(ctx, deps)
+	var result NetworkReconcileResult
+	err := a.RunRuntime(ctx, func(ctx context.Context) error {
+		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+			return fmt.Errorf("enginetopo.SourceRuntimeApplier.ReconcileNetwork: acquire lifecycle: %w", err)
+		}
+		defer a.lifecycle.Release(1)
+		policies, err := a.transportPolicies(ctx)
+		if err != nil {
+			return err
+		}
+		deps, _, err := a.runtimeNetworkDeps(ctx, policies)
+		if err != nil {
+			return err
+		}
+		result, err = ReconcileNetwork(ctx, deps)
+		return err
+	})
+	return result, err
 }
 
 // ReconcileRuntime converges the complete persisted engine runtime config
 // through the same lifecycle used by source-intent and topology changes.
 func (a *SourceRuntimeApplier) ReconcileRuntime(ctx context.Context) error {
-	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-		return fmt.Errorf("enginetopo.ReconcileRuntime: acquire lifecycle: %w", err)
-	}
-	defer a.lifecycle.Release(1)
-	return a.reconcileRuntimeLocked(ctx)
+	return a.RunRuntime(ctx, func(ctx context.Context) error {
+		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+			return fmt.Errorf("enginetopo.ReconcileRuntime: acquire lifecycle: %w", err)
+		}
+		defer a.lifecycle.Release(1)
+		return a.reconcileRuntimeLocked(ctx)
+	})
 }
 
 // ApplySourceRuntime converges one full captured runtime snapshot. sourceID is
 // retained for diagnostics; replace-set configuration necessarily converges all
 // active profiles together rather than mutating only one engine instance.
 func (a *SourceRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
-	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d acquire lifecycle: %w", sourceID, err)
-	}
-	defer a.lifecycle.Release(1)
-	if err := a.reconcileRuntimeLocked(ctx); err != nil {
-		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
-	}
-	return nil
+	return a.RunRuntime(ctx, func(ctx context.Context) error {
+		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+			return fmt.Errorf("enginetopo.ApplySourceRuntime source %d acquire lifecycle: %w", sourceID, err)
+		}
+		defer a.lifecycle.Release(1)
+		if err := a.reconcileRuntimeLocked(ctx); err != nil {
+			return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
+		}
+		return nil
+	})
 }
 
 func (a *SourceRuntimeApplier) reconcileRuntimeLocked(ctx context.Context) error {

@@ -69,6 +69,21 @@ func (s *Service) RuntimeIntent(ctx context.Context) (RuntimeIntent, error) {
 // revision committed during the external apply cannot be falsely acknowledged
 // because the update is guarded by the exact attempted desired revision.
 func (s *Service) ApplyPending(ctx context.Context) (RuntimeIntent, error) {
+	if lifecycle, ok := s.runtimeConverger.(interface {
+		RunRuntime(context.Context, func(context.Context) error) error
+	}); ok {
+		var intent RuntimeIntent
+		err := lifecycle.RunRuntime(ctx, func(ctx context.Context) error {
+			var applyErr error
+			intent, applyErr = s.applyPending(ctx)
+			return applyErr
+		})
+		return intent, err
+	}
+	return s.applyPending(ctx)
+}
+
+func (s *Service) applyPending(ctx context.Context) (RuntimeIntent, error) {
 	if err := s.runtimeApplySem.Acquire(ctx, 1); err != nil {
 		return RuntimeIntent{}, fmt.Errorf("settings.ApplyPending: acquire runtime apply: %w", err)
 	}

@@ -11,13 +11,28 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/settings"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
 
 type runtimeConvergerFunc func(context.Context) error
 
 func (f runtimeConvergerFunc) ReconcileRuntime(ctx context.Context) error { return f(ctx) }
+
+type lifecycleRuntimeConverger struct {
+	coordinator *enginetopo.SourceRuntimeApplier
+	apply       func(context.Context) error
+}
+
+func (c lifecycleRuntimeConverger) ReconcileRuntime(ctx context.Context) error {
+	return c.apply(ctx)
+}
+
+func (c lifecycleRuntimeConverger) RunRuntime(ctx context.Context, run func(context.Context) error) error {
+	return c.coordinator.RunRuntime(ctx, run)
+}
 
 // testDefaults mirrors the config defaults so resolution tests are meaningful.
 func testDefaults() settings.Defaults {
@@ -321,6 +336,75 @@ func TestCanceledRuntimeApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
 	}
 	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 {
 		t.Fatalf("intent after metadata timeout = %+v, want revision 1 pending", intent)
+	}
+}
+
+func TestRuntimeConvergenceShutdownJoinsSettingsMetadataTail(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := settings.NewService(client, testDefaults())
+	if err := plain.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("persist pending runtime setting: %v", err)
+	}
+	metadataEntered := make(chan struct{})
+	releaseMetadata := make(chan struct{})
+	client.GlobalRuntimeIntent.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if m, ok := mutation.(*ent.GlobalRuntimeIntentMutation); ok {
+				if _, metadataWrite := m.LastApplyError(); metadataWrite {
+					close(metadataEntered)
+					<-releaseMetadata
+				}
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+
+	coordinator := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	applyEntered := make(chan struct{})
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(lifecycleRuntimeConverger{
+		coordinator: coordinator,
+		apply: func(ctx context.Context) error {
+			close(applyEntered)
+			<-ctx.Done()
+			return ctx.Err()
+		},
+	})
+	applyDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ApplyPending(ctx)
+		applyDone <- err
+	}()
+	<-applyEntered
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- coordinator.ShutdownRuntimeConvergence(context.Background()) }()
+	select {
+	case <-metadataEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("settings apply did not enter detached metadata tail during convergence shutdown")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("convergence shutdown returned before settings metadata tail: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseMetadata)
+	select {
+	case err := <-applyDone:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want lifecycle cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("settings ApplyPending did not finish after metadata release")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeConvergence: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("convergence shutdown did not join settings metadata tail")
 	}
 }
 

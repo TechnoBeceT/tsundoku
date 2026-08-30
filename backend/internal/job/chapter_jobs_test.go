@@ -935,6 +935,72 @@ func TestRunnerStartTwiceKeepsRuntimeRetrySingleFlight(t *testing.T) {
 	}
 }
 
+func TestRunnerCancelingFirstStartKeepsSecondStartRuntimeRetryLive(t *testing.T) {
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &blockingRuntimeReconciler{
+		started:     make(chan struct{}),
+		callStarted: make(chan int, 3),
+		release:     make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+	r.SetRuntimeReconciler(probe)
+	r.Start(firstCtx)
+	r.Start(secondCtx)
+
+	r.Trigger()
+	select {
+	case call := <-probe.callStarted:
+		if call != 1 {
+			t.Fatalf("first runtime call = %d, want 1", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first runtime retry did not start")
+	}
+	cancelFirst()
+	close(probe.release)
+	select {
+	case <-probe.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first runtime retry did not finish after release")
+	}
+
+	deadline := time.After(2 * time.Second)
+	trigger := time.NewTicker(10 * time.Millisecond)
+	defer trigger.Stop()
+	for {
+		select {
+		case call := <-probe.callStarted:
+			if call != 2 {
+				t.Fatalf("second live Start runtime call = %d, want 2", call)
+			}
+			cancelSecond()
+			shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancelShutdown()
+			if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+				t.Fatalf("ShutdownRuntimeRetry: %v", err)
+			}
+			probe.mu.Lock()
+			maxActive := probe.max
+			probe.mu.Unlock()
+			if maxActive != 1 {
+				t.Fatalf("runtime max active = %d, want 1", maxActive)
+			}
+			return
+		case <-trigger.C:
+			r.Trigger()
+		case <-deadline:
+			t.Fatal("second live Start could not retry after first Start was canceled")
+		}
+	}
+}
+
 func TestRunnerRuntimeRetryDoesNotBlockDownloadNowCycle(t *testing.T) {
 	assertRuntimeRetryDoesNotBlockDownloadCycle(t, time.Hour, func(r *job.Runner) { r.Trigger() })
 }
@@ -1228,6 +1294,91 @@ func TestRunnerShutdownRuntimeRetryJoinsMetadataTailAndIsIdempotent(t *testing.T
 	defer cancelRepeat()
 	if err := r.ShutdownRuntimeRetry(repeatCtx); err != nil {
 		t.Fatalf("repeated ShutdownRuntimeRetry: %v", err)
+	}
+}
+
+func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) {
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &generationRuntimeReconciler{
+		started:     make(chan int, 3),
+		tailStarted: make(chan struct{}),
+		tailRelease: make(chan struct{}),
+		tailDone:    make(chan struct{}),
+	}
+	r.SetRuntimeReconciler(probe)
+	r.Start(firstCtx)
+	r.Trigger()
+	select {
+	case call := <-probe.started:
+		if call != 1 {
+			t.Fatalf("first generation call = %d, want 1", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first generation retry did not start")
+	}
+
+	cancelFirst()
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		shutdownDone <- r.ShutdownRuntimeRetry(shutdownCtx)
+	}()
+	select {
+	case <-probe.tailStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime retry did not enter metadata tail during shutdown")
+	}
+
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	startCalling := make(chan struct{})
+	startReturned := make(chan struct{})
+	go func() {
+		close(startCalling)
+		r.Start(secondCtx)
+		close(startReturned)
+	}()
+	<-startCalling
+	select {
+	case <-startReturned:
+		t.Fatal("Start racing shutdown returned before the old generation joined")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(probe.tailRelease)
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeRetry: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ShutdownRuntimeRetry did not join first generation")
+	}
+	select {
+	case <-startReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start racing shutdown did not establish its lifecycle")
+	}
+
+	r.Trigger()
+	select {
+	case call := <-probe.started:
+		if call != 2 {
+			t.Fatalf("fresh post-shutdown generation call = %d, want 2", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start racing shutdown remained bound to the completed generation")
+	}
+	cancelSecond()
+	finalCtx, cancelFinal := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFinal()
+	if err := r.ShutdownRuntimeRetry(finalCtx); err != nil {
+		t.Fatalf("final ShutdownRuntimeRetry: %v", err)
 	}
 }
 

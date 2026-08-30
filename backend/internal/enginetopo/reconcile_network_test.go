@@ -655,6 +655,146 @@ func TestSourceRuntimeApplierQueuedWaitHonorsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestSourceRuntimeApplierShutdownClosesAdmissionsAndJoinsActiveTail(t *testing.T) {
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	entered := make(chan struct{})
+	canceled := make(chan struct{})
+	releaseTail := make(chan struct{})
+	finished := make(chan struct{})
+	callDone := make(chan error, 1)
+	go func() {
+		callDone <- applier.RunRuntime(context.Background(), func(ctx context.Context) error {
+			close(entered)
+			<-ctx.Done()
+			close(canceled)
+			<-releaseTail
+			close(finished)
+			return ctx.Err()
+		})
+	}()
+	<-entered
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		shutdownDone <- applier.ShutdownRuntimeConvergence(shutdownCtx)
+	}()
+	select {
+	case <-canceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("active convergence did not receive lifecycle cancellation")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("shutdown returned before active tail completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	lateDone := make(chan error, 1)
+	go func() {
+		lateDone <- applier.RunRuntime(context.Background(), func(context.Context) error {
+			return errors.New("late callback ran")
+		})
+	}()
+	select {
+	case err := <-lateDone:
+		if !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+			t.Fatalf("late admission error = %v, want ErrRuntimeConvergenceClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late convergence admission did not fail fast")
+	}
+
+	close(releaseTail)
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("active convergence tail did not finish")
+	}
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("active convergence error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active convergence call did not return")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeConvergence: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not join completed convergence")
+	}
+	if err := applier.ShutdownRuntimeConvergence(context.Background()); err != nil {
+		t.Fatalf("repeated ShutdownRuntimeConvergence: %v", err)
+	}
+}
+
+type shutdownTransportSnapshotter struct {
+	entered  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (s *shutdownTransportSnapshotter) Snapshot(ctx context.Context) (map[int64]sourcetransport.Override, error) {
+	close(s.entered)
+	<-ctx.Done()
+	close(s.canceled)
+	<-s.release
+	return nil, ctx.Err()
+}
+
+func TestSourceRuntimeApplierShutdownJoinsDirectRuntimeCall(t *testing.T) {
+	snapshot := &shutdownTransportSnapshotter{
+		entered:  make(chan struct{}),
+		canceled: make(chan struct{}),
+		release:  make(chan struct{}),
+	}
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{
+		Snapshot:          fakeSnapshotter{},
+		TransportSnapshot: snapshot,
+		Router:            engineroute.NewRouter(sourceenginefake.New()),
+		Launcher:          &fakeLauncher{},
+		BaseConfig:        baseConfig(),
+	})
+	callDone := make(chan error, 1)
+	go func() { callDone <- applier.ReconcileRuntime(context.Background()) }()
+	<-snapshot.entered
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- applier.ShutdownRuntimeConvergence(context.Background()) }()
+	select {
+	case <-snapshot.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("direct ReconcileRuntime did not receive lifecycle cancellation")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("shutdown returned before direct runtime tail: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(snapshot.release)
+	select {
+	case err := <-callDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ReconcileRuntime error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("direct ReconcileRuntime did not finish")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeConvergence: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not join direct ReconcileRuntime")
+	}
+}
+
 func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

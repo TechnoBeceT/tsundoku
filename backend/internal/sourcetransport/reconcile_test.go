@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
+	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
@@ -17,6 +19,19 @@ type runtimeApplierFunc func(context.Context, int64) error
 
 func (f runtimeApplierFunc) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
 	return f(ctx, sourceID)
+}
+
+type lifecycleRuntimeApplier struct {
+	coordinator *enginetopo.SourceRuntimeApplier
+	apply       func(context.Context, int64) error
+}
+
+func (a lifecycleRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
+	return a.apply(ctx, sourceID)
+}
+
+func (a lifecycleRuntimeApplier) RunRuntime(ctx context.Context, run func(context.Context) error) error {
+	return a.coordinator.RunRuntime(ctx, run)
 }
 
 func newRuntimeService(t *testing.T, applier sourcetransport.RuntimeApplier) (*sourcetransport.Service, *ent.Client) {
@@ -190,6 +205,76 @@ func TestCanceledSourceApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
 	}
 	if len(pending) != 1 || pending[0].DesiredRevision != 1 || pending[0].AppliedRevision != 0 {
 		t.Fatalf("pending after metadata timeout = %+v, want revision 1 pending", pending)
+	}
+}
+
+func TestRuntimeConvergenceShutdownJoinsSourceMetadataTail(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	if _, err := plain.Update(ctx, 205, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(false)}); err != nil {
+		t.Fatalf("persist pending source revision: %v", err)
+	}
+	metadataEntered := make(chan struct{})
+	releaseMetadata := make(chan struct{})
+	client.SourceRuntimeIntent.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if m, ok := mutation.(*ent.SourceRuntimeIntentMutation); ok {
+				if _, metadataWrite := m.LastApplyError(); metadataWrite {
+					close(metadataEntered)
+					<-releaseMetadata
+				}
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+
+	coordinator := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	applyEntered := make(chan struct{})
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(lifecycleRuntimeApplier{
+			coordinator: coordinator,
+			apply: func(ctx context.Context, _ int64) error {
+				close(applyEntered)
+				<-ctx.Done()
+				return ctx.Err()
+			},
+		})
+	applyDone := make(chan error, 1)
+	go func() {
+		_, err := svc.ApplyPending(ctx, 205)
+		applyDone <- err
+	}()
+	<-applyEntered
+
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- coordinator.ShutdownRuntimeConvergence(context.Background()) }()
+	select {
+	case <-metadataEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("source apply did not enter detached metadata tail during convergence shutdown")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("convergence shutdown returned before source metadata tail: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseMetadata)
+	select {
+	case err := <-applyDone:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want lifecycle cancellation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("source ApplyPending did not finish after metadata release")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeConvergence: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("convergence shutdown did not join source metadata tail")
 	}
 }
 

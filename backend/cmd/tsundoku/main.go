@@ -487,9 +487,15 @@ func main() {
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
 	settingsSvc.WithRuntimeConverger(runtimeApplier)
 	runner.SetRuntimeReconciler(runtimePendingGroup{global: settingsSvc, sources: sourceTransportSvc})
-	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, runtimeApplier) }
+	netReconcile := func(rctx context.Context) {
+		runTrackedRuntimeConvergence(rctx, runtimeApplier, func(rctx context.Context) {
+			runNetworkReconcile(rctx, runtimeApplier)
+		})
+	}
 	runtimeReconcile := func(rctx context.Context) {
-		runSourceRuntimeReconcile(rctx, runtimeApplier, settingsSvc, sourceTransportSvc)
+		runTrackedRuntimeConvergence(rctx, runtimeApplier, func(rctx context.Context) {
+			runSourceRuntimeReconcile(rctx, runtimeApplier, settingsSvc, sourceTransportSvc)
+		})
 	}
 
 	// Start the download + refresh + extension-check + warm-up tickers. This
@@ -537,15 +543,15 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
-	gracefulShutdown(e, runner, engineHostLauncher)
+	gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher)
 }
 
-// gracefulShutdown drains in-flight HTTP requests, joins the canceled runtime
-// retry generation (including its bounded failure-metadata tail), and only then
-// stops every per-profile engine-host JVM the launcher spawned. The database is
-// closed later by main's defer, so neither dependency can disappear under the
-// joined retry. Extracted from main so main's cyclomatic complexity stays within
-// the cyclop budget.
+// gracefulShutdown drains in-flight HTTP requests, closes and joins all runtime
+// convergence admissions, joins the retry generation, and only then stops every
+// per-profile engine-host JVM the launcher spawned. The database is closed later
+// by main's defer, so neither dependency can disappear under an admitted call or
+// its bounded failure-metadata tail. Extracted from main so main's cyclomatic
+// complexity stays within the cyclop budget.
 // runStartupStagingGC reclaims leaked page-staging dirs under stagingRoot at boot
 // (download.GCStagingRoot). Best-effort: a GC error is logged, never fatal
 // (NFS-safe) — the API must keep serving regardless — and a no-removals sweep is
@@ -589,16 +595,33 @@ type runtimeRetryShutdowner interface {
 	ShutdownRuntimeRetry(context.Context) error
 }
 
+type runtimeConvergenceRunner interface {
+	RunRuntime(context.Context, func(context.Context) error) error
+}
+
+type runtimeConvergenceShutdowner interface {
+	ShutdownRuntimeConvergence(context.Context) error
+}
+
 type engineHostCloser interface {
 	Close() error
 }
 
-func gracefulShutdown(e serverShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) {
+func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
 	}
 	cancel()
+
+	// Echo can return on its drain deadline while a handler is still finishing.
+	// Close the shared admission gate next, cancel every admitted convergence,
+	// and join complete settings/source/startup/network tails before dependencies
+	// disappear. New post-timeout handler admissions now fail fast and leave their
+	// durable revision pending.
+	if err := convergence.ShutdownRuntimeConvergence(context.Background()); err != nil {
+		log.Printf("tsundoku: runtime convergence shutdown: %v", err)
+	}
 
 	// The retry generation's cancellation contract is itself bounded: external
 	// calls receive its canceled context and failure metadata has a one-second
@@ -771,7 +794,9 @@ func startEngine(
 // running them concurrently could race a RunSeed capture against an
 // in-flight Reconcile install/push. Neither call can delay the HTTP server or
 // the tickers, which have already started by the time this goroutine is
-// launched.
+// launched. Its network and runtime convergence sections enter the shared
+// admission lifecycle, so shutdown cancels and joins those complete callbacks
+// even though the enclosing boot goroutine is detached.
 //
 // (QCAT-253, P2 Suwayomi-removal slice 5): targets engineClient
 // (internal/sourceengine) now, not the Suwayomi client — the seed's repo/
@@ -808,6 +833,16 @@ func startEngineTopo(
 			Retained: settingsSvc.RetainedVersions,
 		})
 	}()
+}
+
+func runTrackedRuntimeConvergence(ctx context.Context, lifecycle runtimeConvergenceRunner, run func(context.Context)) {
+	err := lifecycle.RunRuntime(ctx, func(ctx context.Context) error {
+		run(ctx)
+		return nil
+	})
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+		slog.WarnContext(ctx, "engine runtime convergence admission failed", "err", err)
+	}
 }
 
 // runEngineTopoReconcile runs ONE enginetopo.Reconcile pass, mirroring

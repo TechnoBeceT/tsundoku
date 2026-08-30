@@ -13,8 +13,11 @@
 // acknowledgement plus bounded startup and download-cadence retries make a
 // failed push durable. That convergence reads all 13 engine fields with one
 // query, so it sees one committed state rather than a cross-transaction
-// mixture. The service NEVER reads the environment — main injects the Defaults
-// built from *config.Config, preserving the single env boundary.
+// mixture. When the converger exposes the shared lifecycle, ApplyPending keeps
+// its exact-revision acknowledgement or bounded failure-metadata tail inside
+// that admission so shutdown joins it before closing the database. The service
+// NEVER reads the environment — main injects the Defaults built from
+// *config.Config, preserving the single env boundary.
 package settings
 
 import (
