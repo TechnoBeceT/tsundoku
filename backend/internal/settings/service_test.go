@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/settings"
 )
 
@@ -50,6 +51,96 @@ func testDefaults() settings.Defaults {
 		EngineSocksPort:          1080,
 		EngineSocksVersion:       5,
 		RetainedVersions:         3,
+	}
+}
+
+func TestRuntimeConfigSnapshotReadsOneCommittedDatabaseState(t *testing.T) {
+	ctx := context.Background()
+	client, sqlDB := testdb.NewWithSQL(t)
+	svc := settings.NewService(client, testDefaults())
+	old := runtimeSettingValues("old", false, 11)
+	next := runtimeSettingValues("new", true, 22)
+	if err := svc.SetMany(ctx, old); err != nil {
+		t.Fatalf("seed old runtime settings: %v", err)
+	}
+
+	queries := 0
+	client.Intercept(ent.InterceptFunc(func(next ent.Querier) ent.Querier {
+		return ent.QuerierFunc(func(ctx context.Context, query ent.Query) (ent.Value, error) {
+			queries++
+			return next.Query(ctx, query)
+		})
+	}))
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin concurrent runtime update: %v", err)
+	}
+	for _, update := range next {
+		if _, err := tx.ExecContext(ctx, `UPDATE settings SET value = $1 WHERE key = $2`, update.Value, update.Key); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("stage %s: %v", update.Key, err)
+		}
+	}
+
+	queries = 0
+	before, err := svc.RuntimeConfigSnapshot(ctx)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("RuntimeConfigSnapshot before commit: %v", err)
+	}
+	if queries != 1 {
+		_ = tx.Rollback()
+		t.Fatalf("runtime snapshot queries = %d, want exactly 1", queries)
+	}
+	assertRuntimeSnapshot(t, before, "old", false, 11)
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit concurrent runtime update: %v", err)
+	}
+	queries = 0
+	after, err := svc.RuntimeConfigSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeConfigSnapshot after commit: %v", err)
+	}
+	if queries != 1 {
+		t.Fatalf("runtime snapshot queries after commit = %d, want exactly 1", queries)
+	}
+	assertRuntimeSnapshot(t, after, "new", true, 22)
+}
+
+func runtimeSettingValues(label string, enabled bool, sourceID int64) []settings.KeyValue {
+	return []settings.KeyValue{
+		{Key: settings.KeyFlareSolverrEnabled, Value: strconv.FormatBool(enabled)},
+		{Key: settings.KeyFlareSolverrURL, Value: "http://" + label + "-flare:8191"},
+		{Key: settings.KeyFlareSolverrTimeout, Value: map[bool]string{false: "60", true: "90"}[enabled]},
+		{Key: settings.KeyFlareSolverrSessionName, Value: label + "-session"},
+		{Key: settings.KeyFlareSolverrSessionTTL, Value: map[bool]string{false: "15", true: "30"}[enabled]},
+		{Key: settings.KeyFlareSolverrResponseFallback, Value: strconv.FormatBool(enabled)},
+		{Key: settings.KeyEngineSocksEnabled, Value: strconv.FormatBool(enabled)},
+		{Key: settings.KeyEngineSocksHost, Value: label + "-socks"},
+		{Key: settings.KeyEngineSocksPort, Value: map[bool]string{false: "1080", true: "1081"}[enabled]},
+		{Key: settings.KeyEngineSocksVersion, Value: map[bool]string{false: "5", true: "4"}[enabled]},
+		{Key: settings.KeyImpersonateEnabled, Value: strconv.FormatBool(enabled)},
+		{Key: settings.KeyImpersonateURL, Value: "http://" + label + "-impersonate:8788"},
+		{Key: settings.KeyImpersonateSources, Value: strconv.FormatInt(sourceID, 10)},
+	}
+}
+
+func assertRuntimeSnapshot(t *testing.T, got settings.RuntimeConfigSnapshot, label string, enabled bool, sourceID int64) {
+	t.Helper()
+	wantTimeout, wantTTL, wantPort, wantVersion := 60, 15, 1080, 5
+	if enabled {
+		wantTimeout, wantTTL, wantPort, wantVersion = 90, 30, 1081, 4
+	}
+	if got.FlareSolverrEnabled != enabled || got.FlareSolverrURL != "http://"+label+"-flare:8191" ||
+		got.FlareSolverrTimeout != wantTimeout || got.FlareSolverrSessionName != label+"-session" ||
+		got.FlareSolverrSessionTTL != wantTTL || got.FlareSolverrResponseFallback != enabled ||
+		got.EngineSocksEnabled != enabled || got.EngineSocksHost != label+"-socks" ||
+		got.EngineSocksPort != wantPort || got.EngineSocksVersion != wantVersion ||
+		got.ImpersonateEnabled != enabled || got.ImpersonateURL != "http://"+label+"-impersonate:8788" ||
+		len(got.ImpersonateSources) != 1 || got.ImpersonateSources[0] != sourceID {
+		t.Fatalf("runtime snapshot = %+v, want complete %s committed state", got, label)
 	}
 }
 

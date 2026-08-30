@@ -28,12 +28,10 @@ import (
 // OnReposSet) targets sourceengine.Client/sourceengine.Extension — the P2
 // Suwayomi-removal repoint. The FlareSolverr/SOCKS config write-through
 // (formerly WriteThroughEngineConfig, targeting suwayomi.SuwayomiSettings) is
-// RETIRED (P2 slice 6) alongside handler/suwayomi: FlareSolverr is now pushed
-// via handler/flaresolverr's best-effort mirror straight onto
-// sourceengine.Client.SetFlareSolverr (no durable capture needed — Tsundoku's
-// settings overlay is already the source of truth for that config, not a
-// mirror of it). SOCKS runtime-push is DEFERRED to reconcile-on-boot (a later
-// slice); a runtime SOCKS edit reaches the engine on the next reconcile.
+// RETIRED (P2 slice 6) alongside handler/suwayomi. The settings overlay is the
+// source of truth for FlareSolverr, SOCKS, and impersonate configuration; every
+// committed runtime edit requests a full push through SourceRuntimeApplier's
+// shared topology lifecycle rather than writing only the default engine.
 //
 // The DB→engine RECONCILE direction (re-applying the durable store back onto a
 // fresh/rebuilt engine) lives in reconcile.go, not here.

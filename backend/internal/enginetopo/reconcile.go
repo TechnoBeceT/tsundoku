@@ -51,8 +51,21 @@ func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkRec
 	if err != nil {
 		return NetworkReconcileResult{}, err
 	}
-	deps, _ := a.runtimeNetworkDeps(ctx, policies)
+	deps, _, err := a.runtimeNetworkDeps(ctx, policies)
+	if err != nil {
+		return NetworkReconcileResult{}, err
+	}
 	return ReconcileNetwork(ctx, deps)
+}
+
+// ReconcileRuntime converges the complete persisted engine runtime config
+// through the same lifecycle used by source-intent and topology changes.
+func (a *SourceRuntimeApplier) ReconcileRuntime(ctx context.Context) error {
+	if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+		return fmt.Errorf("enginetopo.ReconcileRuntime: acquire lifecycle: %w", err)
+	}
+	defer a.lifecycle.Release(1)
+	return a.reconcileRuntimeLocked(ctx)
 }
 
 // ApplySourceRuntime converges one full captured runtime snapshot. sourceID is
@@ -63,19 +76,28 @@ func (a *SourceRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID 
 		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d acquire lifecycle: %w", sourceID, err)
 	}
 	defer a.lifecycle.Release(1)
-
-	policies, err := a.transportPolicies(ctx)
-	if err != nil {
+	if err := a.reconcileRuntimeLocked(ctx); err != nil {
 		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
 	}
-	deps, cfg := a.runtimeNetworkDeps(ctx, policies)
+	return nil
+}
+
+func (a *SourceRuntimeApplier) reconcileRuntimeLocked(ctx context.Context) error {
+	policies, err := a.transportPolicies(ctx)
+	if err != nil {
+		return err
+	}
+	deps, cfg, err := a.runtimeNetworkDeps(ctx, policies)
+	if err != nil {
+		return err
+	}
 	defaultErr := ApplyRuntimeConfig(ctx, a.defaultClient, cfg)
 
 	result, networkErr := ReconcileNetwork(ctx, deps)
 	return errors.Join(
-		wrapRuntimeApplyError(sourceID, "default profile", defaultErr),
-		wrapRuntimeApplyError(sourceID, "topology", networkErr),
-		wrapRuntimeApplyError(sourceID, "profile fallback", errors.Join(result.Gaps...)),
+		wrapRuntimeApplyError("default profile", defaultErr),
+		wrapRuntimeApplyError("topology", networkErr),
+		wrapRuntimeApplyError("profile fallback", errors.Join(result.Gaps...)),
 	)
 }
 
@@ -90,7 +112,7 @@ func (a *SourceRuntimeApplier) transportPolicies(ctx context.Context) (map[int64
 	return policies, nil
 }
 
-func (a *SourceRuntimeApplier) runtimeNetworkDeps(ctx context.Context, policies map[int64]sourcetransport.Override) (NetworkReconcileDeps, ConfigProvider) {
+func (a *SourceRuntimeApplier) runtimeNetworkDeps(ctx context.Context, policies map[int64]sourcetransport.Override) (NetworkReconcileDeps, ConfigProvider, error) {
 	reuseSourceIDs := make([]int64, 0, len(policies))
 	for id, policy := range policies {
 		if policy.ImageConnectionMode != nil && *policy.ImageConnectionMode == sourcetransport.ImageConnectionReuse {
@@ -98,12 +120,16 @@ func (a *SourceRuntimeApplier) runtimeNetworkDeps(ctx context.Context, policies 
 		}
 	}
 	slices.Sort(reuseSourceIDs)
+	reuseSourceIDs = slices.Compact(reuseSourceIDs)
 
-	cfg := freezeConfig(ctx, withImageTransportSources(a.network.BaseConfig, reuseSourceIDs))
+	cfg, err := freezeConfig(ctx, a.network.BaseConfig, reuseSourceIDs)
+	if err != nil {
+		return NetworkReconcileDeps{}, nil, fmt.Errorf("snapshot runtime config: %w", err)
+	}
 	deps := a.network
 	deps.TransportSnapshot = frozenTransportSnapshot(policies)
 	deps.BaseConfig = cfg
-	return deps, cfg
+	return deps, cfg, nil
 }
 
 type frozenTransportSnapshot map[int64]sourcetransport.Override
@@ -116,18 +142,19 @@ func (s frozenTransportSnapshot) Snapshot(context.Context) (map[int64]sourcetran
 	return copy, nil
 }
 
-func wrapRuntimeApplyError(sourceID int64, stage string, err error) error {
+func wrapRuntimeApplyError(stage string, err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("enginetopo.ApplySourceRuntime source %d %s: %w", sourceID, stage, err)
+	return fmt.Errorf("%s: %w", stage, err)
 }
 
 // ConfigProvider is the narrow read surface Reconcile needs to push Tsundoku's
 // OWN FlareSolverr + SOCKS + impersonate-gateway config onto the engine. It
 // reads Tsundoku's OWN runtime settings (never the engine), so it has no
 // sourceengine dependency. Kept to precisely the typed getters used here so a
-// test double is trivial; *settings.Service satisfies it directly.
+// test double is trivial; production *settings.Service additionally supplies
+// RuntimeConfigSnapshot, which freezes this whole surface with one DB query.
 type ConfigProvider interface {
 	FlareSolverrEnabled(ctx context.Context) bool
 	FlareSolverrURL(ctx context.Context) string

@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
@@ -153,6 +154,32 @@ type blockingTransportSnapshotter struct {
 	once    sync.Once
 	entered chan struct{}
 	release chan struct{}
+}
+
+type sourceRuntimeDefaults struct{}
+
+func (sourceRuntimeDefaults) ImageConnectionMode(context.Context) sourcetransport.ImageConnectionMode {
+	return sourcetransport.ImageConnectionFresh
+}
+
+func (sourceRuntimeDefaults) ResolveBypassSession(context.Context, int64, *bool) (bool, sourcetransport.BypassSessionMode, error) {
+	return false, sourcetransport.BypassSessionDisabled, nil
+}
+
+type sourceCatalog struct{}
+
+func (sourceCatalog) RequireSource(context.Context, int64) error { return nil }
+
+type signalingRuntimeConverger struct {
+	entered  chan struct{}
+	delegate interface {
+		ReconcileRuntime(context.Context) error
+	}
+}
+
+func (c signalingRuntimeConverger) ReconcileRuntime(ctx context.Context) error {
+	close(c.entered)
+	return c.delegate.ReconcileRuntime(ctx)
 }
 
 func (s *blockingTransportSnapshotter) Snapshot(ctx context.Context) (map[int64]sourcetransport.Override, error) {
@@ -625,5 +652,102 @@ func TestSourceRuntimeApplierQueuedWaitHonorsContextCancellation(t *testing.T) {
 	close(snapshot.release)
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first ApplySourceRuntime: %v", err)
+	}
+}
+
+func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	settingsSvc := settings.NewService(db, settings.Defaults{
+		FlareSolverrTimeout:    60,
+		FlareSolverrSessionTTL: 15,
+		EngineSocksPort:        1080,
+		EngineSocksVersion:     5,
+		ImpersonateSources:     "",
+	})
+	if err := settingsSvc.SetMany(ctx, []settings.KeyValue{
+		{Key: settings.KeyImpersonateEnabled, Value: "true"},
+		{Key: settings.KeyImpersonateURL, Value: "http://impersonate.test:8788"},
+		{Key: settings.KeyImpersonateSources, Value: "11"},
+	}); err != nil {
+		t.Fatalf("seed runtime settings: %v", err)
+	}
+
+	defaultClient := &runtimeConfigClient{Client: sourceenginefake.New()}
+	launcher := &lifecycleLauncher{instances: map[string]*runtimeConfigClient{}}
+	router := engineroute.NewRouter(defaultClient)
+	transportSvc := sourcetransport.NewService(db, sourceRuntimeDefaults{}, sourceCatalog{})
+	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
+		Snapshot:          fakeSnapshotter{bindings: []network.ResolvedBinding{socksBinding(11)}},
+		TransportSnapshot: transportSvc,
+		Router:            router,
+		Launcher:          launcher,
+		DB:                db,
+		Cache:             apkcache.New(t.TempDir()),
+		BaseConfig:        settingsSvc,
+	})
+	transportSvc.WithRuntimeApplier(applier)
+	settingsConvergenceEntered := make(chan struct{})
+	settingsSvc.WithRuntimeConverger(signalingRuntimeConverger{
+		entered:  settingsConvergenceEntered,
+		delegate: applier,
+	})
+
+	oldDefaultApplied := make(chan struct{})
+	resumeSourceApply := make(chan struct{})
+	var pauseOnce sync.Once
+	defaultClient.beforeImagePush = func() {
+		pauseOnce.Do(func() {
+			close(oldDefaultApplied)
+			<-resumeSourceApply
+		})
+	}
+	transportDone := make(chan sourcetransport.UpdateResult, 1)
+	transportErr := make(chan error, 1)
+	go func() {
+		result, err := transportSvc.Update(ctx, 11, sourcetransport.Patch{
+			ImageConnectionMode: sourcetransport.Set(sourcetransport.ImageConnectionReuse),
+		})
+		transportDone <- result
+		transportErr <- err
+	}()
+	<-oldDefaultApplied
+
+	settingsErr := make(chan error, 1)
+	go func() {
+		settingsErr <- settingsSvc.SetMany(ctx, []settings.KeyValue{
+			{Key: settings.KeyImpersonateSources, Value: "22"},
+		})
+	}()
+	<-settingsConvergenceEntered
+	_, defaultProxy := defaultClient.runtimeSets()
+	if !slices.Equal(defaultProxy, []int64{11}) {
+		t.Fatalf("default proxy set while source apply paused = %v, want frozen old [11] (no direct mirror)", defaultProxy)
+	}
+
+	close(resumeSourceApply)
+	result := <-transportDone
+	if err := <-transportErr; err != nil {
+		t.Fatalf("transport Update: %v", err)
+	}
+	if result.Intent.DesiredRevision != 1 || result.Intent.AppliedRevision != 1 {
+		t.Fatalf("transport intent = %+v, want exact revision 1 acknowledged", result.Intent)
+	}
+	if err := <-settingsErr; err != nil {
+		t.Fatalf("runtime settings update: %v", err)
+	}
+
+	var profileClient *runtimeConfigClient
+	for _, client := range launcher.instances {
+		profileClient = client
+	}
+	if profileClient == nil {
+		t.Fatal("desired profile instance missing")
+	}
+	for name, client := range map[string]*runtimeConfigClient{"default": defaultClient, "profile": profileClient} {
+		_, proxy := client.runtimeSets()
+		if !slices.Equal(proxy, []int64{22}) {
+			t.Errorf("%s proxy sources after both writes = %v, want converged [22]", name, proxy)
+		}
 	}
 }

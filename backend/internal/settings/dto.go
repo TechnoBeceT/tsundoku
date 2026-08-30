@@ -17,3 +17,23 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// RuntimeConfigSnapshot is one committed view of every global setting pushed
+// to engine-host instances. The settings service loads this complete group with
+// one query so a concurrent SetMany transaction can be observed only before or
+// after its commit, never as an impossible mixture of both states.
+type RuntimeConfigSnapshot struct {
+	FlareSolverrEnabled          bool
+	FlareSolverrURL              string
+	FlareSolverrTimeout          int
+	FlareSolverrSessionName      string
+	FlareSolverrSessionTTL       int
+	FlareSolverrResponseFallback bool
+	EngineSocksEnabled           bool
+	EngineSocksHost              string
+	EngineSocksPort              int
+	EngineSocksVersion           int
+	ImpersonateEnabled           bool
+	ImpersonateURL               string
+	ImpersonateSources           []int64
+}

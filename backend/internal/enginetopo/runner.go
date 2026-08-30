@@ -3,7 +3,9 @@
 // RunSeed), their DB->engine inverse (Reconcile — the recovery core for a
 // wiped/swapped/rebuilt engine), a live best-effort write-through
 // (OnExtensionInstalled/OnExtensionUninstalled/OnReposSet), and a read-only
-// status snapshot (TopologyStatus). These are one-shot/owner-triggered
+// status snapshot (TopologyStatus). SourceRuntimeApplier additionally owns the
+// serialized convergence boundary shared by source-policy, network-topology,
+// and global runtime-settings changes. These are one-shot/owner-triggered
 // maintenance passes, as opposed to the recurring per-cycle work in
 // internal/refresh/internal/download.
 //
@@ -12,8 +14,9 @@
 // SeriesProvider.url backfill and the engine-config gap-fill seed are
 // RETIRED — see RunSeed's doc comment. (P2 slice 6): the FlareSolverr/SOCKS
 // config write-through (formerly WriteThroughEngineConfig) is RETIRED
-// alongside handler/suwayomi — this package now imports ZERO
-// internal/suwayomi.
+// alongside handler/suwayomi. Persisted runtime changes now converge through
+// SourceRuntimeApplier rather than a handler-owned default-only write — this
+// package imports ZERO internal/suwayomi.
 package enginetopo
 
 import (

@@ -1,8 +1,8 @@
 // Package flaresolverr_test exercises the Tsundoku-owned FlareSolverr settings
 // HTTP handlers end-to-end through a real Echo instance (with RequireOwner +
 // the central error middleware wired) against an ephemeral PostgreSQL
-// instance (testdb, for the real settings.Service) and a fake
-// sourceengine.Client (the best-effort mirror target). Tests require Docker.
+// instance (testdb, for the real settings.Service) and a fake runtime
+// converger. Tests require Docker.
 package flaresolverr_test
 
 import (
@@ -22,31 +22,23 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	settingssvc "github.com/technobecet/tsundoku/internal/settings"
-	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 const testSecret = "flaresolverr-handler-test-secret" //nolint:gosec // test fixture, not a real credential
 
-// fakeEngineClient is a sourceengine.Client double: only SetFlareSolverr is
-// overridden (the mirror target); every other method would panic if called,
-// which this handler never does. It captures the last patch it received so
-// tests can assert the mirror carries the freshly-saved Tsundoku state.
-type fakeEngineClient struct {
-	sourceengine.Client
-	setErr    error
-	setCalled bool
-	lastPatch sourceengine.FlareSolverrPatch
+type fakeRuntimeConverger struct {
+	err    error
+	called bool
 }
 
-func (f *fakeEngineClient) SetFlareSolverr(_ context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
-	f.setCalled = true
-	f.lastPatch = patch
-	return sourceengine.FlareSolverrConfig{}, f.setErr
+func (f *fakeRuntimeConverger) ReconcileRuntime(context.Context) error {
+	f.called = true
+	return f.err
 }
 
 type testEnv struct {
 	e     *echo.Echo
-	fake  *fakeEngineClient
+	fake  *fakeRuntimeConverger
 	token string
 }
 
@@ -54,8 +46,10 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	fake := &fakeEngineClient{}
-	h := handler.NewHandler(settingssvc.NewService(client, settingssvc.Defaults{FlareSolverrTimeout: 60, FlareSolverrSessionTTL: 15}), fake)
+	fake := &fakeRuntimeConverger{}
+	svc := settingssvc.NewService(client, settingssvc.Defaults{FlareSolverrTimeout: 60, FlareSolverrSessionTTL: 15}).
+		WithRuntimeConverger(fake)
+	h := handler.NewHandler(svc)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -146,7 +140,7 @@ func TestUpdate_OK(t *testing.T) {
 		t.Errorf("re-GET = %+v, want it to match the Update response %+v", got2, got)
 	}
 
-	assertMirrorPatch(t, env.fake)
+	assertRuntimeConvergence(t, env.fake)
 }
 
 // assertFullySubmittedValues checks the Update response reflects every field
@@ -160,48 +154,36 @@ func assertFullySubmittedValues(t *testing.T, got handler.SettingsDTO) {
 	}
 }
 
-// assertMirrorPatch checks the engine mirror was attempted with the full
-// resulting (post-save) state.
-func assertMirrorPatch(t *testing.T, fake *fakeEngineClient) {
+func assertRuntimeConvergence(t *testing.T, fake *fakeRuntimeConverger) {
 	t.Helper()
-	if !fake.setCalled {
-		t.Fatal("SetFlareSolverr was not called — the engine mirror never fired")
-	}
-	p := fake.lastPatch
-	if p.Enabled == nil || !*p.Enabled {
-		t.Error("mirror patch Enabled missing/false")
-	}
-	if p.URL == nil || *p.URL != "http://flaresolverr:8191" {
-		t.Error("mirror patch URL missing/mismatched")
-	}
-	if p.Session == nil || *p.Session != "tsundoku" {
-		t.Error("mirror patch Session missing/mismatched")
+	if !fake.called {
+		t.Fatal("runtime convergence was not requested")
 	}
 }
 
-// TestUpdate_MirrorFailureStillSaves proves an engine-mirror failure is
-// swallowed: the Tsundoku save already succeeded, so the request still
-// returns 200 with the persisted Tsundoku values.
-func TestUpdate_MirrorFailureStillSaves(t *testing.T) {
+// TestUpdate_RuntimeConvergenceFailureStillSaves proves an engine-convergence
+// failure is swallowed: the Tsundoku save already succeeded, so the request
+// still returns 200 with the persisted Tsundoku values.
+func TestUpdate_RuntimeConvergenceFailureStillSaves(t *testing.T) {
 	env := newTestEnv(t)
-	env.fake.setErr = errors.New("engine: connection refused")
+	env.fake.err = errors.New("engine: connection refused")
 
 	rec := env.do(http.MethodPatch, "/api/flaresolverr/settings", `{"enabled":true}`)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("Update with mirror failure: want 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("Update with convergence failure: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	var got handler.SettingsDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if !got.Enabled {
-		t.Error("Update response Enabled = false, want true (Tsundoku save must persist despite mirror failure)")
+		t.Error("Update response Enabled = false, want true (Tsundoku save must persist despite convergence failure)")
 	}
-	if !env.fake.setCalled {
-		t.Fatal("SetFlareSolverr was not attempted")
+	if !env.fake.called {
+		t.Fatal("runtime convergence was not attempted")
 	}
 
-	// Persistence survives the mirror failure too.
+	// Persistence survives the convergence failure too.
 	rec2 := env.do(http.MethodGet, "/api/flaresolverr/settings", "")
 	var got2 handler.SettingsDTO
 	_ = json.Unmarshal(rec2.Body.Bytes(), &got2)
@@ -218,8 +200,8 @@ func TestUpdate_EmptyBody(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Update empty body: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if env.fake.setCalled {
-		t.Error("SetFlareSolverr must not be attempted when the Tsundoku save was rejected")
+	if env.fake.called {
+		t.Error("runtime convergence must not be attempted when the Tsundoku save was rejected")
 	}
 }
 
@@ -231,8 +213,8 @@ func TestUpdate_InvalidURL(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("Update bad url: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if env.fake.setCalled {
-		t.Error("SetFlareSolverr must not be attempted when the Tsundoku save was rejected")
+	if env.fake.called {
+		t.Error("runtime convergence must not be attempted when the Tsundoku save was rejected")
 	}
 }
 

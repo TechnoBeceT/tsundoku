@@ -487,6 +487,7 @@ func main() {
 	}
 	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
+	settingsSvc.WithRuntimeConverger(runtimeApplier)
 	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, runtimeApplier) }
 	runtimeReconcile := func(rctx context.Context) {
 		runSourceRuntimeReconcile(rctx, runtimeApplier, sourceTransportSvc)

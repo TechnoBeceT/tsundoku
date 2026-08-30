@@ -17,8 +17,16 @@ import (
 // Ent client is safe for concurrent use, so the typed accessors are safe to call
 // from the ticker + dispatcher goroutines without extra locking.
 type Service struct {
-	client   *ent.Client
-	defaults Defaults
+	client           *ent.Client
+	defaults         Defaults
+	runtimeConverger RuntimeConverger
+}
+
+// RuntimeConverger restores the complete persisted engine runtime config after
+// a runtime-setting commit. The implementation owns engine lifecycle
+// serialization; settings remains independent of engine topology.
+type RuntimeConverger interface {
+	ReconcileRuntime(context.Context) error
 }
 
 // ImageDelaySettings is the runtime policy surface for the interval between
@@ -32,6 +40,13 @@ type ImageDelaySettings interface {
 // reads env — defaults arrive already typed, preserving the single env boundary.
 func NewService(client *ent.Client, defaults Defaults) *Service {
 	return &Service{client: client, defaults: defaults}
+}
+
+// WithRuntimeConverger attaches the best-effort runtime convergence hook. It is
+// intended for construction-time wiring before the service is shared.
+func (s *Service) WithRuntimeConverger(converger RuntimeConverger) *Service {
+	s.runtimeConverger = converger
+	return s
 }
 
 // DownloadInterval is the download ticker period (DB override else default).
@@ -355,9 +370,12 @@ func (s *Service) Set(ctx context.Context, key, value string) error {
 // the first unknown key → ErrUnknownSetting, the first bad value →
 // ErrInvalidSetting, both naming the offending key), then upserts all of them in
 // a single transaction. No partial write ever lands when one update is invalid.
+// A committed engine-runtime key triggers one best-effort full convergence via
+// RuntimeConverger; its failure is logged and never rolls back durable settings.
 func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 	type canonical struct{ key, value string }
 	pending := make([]canonical, 0, len(updates))
+	runtimeChanged := false
 	for _, u := range updates {
 		t, ok := tunables[u.Key]
 		if !ok {
@@ -368,6 +386,7 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 			return err // already wraps ErrInvalidSetting and names the key
 		}
 		pending = append(pending, canonical{key: u.Key, value: c})
+		runtimeChanged = runtimeChanged || runtimeConfigKey(u.Key)
 	}
 
 	tx, err := s.client.Tx(ctx)
@@ -383,7 +402,112 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("settings.SetMany: commit tx: %w", err)
 	}
+	if runtimeChanged && s.runtimeConverger != nil {
+		if err := s.runtimeConverger.ReconcileRuntime(ctx); err != nil {
+			slog.WarnContext(ctx, "settings: engine runtime convergence failed (settings already persisted)", "err", err)
+		}
+	}
 	return nil
+}
+
+var runtimeConfigKeys = []string{
+	KeyFlareSolverrEnabled,
+	KeyFlareSolverrURL,
+	KeyFlareSolverrTimeout,
+	KeyFlareSolverrSessionName,
+	KeyFlareSolverrSessionTTL,
+	KeyFlareSolverrResponseFallback,
+	KeyEngineSocksEnabled,
+	KeyEngineSocksHost,
+	KeyEngineSocksPort,
+	KeyEngineSocksVersion,
+	KeyImpersonateEnabled,
+	KeyImpersonateURL,
+	KeyImpersonateSources,
+}
+
+func runtimeConfigKey(key string) bool {
+	for _, runtimeKey := range runtimeConfigKeys {
+		if key == runtimeKey {
+			return true
+		}
+	}
+	return false
+}
+
+// RuntimeConfigSnapshot loads every global engine runtime setting in one SQL
+// statement. PostgreSQL's statement snapshot makes an atomic SetMany commit
+// visible as one complete before-or-after state. A query failure is returned so
+// convergence cannot acknowledge a configuration it did not read.
+func (s *Service) RuntimeConfigSnapshot(ctx context.Context) (RuntimeConfigSnapshot, error) {
+	rows, err := s.client.Settings.Query().Where(entsettings.KeyIn(runtimeConfigKeys...)).All(ctx)
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: query runtime settings: %w", err)
+	}
+	values := make(map[string]string, len(runtimeConfigKeys))
+	for _, key := range runtimeConfigKeys {
+		values[key] = tunables[key].def(s.defaults)
+	}
+	for _, row := range rows {
+		canonical, err := tunables[row.Key].validate(row.Value)
+		if err != nil {
+			slog.WarnContext(ctx, "settings: stored runtime value invalid, using default", "key", row.Key, "value", row.Value, "err", err)
+			continue
+		}
+		values[row.Key] = canonical
+	}
+
+	flareEnabled, err := strconv.ParseBool(values[KeyFlareSolverrEnabled])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrEnabled, err)
+	}
+	flareTimeout, err := strconv.Atoi(values[KeyFlareSolverrTimeout])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrTimeout, err)
+	}
+	flareTTL, err := strconv.Atoi(values[KeyFlareSolverrSessionTTL])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrSessionTTL, err)
+	}
+	flareFallback, err := strconv.ParseBool(values[KeyFlareSolverrResponseFallback])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrResponseFallback, err)
+	}
+	socksEnabled, err := strconv.ParseBool(values[KeyEngineSocksEnabled])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksEnabled, err)
+	}
+	socksPort, err := strconv.Atoi(values[KeyEngineSocksPort])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksPort, err)
+	}
+	socksVersion, err := strconv.Atoi(values[KeyEngineSocksVersion])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksVersion, err)
+	}
+	impersonateEnabled, err := strconv.ParseBool(values[KeyImpersonateEnabled])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyImpersonateEnabled, err)
+	}
+	impersonateSources, err := parseSourceIDSet(values[KeyImpersonateSources])
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyImpersonateSources, err)
+	}
+	return RuntimeConfigSnapshot{
+		FlareSolverrEnabled:          flareEnabled,
+		FlareSolverrURL:              values[KeyFlareSolverrURL],
+		FlareSolverrTimeout:          flareTimeout,
+		FlareSolverrSessionName:      values[KeyFlareSolverrSessionName],
+		FlareSolverrSessionTTL:       flareTTL,
+		FlareSolverrResponseFallback: flareFallback,
+		EngineSocksEnabled:           socksEnabled,
+		EngineSocksHost:              values[KeyEngineSocksHost],
+		EngineSocksPort:              socksPort,
+		EngineSocksVersion:           socksVersion,
+		ImpersonateEnabled:           impersonateEnabled,
+		ImpersonateURL:               values[KeyImpersonateURL],
+		ImpersonateSources:           impersonateSources,
+	}, nil
 }
 
 // upsertSettingTx writes key=value into the Settings table, creating the row the

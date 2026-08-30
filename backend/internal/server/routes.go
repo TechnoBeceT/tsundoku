@@ -128,9 +128,9 @@ import (
 //   - /api/push/subscriptions (DELETE)             — remove this device's Web Push subscription (RequireOwner).
 //   - /api/system (GET)                             — read-only env-structural info (RequireOwner).
 //   - /api/flaresolverr/settings (GET)              — read Tsundoku-owned FlareSolverr settings (RequireOwner).
-//   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort mirror to Suwayomi (RequireOwner).
+//   - /api/flaresolverr/settings (PATCH)            — partial-update + best-effort engine-runtime convergence (RequireOwner).
 //   - /api/impersonate (GET)                        — read Tsundoku-owned impersonate-gateway settings (RequireOwner).
-//   - /api/impersonate (PUT)                        — update + best-effort mirror to the engine host (RequireOwner).
+//   - /api/impersonate (PUT)                        — update + best-effort engine-runtime convergence (RequireOwner).
 //   - /api/network/endpoints (GET/POST)            — list / create reusable SOCKS|FlareSolverr egress endpoints (RequireOwner).
 //   - /api/network/endpoints/:id (PATCH/DELETE)    — update / delete an endpoint (delete blocked 409 when bound) (RequireOwner).
 //   - /api/network/bindings (GET)                  — list every per-source network binding (RequireOwner).
@@ -403,22 +403,18 @@ func registerRoutes(
 	authed.GET("/system", systemH.Get)
 
 	// Tsundoku-owned FlareSolverr settings (QCAT-238): a runtime setting on
-	// settingsSvc, NOT read from Suwayomi/the engine. PATCH best-effort mirrors
-	// down to the engine host via engineClient.SetFlareSolverr (P2 slice 6: the
-	// obsolete Suwayomi settings-proxy this used to mirror through is deleted —
-	// the engine host has no readable config, so its GET half was already
-	// impossible; SOCKS runtime-push stays deferred to reconcile-on-boot, a
-	// later slice).
-	flareSolverrH := flaresolverrh.NewHandler(settingsSvc, engineClient)
+	// settingsSvc, NOT read from Suwayomi/the engine. The settings service owns
+	// post-commit best-effort convergence through enginetopo's shared lifecycle;
+	// this handler never calls the engine directly.
+	flareSolverrH := flaresolverrh.NewHandler(settingsSvc)
 	authed.GET("/flaresolverr/settings", flareSolverrH.Get)
 	authed.PATCH("/flaresolverr/settings", flareSolverrH.Update)
 
 	// Tsundoku-owned impersonate-gateway settings (GAP-111): a runtime setting on
 	// settingsSvc (NOT an env var, NOT read from the engine) toggling the
-	// Chrome-fingerprint image-fetch gateway + its URL. PUT best-effort mirrors
-	// down to the engine host via engineClient.SetImpersonate — the engine reads
-	// the pushed value live per image fetch; reconcile-on-boot re-pushes it.
-	impersonateH := impersonateh.NewHandler(settingsSvc, engineClient)
+	// Chrome-fingerprint image-fetch gateway + its URL. The same settings-owned
+	// convergence hook pushes its full committed state to every engine profile.
+	impersonateH := impersonateh.NewHandler(settingsSvc)
 	authed.GET("/impersonate", impersonateH.Get)
 	authed.PUT("/impersonate", impersonateH.Update)
 

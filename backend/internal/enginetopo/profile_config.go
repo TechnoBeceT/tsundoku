@@ -2,9 +2,9 @@ package enginetopo
 
 import (
 	"context"
-	"slices"
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
+	"github.com/technobecet/tsundoku/internal/settings"
 )
 
 // socksDefaultPort is the SOCKS port a profile with no SOCKS override pushes
@@ -31,15 +31,6 @@ type profileConfigProvider struct {
 	base    ConfigProvider
 }
 
-// imageTransportConfigProvider decorates the ordinary topology config with the
-// full source set whose image calls reuse pooled connections. Keeping this
-// projection in enginetopo lets sourcetransport remain independent of engine
-// RPC types while every default/non-default instance receives one exact set.
-type imageTransportConfigProvider struct {
-	ConfigProvider
-	reuseSourceIDs []int64
-}
-
 type imageTransportSourceProvider interface {
 	ImageTransportSources(context.Context) []int64
 }
@@ -61,7 +52,33 @@ type frozenConfig struct {
 	imageSources       []int64
 }
 
-func freezeConfig(ctx context.Context, cfg ConfigProvider) frozenConfig {
+type runtimeConfigSnapshotter interface {
+	RuntimeConfigSnapshot(context.Context) (settings.RuntimeConfigSnapshot, error)
+}
+
+func freezeConfig(ctx context.Context, cfg ConfigProvider, imageSources []int64) (frozenConfig, error) {
+	if snapshotter, ok := cfg.(runtimeConfigSnapshotter); ok {
+		snapshot, err := snapshotter.RuntimeConfigSnapshot(ctx)
+		if err != nil {
+			return frozenConfig{}, err
+		}
+		return frozenConfig{
+			flareEnabled:       snapshot.FlareSolverrEnabled,
+			flareURL:           snapshot.FlareSolverrURL,
+			flareTimeout:       snapshot.FlareSolverrTimeout,
+			flareSessionName:   snapshot.FlareSolverrSessionName,
+			flareSessionTTL:    snapshot.FlareSolverrSessionTTL,
+			flareFallback:      snapshot.FlareSolverrResponseFallback,
+			socksEnabled:       snapshot.EngineSocksEnabled,
+			socksHost:          snapshot.EngineSocksHost,
+			socksPort:          snapshot.EngineSocksPort,
+			socksVersion:       snapshot.EngineSocksVersion,
+			impersonateEnabled: snapshot.ImpersonateEnabled,
+			impersonateURL:     snapshot.ImpersonateURL,
+			impersonateSources: append([]int64(nil), snapshot.ImpersonateSources...),
+			imageSources:       append([]int64(nil), imageSources...),
+		}, nil
+	}
 	return frozenConfig{
 		flareEnabled:       cfg.FlareSolverrEnabled(ctx),
 		flareURL:           cfg.FlareSolverrURL(ctx),
@@ -76,8 +93,8 @@ func freezeConfig(ctx context.Context, cfg ConfigProvider) frozenConfig {
 		impersonateEnabled: cfg.ImpersonateEnabled(ctx),
 		impersonateURL:     cfg.ImpersonateURL(ctx),
 		impersonateSources: append([]int64(nil), cfg.ImpersonateSources(ctx)...),
-		imageSources:       imageTransportSources(ctx, cfg),
-	}
+		imageSources:       append([]int64(nil), imageSources...),
+	}, nil
 }
 
 func (c frozenConfig) FlareSolverrEnabled(context.Context) bool          { return c.flareEnabled }
@@ -97,17 +114,6 @@ func (c frozenConfig) ImpersonateSources(context.Context) []int64 {
 }
 func (c frozenConfig) ImageTransportSources(context.Context) []int64 {
 	return append([]int64(nil), c.imageSources...)
-}
-
-func withImageTransportSources(base ConfigProvider, sourceIDs []int64) ConfigProvider {
-	ids := append([]int64(nil), sourceIDs...)
-	slices.Sort(ids)
-	ids = slices.Compact(ids)
-	return imageTransportConfigProvider{ConfigProvider: base, reuseSourceIDs: ids}
-}
-
-func (p imageTransportConfigProvider) ImageTransportSources(context.Context) []int64 {
-	return append([]int64(nil), p.reuseSourceIDs...)
 }
 
 func imageTransportSources(ctx context.Context, cfg ConfigProvider) []int64 {
