@@ -136,9 +136,9 @@ func (h *Handler) SetBinding(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	var req SetBindingRequest
-	if err := c.Bind(&req); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	req, err := decodeSetBindingRequest(c.Request().Body)
+	if err != nil {
+		return err
 	}
 	in, err := req.toInput()
 	if err != nil {

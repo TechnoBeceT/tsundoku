@@ -8,6 +8,8 @@
 package network
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -126,6 +128,52 @@ type SetBindingRequest struct {
 	FlareEndpointID *string `json:"flareEndpointId"`
 }
 
+// decodeSetBindingRequest enforces the frozen request schema at the HTTP
+// boundary: exactly one object, exact property names, and a required non-null
+// string flareMode. Optional endpoint ids accept either a string or null.
+func decodeSetBindingRequest(body io.Reader) (SetBindingRequest, error) {
+	decoder := json.NewDecoder(body)
+	var fields map[string]json.RawMessage
+	if err := decoder.Decode(&fields); err != nil || fields == nil {
+		return SetBindingRequest{}, invalidBindingBody()
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return SetBindingRequest{}, echo.NewHTTPError(http.StatusBadRequest, "request body must contain one JSON object")
+	}
+
+	rawMode, ok := fields["flareMode"]
+	if !ok {
+		return SetBindingRequest{}, echo.NewHTTPError(http.StatusBadRequest, "flareMode is required")
+	}
+	var mode *string
+	if err := json.Unmarshal(rawMode, &mode); err != nil || mode == nil {
+		return SetBindingRequest{}, invalidBindingBody()
+	}
+
+	request := SetBindingRequest{FlareMode: *mode}
+	for name, raw := range fields {
+		switch name {
+		case "flareMode":
+		case "socksEndpointId":
+			if err := json.Unmarshal(raw, &request.SocksEndpointID); err != nil {
+				return SetBindingRequest{}, invalidBindingBody()
+			}
+		case "flareEndpointId":
+			if err := json.Unmarshal(raw, &request.FlareEndpointID); err != nil {
+				return SetBindingRequest{}, invalidBindingBody()
+			}
+		default:
+			return SetBindingRequest{}, invalidBindingBody()
+		}
+	}
+	return request, nil
+}
+
+func invalidBindingBody() error {
+	return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+}
+
 // toInput maps the request to the service BindingInput, parsing the optional
 // endpoint UUIDs. A malformed UUID is a 400.
 func (r SetBindingRequest) toInput() (networksvc.BindingInput, error) {
@@ -154,15 +202,37 @@ func validateID(raw string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// parseSourceID parses the :sourceId path param as a decimal int64 — the
-// engine-host source identity a binding is keyed by. A blank or non-numeric
-// value yields a 400.
+// parseSourceID parses the :sourceId path param as an exact signed decimal
+// int64 — the engine-host source identity a binding is keyed by. A leading
+// plus, whitespace, blank, overflow, or non-decimal value yields a 400.
 func parseSourceID(raw string) (int64, error) {
-	id, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if !isSignedDecimal(raw) {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "sourceId must be numeric")
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, echo.NewHTTPError(http.StatusBadRequest, "sourceId must be numeric")
 	}
 	return id, nil
+}
+
+func isSignedDecimal(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	start := 0
+	if raw[0] == '-' {
+		if len(raw) == 1 {
+			return false
+		}
+		start = 1
+	}
+	for i := start; i < len(raw); i++ {
+		if raw[i] < '0' || raw[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // parseOptionalUUID parses an optional stringified UUID from a request body. A

@@ -332,6 +332,71 @@ func TestSetBinding_MalformedSourceID(t *testing.T) {
 	}
 }
 
+// TestBindingMutations_RejectOutOfContractSourceIDGrammar catches accepting
+// ParseInt's leading plus or trimming decoded path whitespace before parsing.
+func TestBindingMutations_RejectOutOfContractSourceIDGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		method string
+		target string
+		body   string
+	}{
+		{name: "put leading plus", method: http.MethodPut, target: "/api/network/bindings/+42", body: `{"flareMode":"global"}`},
+		{name: "put decoded whitespace", method: http.MethodPut, target: "/api/network/bindings/%2042", body: `{"flareMode":"global"}`},
+		{name: "delete leading plus", method: http.MethodDelete, target: "/api/network/bindings/+42"},
+		{name: "delete decoded whitespace", method: http.MethodDelete, target: "/api/network/bindings/%2042"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			rec := env.do(tc.method, tc.target, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("%s %s status = %d (%s), want 400", tc.method, tc.target, rec.Code, rec.Body.String())
+			}
+			if got := env.client.SourceNetworkBinding.Query().CountX(context.Background()); got != 0 {
+				t.Fatalf("binding rows after rejected sourceId = %d, want 0", got)
+			}
+			if got := env.client.SourceRuntimeIntent.Query().CountX(context.Background()); got != 0 {
+				t.Fatalf("intent rows after rejected sourceId = %d, want 0", got)
+			}
+		})
+	}
+}
+
+// TestSetBinding_RejectsOutOfContractBodies catches permissive framework JSON
+// binding: the wire contract is one object with exact known keys and a
+// non-null, string flareMode property.
+func TestSetBinding_RejectsOutOfContractBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty body"},
+		{name: "null object", body: `null`},
+		{name: "array", body: `[]`},
+		{name: "malformed", body: `{`},
+		{name: "missing flare mode", body: `{}`},
+		{name: "null flare mode", body: `{"flareMode":null}`},
+		{name: "wrong flare mode type", body: `{"flareMode":1}`},
+		{name: "case changed key", body: `{"FlareMode":"global"}`},
+		{name: "unknown key", body: `{"flareMode":"global","unknown":true}`},
+		{name: "trailing object", body: `{"flareMode":"global"} {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestEnv(t)
+			rec := env.do(http.MethodPut, "/api/network/bindings/42", tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("body %q status = %d (%s), want 400", tc.body, rec.Code, rec.Body.String())
+			}
+			if got := env.client.SourceNetworkBinding.Query().CountX(context.Background()); got != 0 {
+				t.Fatalf("binding rows after rejected body = %d, want 0", got)
+			}
+			if got := env.client.SourceRuntimeIntent.Query().CountX(context.Background()); got != 0 {
+				t.Fatalf("intent rows after rejected body = %d, want 0", got)
+			}
+		})
+	}
+}
+
 // TestClearBinding_NotFound proves clearing an unbound source is a 404.
 func TestClearBinding_NotFound(t *testing.T) {
 	env := newTestEnv(t)

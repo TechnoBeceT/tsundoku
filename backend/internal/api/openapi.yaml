@@ -4636,6 +4636,7 @@ components:
 
     SourceNetworkBindingUpdate:
       type: object
+      additionalProperties: false
       description: >-
         Set-binding body. `flareMode` is required; the two endpoint ids are
         optional (null / omitted = no override). `flareEndpointId` is required
@@ -8597,7 +8598,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          description: Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted.
           content:
             application/json:
               schema:
@@ -8649,7 +8650,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          description: Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted.
           content:
             application/json:
               schema:
@@ -10885,6 +10886,7 @@ paths:
           description: Engine-host source ID, stringified decimal int64.
           schema:
             type: string
+            pattern: "^-?[0-9]+$"
       requestBody:
         required: true
         content:
@@ -10910,8 +10912,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          description: Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted.
           content:
             application/json:
               schema:
@@ -10931,6 +10939,7 @@ paths:
           description: Engine-host source ID, stringified decimal int64.
           schema:
             type: string
+            pattern: "^-?[0-9]+$"
       responses:
         "200":
           description: The refreshed effective configuration and runtime status.
@@ -10957,7 +10966,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
-          description: Source catalog unavailable; validation fails closed and no mutation is persisted.
+          description: Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted.
           content:
             application/json:
               schema:

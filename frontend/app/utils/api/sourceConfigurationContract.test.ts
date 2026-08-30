@@ -10,6 +10,10 @@ type MutationResponse = operations['updateSourceTransport']['responses'][200]['c
 type BindingPut = NonNullable<paths['/api/network/bindings/{sourceId}']['put']>
 type BindingDelete = NonNullable<paths['/api/network/bindings/{sourceId}']['delete']>
 
+const bindingPutNotFound: BindingPut['responses'][404]['content']['application/json'] = {
+  message: 'source not found',
+}
+
 const runtime: Schemas['SourceRuntimeStatus'] = {
   status: 'pending',
   desiredRevision: 9,
@@ -97,6 +101,7 @@ describe('source configuration generated contract', () => {
     expect(transport.configuration.profileKey).toBe('source-1998416842837112832')
     expect(bindingPut.runtime.status).toBe('pending')
     expect(bindingDelete.runtime.desiredRevision).toBe(9)
+    expect(bindingPutNotFound.message).toBe('source not found')
   })
 
   it('lists field-level exceptions with runtime status', () => {

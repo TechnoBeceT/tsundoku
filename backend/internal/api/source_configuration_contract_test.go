@@ -8,6 +8,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+const mutationCatalogUnavailableDescription = "Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted."
+
 func TestSourceConfigurationContract(t *testing.T) {
 	doc := decodeOpenAPI(t)
 	schemas := objectAt(t, objectAt(t, doc, "components"), "schemas")
@@ -95,17 +97,24 @@ func TestSourceConfigurationContract(t *testing.T) {
 
 		assertEnumSchema(t, schemas, "PolicyPatchMode", []any{"inherit", "override"})
 		assertObjectSchema(t, schemas, "BooleanPolicyPatch", []string{"mode", "value"}, []string{"mode"})
+		assertValue(t, objectAt(t, schemas, "BooleanPolicyPatch"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "BooleanPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
 		assertType(t, propertyAt(t, schemas, "BooleanPolicyPatch", "value"), "boolean")
 		assertObjectSchema(t, schemas, "ImageConnectionPolicyPatch", []string{"mode", "value"}, []string{"mode"})
+		assertValue(t, objectAt(t, schemas, "ImageConnectionPolicyPatch"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
 		assertEnum(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "value"), []any{"fresh", "reuse"})
 
 		assertObjectSchema(t, schemas, "SourceTransportPolicyUpdate", []string{"reuseBypassSession", "imageConnectionMode"}, nil)
+		assertValue(t, objectAt(t, schemas, "SourceTransportPolicyUpdate"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "SourceTransportPolicyUpdate", "reuseBypassSession"), "#/components/schemas/BooleanPolicyPatch")
 		assertRef(t, propertyAt(t, schemas, "SourceTransportPolicyUpdate", "imageConnectionMode"), "#/components/schemas/ImageConnectionPolicyPatch")
 		assertObjectSchema(t, schemas, "SourceImageProxyMembershipUpdate", []string{"enabled"}, []string{"enabled"})
+		assertValue(t, objectAt(t, schemas, "SourceImageProxyMembershipUpdate"), "additionalProperties", false)
 		assertType(t, propertyAt(t, schemas, "SourceImageProxyMembershipUpdate", "enabled"), "boolean")
+		assertObjectSchema(t, schemas, "SourceNetworkBindingUpdate", []string{"socksEndpointId", "flareMode", "flareEndpointId"}, []string{"flareMode"})
+		assertValue(t, objectAt(t, schemas, "SourceNetworkBindingUpdate"), "additionalProperties", false)
+		assertEnum(t, propertyAt(t, schemas, "SourceNetworkBindingUpdate", "flareMode"), []any{"none", "global", "endpoint"})
 		assertObjectSchema(t, schemas, "SourceMutationResponse", []string{"configuration", "runtime"}, []string{"configuration", "runtime"})
 		assertRef(t, propertyAt(t, schemas, "SourceMutationResponse", "configuration"), "#/components/schemas/SourceEffectiveConfiguration")
 		assertRef(t, propertyAt(t, schemas, "SourceMutationResponse", "runtime"), "#/components/schemas/SourceRuntimeStatus")
@@ -121,13 +130,13 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertResponseRef(t, paths, "/api/sources/{sourceId}/image-proxy", "put", "200", "#/components/schemas/SourceMutationResponse")
 		assertRequestRef(t, paths, "/api/network/bindings/{sourceId}", "put", "#/components/schemas/SourceNetworkBindingUpdate")
 		assertResponseRef(t, paths, "/api/network/bindings/{sourceId}", "put", "200", "#/components/schemas/SourceMutationResponse")
+		assertResponseRef(t, paths, "/api/network/bindings/{sourceId}", "put", "404", "#/components/schemas/ErrorResponse")
+		assertResponseDescription(t, paths, "/api/network/bindings/{sourceId}", "put", "404", "Source not found.")
 		assertResponseRef(t, paths, "/api/network/bindings/{sourceId}", "delete", "200", "#/components/schemas/SourceMutationResponse")
 		for _, route := range []struct {
 			path   string
 			method string
 		}{
-			{"/api/sources/exceptions", "get"},
-			{"/api/sources/{sourceId}/effective-configuration", "get"},
 			{"/api/sources/{sourceId}/transport", "patch"},
 			{"/api/sources/{sourceId}/image-proxy", "put"},
 			{"/api/network/bindings/{sourceId}", "put"},
@@ -135,6 +144,7 @@ func TestSourceConfigurationContract(t *testing.T) {
 		} {
 			t.Run(route.method+" "+route.path+" catalog unavailable", func(t *testing.T) {
 				assertResponseRef(t, paths, route.path, route.method, "503", "#/components/schemas/ErrorResponse")
+				assertResponseDescription(t, paths, route.path, route.method, "503", mutationCatalogUnavailableDescription)
 			})
 		}
 		if _, exists := paths["/api/network/sources/{sourceId}/binding"]; exists {
@@ -152,6 +162,22 @@ func TestSourceConfigurationContract(t *testing.T) {
 			{"/api/network/bindings/{sourceId}", "delete"},
 		} {
 			assertStringSourceIDParameter(t, paths, route.path, route.method)
+		}
+
+		for _, route := range []struct {
+			path    string
+			methods []string
+		}{
+			{path: "/api/sources/exceptions", methods: []string{"get"}},
+			{path: "/api/sources/{sourceId}/effective-configuration", methods: []string{"get"}},
+			{path: "/api/sources/{sourceId}/transport", methods: []string{"patch"}},
+			{path: "/api/sources/{sourceId}/image-proxy", methods: []string{"put"}},
+			{path: "/api/network/bindings/{sourceId}", methods: []string{"delete", "put"}},
+		} {
+			assertStringSet(t, keys(objectAt(t, paths, route.path)), route.methods, route.path+" methods")
+			for _, method := range route.methods {
+				assertBearerSecurity(t, paths, route.path, method)
+			}
 		}
 	})
 }
@@ -267,9 +293,17 @@ func assertRequestRef(t *testing.T, paths map[string]any, path, method, want str
 	t.Helper()
 	operation := objectAt(t, objectAt(t, paths, path), method)
 	requestBody := objectAt(t, operation, "requestBody")
+	assertValue(t, requestBody, "required", true)
 	content := objectAt(t, requestBody, "content")
 	schema := objectAt(t, objectAt(t, content, "application/json"), "schema")
 	assertRef(t, schema, want)
+}
+
+func assertResponseDescription(t *testing.T, paths map[string]any, path, method, status, want string) {
+	t.Helper()
+	operation := objectAt(t, objectAt(t, paths, path), method)
+	response := objectAt(t, objectAt(t, operation, "responses"), status)
+	assertValue(t, response, "description", want)
 }
 
 func assertResponseRef(t *testing.T, paths map[string]any, path, method, status, want string) {
@@ -300,10 +334,18 @@ func assertStringSourceIDParameter(t *testing.T, paths map[string]any, path, met
 			continue
 		}
 		assertValue(t, parameter, "required", true)
-		assertType(t, objectAt(t, parameter, "schema"), "string")
+		schema := objectAt(t, parameter, "schema")
+		assertType(t, schema, "string")
+		assertValue(t, schema, "pattern", "^-?[0-9]+$")
 		return
 	}
 	t.Fatalf("%s %s is missing its sourceId path parameter", method, path)
+}
+
+func assertBearerSecurity(t *testing.T, paths map[string]any, path, method string) {
+	t.Helper()
+	operation := objectAt(t, objectAt(t, paths, path), method)
+	assertValue(t, operation, "security", []any{map[string]any{"BearerAuth": []any{}}})
 }
 
 func keys(object map[string]any) []string {

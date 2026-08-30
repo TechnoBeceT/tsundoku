@@ -9405,7 +9405,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            /** @description Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -9467,7 +9467,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            /** @description Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -11803,7 +11803,16 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            /** @description Source not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -11862,7 +11871,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Source catalog unavailable; validation fails closed and no mutation is persisted. */
+            /** @description Source catalog unavailable. If live source validation fails, no mutation is persisted. If post-commit effective-configuration composition fails, the mutation may already be persisted. */
             503: {
                 headers: {
                     [name: string]: unknown;
