@@ -76,7 +76,7 @@ function installDefaultResponses(): void {
 
 describe('useSourceEffectiveConfiguration', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     detailBySource = {
       [SOURCE_ID]: comicAsuraSourceConfiguration,
       [OTHER_SOURCE_ID]: fullyInheritedSourceConfiguration,
@@ -149,6 +149,10 @@ describe('useSourceEffectiveConfiguration', () => {
 
     await state.setThroughput(SOURCE_ID, 'imageRequestDelay', { mode: 'override', value: '750ms' })
 
+    expect(apiClient.PATCH).toHaveBeenCalledWith('/api/sources/{sourceId}/throughput', {
+      params: { path: { sourceId: SOURCE_ID } },
+      body: { imageRequestDelay: { mode: 'override', value: '750ms' } },
+    })
     expect(state.selected.value).toEqual(serverConfirmed)
     expect(state.selected.value?.protection.failureThreshold).toBe(17)
     expect(apiClient.GET).toHaveBeenCalledWith('/api/sources/{sourceId}/effective-configuration', {
@@ -230,26 +234,129 @@ describe('useSourceEffectiveConfiguration', () => {
     expect(state.selected.value).toEqual(fullyInheritedSourceConfiguration)
   })
 
-  it('serializes mutations so a second row cannot replace the active row state', async () => {
-    let finish!: () => void
-    vi.mocked(apiClient.PATCH).mockReturnValueOnce(new Promise(resolve => {
-      finish = () => resolve({
-        data: {
-          sourceId: SOURCE_ID,
-          downloadConcurrency: { override: 2, effective: 2 },
-          imageRequestDelay: { override: null, effective: '500ms' },
-        },
-        response: new Response(),
-      })
-    }) as never)
+  it('runs overlapping rows FIFO and resolves each call only after its own request completes', async () => {
+    let finishFirst!: () => void
+    let finishSecond!: () => void
+    vi.mocked(apiClient.PATCH)
+      .mockReturnValueOnce(new Promise(resolve => {
+        finishFirst = () => resolve({
+          data: {
+            sourceId: SOURCE_ID,
+            downloadConcurrency: { override: 2, effective: 2 },
+            imageRequestDelay: { override: null, effective: '500ms' },
+          },
+          response: new Response(),
+        })
+      }) as never)
+      .mockReturnValueOnce(new Promise(resolve => {
+        finishSecond = () => resolve({
+          data: {
+            configuration: comicAsuraSourceConfiguration,
+            runtime: comicAsuraSourceConfiguration.runtime,
+          },
+          response: new Response(),
+        })
+      }) as never)
     const state = useSourceEffectiveConfiguration()
 
     const first = state.setThroughput(SOURCE_ID, 'downloadConcurrency', { mode: 'override', value: 2 })
-    await state.setTransport(SOURCE_ID, 'imageConnectionMode', { mode: 'override', value: 'fresh' })
+    const second = state.setTransport(SOURCE_ID, 'imageConnectionMode', { mode: 'override', value: 'fresh' })
+    let secondCompleted = false
+    void second.then(() => { secondCompleted = true })
 
     expect(apiClient.PATCH).toHaveBeenCalledTimes(1)
-    expect(state.action.value.key).toBe('downloadConcurrency')
-    finish()
+    expect(state.action.value).toEqual({
+      sourceId: SOURCE_ID,
+      key: 'downloadConcurrency',
+      saving: true,
+      error: null,
+    })
+
+    finishFirst()
     await first
+    await vi.waitFor(() => expect(apiClient.PATCH).toHaveBeenCalledTimes(2))
+
+    expect(apiClient.PATCH).toHaveBeenNthCalledWith(2, '/api/sources/{sourceId}/transport', {
+      params: { path: { sourceId: SOURCE_ID } },
+      body: { imageConnectionMode: { mode: 'override', value: 'fresh' } },
+    })
+    expect(state.action.value).toEqual({
+      sourceId: SOURCE_ID,
+      key: 'imageConnectionMode',
+      saving: true,
+      error: null,
+    })
+    expect(secondCompleted).toBe(false)
+
+    finishSecond()
+    await second
+    expect(secondCompleted).toBe(true)
+  })
+
+  it('continues with the next queued row after the first write fails', async () => {
+    let failFirst!: () => void
+    let finishSecond!: () => void
+    vi.mocked(apiClient.PATCH)
+      .mockReturnValueOnce(new Promise(resolve => {
+        failFirst = () => resolve({ error: { message: 'Concurrency was rejected' }, response: new Response() })
+      }) as never)
+      .mockReturnValueOnce(new Promise(resolve => {
+        finishSecond = () => resolve({
+          data: {
+            configuration: comicAsuraSourceConfiguration,
+            runtime: comicAsuraSourceConfiguration.runtime,
+          },
+          response: new Response(),
+        })
+      }) as never)
+    const state = useSourceEffectiveConfiguration()
+
+    const first = state.setThroughput(SOURCE_ID, 'downloadConcurrency', { mode: 'override', value: 2 })
+    const second = state.setTransport(SOURCE_ID, 'reuseBypassSession', { mode: 'inherit' })
+
+    expect(apiClient.PATCH).toHaveBeenCalledTimes(1)
+    failFirst()
+    await first
+    await vi.waitFor(() => expect(apiClient.PATCH).toHaveBeenCalledTimes(2))
+    expect(state.action.value.key).toBe('reuseBypassSession')
+
+    finishSecond()
+    await second
+    expect(state.action.value).toEqual({
+      sourceId: SOURCE_ID,
+      key: 'reuseBypassSession',
+      saving: false,
+      error: null,
+    })
+  })
+
+  it('does not deadlock later writes when a successful mutation confirmation read rejects', async () => {
+    let detailReads = 0
+    vi.mocked(apiClient.GET).mockImplementation((path, options) => {
+      if (path === '/api/sources/exceptions') {
+        return Promise.resolve({ data: summariesResponse, response: new Response() }) as never
+      }
+      if (path === '/api/sources/{sourceId}/effective-configuration') {
+        detailReads += 1
+        if (detailReads === 1) return Promise.reject(new Error('Confirmation read failed')) as never
+        const sourceId = (options as { params: { path: { sourceId: string } } }).params.path.sourceId
+        return Promise.resolve({ data: detailBySource[sourceId], response: new Response() }) as never
+      }
+      return Promise.resolve({ error: { message: 'Unexpected GET' }, response: new Response() }) as never
+    })
+    const state = useSourceEffectiveConfiguration()
+
+    const first = state.setTransport(SOURCE_ID, 'reuseBypassSession', { mode: 'inherit' })
+    const second = state.setThroughput(SOURCE_ID, 'downloadConcurrency', { mode: 'override', value: 2 })
+
+    await first
+    await second
+    expect(apiClient.PATCH).toHaveBeenCalledTimes(2)
+    expect(state.action.value).toEqual({
+      sourceId: SOURCE_ID,
+      key: 'downloadConcurrency',
+      saving: false,
+      error: null,
+    })
   })
 })

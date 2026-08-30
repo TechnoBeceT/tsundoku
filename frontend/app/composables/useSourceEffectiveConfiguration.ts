@@ -62,7 +62,8 @@ export function useSourceEffectiveConfiguration() {
 
   let summariesRequest = 0
   let detailRequest = 0
-  let mutationRequest = 0
+  let mutationRunning = false
+  const mutationQueue: (() => Promise<void>)[] = []
 
   async function loadSummaries(): Promise<void> {
     const request = ++summariesRequest
@@ -127,15 +128,12 @@ export function useSourceEffectiveConfiguration() {
     })
   }
 
-  async function runMutation<T>(
+  async function executeMutation<T>(
     sourceId: string,
     key: SourceConfigurationActionKey,
     write: () => Promise<ApiResult<T>>,
     configurationOf: (data: T) => SourceEffectiveConfiguration | null,
   ): Promise<void> {
-    if (action.value.saving) return
-
-    const request = ++mutationRequest
     action.value = { sourceId, key, saving: true, error: null }
     try {
       const result = await write()
@@ -155,18 +153,49 @@ export function useSourceEffectiveConfiguration() {
         loadSummaries(),
       ])
 
-      if (request === mutationRequest) action.value = { sourceId, key, saving: false, error: null }
+      action.value = { sourceId, key, saving: false, error: null }
     }
     catch (cause) {
-      if (request === mutationRequest) {
-        action.value = {
-          sourceId,
-          key,
-          saving: false,
-          error: cause instanceof Error ? cause.message : 'Source configuration could not be saved',
-        }
+      action.value = {
+        sourceId,
+        key,
+        saving: false,
+        error: cause instanceof Error ? cause.message : 'Source configuration could not be saved',
       }
     }
+  }
+
+  function runMutation<T>(
+    sourceId: string,
+    key: SourceConfigurationActionKey,
+    write: () => Promise<ApiResult<T>>,
+    configurationOf: (data: T) => SourceEffectiveConfiguration | null,
+  ): Promise<void> {
+    const queued = new Promise<void>((resolve, reject) => {
+      mutationQueue.push(async () => {
+        try {
+          await executeMutation(sourceId, key, write, configurationOf)
+          resolve()
+        }
+        catch (cause) {
+          reject(cause instanceof Error ? cause : new Error('Source configuration could not be saved'))
+        }
+      })
+    })
+    drainMutationQueue()
+    return queued
+  }
+
+  function drainMutationQueue(): void {
+    if (mutationRunning) return
+    const next = mutationQueue.shift()
+    if (!next) return
+
+    mutationRunning = true
+    void next().finally(() => {
+      mutationRunning = false
+      drainMutationQueue()
+    })
   }
 
   function setTransport(
