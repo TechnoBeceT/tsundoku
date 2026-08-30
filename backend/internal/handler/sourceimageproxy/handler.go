@@ -11,6 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	proxy "github.com/technobecet/tsundoku/internal/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
@@ -74,9 +75,9 @@ func (h *Handler[C]) Update(c echo.Context) error {
 
 func mapServiceError(err error) error {
 	switch {
-	case errors.Is(err, proxy.ErrSourceNotFound):
+	case errors.Is(err, proxy.ErrSourceNotFound), errors.Is(err, sourceconfiguration.ErrSourceNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "source not found")
-	case errors.Is(err, proxy.ErrCatalogUnavailable):
+	case errors.Is(err, proxy.ErrCatalogUnavailable), errors.Is(err, sourceconfiguration.ErrCatalogUnavailable):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "source catalog unavailable")
 	default:
 		return err

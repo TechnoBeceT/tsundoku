@@ -25,8 +25,10 @@ type configurationGetter interface {
 // DTO. It is also the typed post-mutation composer used by sibling handlers.
 type DTOReader struct{ service configurationGetter }
 
+// NewDTOReader constructs the shared post-mutation configuration reader.
 func NewDTOReader(service configurationGetter) *DTOReader { return &DTOReader{service: service} }
 
+// Get composes and maps one source's effective configuration DTO.
 func (r *DTOReader) Get(ctx context.Context, sourceID int64) (ConfigurationDTO, error) {
 	value, err := r.service.Get(ctx, sourceID)
 	if err != nil {
@@ -41,6 +43,7 @@ type Handler struct {
 	reader  *DTOReader
 }
 
+// NewHandler constructs the effective-configuration read handler.
 func NewHandler(service configurationService) *Handler {
 	return &Handler{service: service, reader: NewDTOReader(service)}
 }

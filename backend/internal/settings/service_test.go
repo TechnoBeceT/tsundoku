@@ -586,6 +586,100 @@ func TestRuntimeConfigSnapshotReadsOneCommittedDatabaseState(t *testing.T) {
 	assertRuntimeSnapshot(t, after, "new", true, 22)
 }
 
+func TestSourceConfigurationSnapshotReadsOneCommittedDatabaseState(t *testing.T) {
+	ctx := context.Background()
+	client, sqlDB := testdb.NewWithSQL(t)
+	svc := settings.NewService(client, testDefaults())
+	old := sourceConfigurationSettingValues("old", false, 11, 3)
+	next := sourceConfigurationSettingValues("new", true, 22, 9)
+	if err := svc.SetMany(ctx, old); err != nil {
+		t.Fatalf("seed old source configuration settings: %v", err)
+	}
+
+	queries := 0
+	client.Intercept(ent.InterceptFunc(func(next ent.Querier) ent.Querier {
+		return ent.QuerierFunc(func(ctx context.Context, query ent.Query) (ent.Value, error) {
+			queries++
+			return next.Query(ctx, query)
+		})
+	}))
+
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin concurrent source configuration update: %v", err)
+	}
+	for _, update := range next {
+		if _, err := tx.ExecContext(ctx, `UPDATE settings SET value = $1 WHERE key = $2`, update.Value, update.Key); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("stage %s: %v", update.Key, err)
+		}
+	}
+
+	queries = 0
+	before, err := svc.SourceConfigurationSnapshot(ctx)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("SourceConfigurationSnapshot before commit: %v", err)
+	}
+	if queries != 1 {
+		_ = tx.Rollback()
+		t.Fatalf("source configuration snapshot queries = %d, want exactly 1", queries)
+	}
+	assertSourceConfigurationSnapshot(t, before, "old", false, 11, 3)
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit concurrent source configuration update: %v", err)
+	}
+	queries = 0
+	after, err := svc.SourceConfigurationSnapshot(ctx)
+	if err != nil {
+		t.Fatalf("SourceConfigurationSnapshot after commit: %v", err)
+	}
+	if queries != 1 {
+		t.Fatalf("source configuration snapshot queries after commit = %d, want exactly 1", queries)
+	}
+	assertSourceConfigurationSnapshot(t, after, "new", true, 22, 9)
+}
+
+func TestSourceConfigurationSnapshotReturnsReadFailure(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	raw := errors.New("forced settings snapshot failure")
+	client.Intercept(ent.InterceptFunc(func(ent.Querier) ent.Querier {
+		return ent.QuerierFunc(func(context.Context, ent.Query) (ent.Value, error) {
+			return nil, raw
+		})
+	}))
+	_, err := settings.NewService(client, testDefaults()).SourceConfigurationSnapshot(ctx)
+	if !errors.Is(err, raw) {
+		t.Fatalf("SourceConfigurationSnapshot error = %v, want raw read failure", err)
+	}
+}
+
+func sourceConfigurationSettingValues(label string, enabled bool, sourceID int64, concurrency int) []settings.KeyValue {
+	values := runtimeSettingValues(label, enabled, sourceID)
+	return append(values,
+		settings.KeyValue{Key: settings.KeyDownloadConcurrency, Value: strconv.Itoa(concurrency)},
+		settings.KeyValue{Key: settings.KeySourcesImageRequestDelay, Value: strconv.Itoa(concurrency) + "s"},
+		settings.KeyValue{Key: settings.KeyWarmupInterval, Value: strconv.Itoa(concurrency) + "m"},
+		settings.KeyValue{Key: settings.KeyWarmupSlowThresholdMs, Value: strconv.Itoa(concurrency * 1000)},
+		settings.KeyValue{Key: settings.KeySourcesFailureThreshold, Value: strconv.Itoa(concurrency)},
+		settings.KeyValue{Key: settings.KeySourcesCooldown, Value: strconv.Itoa(concurrency*2) + "m"},
+		settings.KeyValue{Key: settings.KeySourcesMinRequestDelay, Value: strconv.Itoa(concurrency*100) + "ms"},
+	)
+}
+
+func assertSourceConfigurationSnapshot(t *testing.T, got settings.SourceConfigurationSnapshot, label string, enabled bool, sourceID int64, concurrency int) {
+	t.Helper()
+	assertRuntimeSnapshot(t, got.Runtime, label, enabled, sourceID)
+	if got.DownloadConcurrency != concurrency || got.ImageRequestDelay != time.Duration(concurrency)*time.Second ||
+		got.WarmupInterval != time.Duration(concurrency)*time.Minute || got.WarmupSlowThresholdMs != concurrency*1000 ||
+		got.FailureThreshold != concurrency || got.SourceCooldown != time.Duration(concurrency*2)*time.Minute ||
+		got.PolitenessDelay != time.Duration(concurrency*100)*time.Millisecond {
+		t.Fatalf("source configuration snapshot = %+v, want complete %s committed state", got, label)
+	}
+}
+
 func runtimeSettingValues(label string, enabled bool, sourceID int64) []settings.KeyValue {
 	return []settings.KeyValue{
 		{Key: settings.KeyFlareSolverrEnabled, Value: strconv.FormatBool(enabled)},

@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -50,6 +51,25 @@ type ResolvedBinding struct {
 	Flare     *ResolvedFlare // non-nil iff FlareMode == endpoint
 }
 
+// ConfigurationBinding is the persisted routing intent for one source before
+// endpoint availability is resolved. IDs remain nullable because each routing
+// dimension can inherit independently.
+type ConfigurationBinding struct {
+	SourceID        int64
+	SocksEndpointID *string
+	FlareMode       string
+	FlareEndpointID *string
+}
+
+// ConfigurationSnapshot is one coherent view of resolved routing, persisted
+// routing intent, and endpoint display names. All three projections are derived
+// from the same endpoint and binding row sets.
+type ConfigurationSnapshot struct {
+	Resolved      []ResolvedBinding
+	Stored        []ConfigurationBinding
+	EndpointNames map[string]string
+}
+
 // RoutingSnapshot loads every EXPLICIT per-source binding with its referenced
 // endpoints resolved to their full config (SOCKS password included). The
 // engine-side topology adapter unions this network-owned snapshot with any
@@ -65,25 +85,56 @@ type ResolvedBinding struct {
 // half-configured or temporarily-disabled endpoint from silently routing a
 // source through a broken egress — it just falls back to the default.
 func (s *Service) RoutingSnapshot(ctx context.Context) ([]ResolvedBinding, error) {
-	endpoints, err := s.client.NetworkEndpoint.Query().All(ctx)
+	snapshot, err := s.ConfigurationSnapshot(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("network.RoutingSnapshot: query endpoints: %w", err)
+		return nil, fmt.Errorf("network.RoutingSnapshot: %w", err)
+	}
+	return snapshot.Resolved, nil
+}
+
+// ConfigurationSnapshot reads endpoints and bindings in one repeatable-read,
+// read-only transaction so a commit between the two backing queries cannot
+// produce a mixed source configuration.
+func (s *Service) ConfigurationSnapshot(ctx context.Context) (ConfigurationSnapshot, error) {
+	tx, err := s.client.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return ConfigurationSnapshot{}, fmt.Errorf("network.ConfigurationSnapshot: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	endpoints, err := tx.NetworkEndpoint.Query().All(ctx)
+	if err != nil {
+		return ConfigurationSnapshot{}, fmt.Errorf("network.ConfigurationSnapshot: query endpoints: %w", err)
 	}
 	byID := make(map[uuid.UUID]*ent.NetworkEndpoint, len(endpoints))
 	for _, e := range endpoints {
 		byID[e.ID] = e
 	}
 
-	bindings, err := s.client.SourceNetworkBinding.Query().
+	bindings, err := tx.SourceNetworkBinding.Query().
 		Order(ent.Asc(entbinding.FieldSourceID)).
 		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("network.RoutingSnapshot: query bindings: %w", err)
+		return ConfigurationSnapshot{}, fmt.Errorf("network.ConfigurationSnapshot: query bindings: %w", err)
 	}
 
-	out := make([]ResolvedBinding, 0, len(bindings))
+	out := ConfigurationSnapshot{
+		Resolved:      make([]ResolvedBinding, 0, len(bindings)),
+		Stored:        make([]ConfigurationBinding, 0, len(bindings)),
+		EndpointNames: make(map[string]string, len(endpoints)),
+	}
+	for _, endpoint := range endpoints {
+		out.EndpointNames[endpoint.ID.String()] = endpoint.Name
+	}
 	for _, b := range bindings {
-		out = append(out, resolveBinding(b, byID))
+		out.Resolved = append(out.Resolved, resolveBinding(b, byID))
+		out.Stored = append(out.Stored, ConfigurationBinding{
+			SourceID: b.SourceID, SocksEndpointID: uuidPtrToStringPtr(b.SocksEndpointID),
+			FlareMode: b.FlareMode, FlareEndpointID: uuidPtrToStringPtr(b.FlareEndpointID),
+		})
+	}
+	if err := tx.Commit(); err != nil {
+		return ConfigurationSnapshot{}, fmt.Errorf("network.ConfigurationSnapshot: commit: %w", err)
 	}
 	return out, nil
 }

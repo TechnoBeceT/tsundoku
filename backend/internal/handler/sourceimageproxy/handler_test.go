@@ -12,9 +12,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	configurationhandler "github.com/technobecet/tsundoku/internal/handler/sourceconfiguration"
 	handler "github.com/technobecet/tsundoku/internal/handler/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
@@ -177,6 +179,50 @@ func TestImageProxyUpdateMapsSourceAndCatalogErrorsWithoutLeakingDetail(t *testi
 		}
 		if got, want := rec.Body.String(), `{"message":"`+tc.message+`"}`+"\n"; got != want {
 			t.Fatalf("error body = %q, want %q", got, want)
+		}
+	}
+}
+
+type configurationGetterFunc func(context.Context, int64) (sourceconfiguration.Configuration, error)
+
+func (f configurationGetterFunc) Get(ctx context.Context, sourceID int64) (sourceconfiguration.Configuration, error) {
+	return f(ctx, sourceID)
+}
+
+func TestImageProxyPostCommitDTOReaderMapsCanonicalCatalogErrors(t *testing.T) {
+	cases := []struct {
+		err     error
+		status  int
+		message string
+	}{
+		{errors.Join(sourceconfiguration.ErrSourceNotFound, errors.New("catalog changed")), http.StatusNotFound, "source not found"},
+		{errors.Join(sourceconfiguration.ErrCatalogUnavailable, errors.New("dial tcp secret-host")), http.StatusServiceUnavailable, "source catalog unavailable"},
+	}
+	for _, tc := range cases {
+		updater := &fakeUpdater{result: sourceimageproxy.UpdateResult{Intent: sourcetransport.Intent{SourceID: 42, DesiredRevision: 1}}}
+		applier := &fakeApplier{}
+		reader := configurationhandler.NewDTOReader(configurationGetterFunc(func(context.Context, int64) (sourceconfiguration.Configuration, error) {
+			return sourceconfiguration.Configuration{}, tc.err
+		}))
+		h := handler.NewHandler(updater, applier, reader)
+		authSvc := auth.NewService(testSecret)
+		e := echo.New()
+		e.HTTPErrorHandler = middleware.ErrorHandler
+		e.Group("/api", middleware.RequireOwner(authSvc, false)).PUT("/sources/:sourceId/image-proxy", h.Update)
+		token, err := authSvc.Issue(uuid.New())
+		if err != nil {
+			t.Fatalf("Issue token: %v", err)
+		}
+		req := httptest.NewRequest(http.MethodPut, "/api/sources/42/image-proxy", strings.NewReader(`{"enabled":true}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if !updater.called {
+			t.Fatal("configuration error occurred before committed mutation")
+		}
+		if rec.Code != tc.status || rec.Body.String() != `{"message":"`+tc.message+`"}`+"\n" {
+			t.Fatalf("error %v: status=%d body=%s", tc.err, rec.Code, rec.Body.String())
 		}
 	}
 }

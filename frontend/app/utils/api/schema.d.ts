@@ -9285,6 +9285,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description The live installed-source catalog is unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getSourceEffectiveConfiguration: {
@@ -9327,6 +9336,15 @@ export interface operations {
             };
             /** @description Source not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The live installed-source catalog is unavailable. */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

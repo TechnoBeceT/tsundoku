@@ -8498,6 +8498,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The live installed-source catalog is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/sources/{sourceId}/effective-configuration:
     get:
@@ -8534,6 +8540,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: The live installed-source catalog is unavailable.
           content:
             application/json:
               schema:

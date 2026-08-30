@@ -8,30 +8,35 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
+// SourceIdentityDTO is the source identity wire projection.
 type SourceIdentityDTO struct {
 	SourceID string `json:"sourceId"`
 	Name     string `json:"name"`
 	Language string `json:"language"`
 }
 
+// IntegerPolicyValueDTO is an inherited-or-overridden integer policy value.
 type IntegerPolicyValueDTO struct {
 	Override  *int `json:"override"`
 	Effective int  `json:"effective"`
 	Inherited bool `json:"inherited"`
 }
 
+// DurationPolicyValueDTO is an inherited-or-overridden duration policy value.
 type DurationPolicyValueDTO struct {
 	Override  *string `json:"override"`
 	Effective string  `json:"effective"`
 	Inherited bool    `json:"inherited"`
 }
 
+// ImageConnectionPolicyValueDTO is the resolved image-connection policy value.
 type ImageConnectionPolicyValueDTO struct {
 	Override  *sourcetransport.ImageConnectionMode `json:"override"`
 	Effective sourcetransport.ImageConnectionMode  `json:"effective"`
 	Inherited bool                                 `json:"inherited"`
 }
 
+// BypassSessionPolicyValueDTO is the resolved bypass-session policy value.
 type BypassSessionPolicyValueDTO struct {
 	Override  *bool                             `json:"override"`
 	Effective bool                              `json:"effective"`
@@ -39,6 +44,7 @@ type BypassSessionPolicyValueDTO struct {
 	Mode      sourcetransport.BypassSessionMode `json:"mode"`
 }
 
+// ProtectionConfigurationDTO is the source-protection wire projection.
 type ProtectionConfigurationDTO struct {
 	WarmupInterval        string `json:"warmupInterval"`
 	WarmupSlowThresholdMs int    `json:"warmupSlowThresholdMs"`
@@ -47,6 +53,7 @@ type ProtectionConfigurationDTO struct {
 	PolitenessDelay       string `json:"politenessDelay"`
 }
 
+// ImageProxyStateDTO is the image-proxy availability wire projection.
 type ImageProxyStateDTO struct {
 	OptedIn            bool `json:"optedIn"`
 	GatewayEnabled     bool `json:"gatewayEnabled"`
@@ -54,11 +61,13 @@ type ImageProxyStateDTO struct {
 	EffectiveAvailable bool `json:"effectiveAvailable"`
 }
 
+// ResolvedEndpointDTO identifies a resolved routing endpoint on the wire.
 type ResolvedEndpointDTO struct {
 	EndpointID *string `json:"endpointId"`
 	Name       *string `json:"name"`
 }
 
+// RoutingConfigurationDTO is the effective routing wire projection.
 type RoutingConfigurationDTO struct {
 	SocksMode  string              `json:"socksMode"`
 	Socks      ResolvedEndpointDTO `json:"socks"`
@@ -66,6 +75,7 @@ type RoutingConfigurationDTO struct {
 	Bypass     ResolvedEndpointDTO `json:"bypass"`
 }
 
+// RuntimeStatusDTO is one source profile's durable apply state on the wire.
 type RuntimeStatusDTO struct {
 	Status           string     `json:"status"`
 	DesiredRevision  int64      `json:"desiredRevision"`
@@ -89,6 +99,7 @@ type ConfigurationDTO struct {
 	Runtime             RuntimeStatusDTO              `json:"runtime"`
 }
 
+// SummaryDTO is the wire projection for one source with exceptions.
 type SummaryDTO struct {
 	Source         SourceIdentityDTO `json:"source"`
 	ExceptionCount int               `json:"exceptionCount"`

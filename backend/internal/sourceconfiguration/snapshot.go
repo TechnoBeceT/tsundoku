@@ -3,7 +3,6 @@ package sourceconfiguration
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -19,6 +18,8 @@ type sourceCatalog interface {
 }
 
 type globalSnapshot struct {
+	DownloadConcurrency   int
+	ImageRequestDelay     time.Duration
 	WarmupInterval        time.Duration
 	WarmupSlowThresholdMs int
 	FailureThreshold      int
@@ -37,27 +38,25 @@ type globalSnapshotter interface {
 }
 
 type globalSettings interface {
-	RuntimeConfigSnapshot(context.Context) (settings.RuntimeConfigSnapshot, error)
-	WarmupInterval(context.Context) time.Duration
-	WarmupSlowThresholdMs(context.Context) int
-	SourcesFailureThreshold(context.Context) int
-	SourcesCooldown(context.Context) time.Duration
-	SourcesMinRequestDelay(context.Context) time.Duration
+	SourceConfigurationSnapshot(context.Context) (settings.SourceConfigurationSnapshot, error)
 }
 
 type settingsSnapshotter struct{ settings globalSettings }
 
 func (s settingsSnapshotter) Snapshot(ctx context.Context) (globalSnapshot, error) {
-	runtime, err := s.settings.RuntimeConfigSnapshot(ctx)
+	snapshot, err := s.settings.SourceConfigurationSnapshot(ctx)
 	if err != nil {
-		return globalSnapshot{}, fmt.Errorf("global runtime settings: %w", err)
+		return globalSnapshot{}, fmt.Errorf("source configuration settings: %w", err)
 	}
+	runtime := snapshot.Runtime
 	return globalSnapshot{
-		WarmupInterval:        s.settings.WarmupInterval(ctx),
-		WarmupSlowThresholdMs: s.settings.WarmupSlowThresholdMs(ctx),
-		FailureThreshold:      s.settings.SourcesFailureThreshold(ctx),
-		SourceCooldown:        s.settings.SourcesCooldown(ctx),
-		PolitenessDelay:       s.settings.SourcesMinRequestDelay(ctx),
+		DownloadConcurrency:   snapshot.DownloadConcurrency,
+		ImageRequestDelay:     snapshot.ImageRequestDelay,
+		WarmupInterval:        snapshot.WarmupInterval,
+		WarmupSlowThresholdMs: snapshot.WarmupSlowThresholdMs,
+		FailureThreshold:      snapshot.FailureThreshold,
+		SourceCooldown:        snapshot.SourceCooldown,
+		PolitenessDelay:       snapshot.PolitenessDelay,
 		BypassEnabled:         runtime.FlareSolverrEnabled,
 		BypassURL:             runtime.FlareSolverrURL,
 		BypassSession:         runtime.FlareSolverrSessionName,
@@ -68,7 +67,6 @@ func (s settingsSnapshotter) Snapshot(ctx context.Context) (globalSnapshot, erro
 }
 
 type throughputSnapshot struct {
-	Defaults  sourcethroughput.Effective
 	Overrides map[int64]sourcethroughput.Override
 }
 
@@ -77,19 +75,17 @@ type throughputSnapshotter interface {
 }
 
 type throughputStore interface {
-	Defaults(context.Context) sourcethroughput.Effective
 	Snapshot(context.Context) (map[int64]sourcethroughput.Override, error)
 }
 
 type throughputStoreSnapshotter struct{ store throughputStore }
 
 func (s throughputStoreSnapshotter) Snapshot(ctx context.Context) (throughputSnapshot, error) {
-	defaults := s.store.Defaults(ctx)
 	overrides, err := s.store.Snapshot(ctx)
 	if err != nil {
 		return throughputSnapshot{}, err
 	}
-	return throughputSnapshot{Defaults: defaults, Overrides: overrides}, nil
+	return throughputSnapshot{Overrides: overrides}, nil
 }
 
 type transportSnapshot struct {
@@ -125,7 +121,7 @@ func (s transportStoreSnapshotter) Snapshot(ctx context.Context) (transportSnaps
 
 type routingSnapshot struct {
 	Resolved      map[int64]network.ResolvedBinding
-	Stored        map[int64]network.BindingDTO
+	Stored        map[int64]network.ConfigurationBinding
 	EndpointNames map[string]string
 }
 
@@ -134,43 +130,29 @@ type routingSnapshotter interface {
 }
 
 type routingStore interface {
-	RoutingSnapshot(context.Context) ([]network.ResolvedBinding, error)
-	ListBindings(context.Context) ([]network.BindingDTO, error)
-	ListEndpoints(context.Context) ([]network.EndpointDTO, error)
+	ConfigurationSnapshot(context.Context) (network.ConfigurationSnapshot, error)
 }
 
 type routingStoreSnapshotter struct{ store routingStore }
 
 func (s routingStoreSnapshotter) Snapshot(ctx context.Context) (routingSnapshot, error) {
-	resolved, err := s.store.RoutingSnapshot(ctx)
-	if err != nil {
-		return routingSnapshot{}, err
-	}
-	stored, err := s.store.ListBindings(ctx)
-	if err != nil {
-		return routingSnapshot{}, err
-	}
-	endpoints, err := s.store.ListEndpoints(ctx)
+	snapshot, err := s.store.ConfigurationSnapshot(ctx)
 	if err != nil {
 		return routingSnapshot{}, err
 	}
 	out := routingSnapshot{
-		Resolved:      make(map[int64]network.ResolvedBinding, len(resolved)),
-		Stored:        make(map[int64]network.BindingDTO, len(stored)),
-		EndpointNames: make(map[string]string, len(endpoints)),
+		Resolved:      make(map[int64]network.ResolvedBinding, len(snapshot.Resolved)),
+		Stored:        make(map[int64]network.ConfigurationBinding, len(snapshot.Stored)),
+		EndpointNames: make(map[string]string, len(snapshot.EndpointNames)),
 	}
-	for _, binding := range resolved {
+	for _, binding := range snapshot.Resolved {
 		out.Resolved[binding.SourceID] = binding
 	}
-	for _, binding := range stored {
-		sourceID, err := strconv.ParseInt(binding.SourceID, 10, 64)
-		if err != nil {
-			return routingSnapshot{}, fmt.Errorf("parse stored source id %q: %w", binding.SourceID, err)
-		}
-		out.Stored[sourceID] = binding
+	for _, binding := range snapshot.Stored {
+		out.Stored[binding.SourceID] = binding
 	}
-	for _, endpoint := range endpoints {
-		out.EndpointNames[endpoint.ID] = endpoint.Name
+	for endpointID, name := range snapshot.EndpointNames {
+		out.EndpointNames[endpointID] = name
 	}
 	return out, nil
 }

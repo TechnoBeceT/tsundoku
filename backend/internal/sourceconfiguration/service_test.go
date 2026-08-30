@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
@@ -75,6 +76,28 @@ type runtimeStub struct {
 	calls int
 }
 
+type coherentSettingsStub struct {
+	value settings.SourceConfigurationSnapshot
+	err   error
+	calls int
+}
+
+func (s *coherentSettingsStub) SourceConfigurationSnapshot(context.Context) (settings.SourceConfigurationSnapshot, error) {
+	s.calls++
+	return s.value, s.err
+}
+
+type networkConfigurationStub struct {
+	value network.ConfigurationSnapshot
+	err   error
+	calls int
+}
+
+func (s *networkConfigurationStub) ConfigurationSnapshot(context.Context) (network.ConfigurationSnapshot, error) {
+	s.calls++
+	return s.value, s.err
+}
+
 func (s *runtimeStub) Snapshot(context.Context) (map[int64]sourcetransport.Intent, error) {
 	s.calls++
 	return s.value, s.err
@@ -111,6 +134,8 @@ func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *
 			{ID: explicitOnID, Name: "Explicit on", Lang: "en"},
 		}},
 		globals: &globalsStub{value: globalSnapshot{
+			DownloadConcurrency:   3,
+			ImageRequestDelay:     500 * time.Millisecond,
 			WarmupInterval:        15 * time.Minute,
 			WarmupSlowThresholdMs: 1250,
 			FailureThreshold:      4,
@@ -124,7 +149,6 @@ func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *
 			ProxySourceIDs:        []int64{exceptionID},
 		}},
 		throughput: &throughputStub{value: throughputSnapshot{
-			Defaults: sourcethroughput.Effective{DownloadConcurrency: 3, ImageRequestDelay: 500 * time.Millisecond},
 			Overrides: map[int64]sourcethroughput.Override{
 				exceptionID: {DownloadConcurrency: intPtr(7), ImageRequestDelay: durationPtr(0)},
 			},
@@ -156,10 +180,10 @@ func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *
 					Flare:     &network.ResolvedFlare{ID: "whitespace", Session: "   "},
 				},
 			},
-			Stored: map[int64]network.BindingDTO{
-				exceptionID:     {SourceID: fmt.Sprint(exceptionID), SocksEndpointID: &socksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &flareID},
-				blankEndpointID: {SourceID: fmt.Sprint(blankEndpointID), FlareMode: network.FlareModeEndpoint, FlareEndpointID: &blankFlareID},
-				noneID:          {SourceID: fmt.Sprint(noneID), FlareMode: network.FlareModeNone},
+			Stored: map[int64]network.ConfigurationBinding{
+				exceptionID:     {SourceID: exceptionID, SocksEndpointID: &socksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &flareID},
+				blankEndpointID: {SourceID: blankEndpointID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &blankFlareID},
+				noneID:          {SourceID: noneID, FlareMode: network.FlareModeNone},
 			},
 			EndpointNames: map[string]string{socksID: "VPN SOCKS", flareID: "Bypass EU", blankFlareID: "Blank session"},
 		}},
@@ -286,7 +310,7 @@ func TestExceptionsUsesExactFieldLevelCount(t *testing.T) {
 	deps := dependencies{
 		catalog: &catalogStub{sources: []sourceengine.Source{{ID: 4, Name: "global only"}, {ID: 3, Name: "none"}, {ID: 1, Name: "one"}, {ID: 2, Name: "two"}}},
 		globals: &globalsStub{value: globalSnapshot{BypassEnabled: true, BypassURL: "http://bypass", ProxyEnabled: true, ProxyURL: "http://proxy", ProxySourceIDs: []int64{2}}},
-		throughput: &throughputStub{value: throughputSnapshot{Defaults: sourcethroughput.Effective{}, Overrides: map[int64]sourcethroughput.Override{
+		throughput: &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{
 			1: {DownloadConcurrency: intPtr(0)},
 			2: {DownloadConcurrency: intPtr(5), ImageRequestDelay: durationPtr(0)},
 		}}},
@@ -295,9 +319,9 @@ func TestExceptionsUsesExactFieldLevelCount(t *testing.T) {
 		}}},
 		routing: &routingStub{value: routingSnapshot{
 			Resolved: map[int64]network.ResolvedBinding{2: {SourceID: 2, Socks: &network.ResolvedSocks{ID: socksID}, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: flareID}}},
-			Stored: map[int64]network.BindingDTO{
-				2: {SourceID: "2", SocksEndpointID: &socksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &flareID},
-				3: {SourceID: "3", FlareMode: network.FlareModeNone},
+			Stored: map[int64]network.ConfigurationBinding{
+				2: {SourceID: 2, SocksEndpointID: &socksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &flareID},
+				3: {SourceID: 3, FlareMode: network.FlareModeNone},
 			},
 		}},
 		runtime: &runtimeStub{value: map[int64]sourcetransport.Intent{}},
@@ -325,7 +349,7 @@ func TestExceptionsLoadsEachStoreOnceForManySources(t *testing.T) {
 	globals := &globalsStub{}
 	throughput := &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{}}}
 	transport := &transportStub{value: transportSnapshot{DefaultImageConnectionMode: sourcetransport.ImageConnectionFresh, Overrides: map[int64]sourcetransport.Override{}}}
-	routing := &routingStub{value: routingSnapshot{Resolved: map[int64]network.ResolvedBinding{}, Stored: map[int64]network.BindingDTO{}}}
+	routing := &routingStub{value: routingSnapshot{Resolved: map[int64]network.ResolvedBinding{}, Stored: map[int64]network.ConfigurationBinding{}}}
 	runtime := &runtimeStub{value: map[int64]sourcetransport.Intent{}}
 
 	got, err := newService(dependencies{catalog: catalog, globals: globals, throughput: throughput, transport: transport, routing: routing, runtime: runtime}).Exceptions(context.Background())
@@ -350,5 +374,70 @@ func TestGetClassifiesCatalogFailuresAndMissingSource(t *testing.T) {
 	svc = newService(dependencies{catalog: &catalogStub{sources: []sourceengine.Source{{ID: 2}}}})
 	if _, err := svc.Get(context.Background(), 1); !errors.Is(err, ErrSourceNotFound) {
 		t.Fatalf("missing error = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestProductionSettingsAdapterUsesOneCoherentSnapshotAndReturnsFailure(t *testing.T) {
+	store := &coherentSettingsStub{value: settings.SourceConfigurationSnapshot{
+		Runtime: settings.RuntimeConfigSnapshot{
+			FlareSolverrEnabled:     true,
+			FlareSolverrURL:         "http://flare",
+			FlareSolverrSessionName: "session",
+			ImpersonateEnabled:      true,
+			ImpersonateURL:          "http://proxy",
+			ImpersonateSources:      []int64{7, 8},
+		},
+		DownloadConcurrency:   8,
+		ImageRequestDelay:     250 * time.Millisecond,
+		WarmupInterval:        time.Hour,
+		WarmupSlowThresholdMs: 900,
+		FailureThreshold:      4,
+		SourceCooldown:        5 * time.Minute,
+		PolitenessDelay:       100 * time.Millisecond,
+	}}
+	got, err := (settingsSnapshotter{settings: store}).Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("adapter success: %v", err)
+	}
+	want := globalSnapshot{
+		DownloadConcurrency: 8, ImageRequestDelay: 250 * time.Millisecond,
+		WarmupInterval: time.Hour, WarmupSlowThresholdMs: 900,
+		FailureThreshold: 4, SourceCooldown: 5 * time.Minute, PolitenessDelay: 100 * time.Millisecond,
+		BypassEnabled: true, BypassURL: "http://flare", BypassSession: "session",
+		ProxyEnabled: true, ProxyURL: "http://proxy", ProxySourceIDs: []int64{7, 8},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("adapter snapshot = %+v, want %+v", got, want)
+	}
+	if store.calls != 1 {
+		t.Fatalf("SourceConfigurationSnapshot success calls = %d, want exactly 1", store.calls)
+	}
+
+	raw := errors.New("settings unavailable")
+	store = &coherentSettingsStub{err: raw}
+	_, err = (settingsSnapshotter{settings: store}).Snapshot(context.Background())
+	if !errors.Is(err, raw) {
+		t.Fatalf("adapter error = %v, want raw coherent snapshot failure", err)
+	}
+	if store.calls != 1 {
+		t.Fatalf("SourceConfigurationSnapshot calls = %d, want exactly 1", store.calls)
+	}
+}
+
+func TestProductionRoutingAdapterUsesOneNetworkOwnedSnapshot(t *testing.T) {
+	store := &networkConfigurationStub{value: network.ConfigurationSnapshot{
+		Resolved:      []network.ResolvedBinding{{SourceID: 42, FlareMode: network.FlareModeGlobal}},
+		Stored:        []network.ConfigurationBinding{{SourceID: 42, FlareMode: network.FlareModeGlobal}},
+		EndpointNames: map[string]string{"endpoint": "name"},
+	}}
+	got, err := (routingStoreSnapshotter{store: store}).Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if store.calls != 1 {
+		t.Fatalf("ConfigurationSnapshot calls = %d, want exactly 1", store.calls)
+	}
+	if got.Resolved[42].SourceID != 42 || got.Stored[42].SourceID != 42 || got.EndpointNames["endpoint"] != "name" {
+		t.Fatalf("adapter snapshot = %+v", got)
 	}
 }

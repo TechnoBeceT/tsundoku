@@ -40,6 +40,21 @@ type RuntimeConfigSnapshot struct {
 	ImpersonateSources           []int64
 }
 
+// SourceConfigurationSnapshot is one committed view of every global value
+// needed to compose source configuration. Runtime, protection, and throughput
+// defaults are loaded by one settings query so callers cannot observe a mixture
+// across concurrent setting commits; read failures are returned.
+type SourceConfigurationSnapshot struct {
+	Runtime               RuntimeConfigSnapshot
+	DownloadConcurrency   int
+	ImageRequestDelay     time.Duration
+	WarmupInterval        time.Duration
+	WarmupSlowThresholdMs int
+	FailureThreshold      int
+	SourceCooldown        time.Duration
+	PolitenessDelay       time.Duration
+}
+
 // RuntimeIntent is the durable revision state for the global engine config.
 // DesiredRevision advances atomically with runtime setting writes;
 // AppliedRevision advances only after that exact revision converges.

@@ -126,6 +126,8 @@ func TestSourceConfigurationContract(t *testing.T) {
 			path   string
 			method string
 		}{
+			{"/api/sources/exceptions", "get"},
+			{"/api/sources/{sourceId}/effective-configuration", "get"},
 			{"/api/sources/{sourceId}/transport", "patch"},
 			{"/api/sources/{sourceId}/image-proxy", "put"},
 			{"/api/network/bindings/{sourceId}", "put"},

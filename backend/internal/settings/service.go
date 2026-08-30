@@ -503,58 +503,53 @@ func runtimeConfigKey(key string) bool {
 // visible as one complete before-or-after state. A query failure is returned so
 // convergence cannot acknowledge a configuration it did not read.
 func (s *Service) RuntimeConfigSnapshot(ctx context.Context) (RuntimeConfigSnapshot, error) {
-	rows, err := s.client.Settings.Query().Where(entsettings.KeyIn(runtimeConfigKeys...)).All(ctx)
+	values, err := s.snapshotValues(ctx, "settings.RuntimeConfigSnapshot", runtimeConfigKeys)
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: query runtime settings: %w", err)
+		return RuntimeConfigSnapshot{}, err
 	}
-	values := make(map[string]string, len(runtimeConfigKeys))
-	for _, key := range runtimeConfigKeys {
-		values[key] = tunables[key].def(s.defaults)
+	runtime, err := runtimeConfigFromValues(values)
+	if err != nil {
+		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: %w", err)
 	}
-	for _, row := range rows {
-		canonical, err := tunables[row.Key].validate(row.Value)
-		if err != nil {
-			slog.WarnContext(ctx, "settings: stored runtime value invalid, using default", "key", row.Key, "value", row.Value, "err", err)
-			continue
-		}
-		values[row.Key] = canonical
-	}
+	return runtime, nil
+}
 
+func runtimeConfigFromValues(values map[string]string) (RuntimeConfigSnapshot, error) {
 	flareEnabled, err := strconv.ParseBool(values[KeyFlareSolverrEnabled])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrEnabled, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyFlareSolverrEnabled, err)
 	}
 	flareTimeout, err := strconv.Atoi(values[KeyFlareSolverrTimeout])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrTimeout, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyFlareSolverrTimeout, err)
 	}
 	flareTTL, err := strconv.Atoi(values[KeyFlareSolverrSessionTTL])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrSessionTTL, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyFlareSolverrSessionTTL, err)
 	}
 	flareFallback, err := strconv.ParseBool(values[KeyFlareSolverrResponseFallback])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyFlareSolverrResponseFallback, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyFlareSolverrResponseFallback, err)
 	}
 	socksEnabled, err := strconv.ParseBool(values[KeyEngineSocksEnabled])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksEnabled, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyEngineSocksEnabled, err)
 	}
 	socksPort, err := strconv.Atoi(values[KeyEngineSocksPort])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksPort, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyEngineSocksPort, err)
 	}
 	socksVersion, err := strconv.Atoi(values[KeyEngineSocksVersion])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyEngineSocksVersion, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyEngineSocksVersion, err)
 	}
 	impersonateEnabled, err := strconv.ParseBool(values[KeyImpersonateEnabled])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyImpersonateEnabled, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyImpersonateEnabled, err)
 	}
 	impersonateSources, err := parseSourceIDSet(values[KeyImpersonateSources])
 	if err != nil {
-		return RuntimeConfigSnapshot{}, fmt.Errorf("settings.RuntimeConfigSnapshot: parse %s: %w", KeyImpersonateSources, err)
+		return RuntimeConfigSnapshot{}, fmt.Errorf("parse %s: %w", KeyImpersonateSources, err)
 	}
 	return RuntimeConfigSnapshot{
 		FlareSolverrEnabled:          flareEnabled,
@@ -571,6 +566,26 @@ func (s *Service) RuntimeConfigSnapshot(ctx context.Context) (RuntimeConfigSnaps
 		ImpersonateURL:               values[KeyImpersonateURL],
 		ImpersonateSources:           impersonateSources,
 	}, nil
+}
+
+func (s *Service) snapshotValues(ctx context.Context, operation string, keys []string) (map[string]string, error) {
+	rows, err := s.client.Settings.Query().Where(entsettings.KeyIn(keys...)).All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s: query settings: %w", operation, err)
+	}
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		values[key] = tunables[key].def(s.defaults)
+	}
+	for _, row := range rows {
+		canonical, err := tunables[row.Key].validate(row.Value)
+		if err != nil {
+			slog.WarnContext(ctx, "settings: stored snapshot value invalid, using default", "key", row.Key, "value", row.Value, "err", err)
+			continue
+		}
+		values[row.Key] = canonical
+	}
+	return values, nil
 }
 
 // upsertSettingTx writes key=value into the Settings table, creating the row the
