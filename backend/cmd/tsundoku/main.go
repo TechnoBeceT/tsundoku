@@ -36,8 +36,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/labstack/echo/v4"
-
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
@@ -539,14 +537,15 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
-	gracefulShutdown(e, engineHostLauncher)
+	gracefulShutdown(e, runner, engineHostLauncher)
 }
 
-// gracefulShutdown drains in-flight HTTP requests (bounded by shutdownTimeout)
-// and then stops every per-profile engine-host JVM the launcher spawned (a no-op
-// when no non-default profile was ever brought up; the default instance is owned
-// by the container entrypoint, not this launcher). Extracted from main so main's
-// cyclomatic complexity stays within the cyclop budget.
+// gracefulShutdown drains in-flight HTTP requests, joins the canceled runtime
+// retry generation (including its bounded failure-metadata tail), and only then
+// stops every per-profile engine-host JVM the launcher spawned. The database is
+// closed later by main's defer, so neither dependency can disappear under the
+// joined retry. Extracted from main so main's cyclomatic complexity stays within
+// the cyclop budget.
 // runStartupStagingGC reclaims leaked page-staging dirs under stagingRoot at boot
 // (download.GCStagingRoot). Best-effort: a GC error is logged, never fatal
 // (NFS-safe) — the API must keep serving regardless — and a no-removals sweep is
@@ -582,12 +581,33 @@ func runStartupUpgradeDetection(ctx context.Context, dispatcher *download.Dispat
 	}
 }
 
-func gracefulShutdown(e *echo.Echo, engineHostLauncher *enginehost.Launcher) {
+type serverShutdowner interface {
+	Shutdown(context.Context) error
+}
+
+type runtimeRetryShutdowner interface {
+	ShutdownRuntimeRetry(context.Context) error
+}
+
+type engineHostCloser interface {
+	Close() error
+}
+
+func gracefulShutdown(e serverShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
 	}
+	cancel()
+
+	// The retry generation's cancellation contract is itself bounded: external
+	// calls receive its canceled context and failure metadata has a one-second
+	// detached cap. Join unconditionally so launcher/database teardown can never
+	// race that tail.
+	if err := runner.ShutdownRuntimeRetry(context.Background()); err != nil {
+		log.Printf("tsundoku: runtime retry shutdown: %v", err)
+	}
+
 	if err := engineHostLauncher.Close(); err != nil {
 		log.Printf("tsundoku: engine-host launcher close: %v", err)
 	}

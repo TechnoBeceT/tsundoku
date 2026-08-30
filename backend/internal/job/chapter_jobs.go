@@ -137,10 +137,18 @@ type Runner struct {
 	runtimeReconciler interface {
 		ReconcilePending(context.Context) error
 	}
-	// runtimeRetry receives non-blocking requests from download-cycle starts. A
-	// single Start-owned worker drains it, so a blocked scan cannot delay chapter
-	// work and can accumulate at most one later retry.
-	runtimeRetry chan struct{}
+	// runtimeMu owns the retry generation. Other Runner loops retain their
+	// historical Start semantics; runtime retry alone is idempotent so repeated
+	// Start calls share one consumer and one generation-scoped cap-1 signal.
+	runtimeMu         sync.Mutex
+	runtimeGeneration *runtimeRetryGeneration
+}
+
+type runtimeRetryGeneration struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	retry  chan struct{}
+	done   chan struct{}
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -174,13 +182,12 @@ func (r *Runner) SetRuntimeReconciler(reconciler interface {
 // periods, read at the top of each loop iteration (hot reload).
 func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub, storage string, intervals Intervals) *Runner {
 	return &Runner{
-		dispatcher:   dispatcher,
-		client:       client,
-		hub:          hub,
-		storage:      storage,
-		intervals:    intervals,
-		trigger:      make(chan struct{}, 1),
-		runtimeRetry: make(chan struct{}, 1),
+		dispatcher: dispatcher,
+		client:     client,
+		hub:        hub,
+		storage:    storage,
+		intervals:  intervals,
+		trigger:    make(chan struct{}, 1),
 	}
 }
 
@@ -382,27 +389,27 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context) {
-	if r.runtimeReconciler != nil {
-		go r.runRuntimeRetryLoop(ctx)
-	}
+	runtimeGeneration := r.startRuntimeRetry(ctx)
 	periodLoop{
 		name:     "download",
 		interval: r.intervals.DownloadInterval,
 		trigger:  r.trigger,
-		run:      r.runDownloadCycleLogging,
-		mark:     r.schedule.markDownload,
+		run: func(ctx context.Context, triggered bool) {
+			r.runDownloadCycleLogging(ctx, triggered, runtimeGeneration)
+		},
+		mark: r.schedule.markDownload,
 	}.start(ctx)
 }
 
 // runDownloadCycleLogging runs one download cycle and logs (without aborting the
 // loop) any hard error, tagged so triggered vs ticked cycles are distinguishable
 // in the logs.
-func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
+func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, runtimeGeneration *runtimeRetryGeneration) {
 	msg := "download cycle error"
 	if triggered {
 		msg = "triggered download cycle error"
 	}
-	r.requestRuntimeRetry()
+	r.requestRuntimeRetry(runtimeGeneration)
 	if ctx.Err() != nil {
 		return
 	}
@@ -414,35 +421,89 @@ func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
 // requestRuntimeRetry attaches one retry request to a download-cycle start
 // without waiting for engine convergence. The cap-1 channel collapses requests
 // arriving while the single worker is busy into at most one later pass.
-func (r *Runner) requestRuntimeRetry() {
-	if r.runtimeReconciler == nil {
+func (r *Runner) requestRuntimeRetry(generation *runtimeRetryGeneration) {
+	if generation == nil || generation.ctx.Err() != nil {
 		return
 	}
 	select {
-	case r.runtimeRetry <- struct{}{}:
+	case generation.retry <- struct{}{}:
 	default:
 	}
 }
 
-// runRuntimeRetryLoop owns runtime reconciliation for Runner's lifetime. There
-// is exactly one worker per Start call, so passes never overlap. Explicit
-// cancellation checks ensure a buffered retry cannot start during shutdown.
-func (r *Runner) runRuntimeRetryLoop(ctx context.Context) {
+func (r *Runner) startRuntimeRetry(parent context.Context) *runtimeRetryGeneration {
+	if r.runtimeReconciler == nil {
+		return nil
+	}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	if current := r.runtimeGeneration; current != nil {
+		select {
+		case <-current.done:
+			r.runtimeGeneration = nil
+		default:
+			return current
+		}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	generation := &runtimeRetryGeneration{
+		ctx:    ctx,
+		cancel: cancel,
+		retry:  make(chan struct{}, 1),
+		done:   make(chan struct{}),
+	}
+	r.runtimeGeneration = generation
+	go r.runRuntimeRetryLoop(generation)
+	return generation
+}
+
+// runRuntimeRetryLoop owns one immutable retry generation. Its private signal
+// prevents a canceled generation's buffered request from replaying after a
+// later Start, while one consumer keeps passes single-flight.
+func (r *Runner) runRuntimeRetryLoop(generation *runtimeRetryGeneration) {
+	defer close(generation.done)
 	for {
-		if ctx.Err() != nil {
+		if generation.ctx.Err() != nil {
 			return
 		}
 		select {
-		case <-ctx.Done():
+		case <-generation.ctx.Done():
 			return
-		case <-r.runtimeRetry:
-			if ctx.Err() != nil {
+		case <-generation.retry:
+			if generation.ctx.Err() != nil {
 				return
 			}
-			if err := r.runtimeReconciler.ReconcilePending(ctx); err != nil {
-				slog.WarnContext(ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
+			if err := r.runtimeReconciler.ReconcilePending(generation.ctx); err != nil {
+				slog.WarnContext(generation.ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
 			}
 		}
+	}
+}
+
+// ShutdownRuntimeRetry cancels and joins the current retry generation. It is
+// safe to call repeatedly or concurrently with Start: a generation is fully
+// registered before its goroutine is launched, and its close-only done channel
+// avoids WaitGroup Add/Wait races. A timed-out caller may retry the join later.
+func (r *Runner) ShutdownRuntimeRetry(ctx context.Context) error {
+	r.runtimeMu.Lock()
+	generation := r.runtimeGeneration
+	if generation == nil {
+		r.runtimeMu.Unlock()
+		return nil
+	}
+	generation.cancel()
+	r.runtimeMu.Unlock()
+
+	select {
+	case <-generation.done:
+		r.runtimeMu.Lock()
+		if r.runtimeGeneration == generation {
+			r.runtimeGeneration = nil
+		}
+		r.runtimeMu.Unlock()
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("job.Runner.ShutdownRuntimeRetry: %w", ctx.Err())
 	}
 }
 

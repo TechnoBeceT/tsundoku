@@ -846,18 +846,20 @@ func TestRunnerTriggerRetriesPostStartupGlobalAndSourceRuntimeIntents(t *testing
 }
 
 type blockingRuntimeReconciler struct {
-	started chan struct{}
-	release chan struct{}
-	done    chan struct{}
-	mu      sync.Mutex
-	calls   int
-	active  int
-	max     int
+	started     chan struct{}
+	callStarted chan int
+	release     chan struct{}
+	done        chan struct{}
+	mu          sync.Mutex
+	calls       int
+	active      int
+	max         int
 }
 
 func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error {
 	r.mu.Lock()
 	r.calls++
+	call := r.calls
 	first := r.calls == 1
 	r.active++
 	if r.active > r.max {
@@ -867,6 +869,9 @@ func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error 
 		close(r.started)
 	}
 	r.mu.Unlock()
+	if r.callStarted != nil {
+		r.callStarted <- call
+	}
 	select {
 	case <-ctx.Done():
 	case <-r.release:
@@ -878,6 +883,56 @@ func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error 
 		close(r.done)
 	}
 	return ctx.Err()
+}
+
+func TestRunnerStartTwiceKeepsRuntimeRetrySingleFlight(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &blockingRuntimeReconciler{
+		started:     make(chan struct{}),
+		callStarted: make(chan int, 2),
+		release:     make(chan struct{}),
+	}
+	r.SetRuntimeReconciler(probe)
+	r.Start(ctx)
+	r.Start(ctx)
+
+	r.Trigger()
+	select {
+	case call := <-probe.callStarted:
+		if call != 1 {
+			t.Fatalf("first runtime call = %d, want 1", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first runtime retry did not start")
+	}
+	for i := 0; i < 100; i++ {
+		r.Trigger()
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case call := <-probe.callStarted:
+		t.Fatalf("runtime retry %d overlapped blocked retry 1 after repeated Start", call)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	probe.mu.Lock()
+	calls, maxActive := probe.calls, probe.max
+	probe.mu.Unlock()
+	if calls != 1 || maxActive != 1 {
+		t.Fatalf("runtime calls=%d maxActive=%d, want one single-flight pass", calls, maxActive)
+	}
+	cancel()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelShutdown()
+	if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+		t.Fatalf("ShutdownRuntimeRetry: %v", err)
+	}
 }
 
 func TestRunnerRuntimeRetryDoesNotBlockDownloadNowCycle(t *testing.T) {
@@ -1018,6 +1073,193 @@ func TestRunnerRuntimeRetryRunsAgainOnLaterExistingTrigger(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("later existing trigger did not retry recovered pending work")
+	}
+}
+
+type generationRuntimeReconciler struct {
+	started     chan int
+	tailStarted chan struct{}
+	tailRelease chan struct{}
+	tailDone    chan struct{}
+	mu          sync.Mutex
+	calls       int
+}
+
+func (r *generationRuntimeReconciler) ReconcilePending(ctx context.Context) error {
+	r.mu.Lock()
+	r.calls++
+	call := r.calls
+	r.mu.Unlock()
+	r.started <- call
+	if call != 1 {
+		return nil
+	}
+	<-ctx.Done()
+	if r.tailStarted != nil {
+		close(r.tailStarted)
+	}
+	if r.tailRelease != nil {
+		<-r.tailRelease
+	}
+	if r.tailDone != nil {
+		close(r.tailDone)
+	}
+	return ctx.Err()
+}
+
+func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) {
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &generationRuntimeReconciler{started: make(chan int, 3)}
+	r.SetRuntimeReconciler(probe)
+
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	r.Start(firstCtx)
+	r.Trigger()
+	select {
+	case call := <-probe.started:
+		if call != 1 {
+			t.Fatalf("first generation call = %d, want 1", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first generation retry did not start")
+	}
+	firstCycle := waitForSchedule(t, r, func(s job.Schedule) bool {
+		return !s.Download.Running && !s.Download.NextRunAt.IsZero()
+	}, "the first cycle to finish before buffering generation-1 retry 2")
+	// Complete another existing-cadence cycle while retry 1 is blocked, which
+	// leaves one coalesced retry signal buffered for generation 1.
+	r.Trigger()
+	waitForSchedule(t, r, func(s job.Schedule) bool {
+		return !s.Download.Running && s.Download.NextRunAt.After(firstCycle.Download.NextRunAt)
+	}, "the second cycle to buffer a generation-1 runtime retry")
+
+	cancelFirst()
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+		cancelShutdown()
+		t.Fatalf("ShutdownRuntimeRetry generation 1: %v", err)
+	}
+	cancelShutdown()
+
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	r.Start(secondCtx)
+	select {
+	case call := <-probe.started:
+		t.Fatalf("new generation replayed stale buffered retry as call %d", call)
+	case <-time.After(250 * time.Millisecond):
+	}
+	r.Trigger()
+	select {
+	case call := <-probe.started:
+		if call != 2 {
+			t.Fatalf("new generation trigger call = %d, want 2", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("new generation trigger did not start a fresh runtime retry")
+	}
+	cancelSecond()
+	finalCtx, cancelFinal := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelFinal()
+	if err := r.ShutdownRuntimeRetry(finalCtx); err != nil {
+		t.Fatalf("ShutdownRuntimeRetry generation 2: %v", err)
+	}
+}
+
+func TestRunnerShutdownRuntimeRetryJoinsMetadataTailAndIsIdempotent(t *testing.T) {
+	parentCtx, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &generationRuntimeReconciler{
+		started:     make(chan int, 1),
+		tailStarted: make(chan struct{}),
+		tailRelease: make(chan struct{}),
+		tailDone:    make(chan struct{}),
+	}
+	r.SetRuntimeReconciler(probe)
+	r.Start(parentCtx)
+	r.Trigger()
+	select {
+	case <-probe.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime retry did not start")
+	}
+
+	shutdownDone := make(chan error, 1)
+	go func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		shutdownDone <- r.ShutdownRuntimeRetry(shutdownCtx)
+	}()
+	select {
+	case <-probe.tailStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runtime retry did not enter its metadata tail after shutdown")
+	}
+	select {
+	case err := <-shutdownDone:
+		t.Fatalf("ShutdownRuntimeRetry returned before metadata tail completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(probe.tailRelease)
+	select {
+	case <-probe.tailDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("metadata tail did not complete")
+	}
+	select {
+	case err := <-shutdownDone:
+		if err != nil {
+			t.Fatalf("ShutdownRuntimeRetry: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ShutdownRuntimeRetry did not join completed metadata tail")
+	}
+
+	repeatCtx, cancelRepeat := context.WithTimeout(context.Background(), time.Second)
+	defer cancelRepeat()
+	if err := r.ShutdownRuntimeRetry(repeatCtx); err != nil {
+		t.Fatalf("repeated ShutdownRuntimeRetry: %v", err)
+	}
+}
+
+func TestRunnerRuntimeRetryConcurrentStartShutdownIsSafe(t *testing.T) {
+	for i := 0; i < 25; i++ {
+		r := job.NewRunner(nil, nil, nil, "", settings.Static{Download: time.Hour})
+		r.SetRuntimeReconciler(&retryRuntimeReconciler{calls: make(chan int, 1)})
+		parentCtx, cancelParent := context.WithCancel(context.Background())
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), time.Second)
+		var wg sync.WaitGroup
+		shutdownErr := make(chan error, 1)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			r.Start(parentCtx)
+		}()
+		go func() {
+			defer wg.Done()
+			shutdownErr <- r.ShutdownRuntimeRetry(shutdownCtx)
+		}()
+		wg.Wait()
+		if err := <-shutdownErr; err != nil {
+			cancelParent()
+			cancelShutdown()
+			t.Fatalf("concurrent ShutdownRuntimeRetry iteration %d: %v", i, err)
+		}
+		cancelParent()
+		if err := r.ShutdownRuntimeRetry(shutdownCtx); err != nil {
+			cancelShutdown()
+			t.Fatalf("final ShutdownRuntimeRetry iteration %d: %v", i, err)
+		}
+		cancelShutdown()
 	}
 }
 

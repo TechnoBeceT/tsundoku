@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -53,5 +54,37 @@ func TestRuntimePendingGroupAttemptsBothDomainsAfterFailure(t *testing.T) {
 	}
 	if globalCalls != 1 || sourceCalls != 1 {
 		t.Fatalf("runtime pending calls global/source = %d/%d, want 1/1", globalCalls, sourceCalls)
+	}
+}
+
+type shutdownRecorder struct {
+	steps *[]string
+	step  string
+}
+
+func (r shutdownRecorder) Shutdown(context.Context) error {
+	*r.steps = append(*r.steps, r.step)
+	return nil
+}
+
+func (r shutdownRecorder) ShutdownRuntimeRetry(context.Context) error {
+	*r.steps = append(*r.steps, r.step)
+	return nil
+}
+
+func (r shutdownRecorder) Close() error {
+	*r.steps = append(*r.steps, r.step)
+	return nil
+}
+
+func TestGracefulShutdownJoinsRuntimeRetryBeforeLauncherClose(t *testing.T) {
+	var steps []string
+	gracefulShutdown(
+		shutdownRecorder{steps: &steps, step: "http"},
+		shutdownRecorder{steps: &steps, step: "runtime"},
+		shutdownRecorder{steps: &steps, step: "launcher"},
+	)
+	if want := []string{"http", "runtime", "launcher"}; !reflect.DeepEqual(steps, want) {
+		t.Fatalf("shutdown order = %v, want %v", steps, want)
 	}
 }
