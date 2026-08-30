@@ -366,3 +366,33 @@ func TestEngineTopoBootSequenceSerializesSettingsConvergence(t *testing.T) {
 		t.Fatalf("settings convergence: %v", err)
 	}
 }
+
+func TestEngineTopoBootReleasesSerializerBeforePendingServices(t *testing.T) {
+	coordinator := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	pendingEntered := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		runEngineTopoBootSequence(context.Background(), coordinator, engineTopoBootPhases{
+			runtime: func(context.Context) {},
+			pending: func(ctx context.Context) {
+				if err := coordinator.RunSerializedRuntime(ctx, func(context.Context) error {
+					close(pendingEntered)
+					return nil
+				}); err != nil {
+					t.Errorf("pending serializer admission: %v", err)
+				}
+			},
+		})
+		close(done)
+	}()
+	select {
+	case <-pendingEntered:
+	case <-time.After(time.Second):
+		t.Fatal("pending service could not acquire serializer after boot phases")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("boot sequence did not finish after pending reconciliation")
+	}
+}

@@ -499,8 +499,13 @@ func main() {
 	}
 	runtimeReconcile := func(rctx context.Context) {
 		runTrackedRuntimeConvergence(rctx, runtimeApplier, func(rctx context.Context) {
-			runSourceRuntimeReconcile(rctx, runtimeApplier, settingsSvc, sourceTransportSvc)
+			if err := runtimeApplier.ReconcileRuntime(rctx); err != nil {
+				slog.WarnContext(rctx, "source runtime: startup restore incomplete", "err", err)
+			}
 		})
+	}
+	pendingRuntimeReconcile := func(rctx context.Context) {
+		runPendingRuntimeReconcile(rctx, settingsSvc, sourceTransportSvc)
 	}
 
 	// Start the download + refresh + extension-check + warm-up tickers. This
@@ -510,7 +515,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile)
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -784,6 +789,7 @@ func startEngine(
 	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
+	pendingRuntimeReconcile func(context.Context),
 ) {
 	// Log the currently-resolved cadence (the loops re-read it each cycle, so
 	// these are the values in force right now, not a fixed schedule).
@@ -797,7 +803,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -847,6 +853,7 @@ func startEngineTopo(
 	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
+	pendingRuntimeReconcile func(context.Context),
 ) {
 	go func() {
 		runEngineTopoBootSequence(ctx, runtimeLifecycle, engineTopoBootPhases{
@@ -855,6 +862,7 @@ func startEngineTopo(
 			},
 			network: netReconcile,
 			runtime: runtimeReconcile,
+			pending: pendingRuntimeReconcile,
 			seed: func(ctx context.Context) {
 				enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
 					Client: engineClient,
@@ -879,6 +887,7 @@ type engineTopoBootPhases struct {
 	network   func(context.Context)
 	runtime   func(context.Context)
 	seed      func(context.Context)
+	pending   func(context.Context)
 }
 
 // runEngineTopoBootSequence keeps every boot-time engine/DB dependency use in
@@ -900,6 +909,9 @@ func runEngineTopoBootSequence(ctx context.Context, lifecycle runtimeConvergence
 	})
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
 		slog.WarnContext(ctx, "engine topology boot convergence failed", "err", err)
+	}
+	if err == nil && phases.pending != nil && ctx.Err() == nil {
+		phases.pending(ctx)
 	}
 }
 
@@ -1042,6 +1054,13 @@ func runSourceRuntimeReconcile(
 	if err := applier.ReconcileRuntime(ctx); err != nil {
 		slog.WarnContext(ctx, "source runtime: startup restore incomplete", "err", err)
 	}
+	runPendingRuntimeReconcile(ctx, global, sources)
+}
+
+// runPendingRuntimeReconcile runs after boot's outer topology admission has
+// been released. Each service therefore acquires its apply semaphore before
+// entering the topology serializer, matching the sole runtime lock order.
+func runPendingRuntimeReconcile(ctx context.Context, global, sources pendingRuntimeReconciler) {
 	if err := global.ReconcilePending(ctx); err != nil {
 		slog.WarnContext(ctx, "source runtime: global pending revision retry incomplete", "err", err)
 	}
