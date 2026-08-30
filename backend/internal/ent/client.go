@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/globalruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
@@ -63,6 +64,8 @@ type Client struct {
 	DisabledSource *DisabledSourceClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
+	// GlobalRuntimeIntent is the client for interacting with the GlobalRuntimeIntent builders.
+	GlobalRuntimeIntent *GlobalRuntimeIntentClient
 	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
 	HarvestedExtension *HarvestedExtensionClient
 	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
@@ -134,6 +137,7 @@ func (c *Client) init() {
 	c.Chapter = NewChapterClient(c.config)
 	c.DisabledSource = NewDisabledSourceClient(c.config)
 	c.EtagCache = NewEtagCacheClient(c.config)
+	c.GlobalRuntimeIntent = NewGlobalRuntimeIntentClient(c.config)
 	c.HarvestedExtension = NewHarvestedExtensionClient(c.config)
 	c.HarvestedRepo = NewHarvestedRepoClient(c.config)
 	c.IgnoreScanlatorSource = NewIgnoreScanlatorSourceClient(c.config)
@@ -258,6 +262,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Chapter:                         NewChapterClient(cfg),
 		DisabledSource:                  NewDisabledSourceClient(cfg),
 		EtagCache:                       NewEtagCacheClient(cfg),
+		GlobalRuntimeIntent:             NewGlobalRuntimeIntentClient(cfg),
 		HarvestedExtension:              NewHarvestedExtensionClient(cfg),
 		HarvestedRepo:                   NewHarvestedRepoClient(cfg),
 		IgnoreScanlatorSource:           NewIgnoreScanlatorSourceClient(cfg),
@@ -309,6 +314,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Chapter:                         NewChapterClient(cfg),
 		DisabledSource:                  NewDisabledSourceClient(cfg),
 		EtagCache:                       NewEtagCacheClient(cfg),
+		GlobalRuntimeIntent:             NewGlobalRuntimeIntentClient(cfg),
 		HarvestedExtension:              NewHarvestedExtensionClient(cfg),
 		HarvestedRepo:                   NewHarvestedRepoClient(cfg),
 		IgnoreScanlatorSource:           NewIgnoreScanlatorSourceClient(cfg),
@@ -366,10 +372,10 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
-		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
-		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.GlobalRuntimeIntent,
+		c.HarvestedExtension, c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry,
+		c.LatestSeries, c.NetworkEndpoint, c.Owner, c.PendingTrackPush,
+		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
 		c.SourceNetworkBinding, c.SourcePreference, c.SourceRuntimeIntent,
@@ -384,10 +390,10 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.HarvestedExtension,
-		c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry, c.LatestSeries,
-		c.NetworkEndpoint, c.Owner, c.PendingTrackPush, c.ProviderChapter,
-		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
+		c.Category, c.Chapter, c.DisabledSource, c.EtagCache, c.GlobalRuntimeIntent,
+		c.HarvestedExtension, c.HarvestedRepo, c.IgnoreScanlatorSource, c.ImportEntry,
+		c.LatestSeries, c.NetworkEndpoint, c.Owner, c.PendingTrackPush,
+		c.ProviderChapter, c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
 		c.SourceNetworkBinding, c.SourcePreference, c.SourceRuntimeIntent,
@@ -409,6 +415,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.DisabledSource.mutate(ctx, m)
 	case *EtagCacheMutation:
 		return c.EtagCache.mutate(ctx, m)
+	case *GlobalRuntimeIntentMutation:
+		return c.GlobalRuntimeIntent.mutate(ctx, m)
 	case *HarvestedExtensionMutation:
 		return c.HarvestedExtension.mutate(ctx, m)
 	case *HarvestedRepoMutation:
@@ -1047,6 +1055,139 @@ func (c *EtagCacheClient) mutate(ctx context.Context, m *EtagCacheMutation) (Val
 		return (&EtagCacheDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown EtagCache mutation op: %q", m.Op())
+	}
+}
+
+// GlobalRuntimeIntentClient is a client for the GlobalRuntimeIntent schema.
+type GlobalRuntimeIntentClient struct {
+	config
+}
+
+// NewGlobalRuntimeIntentClient returns a client for the GlobalRuntimeIntent from the given config.
+func NewGlobalRuntimeIntentClient(c config) *GlobalRuntimeIntentClient {
+	return &GlobalRuntimeIntentClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `globalruntimeintent.Hooks(f(g(h())))`.
+func (c *GlobalRuntimeIntentClient) Use(hooks ...Hook) {
+	c.hooks.GlobalRuntimeIntent = append(c.hooks.GlobalRuntimeIntent, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `globalruntimeintent.Intercept(f(g(h())))`.
+func (c *GlobalRuntimeIntentClient) Intercept(interceptors ...Interceptor) {
+	c.inters.GlobalRuntimeIntent = append(c.inters.GlobalRuntimeIntent, interceptors...)
+}
+
+// Create returns a builder for creating a GlobalRuntimeIntent entity.
+func (c *GlobalRuntimeIntentClient) Create() *GlobalRuntimeIntentCreate {
+	mutation := newGlobalRuntimeIntentMutation(c.config, OpCreate)
+	return &GlobalRuntimeIntentCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of GlobalRuntimeIntent entities.
+func (c *GlobalRuntimeIntentClient) CreateBulk(builders ...*GlobalRuntimeIntentCreate) *GlobalRuntimeIntentCreateBulk {
+	return &GlobalRuntimeIntentCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *GlobalRuntimeIntentClient) MapCreateBulk(slice any, setFunc func(*GlobalRuntimeIntentCreate, int)) *GlobalRuntimeIntentCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &GlobalRuntimeIntentCreateBulk{err: fmt.Errorf("calling to GlobalRuntimeIntentClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*GlobalRuntimeIntentCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &GlobalRuntimeIntentCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for GlobalRuntimeIntent.
+func (c *GlobalRuntimeIntentClient) Update() *GlobalRuntimeIntentUpdate {
+	mutation := newGlobalRuntimeIntentMutation(c.config, OpUpdate)
+	return &GlobalRuntimeIntentUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *GlobalRuntimeIntentClient) UpdateOne(_m *GlobalRuntimeIntent) *GlobalRuntimeIntentUpdateOne {
+	mutation := newGlobalRuntimeIntentMutation(c.config, OpUpdateOne, withGlobalRuntimeIntent(_m))
+	return &GlobalRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *GlobalRuntimeIntentClient) UpdateOneID(id uuid.UUID) *GlobalRuntimeIntentUpdateOne {
+	mutation := newGlobalRuntimeIntentMutation(c.config, OpUpdateOne, withGlobalRuntimeIntentID(id))
+	return &GlobalRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for GlobalRuntimeIntent.
+func (c *GlobalRuntimeIntentClient) Delete() *GlobalRuntimeIntentDelete {
+	mutation := newGlobalRuntimeIntentMutation(c.config, OpDelete)
+	return &GlobalRuntimeIntentDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *GlobalRuntimeIntentClient) DeleteOne(_m *GlobalRuntimeIntent) *GlobalRuntimeIntentDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *GlobalRuntimeIntentClient) DeleteOneID(id uuid.UUID) *GlobalRuntimeIntentDeleteOne {
+	builder := c.Delete().Where(globalruntimeintent.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &GlobalRuntimeIntentDeleteOne{builder}
+}
+
+// Query returns a query builder for GlobalRuntimeIntent.
+func (c *GlobalRuntimeIntentClient) Query() *GlobalRuntimeIntentQuery {
+	return &GlobalRuntimeIntentQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeGlobalRuntimeIntent},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a GlobalRuntimeIntent entity by its id.
+func (c *GlobalRuntimeIntentClient) Get(ctx context.Context, id uuid.UUID) (*GlobalRuntimeIntent, error) {
+	return c.Query().Where(globalruntimeintent.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *GlobalRuntimeIntentClient) GetX(ctx context.Context, id uuid.UUID) *GlobalRuntimeIntent {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *GlobalRuntimeIntentClient) Hooks() []Hook {
+	return c.hooks.GlobalRuntimeIntent
+}
+
+// Interceptors returns the client interceptors.
+func (c *GlobalRuntimeIntentClient) Interceptors() []Interceptor {
+	return c.inters.GlobalRuntimeIntent
+}
+
+func (c *GlobalRuntimeIntentClient) mutate(ctx context.Context, m *GlobalRuntimeIntentMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&GlobalRuntimeIntentCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&GlobalRuntimeIntentUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&GlobalRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&GlobalRuntimeIntentDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown GlobalRuntimeIntent mutation op: %q", m.Op())
 	}
 }
 
@@ -4953,23 +5094,25 @@ func (c *TrackerConnectionClient) mutate(ctx context.Context, m *TrackerConnecti
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
-		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
-		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
-		SourceNetworkBinding, SourcePreference, SourceRuntimeIntent, SourceSeedState,
-		SourceThroughputPolicy, SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
+		Category, Chapter, DisabledSource, EtagCache, GlobalRuntimeIntent,
+		HarvestedExtension, HarvestedRepo, IgnoreScanlatorSource, ImportEntry,
+		LatestSeries, NetworkEndpoint, Owner, PendingTrackPush, ProviderChapter,
+		PushSubscription, Series, SeriesProvider, Settings, SourceBreakerNotification,
+		SourceBreakerNotificationCursor, SourceCircuitState, SourceCoverage,
+		SourceEvent, SourceMetric, SourceNetworkBinding, SourcePreference,
+		SourceRuntimeIntent, SourceSeedState, SourceThroughputPolicy,
+		SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Hook
 	}
 	inters struct {
-		Category, Chapter, DisabledSource, EtagCache, HarvestedExtension, HarvestedRepo,
-		IgnoreScanlatorSource, ImportEntry, LatestSeries, NetworkEndpoint, Owner,
-		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
-		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
-		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
-		SourceNetworkBinding, SourcePreference, SourceRuntimeIntent, SourceSeedState,
-		SourceThroughputPolicy, SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
+		Category, Chapter, DisabledSource, EtagCache, GlobalRuntimeIntent,
+		HarvestedExtension, HarvestedRepo, IgnoreScanlatorSource, ImportEntry,
+		LatestSeries, NetworkEndpoint, Owner, PendingTrackPush, ProviderChapter,
+		PushSubscription, Series, SeriesProvider, Settings, SourceBreakerNotification,
+		SourceBreakerNotificationCursor, SourceCircuitState, SourceCoverage,
+		SourceEvent, SourceMetric, SourceNetworkBinding, SourcePreference,
+		SourceRuntimeIntent, SourceSeedState, SourceThroughputPolicy,
+		SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Interceptor
 	}
 )

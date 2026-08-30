@@ -724,6 +724,13 @@ func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) 
 	if !slices.Equal(defaultProxy, []int64{11}) {
 		t.Fatalf("default proxy set while source apply paused = %v, want frozen old [11] (no direct mirror)", defaultProxy)
 	}
+	pendingSettings, err := settingsSvc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("pending settings RuntimeIntent: %v", err)
+	}
+	if pendingSettings.DesiredRevision != 2 || pendingSettings.AppliedRevision != 0 {
+		t.Fatalf("settings intent while source revision is applying = %+v, want desired 2 / applied 0", pendingSettings)
+	}
 
 	close(resumeSourceApply)
 	result := <-transportDone
@@ -735,6 +742,13 @@ func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) 
 	}
 	if err := <-settingsErr; err != nil {
 		t.Fatalf("runtime settings update: %v", err)
+	}
+	settingsIntent, err := settingsSvc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("settings RuntimeIntent: %v", err)
+	}
+	if settingsIntent.DesiredRevision != 2 || settingsIntent.AppliedRevision != 2 {
+		t.Fatalf("settings intent = %+v, want seeded revision 1 plus concurrent revision 2 exactly acknowledged", settingsIntent)
 	}
 
 	var profileClient *runtimeConfigClient

@@ -7,12 +7,14 @@
 // the config-resolved default injected at construction. Consumers (the download
 // dispatcher, the job tickers, the refresh sweep, the health computation) read
 // the typed accessors at the point of use, so a change takes effect on the next
-// cycle (hot reload). Engine-runtime keys are the exception: after their atomic
-// commit, the service requests one full convergence through enginetopo's shared
-// lifecycle. That convergence reads all 13 engine fields with one query, so it
-// sees one committed state rather than a cross-transaction mixture. The service
-// NEVER reads the environment — main injects the Defaults built from
-// *config.Config, preserving the single env boundary.
+// cycle (hot reload). Engine-runtime keys are the exception: their transaction
+// also advances a typed global desired revision, then requests one full
+// convergence through enginetopo's shared lifecycle. Exact-revision guarded
+// acknowledgement and bounded startup retry make a failed push durable. That
+// convergence reads all 13 engine fields with one query, so it sees one
+// committed state rather than a cross-transaction mixture. The service NEVER
+// reads the environment — main injects the Defaults built from *config.Config,
+// preserving the single env boundary.
 package settings
 
 import (

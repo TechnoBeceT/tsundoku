@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/globalruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
@@ -133,6 +134,36 @@ func init() {
 	etagcacheDescID := etagcacheFields[0].Descriptor()
 	// etagcache.DefaultID holds the default value on creation for the id field.
 	etagcache.DefaultID = etagcacheDescID.Default.(func() uuid.UUID)
+	globalruntimeintentFields := schema.GlobalRuntimeIntent{}.Fields()
+	_ = globalruntimeintentFields
+	// globalruntimeintentDescDesiredRevision is the schema descriptor for desired_revision field.
+	globalruntimeintentDescDesiredRevision := globalruntimeintentFields[2].Descriptor()
+	// globalruntimeintent.DefaultDesiredRevision holds the default value on creation for the desired_revision field.
+	globalruntimeintent.DefaultDesiredRevision = globalruntimeintentDescDesiredRevision.Default.(int64)
+	// globalruntimeintentDescAppliedRevision is the schema descriptor for applied_revision field.
+	globalruntimeintentDescAppliedRevision := globalruntimeintentFields[3].Descriptor()
+	// globalruntimeintent.DefaultAppliedRevision holds the default value on creation for the applied_revision field.
+	globalruntimeintent.DefaultAppliedRevision = globalruntimeintentDescAppliedRevision.Default.(int64)
+	// globalruntimeintentDescLastApplyError is the schema descriptor for last_apply_error field.
+	globalruntimeintentDescLastApplyError := globalruntimeintentFields[5].Descriptor()
+	// globalruntimeintent.DefaultLastApplyError holds the default value on creation for the last_apply_error field.
+	globalruntimeintent.DefaultLastApplyError = globalruntimeintentDescLastApplyError.Default.(string)
+	// globalruntimeintent.LastApplyErrorValidator is a validator for the "last_apply_error" field. It is called by the builders before save.
+	globalruntimeintent.LastApplyErrorValidator = globalruntimeintentDescLastApplyError.Validators[0].(func(string) error)
+	// globalruntimeintentDescCreatedAt is the schema descriptor for created_at field.
+	globalruntimeintentDescCreatedAt := globalruntimeintentFields[6].Descriptor()
+	// globalruntimeintent.DefaultCreatedAt holds the default value on creation for the created_at field.
+	globalruntimeintent.DefaultCreatedAt = globalruntimeintentDescCreatedAt.Default.(func() time.Time)
+	// globalruntimeintentDescUpdatedAt is the schema descriptor for updated_at field.
+	globalruntimeintentDescUpdatedAt := globalruntimeintentFields[7].Descriptor()
+	// globalruntimeintent.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	globalruntimeintent.DefaultUpdatedAt = globalruntimeintentDescUpdatedAt.Default.(func() time.Time)
+	// globalruntimeintent.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	globalruntimeintent.UpdateDefaultUpdatedAt = globalruntimeintentDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// globalruntimeintentDescID is the schema descriptor for id field.
+	globalruntimeintentDescID := globalruntimeintentFields[0].Descriptor()
+	// globalruntimeintent.DefaultID holds the default value on creation for the id field.
+	globalruntimeintent.DefaultID = globalruntimeintentDescID.Default.(func() uuid.UUID)
 	harvestedextensionFields := schema.HarvestedExtension{}.Fields()
 	_ = harvestedextensionFields
 	// harvestedextensionDescRepoURL is the schema descriptor for repo_url field.

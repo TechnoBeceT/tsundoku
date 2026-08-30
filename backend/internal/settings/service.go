@@ -9,6 +9,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsettings "github.com/technobecet/tsundoku/internal/ent/settings"
+	"golang.org/x/sync/semaphore"
 )
 
 // Service resolves runtime tunables: DB override (when a valid Settings row
@@ -20,10 +21,11 @@ type Service struct {
 	client           *ent.Client
 	defaults         Defaults
 	runtimeConverger RuntimeConverger
+	runtimeApplySem  *semaphore.Weighted
 }
 
-// RuntimeConverger restores the complete persisted engine runtime config after
-// a runtime-setting commit. The implementation owns engine lifecycle
+// RuntimeConverger restores the complete persisted engine runtime config for a
+// durable global intent. The implementation owns engine lifecycle
 // serialization; settings remains independent of engine topology.
 type RuntimeConverger interface {
 	ReconcileRuntime(context.Context) error
@@ -39,11 +41,12 @@ type ImageDelaySettings interface {
 // config-resolved defaults injected by the caller (main). The service never
 // reads env — defaults arrive already typed, preserving the single env boundary.
 func NewService(client *ent.Client, defaults Defaults) *Service {
-	return &Service{client: client, defaults: defaults}
+	return &Service{client: client, defaults: defaults, runtimeApplySem: semaphore.NewWeighted(1)}
 }
 
-// WithRuntimeConverger attaches the best-effort runtime convergence hook. It is
-// intended for construction-time wiring before the service is shared.
+// WithRuntimeConverger attaches the runtime convergence hook used by immediate
+// and startup pending-intent attempts. It is intended for construction-time
+// wiring before the service is shared.
 func (s *Service) WithRuntimeConverger(converger RuntimeConverger) *Service {
 	s.runtimeConverger = converger
 	return s
@@ -370,8 +373,9 @@ func (s *Service) Set(ctx context.Context, key, value string) error {
 // the first unknown key → ErrUnknownSetting, the first bad value →
 // ErrInvalidSetting, both naming the offending key), then upserts all of them in
 // a single transaction. No partial write ever lands when one update is invalid.
-// A committed engine-runtime key triggers one best-effort full convergence via
-// RuntimeConverger; its failure is logged and never rolls back durable settings.
+// A runtime-key transaction also advances the durable global desired revision.
+// After commit it attempts one best-effort full convergence; failure remains
+// pending for a bounded retry and never rolls back durable settings.
 func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 	type canonical struct{ key, value string }
 	pending := make([]canonical, 0, len(updates))
@@ -393,6 +397,12 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 	if err != nil {
 		return fmt.Errorf("settings.SetMany: begin tx: %w", err)
 	}
+	if runtimeChanged {
+		if _, err := s.advanceRuntimeIntentTx(ctx, tx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("settings.SetMany: advance runtime intent: %w", err)
+		}
+	}
 	for _, p := range pending {
 		if err := upsertSettingTx(ctx, tx, p.key, p.value); err != nil {
 			_ = tx.Rollback()
@@ -403,7 +413,7 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 		return fmt.Errorf("settings.SetMany: commit tx: %w", err)
 	}
 	if runtimeChanged && s.runtimeConverger != nil {
-		if err := s.runtimeConverger.ReconcileRuntime(ctx); err != nil {
+		if _, err := s.ApplyPending(ctx); err != nil {
 			slog.WarnContext(ctx, "settings: engine runtime convergence failed (settings already persisted)", "err", err)
 		}
 	}

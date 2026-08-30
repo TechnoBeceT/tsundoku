@@ -1,5 +1,7 @@
 package settings
 
+import "time"
+
 // SettingDTO is one row of the settings API: the resolved current value, the
 // config default, and the type + unit metadata the FE uses to render the right
 // input. value is the DB override when present, otherwise default.
@@ -36,4 +38,14 @@ type RuntimeConfigSnapshot struct {
 	ImpersonateEnabled           bool
 	ImpersonateURL               string
 	ImpersonateSources           []int64
+}
+
+// RuntimeIntent is the durable revision state for the global engine config.
+// DesiredRevision advances atomically with runtime setting writes;
+// AppliedRevision advances only after that exact revision converges.
+type RuntimeIntent struct {
+	DesiredRevision  int64
+	AppliedRevision  int64
+	LastApplyAttempt *time.Time
+	LastApplyError   string
 }

@@ -490,7 +490,7 @@ func main() {
 	settingsSvc.WithRuntimeConverger(runtimeApplier)
 	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, runtimeApplier) }
 	runtimeReconcile := func(rctx context.Context) {
-		runSourceRuntimeReconcile(rctx, runtimeApplier, sourceTransportSvc)
+		runSourceRuntimeReconcile(rctx, runtimeApplier, settingsSvc, sourceTransportSvc)
 	}
 
 	// Start the download + refresh + extension-check + warm-up tickers. This
@@ -882,10 +882,19 @@ func runNetworkReconcile(ctx context.Context, reconciler networkReconciler) {
 	}
 }
 
+type runtimeRestorer interface {
+	ReconcileRuntime(context.Context) error
+}
+
+type pendingRuntimeReconciler interface {
+	ReconcilePending(context.Context) error
+}
+
 func runSourceRuntimeReconcile(
 	ctx context.Context,
-	applier sourcetransport.RuntimeApplier,
-	service *sourcetransport.Service,
+	applier runtimeRestorer,
+	global pendingRuntimeReconciler,
+	sources pendingRuntimeReconciler,
 ) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -894,12 +903,16 @@ func runSourceRuntimeReconcile(
 	}()
 
 	// Rebuild the ephemeral engine state even when every durable revision was
-	// acknowledged before restart. The bounded pending pass then records/retries
-	// exact revisions without introducing a second periodic loop.
-	if err := applier.ApplySourceRuntime(ctx, 0); err != nil {
+	// acknowledged before restart. The two bounded pending passes then retry the
+	// independent global and per-source exact revisions without inventing a
+	// source identity or introducing a second periodic loop.
+	if err := applier.ReconcileRuntime(ctx); err != nil {
 		slog.WarnContext(ctx, "source runtime: startup restore incomplete", "err", err)
 	}
-	if err := service.ReconcilePending(ctx); err != nil {
-		slog.WarnContext(ctx, "source runtime: pending revision retry incomplete", "err", err)
+	if err := global.ReconcilePending(ctx); err != nil {
+		slog.WarnContext(ctx, "source runtime: global pending revision retry incomplete", "err", err)
+	}
+	if err := sources.ReconcilePending(ctx); err != nil {
+		slog.WarnContext(ctx, "source runtime: source pending revision retry incomplete", "err", err)
 	}
 }

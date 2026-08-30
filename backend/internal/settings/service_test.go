@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/settings"
 )
+
+type runtimeConvergerFunc func(context.Context) error
+
+func (f runtimeConvergerFunc) ReconcileRuntime(ctx context.Context) error { return f(ctx) }
 
 // testDefaults mirrors the config defaults so resolution tests are meaningful.
 func testDefaults() settings.Defaults {
@@ -51,6 +56,115 @@ func testDefaults() settings.Defaults {
 		EngineSocksPort:          1080,
 		EngineSocksVersion:       5,
 		RetainedVersions:         3,
+	}
+}
+
+func TestRuntimeSettingsFailureLeavesDurablePendingIntent(t *testing.T) {
+	ctx := context.Background()
+	svc := settings.NewService(testdb.New(t), testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(context.Context) error { return errors.New("profile unavailable") }),
+	)
+
+	if err := svc.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("Set must preserve persisted-success contract: %v", err)
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 || intent.LastApplyAttempt == nil {
+		t.Fatalf("intent after failed convergence = %+v, want desired 1 / applied 0 with attempt", intent)
+	}
+	if !strings.Contains(intent.LastApplyError, "profile unavailable") {
+		t.Fatalf("last apply error = %q, want persisted failure", intent.LastApplyError)
+	}
+}
+
+func TestReconcilePendingRetriesSettingsOnlyIntentWithoutSourceRows(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	beforeRestart := settings.NewService(client, testDefaults())
+	if err := beforeRestart.Set(ctx, settings.KeyEngineSocksEnabled, "true"); err != nil {
+		t.Fatalf("persist settings-only intent: %v", err)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("source runtime intents = %d, want zero for global settings work", got)
+	}
+
+	calls := 0
+	afterRestart := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(context.Context) error {
+			calls++
+			return nil
+		}),
+	)
+	if err := afterRestart.ReconcilePending(ctx); err != nil {
+		t.Fatalf("ReconcilePending: %v", err)
+	}
+	intent, err := afterRestart.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if calls != 1 || intent.DesiredRevision != 1 || intent.AppliedRevision != 1 {
+		t.Fatalf("startup retry calls=%d intent=%+v, want one apply and revision 1 acknowledged", calls, intent)
+	}
+}
+
+func TestRuntimeSettingsNewerRevisionDuringApplyRemainsPending(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := settings.NewService(client, testDefaults())
+	var newerErr error
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(context.Context) error {
+			newerErr = plain.Set(ctx, settings.KeyImpersonateURL, "http://newer.test:8788")
+			return nil
+		}),
+	)
+
+	if err := svc.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("first Set: %v", err)
+	}
+	if newerErr != nil {
+		t.Fatalf("newer settings revision during apply: %v", newerErr)
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 2 || intent.AppliedRevision != 0 {
+		t.Fatalf("intent after revision race = %+v, want newer desired 2 still pending", intent)
+	}
+}
+
+func TestRuntimeSettingsRollbackLeavesNoIntentRevision(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	client.Settings.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if m, ok := mutation.(*ent.SettingsMutation); ok && m.Op().Is(ent.OpCreate) {
+				return nil, errors.New("injected settings write failure")
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+	svc := settings.NewService(client, testDefaults())
+
+	if err := svc.Set(ctx, settings.KeyImpersonateEnabled, "true"); err == nil {
+		t.Fatal("Set error = nil, want injected write failure")
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 0 || intent.AppliedRevision != 0 {
+		t.Fatalf("intent after rolled-back settings transaction = %+v, want zero revision", intent)
+	}
+	if got := client.GlobalRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("global runtime intent rows after rollback = %d, want zero", got)
+	}
+	if got := svc.ImpersonateEnabled(ctx); got {
+		t.Fatal("impersonate setting persisted despite transaction rollback")
 	}
 }
 

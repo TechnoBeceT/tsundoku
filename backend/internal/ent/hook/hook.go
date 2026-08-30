@@ -57,6 +57,18 @@ func (f EtagCacheFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, e
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.EtagCacheMutation", m)
 }
 
+// The GlobalRuntimeIntentFunc type is an adapter to allow the use of ordinary
+// function as GlobalRuntimeIntent mutator.
+type GlobalRuntimeIntentFunc func(context.Context, *ent.GlobalRuntimeIntentMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f GlobalRuntimeIntentFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.GlobalRuntimeIntentMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.GlobalRuntimeIntentMutation", m)
+}
+
 // The HarvestedExtensionFunc type is an adapter to allow the use of ordinary
 // function as HarvestedExtension mutator.
 type HarvestedExtensionFunc func(context.Context, *ent.HarvestedExtensionMutation) (ent.Value, error)

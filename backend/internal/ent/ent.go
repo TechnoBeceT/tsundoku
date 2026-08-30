@@ -16,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/globalruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
@@ -108,6 +109,7 @@ func checkColumn(t, c string) error {
 			chapter.Table:                         chapter.ValidColumn,
 			disabledsource.Table:                  disabledsource.ValidColumn,
 			etagcache.Table:                       etagcache.ValidColumn,
+			globalruntimeintent.Table:             globalruntimeintent.ValidColumn,
 			harvestedextension.Table:              harvestedextension.ValidColumn,
 			harvestedrepo.Table:                   harvestedrepo.ValidColumn,
 			ignorescanlatorsource.Table:           ignorescanlatorsource.ValidColumn,

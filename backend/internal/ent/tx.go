@@ -20,6 +20,8 @@ type Tx struct {
 	DisabledSource *DisabledSourceClient
 	// EtagCache is the client for interacting with the EtagCache builders.
 	EtagCache *EtagCacheClient
+	// GlobalRuntimeIntent is the client for interacting with the GlobalRuntimeIntent builders.
+	GlobalRuntimeIntent *GlobalRuntimeIntentClient
 	// HarvestedExtension is the client for interacting with the HarvestedExtension builders.
 	HarvestedExtension *HarvestedExtensionClient
 	// HarvestedRepo is the client for interacting with the HarvestedRepo builders.
@@ -211,6 +213,7 @@ func (tx *Tx) init() {
 	tx.Chapter = NewChapterClient(tx.config)
 	tx.DisabledSource = NewDisabledSourceClient(tx.config)
 	tx.EtagCache = NewEtagCacheClient(tx.config)
+	tx.GlobalRuntimeIntent = NewGlobalRuntimeIntentClient(tx.config)
 	tx.HarvestedExtension = NewHarvestedExtensionClient(tx.config)
 	tx.HarvestedRepo = NewHarvestedRepoClient(tx.config)
 	tx.IgnoreScanlatorSource = NewIgnoreScanlatorSourceClient(tx.config)

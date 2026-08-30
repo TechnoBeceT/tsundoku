@@ -18,6 +18,9 @@ type DisabledSource func(*sql.Selector)
 // EtagCache is the predicate function for etagcache builders.
 type EtagCache func(*sql.Selector)
 
+// GlobalRuntimeIntent is the predicate function for globalruntimeintent builders.
+type GlobalRuntimeIntent func(*sql.Selector)
+
 // HarvestedExtension is the predicate function for harvestedextension builders.
 type HarvestedExtension func(*sql.Selector)
 

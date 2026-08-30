@@ -17,6 +17,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	"github.com/technobecet/tsundoku/internal/ent/etagcache"
+	"github.com/technobecet/tsundoku/internal/ent/globalruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedextension"
 	"github.com/technobecet/tsundoku/internal/ent/harvestedrepo"
 	"github.com/technobecet/tsundoku/internal/ent/ignorescanlatorsource"
@@ -63,6 +64,7 @@ const (
 	TypeChapter                         = "Chapter"
 	TypeDisabledSource                  = "DisabledSource"
 	TypeEtagCache                       = "EtagCache"
+	TypeGlobalRuntimeIntent             = "GlobalRuntimeIntent"
 	TypeHarvestedExtension              = "HarvestedExtension"
 	TypeHarvestedRepo                   = "HarvestedRepo"
 	TypeIgnoreScanlatorSource           = "IgnoreScanlatorSource"
@@ -3373,6 +3375,753 @@ func (m *EtagCacheMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *EtagCacheMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown EtagCache edge %s", name)
+}
+
+// GlobalRuntimeIntentMutation represents an operation that mutates the GlobalRuntimeIntent nodes in the graph.
+type GlobalRuntimeIntentMutation struct {
+	config
+	op                  Op
+	typ                 string
+	id                  *uuid.UUID
+	scope               *string
+	desired_revision    *int64
+	adddesired_revision *int64
+	applied_revision    *int64
+	addapplied_revision *int64
+	last_apply_attempt  *time.Time
+	last_apply_error    *string
+	created_at          *time.Time
+	updated_at          *time.Time
+	clearedFields       map[string]struct{}
+	done                bool
+	oldValue            func(context.Context) (*GlobalRuntimeIntent, error)
+	predicates          []predicate.GlobalRuntimeIntent
+}
+
+var _ ent.Mutation = (*GlobalRuntimeIntentMutation)(nil)
+
+// globalruntimeintentOption allows management of the mutation configuration using functional options.
+type globalruntimeintentOption func(*GlobalRuntimeIntentMutation)
+
+// newGlobalRuntimeIntentMutation creates new mutation for the GlobalRuntimeIntent entity.
+func newGlobalRuntimeIntentMutation(c config, op Op, opts ...globalruntimeintentOption) *GlobalRuntimeIntentMutation {
+	m := &GlobalRuntimeIntentMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeGlobalRuntimeIntent,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withGlobalRuntimeIntentID sets the ID field of the mutation.
+func withGlobalRuntimeIntentID(id uuid.UUID) globalruntimeintentOption {
+	return func(m *GlobalRuntimeIntentMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *GlobalRuntimeIntent
+		)
+		m.oldValue = func(ctx context.Context) (*GlobalRuntimeIntent, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().GlobalRuntimeIntent.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withGlobalRuntimeIntent sets the old GlobalRuntimeIntent of the mutation.
+func withGlobalRuntimeIntent(node *GlobalRuntimeIntent) globalruntimeintentOption {
+	return func(m *GlobalRuntimeIntentMutation) {
+		m.oldValue = func(context.Context) (*GlobalRuntimeIntent, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m GlobalRuntimeIntentMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m GlobalRuntimeIntentMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of GlobalRuntimeIntent entities.
+func (m *GlobalRuntimeIntentMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *GlobalRuntimeIntentMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *GlobalRuntimeIntentMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().GlobalRuntimeIntent.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetScope sets the "scope" field.
+func (m *GlobalRuntimeIntentMutation) SetScope(s string) {
+	m.scope = &s
+}
+
+// Scope returns the value of the "scope" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) Scope() (r string, exists bool) {
+	v := m.scope
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldScope returns the old "scope" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldScope(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldScope is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldScope requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldScope: %w", err)
+	}
+	return oldValue.Scope, nil
+}
+
+// ResetScope resets all changes to the "scope" field.
+func (m *GlobalRuntimeIntentMutation) ResetScope() {
+	m.scope = nil
+}
+
+// SetDesiredRevision sets the "desired_revision" field.
+func (m *GlobalRuntimeIntentMutation) SetDesiredRevision(i int64) {
+	m.desired_revision = &i
+	m.adddesired_revision = nil
+}
+
+// DesiredRevision returns the value of the "desired_revision" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) DesiredRevision() (r int64, exists bool) {
+	v := m.desired_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesiredRevision returns the old "desired_revision" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldDesiredRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesiredRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesiredRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesiredRevision: %w", err)
+	}
+	return oldValue.DesiredRevision, nil
+}
+
+// AddDesiredRevision adds i to the "desired_revision" field.
+func (m *GlobalRuntimeIntentMutation) AddDesiredRevision(i int64) {
+	if m.adddesired_revision != nil {
+		*m.adddesired_revision += i
+	} else {
+		m.adddesired_revision = &i
+	}
+}
+
+// AddedDesiredRevision returns the value that was added to the "desired_revision" field in this mutation.
+func (m *GlobalRuntimeIntentMutation) AddedDesiredRevision() (r int64, exists bool) {
+	v := m.adddesired_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDesiredRevision resets all changes to the "desired_revision" field.
+func (m *GlobalRuntimeIntentMutation) ResetDesiredRevision() {
+	m.desired_revision = nil
+	m.adddesired_revision = nil
+}
+
+// SetAppliedRevision sets the "applied_revision" field.
+func (m *GlobalRuntimeIntentMutation) SetAppliedRevision(i int64) {
+	m.applied_revision = &i
+	m.addapplied_revision = nil
+}
+
+// AppliedRevision returns the value of the "applied_revision" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) AppliedRevision() (r int64, exists bool) {
+	v := m.applied_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAppliedRevision returns the old "applied_revision" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldAppliedRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAppliedRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAppliedRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAppliedRevision: %w", err)
+	}
+	return oldValue.AppliedRevision, nil
+}
+
+// AddAppliedRevision adds i to the "applied_revision" field.
+func (m *GlobalRuntimeIntentMutation) AddAppliedRevision(i int64) {
+	if m.addapplied_revision != nil {
+		*m.addapplied_revision += i
+	} else {
+		m.addapplied_revision = &i
+	}
+}
+
+// AddedAppliedRevision returns the value that was added to the "applied_revision" field in this mutation.
+func (m *GlobalRuntimeIntentMutation) AddedAppliedRevision() (r int64, exists bool) {
+	v := m.addapplied_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAppliedRevision resets all changes to the "applied_revision" field.
+func (m *GlobalRuntimeIntentMutation) ResetAppliedRevision() {
+	m.applied_revision = nil
+	m.addapplied_revision = nil
+}
+
+// SetLastApplyAttempt sets the "last_apply_attempt" field.
+func (m *GlobalRuntimeIntentMutation) SetLastApplyAttempt(t time.Time) {
+	m.last_apply_attempt = &t
+}
+
+// LastApplyAttempt returns the value of the "last_apply_attempt" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) LastApplyAttempt() (r time.Time, exists bool) {
+	v := m.last_apply_attempt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastApplyAttempt returns the old "last_apply_attempt" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldLastApplyAttempt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastApplyAttempt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastApplyAttempt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastApplyAttempt: %w", err)
+	}
+	return oldValue.LastApplyAttempt, nil
+}
+
+// ClearLastApplyAttempt clears the value of the "last_apply_attempt" field.
+func (m *GlobalRuntimeIntentMutation) ClearLastApplyAttempt() {
+	m.last_apply_attempt = nil
+	m.clearedFields[globalruntimeintent.FieldLastApplyAttempt] = struct{}{}
+}
+
+// LastApplyAttemptCleared returns if the "last_apply_attempt" field was cleared in this mutation.
+func (m *GlobalRuntimeIntentMutation) LastApplyAttemptCleared() bool {
+	_, ok := m.clearedFields[globalruntimeintent.FieldLastApplyAttempt]
+	return ok
+}
+
+// ResetLastApplyAttempt resets all changes to the "last_apply_attempt" field.
+func (m *GlobalRuntimeIntentMutation) ResetLastApplyAttempt() {
+	m.last_apply_attempt = nil
+	delete(m.clearedFields, globalruntimeintent.FieldLastApplyAttempt)
+}
+
+// SetLastApplyError sets the "last_apply_error" field.
+func (m *GlobalRuntimeIntentMutation) SetLastApplyError(s string) {
+	m.last_apply_error = &s
+}
+
+// LastApplyError returns the value of the "last_apply_error" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) LastApplyError() (r string, exists bool) {
+	v := m.last_apply_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastApplyError returns the old "last_apply_error" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldLastApplyError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastApplyError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastApplyError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastApplyError: %w", err)
+	}
+	return oldValue.LastApplyError, nil
+}
+
+// ResetLastApplyError resets all changes to the "last_apply_error" field.
+func (m *GlobalRuntimeIntentMutation) ResetLastApplyError() {
+	m.last_apply_error = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *GlobalRuntimeIntentMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *GlobalRuntimeIntentMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *GlobalRuntimeIntentMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *GlobalRuntimeIntentMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the GlobalRuntimeIntent entity.
+// If the GlobalRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GlobalRuntimeIntentMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *GlobalRuntimeIntentMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the GlobalRuntimeIntentMutation builder.
+func (m *GlobalRuntimeIntentMutation) Where(ps ...predicate.GlobalRuntimeIntent) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the GlobalRuntimeIntentMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *GlobalRuntimeIntentMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.GlobalRuntimeIntent, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *GlobalRuntimeIntentMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *GlobalRuntimeIntentMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (GlobalRuntimeIntent).
+func (m *GlobalRuntimeIntentMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *GlobalRuntimeIntentMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.scope != nil {
+		fields = append(fields, globalruntimeintent.FieldScope)
+	}
+	if m.desired_revision != nil {
+		fields = append(fields, globalruntimeintent.FieldDesiredRevision)
+	}
+	if m.applied_revision != nil {
+		fields = append(fields, globalruntimeintent.FieldAppliedRevision)
+	}
+	if m.last_apply_attempt != nil {
+		fields = append(fields, globalruntimeintent.FieldLastApplyAttempt)
+	}
+	if m.last_apply_error != nil {
+		fields = append(fields, globalruntimeintent.FieldLastApplyError)
+	}
+	if m.created_at != nil {
+		fields = append(fields, globalruntimeintent.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, globalruntimeintent.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *GlobalRuntimeIntentMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case globalruntimeintent.FieldScope:
+		return m.Scope()
+	case globalruntimeintent.FieldDesiredRevision:
+		return m.DesiredRevision()
+	case globalruntimeintent.FieldAppliedRevision:
+		return m.AppliedRevision()
+	case globalruntimeintent.FieldLastApplyAttempt:
+		return m.LastApplyAttempt()
+	case globalruntimeintent.FieldLastApplyError:
+		return m.LastApplyError()
+	case globalruntimeintent.FieldCreatedAt:
+		return m.CreatedAt()
+	case globalruntimeintent.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *GlobalRuntimeIntentMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case globalruntimeintent.FieldScope:
+		return m.OldScope(ctx)
+	case globalruntimeintent.FieldDesiredRevision:
+		return m.OldDesiredRevision(ctx)
+	case globalruntimeintent.FieldAppliedRevision:
+		return m.OldAppliedRevision(ctx)
+	case globalruntimeintent.FieldLastApplyAttempt:
+		return m.OldLastApplyAttempt(ctx)
+	case globalruntimeintent.FieldLastApplyError:
+		return m.OldLastApplyError(ctx)
+	case globalruntimeintent.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case globalruntimeintent.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown GlobalRuntimeIntent field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *GlobalRuntimeIntentMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case globalruntimeintent.FieldScope:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetScope(v)
+		return nil
+	case globalruntimeintent.FieldDesiredRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesiredRevision(v)
+		return nil
+	case globalruntimeintent.FieldAppliedRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAppliedRevision(v)
+		return nil
+	case globalruntimeintent.FieldLastApplyAttempt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastApplyAttempt(v)
+		return nil
+	case globalruntimeintent.FieldLastApplyError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastApplyError(v)
+		return nil
+	case globalruntimeintent.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case globalruntimeintent.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown GlobalRuntimeIntent field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *GlobalRuntimeIntentMutation) AddedFields() []string {
+	var fields []string
+	if m.adddesired_revision != nil {
+		fields = append(fields, globalruntimeintent.FieldDesiredRevision)
+	}
+	if m.addapplied_revision != nil {
+		fields = append(fields, globalruntimeintent.FieldAppliedRevision)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *GlobalRuntimeIntentMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case globalruntimeintent.FieldDesiredRevision:
+		return m.AddedDesiredRevision()
+	case globalruntimeintent.FieldAppliedRevision:
+		return m.AddedAppliedRevision()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *GlobalRuntimeIntentMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case globalruntimeintent.FieldDesiredRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDesiredRevision(v)
+		return nil
+	case globalruntimeintent.FieldAppliedRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAppliedRevision(v)
+		return nil
+	}
+	return fmt.Errorf("unknown GlobalRuntimeIntent numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *GlobalRuntimeIntentMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(globalruntimeintent.FieldLastApplyAttempt) {
+		fields = append(fields, globalruntimeintent.FieldLastApplyAttempt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *GlobalRuntimeIntentMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *GlobalRuntimeIntentMutation) ClearField(name string) error {
+	switch name {
+	case globalruntimeintent.FieldLastApplyAttempt:
+		m.ClearLastApplyAttempt()
+		return nil
+	}
+	return fmt.Errorf("unknown GlobalRuntimeIntent nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *GlobalRuntimeIntentMutation) ResetField(name string) error {
+	switch name {
+	case globalruntimeintent.FieldScope:
+		m.ResetScope()
+		return nil
+	case globalruntimeintent.FieldDesiredRevision:
+		m.ResetDesiredRevision()
+		return nil
+	case globalruntimeintent.FieldAppliedRevision:
+		m.ResetAppliedRevision()
+		return nil
+	case globalruntimeintent.FieldLastApplyAttempt:
+		m.ResetLastApplyAttempt()
+		return nil
+	case globalruntimeintent.FieldLastApplyError:
+		m.ResetLastApplyError()
+		return nil
+	case globalruntimeintent.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case globalruntimeintent.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown GlobalRuntimeIntent field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *GlobalRuntimeIntentMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *GlobalRuntimeIntentMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *GlobalRuntimeIntentMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *GlobalRuntimeIntentMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *GlobalRuntimeIntentMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *GlobalRuntimeIntentMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *GlobalRuntimeIntentMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown GlobalRuntimeIntent unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *GlobalRuntimeIntentMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown GlobalRuntimeIntent edge %s", name)
 }
 
 // HarvestedExtensionMutation represents an operation that mutates the HarvestedExtension nodes in the graph.

@@ -99,6 +99,23 @@ var (
 		Columns:    EtagCachesColumns,
 		PrimaryKey: []*schema.Column{EtagCachesColumns[0]},
 	}
+	// GlobalRuntimeIntentsColumns holds the columns for the "global_runtime_intents" table.
+	GlobalRuntimeIntentsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "scope", Type: field.TypeString, Unique: true},
+		{Name: "desired_revision", Type: field.TypeInt64, Default: 0},
+		{Name: "applied_revision", Type: field.TypeInt64, Default: 0},
+		{Name: "last_apply_attempt", Type: field.TypeTime, Nullable: true},
+		{Name: "last_apply_error", Type: field.TypeString, Size: 512, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// GlobalRuntimeIntentsTable holds the schema information for the "global_runtime_intents" table.
+	GlobalRuntimeIntentsTable = &schema.Table{
+		Name:       "global_runtime_intents",
+		Columns:    GlobalRuntimeIntentsColumns,
+		PrimaryKey: []*schema.Column{GlobalRuntimeIntentsColumns[0]},
+	}
 	// HarvestedExtensionsColumns holds the columns for the "harvested_extensions" table.
 	HarvestedExtensionsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -779,6 +796,7 @@ var (
 		ChaptersTable,
 		DisabledSourcesTable,
 		EtagCachesTable,
+		GlobalRuntimeIntentsTable,
 		HarvestedExtensionsTable,
 		HarvestedReposTable,
 		IgnoreScanlatorSourcesTable,
