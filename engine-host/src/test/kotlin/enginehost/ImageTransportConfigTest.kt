@@ -56,8 +56,11 @@ class ImageTransportConfigTest {
         val sourceClient = OkHttpClient()
 
         val selected = SourceCalls.imageClientFor(8L, sourceClient)
+        val nextSelected = SourceCalls.imageClientFor(8L, sourceClient)
 
         assertNotSame(sourceClient, selected)
+        assertNotSame(sourceClient.connectionPool, selected.connectionPool)
+        assertNotSame(selected.connectionPool, nextSelected.connectionPool)
         assertEquals(0, selected.connectionPool.idleConnectionCount())
     }
 }
