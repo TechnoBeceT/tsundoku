@@ -15,21 +15,34 @@ import { flushPromises } from '@vue/test-utils'
 import { mountSuspended } from '@nuxt/test-utils/runtime'
 import type { Router } from 'vue-router'
 import { NuxtPage } from '#components'
+import Settings from '~/components/screens/Settings.vue'
 import {
   comicAsuraSourceConfiguration,
+  flareSolverrConfig,
   fullyInheritedSourceConfiguration,
+  impersonateConfig,
+  librarySettings,
+  sourcesSettings,
 } from '~/fixtures/settings'
 import type { components } from '~/utils/api/schema.d.ts'
 
 type SourceConfiguration = components['schemas']['SourceEffectiveConfiguration']
+interface DetailResult {
+  data?: SourceConfiguration
+  error?: { message: string }
+  response: Response
+}
 
 const apiState = vi.hoisted(() => ({
   detailById: new Map<string, SourceConfiguration>(),
   detailSourceIds: [] as string[],
+  nextDetailResponse: null as Promise<DetailResult> | null,
   summaryAttempts: 0,
   summaryFailuresRemaining: 0,
   summaries: [] as unknown[],
   sources: [] as unknown[],
+  catalogAttempts: 0,
+  catalogFailuresRemaining: 0,
 }))
 
 vi.mock('~/utils/api/client', () => {
@@ -43,7 +56,18 @@ vi.mock('~/utils/api/client', () => {
       return ok({ enabled: false, url: '', timeout: 60, sessionName: '', sessionTtl: 15, asResponseFallback: false })
     }
     if (path === '/api/impersonate') return ok({ enabled: false, url: '', sourceIds: [] })
-    if (path === '/api/sources') return ok(apiState.sources)
+    if (path === '/api/sources') {
+      apiState.catalogAttempts += 1
+      if (apiState.catalogFailuresRemaining > 0) {
+        apiState.catalogFailuresRemaining -= 1
+        return Promise.resolve({
+          data: undefined,
+          error: { message: 'Source catalog could not be loaded.' },
+          response: new Response(null, { status: 503 }),
+        })
+      }
+      return ok(apiState.sources)
+    }
     if (path === '/api/suwayomi/extensions') return ok([])
     if (path === '/api/suwayomi/extensions/repos') return ok({ repos: [] })
     if (path === '/api/trackers') return ok([])
@@ -63,17 +87,44 @@ vi.mock('~/utils/api/client', () => {
     if (path === '/api/sources/{sourceId}/effective-configuration') {
       const sourceId = options?.params?.path?.sourceId ?? ''
       apiState.detailSourceIds.push(sourceId)
+      if (apiState.nextDetailResponse) {
+        const response = apiState.nextDetailResponse
+        apiState.nextDetailResponse = null
+        return response
+      }
       return ok(apiState.detailById.get(sourceId))
     }
     return ok([])
+  })
+
+  const PATCH = vi.fn((path: string, options?: { params?: { path?: { sourceId?: string } }, body?: Record<string, unknown> }) => {
+    if (path === '/api/settings') {
+      const settings = (options?.body as { settings?: unknown[] } | undefined)?.settings ?? []
+      return ok(settings)
+    }
+    if (path === '/api/flaresolverr/settings') return ok(options?.body)
+    if (path === '/api/sources/{sourceId}/throughput') {
+      return ok({
+        sourceId: options?.params?.path?.sourceId ?? '',
+        downloadConcurrency: { override: 2, effective: 2 },
+        imageRequestDelay: { override: null, effective: '500ms' },
+      })
+    }
+    return ok(null)
+  })
+  const PUT = vi.fn((path: string, options?: { body?: Record<string, unknown> }) => {
+    if (path === '/api/impersonate') {
+      return ok({ ...options?.body, sourceIds: impersonateConfig.sourceIds })
+    }
+    return ok(null)
   })
 
   return {
     apiClient: {
       GET,
       POST: vi.fn(() => ok(null)),
-      PUT: vi.fn(() => ok(null)),
-      PATCH: vi.fn(() => ok(null)),
+      PUT,
+      PATCH,
       DELETE: vi.fn(() => ok(null)),
       use: vi.fn(),
     },
@@ -126,10 +177,13 @@ beforeEach(() => {
     [comicAsuraSourceConfiguration.source.sourceId, comicAsuraSourceConfiguration],
   ])
   apiState.detailSourceIds = []
+  apiState.nextDetailResponse = null
   apiState.summaryAttempts = 0
   apiState.summaryFailuresRemaining = 0
   apiState.summaries = [summary(fullyInheritedSourceConfiguration), summary(comicAsuraSourceConfiguration)]
   apiState.sources = [sourceOption(fullyInheritedSourceConfiguration), sourceOption(comicAsuraSourceConfiguration)]
+  apiState.catalogAttempts = 0
+  apiState.catalogFailuresRemaining = 0
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
@@ -196,6 +250,123 @@ describe('Settings page route integration', () => {
     expect(apiState.summaryAttempts).toBe(2)
     expect(wrapper.text()).toContain('Scheduling')
     expect(wrapper.text()).not.toContain('Source exceptions could not be loaded.')
+    wrapper.unmount()
+  })
+
+  it('refreshes the selected effective configuration and summaries after every relevant global save', async () => {
+    const sourceId = fullyInheritedSourceConfiguration.source.sourceId
+    const initial = {
+      ...fullyInheritedSourceConfiguration,
+      bypassEnabled: false,
+      imageProxy: { ...fullyInheritedSourceConfiguration.imageProxy, gatewayEnabled: false, effectiveAvailable: false },
+    } satisfies SourceConfiguration
+    apiState.detailById.set(sourceId, initial)
+    const wrapper = await mountPage(`/settings?pane=download-engine&source=${sourceId}`)
+    const screen = wrapper.getComponent(Settings)
+
+    const scheduling = {
+      ...initial,
+      downloadConcurrency: { override: null, effective: 9, inherited: true },
+    } satisfies SourceConfiguration
+    apiState.detailById.set(sourceId, scheduling)
+    screen.vm.$emit('save-library', { ...librarySettings, downloadConcurrency: 9 })
+    await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(2))
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Global 9')
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Effective 9')
+
+    const protection = {
+      ...scheduling,
+      imageRequestDelay: { override: null, effective: '900ms', inherited: true },
+      protection: { ...scheduling.protection, failureThreshold: 8 },
+    } satisfies SourceConfiguration
+    apiState.detailById.set(sourceId, protection)
+    screen.vm.$emit('save-sources-settings', {
+      ...sourcesSettings,
+      failureThreshold: 8,
+      imageRequestDelayMs: 900,
+    })
+    await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(3))
+    expect(wrapper.get('[data-source-setting-target="imageRequestDelay"]').text()).toContain('Global 900ms')
+    expect(wrapper.get('[data-source-setting-target="imageRequestDelay"]').text()).toContain('Effective 900ms')
+    expect(wrapper.get('[data-testid="source-editor"]').text()).toContain('Failure threshold8')
+
+    const bypass = { ...protection, bypassEnabled: true } satisfies SourceConfiguration
+    apiState.detailById.set(sourceId, bypass)
+    screen.vm.$emit('save-flaresolverr', { ...flareSolverrConfig, enabled: true, url: 'http://flare:8191' })
+    await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(4))
+    expect(wrapper.get('[data-source-setting-target="byparr"]').text()).toContain('Enabled')
+
+    const gateway = {
+      ...bypass,
+      imageProxy: { ...bypass.imageProxy, gatewayEnabled: true, gatewayConfigured: true },
+    } satisfies SourceConfiguration
+    apiState.detailById.set(sourceId, gateway)
+    screen.vm.$emit('save-impersonate', { enabled: true, url: 'http://impersonate:8788' })
+    await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(5))
+    expect(wrapper.get('[data-testid="source-editor"]').text()).toContain('Gateway enabledYes')
+    expect(apiState.summaryAttempts).toBe(5)
+    wrapper.unmount()
+  })
+
+  it('keeps the confirmed editor visible while a row mutation awaits its confirmation GET', async () => {
+    const sourceId = fullyInheritedSourceConfiguration.source.sourceId
+    const wrapper = await mountPage(`/settings?pane=download-engine&source=${sourceId}`)
+    let confirm!: (result: DetailResult) => void
+    apiState.nextDetailResponse = new Promise(resolve => { confirm = resolve })
+    const row = wrapper.get('[data-source-setting-target="downloadConcurrency"]')
+
+    await row.get('input[type="number"]').setValue('2')
+    await row.get('[data-testid="set-override"]').trigger('click')
+    await vi.waitFor(() => expect(apiState.nextDetailResponse).toBeNull())
+
+    expect(wrapper.find('[data-testid="source-editor"]').exists()).toBe(true)
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').attributes('aria-busy')).toBe('true')
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Effective 5')
+
+    const confirmed = {
+      ...fullyInheritedSourceConfiguration,
+      downloadConcurrency: { override: 2, effective: 2, inherited: false },
+    } satisfies SourceConfiguration
+    confirm({ data: confirmed, response: new Response() })
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Effective 2')
+    })
+    wrapper.unmount()
+  })
+
+  it('keeps the confirmed editor visible and reports a rejected confirmation on its row', async () => {
+    const sourceId = fullyInheritedSourceConfiguration.source.sourceId
+    const wrapper = await mountPage(`/settings?pane=download-engine&source=${sourceId}`)
+    let rejectConfirmation!: (cause: Error) => void
+    apiState.nextDetailResponse = new Promise((_, reject) => { rejectConfirmation = reject })
+    const row = wrapper.get('[data-source-setting-target="downloadConcurrency"]')
+
+    await row.get('input[type="number"]').setValue('2')
+    await row.get('[data-testid="set-override"]').trigger('click')
+    await vi.waitFor(() => expect(apiState.nextDetailResponse).toBeNull())
+    rejectConfirmation(new Error('Confirmation read failed'))
+
+    await vi.waitFor(() => {
+      expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Confirmation read failed')
+    })
+    expect(wrapper.find('[data-testid="source-editor"]').exists()).toBe(true)
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Effective 5')
+    expect(wrapper.find('[aria-label="Loading source configuration"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('shows and retries an initial source-catalog failure without claiming the catalog is empty', async () => {
+    apiState.catalogFailuresRemaining = 1
+    const wrapper = await mountPage('/settings?pane=download-engine')
+
+    expect(wrapper.text()).toContain('Source catalog could not be loaded.')
+    expect(wrapper.text()).not.toContain('No sources installed')
+    expect(apiState.catalogAttempts).toBe(1)
+
+    await wrapper.get('[data-testid="retry-source-catalog"]').trigger('click')
+    await vi.waitFor(() => expect(apiState.catalogAttempts).toBe(2))
+    expect(wrapper.text()).not.toContain('Source catalog could not be loaded.')
+    expect(wrapper.find('input[aria-label="Search installed sources"]').exists()).toBe(true)
     wrapper.unmount()
   })
 })

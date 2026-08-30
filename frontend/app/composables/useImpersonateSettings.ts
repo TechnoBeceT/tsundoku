@@ -28,6 +28,7 @@ import type { ImpersonateConfig, SaveState, SourceOption } from '~/components/sc
 type ImpersonateSettingsDTO = components['schemas']['ImpersonateSettings']
 type ImpersonateUpdateDTO = components['schemas']['ImpersonateUpdate']
 type SourceDTO = components['schemas']['Source']
+type ErrorResponse = components['schemas']['ErrorResponse']
 type ImpersonateGatewayUpdate = Pick<ImpersonateUpdateDTO, 'enabled' | 'url'>
 
 /** Maps the GET/PUT response DTO onto the screen's editable config shape. */
@@ -63,6 +64,10 @@ const DEFAULT_CONFIG: ImpersonateConfig = {
   sourceIds: [],
 }
 
+function messageOf(error: ErrorResponse | undefined, fallback: string): string {
+  return error?.message ?? fallback
+}
+
 export function useImpersonateSettings() {
   // The explicit `sourceIds: []` detaches the array from the module-level
   // DEFAULT_CONFIG, which a bare spread would share across every call.
@@ -71,27 +76,45 @@ export function useImpersonateSettings() {
   const impersonateSave = ref<SaveState>({ status: 'idle' })
   const pending = ref(false)
   const error = ref<string | null>(null)
+  const catalogPending = ref(false)
+  const catalogLoaded = ref(false)
+  const catalogError = ref<string | null>(null)
 
-  async function refresh(): Promise<void> {
-    pending.value = true
+  async function refreshConfig(): Promise<void> {
     error.value = null
     try {
-      const [cfgRes, srcRes] = await Promise.all([
-        apiClient.GET('/api/impersonate'),
-        apiClient.GET('/api/sources'),
-      ])
+      const cfgRes = await apiClient.GET('/api/impersonate')
       if (cfgRes.error || !cfgRes.data) throw new Error('Failed to load impersonate settings')
       config.value = mapSettings(cfgRes.data)
-      // The source list supplies only catalog LABELS — an engine that cannot list
-      // its sources must not blank the saved gating set, so this never throws.
-      sources.value = (srcRes.data ?? []).map(mapSource)
     }
     catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to load impersonate settings'
     }
-    finally {
-      pending.value = false
+  }
+
+  async function refreshCatalog(): Promise<void> {
+    catalogPending.value = true
+    catalogError.value = null
+    try {
+      const result = await apiClient.GET('/api/sources')
+      if (result.error || !result.data) {
+        throw new Error(messageOf(result.error, 'Source catalog could not be loaded.'))
+      }
+      sources.value = result.data.map(mapSource)
+      catalogLoaded.value = true
     }
+    catch (err) {
+      catalogError.value = err instanceof Error ? err.message : 'Source catalog could not be loaded.'
+    }
+    finally {
+      catalogPending.value = false
+    }
+  }
+
+  async function refresh(): Promise<void> {
+    pending.value = true
+    await Promise.all([refreshConfig(), refreshCatalog()])
+    pending.value = false
   }
 
   /**
@@ -129,7 +152,11 @@ export function useImpersonateSettings() {
     impersonateSave,
     pending,
     error,
+    catalogPending,
+    catalogLoaded,
+    catalogError,
     save,
     refresh,
+    refreshCatalog,
   }
 }

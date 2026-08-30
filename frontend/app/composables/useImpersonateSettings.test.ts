@@ -18,6 +18,7 @@
  * the fixture's `enabled: true` value.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { apiClient } from '~/utils/api/client'
 import { useImpersonateSettings } from './useImpersonateSettings'
 
 const SETTINGS_RESPONSE = {
@@ -56,6 +57,7 @@ vi.mock('~/utils/api/client', () => ({
 
 describe('useImpersonateSettings', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     putBody = null
     putPath = null
   })
@@ -118,7 +120,6 @@ describe('useImpersonateSettings', () => {
   })
 
   it('a save error surfaces the backend message and leaves the loaded config untouched', async () => {
-    const { apiClient } = await import('~/utils/api/client')
     vi.mocked(apiClient.PUT).mockResolvedValueOnce({
       data: undefined,
       error: { message: 'impersonate.url must be blank or a valid absolute http(s) URL' },
@@ -138,5 +139,35 @@ describe('useImpersonateSettings', () => {
     // The (rejected) edit never overwrote the loaded config.
     expect(config.value.url).toBe('http://impersonate-gateway:8788')
     expect(config.value.sourceIds).toEqual(['1998416842837112832'])
+  })
+
+  it('distinguishes an initial catalog failure from a successful empty catalog', async () => {
+    vi.mocked(apiClient.GET)
+      .mockResolvedValueOnce({ data: SETTINGS_RESPONSE, error: null })
+      .mockResolvedValueOnce({ data: undefined, error: { message: 'Source catalog could not be loaded.' } })
+
+    const { sources, catalogLoaded, catalogError } = useImpersonateSettings()
+
+    await vi.waitFor(() => expect(catalogError.value).toBe('Source catalog could not be loaded.'))
+    expect(sources.value).toEqual([])
+    expect(catalogLoaded.value).toBe(false)
+  })
+
+  it('preserves the last confirmed catalog when a later catalog refresh fails', async () => {
+    const { sources, catalogLoaded, catalogError, refreshCatalog } = useImpersonateSettings()
+    await vi.waitFor(() => expect(sources.value).toHaveLength(2))
+    vi.mocked(apiClient.GET).mockResolvedValueOnce({
+      data: undefined,
+      error: { message: 'Source catalog could not be loaded.' },
+    })
+
+    await refreshCatalog()
+
+    expect(sources.value).toEqual([
+      { id: '1998416842837112832', name: 'Hive Scans', lang: 'en' },
+      { id: '42', name: 'Comix', lang: 'en' },
+    ])
+    expect(catalogLoaded.value).toBe(true)
+    expect(catalogError.value).toBe('Source catalog could not be loaded.')
   })
 })

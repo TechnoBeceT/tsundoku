@@ -117,6 +117,9 @@ withDefaults(defineProps<{
   sourceSummaries?: SourceExceptionSummary[]
   /** Pane-local summary-list failure; unrelated global controls stay available. */
   sourceSummariesError?: string | null
+  sourceCatalogPending?: boolean
+  sourceCatalogLoaded?: boolean
+  sourceCatalogError?: string | null
   /** Lossless source identity currently selected in the editor. */
   selectedSourceId?: string | null
   /** Last confirmed server-composed source configuration. */
@@ -203,6 +206,9 @@ withDefaults(defineProps<{
   sourceCatalog: () => [],
   sourceSummaries: () => [],
   sourceSummariesError: null,
+  sourceCatalogPending: false,
+  sourceCatalogLoaded: false,
+  sourceCatalogError: null,
   selectedSourceId: null,
   sourceConfiguration: null,
   sourceExceptionsPending: false,
@@ -285,6 +291,7 @@ const emit = defineEmits<{
   'save-sources-settings': [settings: SourcesSettings]
   'select-source': [sourceId: string]
   'retry-source-summaries': []
+  'retry-source-catalog': []
   'set-source-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global-source-setting': [sourceId: string, key: SourceConfigurationRowKey]
   'set-source-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
@@ -404,6 +411,9 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           :source-catalog="sourceCatalog"
           :source-summaries="sourceSummaries"
           :source-summaries-error="sourceSummariesError"
+          :source-catalog-pending="sourceCatalogPending"
+          :source-catalog-loaded="sourceCatalogLoaded"
+          :source-catalog-error="sourceCatalogError"
           :selected-source-id="selectedSourceId"
           :source-configuration="sourceConfiguration"
           :source-exceptions-pending="sourceExceptionsPending"
@@ -421,6 +431,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           @dismiss-endpoint-error="emit('dismiss-endpoint-error')"
           @select-source="emit('select-source', $event)"
           @retry-source-summaries="emit('retry-source-summaries')"
+          @retry-source-catalog="emit('retry-source-catalog')"
           @set-source-override="forwardSourceOverride"
           @use-global-source-setting="forwardUseGlobal"
           @set-source-binding="emit('set-source-binding', $event)"

@@ -19,7 +19,15 @@
  * replace the callback query with the canonical Trackers route so refresh cannot
  * replay the flash.
  */
-import type { EngineInfo, SettingsPane, SourceConfigurationRowKey } from '~/components/screens/settings.types'
+import type {
+  EngineInfo,
+  FlareSolverrConfig,
+  ImpersonateConfig,
+  LibrarySettings,
+  SettingsPane,
+  SourceConfigurationRowKey,
+  SourcesSettings,
+} from '~/components/screens/settings.types'
 import { buildSettingsQuery, parseSettingsHighlight } from '~/utils/settingsHighlight'
 import { stashPendingTrackerId } from '~/utils/trackerCallback'
 
@@ -65,7 +73,11 @@ const {
   sources: sourceOptions,
   impersonateSave,
   pending: impersonatePending,
+  catalogPending: sourceCatalogPending,
+  catalogLoaded: sourceCatalogLoaded,
+  catalogError: sourceCatalogError,
   save: saveImpersonate,
+  refreshCatalog: refreshSourceCatalog,
 } = useImpersonateSettings()
 
 const {
@@ -159,6 +171,7 @@ const {
   action: sourceAction,
   loadSummaries: loadSourceSummaries,
   selectSource,
+  refreshAfterGlobalChange: refreshSourceConfigurationAfterGlobalChange,
   setTransport: setSourceTransport,
   setThroughput: setSourceThroughput,
   setProxy: setSourceProxy,
@@ -211,6 +224,26 @@ function onSetSourceBinding(payload: { sourceId: string, socksEndpointId: string
 
 function onClearSourceBinding(sourceId: string): void {
   void setSourceBinding(sourceId, null)
+}
+
+async function onSaveLibrary(next: LibrarySettings): Promise<void> {
+  await saveLibrary(next)
+  if (librarySave.value.status === 'success') await refreshSourceConfigurationAfterGlobalChange()
+}
+
+async function onSaveSourcesSettings(next: SourcesSettings): Promise<void> {
+  await saveSourcesSettings(next)
+  if (sourcesSettingsSave.value.status === 'success') await refreshSourceConfigurationAfterGlobalChange()
+}
+
+async function onSaveFlareSolverr(next: FlareSolverrConfig): Promise<void> {
+  await saveFlareSolverr(next)
+  if (flareSolverrSave.value.status === 'success') await refreshSourceConfigurationAfterGlobalChange()
+}
+
+async function onSaveImpersonate(next: Pick<ImpersonateConfig, 'enabled' | 'url'>): Promise<void> {
+  await saveImpersonate(next)
+  if (impersonateSave.value.status === 'success') await refreshSourceConfigurationAfterGlobalChange()
 }
 
 /** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
@@ -368,6 +401,9 @@ const loading = computed(
       :source-catalog="sourceCatalog"
       :source-summaries="sourceSummaries"
       :source-summaries-error="sourceSummariesError"
+      :source-catalog-pending="sourceCatalogPending"
+      :source-catalog-loaded="sourceCatalogLoaded"
+      :source-catalog-error="sourceCatalogError"
       :selected-source-id="selectedSourceId"
       :source-configuration="sourceConfiguration"
       :source-exceptions-pending="sourceExceptionsPending"
@@ -406,10 +442,10 @@ const loading = computed(
       :network-endpoints-error="networkEndpointsError"
       :loading="loading"
       @set-pane="setPane"
-      @save-library="saveLibrary"
+      @save-library="onSaveLibrary"
       @toggle-auto-identify="saveMetadataAutoIdentify"
-      @save-flaresolverr="saveFlareSolverr"
-      @save-impersonate="saveImpersonate"
+      @save-flaresolverr="onSaveFlareSolverr"
+      @save-impersonate="onSaveImpersonate"
       @add-category="addCategory"
       @rename-category="renameCategory"
       @reorder-category="reorderCategory"
@@ -425,9 +461,10 @@ const loading = computed(
       @remove-repo="removeRepo"
       @reorder-repo="reorderRepo"
       @update:ext-check-interval="saveExtensionCheckInterval"
-      @save-sources-settings="saveSourcesSettings"
+      @save-sources-settings="onSaveSourcesSettings"
       @select-source="setSelectedSource"
       @retry-source-summaries="loadSourceSummaries"
+      @retry-source-catalog="refreshSourceCatalog"
       @set-source-override="onSetSourceOverride"
       @use-global-source-setting="onUseGlobalSourceSetting"
       @set-source-binding="onSetSourceBinding"

@@ -50,6 +50,9 @@ const props = withDefaults(defineProps<{
   sourceCatalog: SourceIdentity[]
   sourceSummaries: SourceExceptionSummary[]
   sourceSummariesError?: string | null
+  sourceCatalogPending?: boolean
+  sourceCatalogLoaded?: boolean
+  sourceCatalogError?: string | null
   selectedSourceId?: string | null
   sourceConfiguration?: SourceEffectiveConfiguration | null
   sourceExceptionsPending?: boolean
@@ -72,6 +75,9 @@ const props = withDefaults(defineProps<{
   endpointsPending: false,
   endpointsError: null,
   sourceSummariesError: null,
+  sourceCatalogPending: false,
+  sourceCatalogLoaded: false,
+  sourceCatalogError: null,
   selectedSourceId: null,
   sourceConfiguration: null,
   sourceExceptionsPending: false,
@@ -92,6 +98,7 @@ const emit = defineEmits<{
   'dismiss-endpoint-error': []
   'select-source': [sourceId: string]
   'retry-source-summaries': []
+  'retry-source-catalog': []
   'set-source-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global-source-setting': [sourceId: string, key: SourceConfigurationRowKey]
   'set-source-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: FlareMode, flareEndpointId: string | null }]
@@ -319,6 +326,9 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             :sources="sourceCatalog"
             :summaries="sourceSummaries"
             :summaries-error="sourceSummariesError"
+            :catalog-pending="sourceCatalogPending"
+            :catalog-loaded="sourceCatalogLoaded"
+            :catalog-error="sourceCatalogError"
             :selected-source-id="selectedSourceId"
             :configuration="sourceConfiguration"
             :endpoints="endpoints"
@@ -332,6 +342,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
             :action="sourceAction"
             @select-source="emit('select-source', $event)"
             @retry-summaries="emit('retry-source-summaries')"
+            @retry-catalog="emit('retry-source-catalog')"
             @set-override="setSourceOverride"
             @use-global="useGlobalSourceSetting"
             @set-binding="emit('set-source-binding', $event)"

@@ -31,6 +31,9 @@ const props = withDefaults(defineProps<{
   globalImageRequestDelay?: string
   pending?: boolean
   summariesError?: string | null
+  catalogPending?: boolean
+  catalogLoaded?: boolean
+  catalogError?: string | null
   configurationPending?: boolean
   configurationError?: string | null
   highlightedSourceId?: string | null
@@ -51,6 +54,9 @@ const props = withDefaults(defineProps<{
   globalImageRequestDelay: '500ms',
   pending: false,
   summariesError: null,
+  catalogPending: false,
+  catalogLoaded: false,
+  catalogError: null,
   configurationPending: false,
   configurationError: null,
   highlightedSourceId: null,
@@ -62,6 +68,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   'select-source': [sourceId: string]
   'retry-summaries': []
+  'retry-catalog': []
   'set-override': [sourceId: string, key: SourceConfigurationRowKey, value: string | number | boolean]
   'use-global': [sourceId: string, key: SourceConfigurationRowKey]
   'set-binding': [payload: { sourceId: string, socksEndpointId: string | null, flareMode: 'none' | 'global' | 'endpoint', flareEndpointId: string | null }]
@@ -104,6 +111,16 @@ const currentConfiguration = computed(() => {
   if (props.configuration?.source.sourceId !== localSelectedSourceId.value) return null
   return props.configuration
 })
+const targetedMutationActive = computed(() => (
+  currentConfiguration.value !== null
+  && props.action.sourceId === currentConfiguration.value.source.sourceId
+  && props.action.key !== null
+  && (Boolean(props.action.saving) || Boolean(props.action.error))
+))
+const showCurrentConfiguration = computed(() => (
+  currentConfiguration.value !== null
+  && ((!props.configurationPending && !props.configurationError) || targetedMutationActive.value)
+))
 
 function selectSource(sourceId: string): void {
   localSelectedSourceId.value = sourceId
@@ -126,6 +143,21 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
     title="Source exceptions"
     sub="Start with sources that differ from global behavior, then search the full installed catalog."
   >
+    <div v-if="catalogError" class="source-exceptions__error" role="alert">
+      <FormError :message="catalogError" />
+      <AppButton
+        data-testid="retry-source-catalog"
+        variant="ghost"
+        size="sm"
+        @click="emit('retry-catalog')"
+      >
+        Retry source catalog
+      </AppButton>
+    </div>
+    <p v-else-if="catalogPending" class="source-exceptions__catalog-status" role="status">
+      Refreshing installed source catalog…
+    </p>
+
     <div v-if="summariesError" class="source-exceptions__error" role="alert">
       <FormError :message="summariesError" />
       <AppButton
@@ -149,7 +181,7 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
     </div>
 
     <EmptyState
-      v-else-if="sources.length === 0"
+      v-else-if="catalogLoaded && !catalogError && sources.length === 0"
       title="No sources installed"
       sub="Install a source extension before adding source-specific settings."
     />
@@ -201,12 +233,8 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
         </aside>
 
         <main class="source-exceptions__editor" aria-live="polite">
-          <div v-if="configurationPending" role="status" aria-label="Loading source configuration">
-            <Skeleton variant="card" height="28rem" />
-          </div>
-          <FormError v-else-if="configurationError" :message="configurationError" />
           <SourceConfigurationGroup
-            v-else-if="currentConfiguration"
+            v-if="showCurrentConfiguration && currentConfiguration"
             :key="currentConfiguration.source.sourceId"
             :configuration="currentConfiguration"
             :endpoints="endpoints"
@@ -219,6 +247,10 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
             @set-binding="emit('set-binding', $event)"
             @clear-binding="emit('clear-binding', $event)"
           />
+          <div v-else-if="configurationPending" role="status" aria-label="Loading source configuration">
+            <Skeleton variant="card" height="28rem" />
+          </div>
+          <FormError v-else-if="configurationError" :message="configurationError" />
           <div v-else class="source-exceptions__editor-empty">
             <h3>{{ localSelectedSourceId ? 'Loading selected source' : 'Choose a source' }}</h3>
             <p>{{ localSelectedSourceId ? 'Its effective configuration will appear here.' : 'Select an exception or search the catalog to inspect effective behavior.' }}</p>
@@ -246,6 +278,12 @@ function forwardUseGlobal(sourceId: string, key: SourceConfigurationRowKey): voi
   justify-content: space-between;
   gap: var(--space-base);
   margin: var(--space-sm) 0 var(--space-lg);
+}
+
+.source-exceptions__catalog-status {
+  margin: var(--space-sm) 0 var(--space-lg);
+  color: var(--muted);
+  font-size: var(--text-sm);
 }
 
 .source-exceptions__counts {

@@ -65,16 +65,31 @@ export function useSourceEffectiveConfiguration() {
   let mutationRunning = false
   const mutationQueue: (() => Promise<void>)[] = []
 
+  async function fetchDetail(sourceId: string): Promise<SourceEffectiveConfiguration> {
+    const result = await apiClient.GET('/api/sources/{sourceId}/effective-configuration', {
+      params: { path: { sourceId } },
+    })
+    if (result.error || !result.data) {
+      throw new Error(messageOf(result.error, 'Source configuration could not be loaded'))
+    }
+    return result.data
+  }
+
+  async function fetchSummaries(): Promise<SourceExceptionSummary[]> {
+    const result = await apiClient.GET('/api/sources/exceptions')
+    if (result.error || !result.data) {
+      throw new Error(messageOf(result.error, 'Source exceptions could not be loaded'))
+    }
+    return result.data
+  }
+
   async function loadSummaries(): Promise<void> {
     const request = ++summariesRequest
     summariesPending.value = true
     summariesError.value = null
     try {
-      const result = await apiClient.GET('/api/sources/exceptions')
-      if (result.error || !result.data) {
-        throw new Error(messageOf(result.error, 'Source exceptions could not be loaded'))
-      }
-      if (request === summariesRequest) summaries.value = result.data
+      const result = await fetchSummaries()
+      if (request === summariesRequest) summaries.value = result
     }
     catch (cause) {
       if (request === summariesRequest) {
@@ -91,13 +106,8 @@ export function useSourceEffectiveConfiguration() {
     selectedPending.value = true
     selectedError.value = null
     try {
-      const result = await apiClient.GET('/api/sources/{sourceId}/effective-configuration', {
-        params: { path: { sourceId } },
-      })
-      if (result.error || !result.data) {
-        throw new Error(messageOf(result.error, 'Source configuration could not be loaded'))
-      }
-      if (request === detailRequest && selectedSourceId.value === sourceId) selected.value = result.data
+      const configuration = await fetchDetail(sourceId)
+      if (request === detailRequest && selectedSourceId.value === sourceId) selected.value = configuration
     }
     catch (cause) {
       if (request === detailRequest && selectedSourceId.value === sourceId) {
@@ -114,18 +124,38 @@ export function useSourceEffectiveConfiguration() {
     await loadDetail(sourceId)
   }
 
-  async function refetchDetailAfterMutation(sourceId: string): Promise<void> {
-    if (selectedSourceId.value === sourceId) {
-      await loadDetail(sourceId)
-      return
-    }
+  async function confirmDetailAfterMutation(sourceId: string): Promise<void> {
+    const request = selectedSourceId.value === sourceId ? ++detailRequest : null
+    const configuration = await fetchDetail(sourceId)
+    if (request === null || request !== detailRequest || selectedSourceId.value !== sourceId) return
 
-    // The owner may select another source while a save is in flight. The write
-    // still earns its confirmation read, but that older source cannot replace
-    // the newly selected detail.
-    await apiClient.GET('/api/sources/{sourceId}/effective-configuration', {
-      params: { path: { sourceId } },
-    })
+    selected.value = configuration
+    selectedError.value = null
+  }
+
+  async function confirmSummariesAfterMutation(): Promise<void> {
+    const request = ++summariesRequest
+    try {
+      const result = await fetchSummaries()
+      if (request !== summariesRequest) return
+      summaries.value = result
+      summariesError.value = null
+    }
+    catch (cause) {
+      if (request === summariesRequest) {
+        summariesError.value = cause instanceof Error ? cause.message : 'Source exceptions could not be loaded'
+      }
+      throw cause
+    }
+  }
+
+  /** Refreshes every projection that includes global source behavior. */
+  async function refreshAfterGlobalChange(): Promise<void> {
+    const sourceId = selectedSourceId.value
+    await Promise.all([
+      sourceId === null ? Promise.resolve() : loadDetail(sourceId),
+      loadSummaries(),
+    ])
   }
 
   async function executeMutation<T>(
@@ -149,8 +179,8 @@ export function useSourceEffectiveConfiguration() {
       }
 
       await Promise.all([
-        refetchDetailAfterMutation(sourceId),
-        loadSummaries(),
+        confirmDetailAfterMutation(sourceId),
+        confirmSummariesAfterMutation(),
       ])
 
       action.value = { sourceId, key, saving: false, error: null }
@@ -284,6 +314,7 @@ export function useSourceEffectiveConfiguration() {
     action,
     loadSummaries,
     selectSource,
+    refreshAfterGlobalChange,
     setTransport,
     setThroughput,
     setProxy,

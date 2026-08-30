@@ -264,6 +264,68 @@ describe('SourceExceptionsPanel', () => {
     expect(wrapper.emitted('retry-summaries')).toHaveLength(1)
   })
 
+  it('keeps the confirmed editor mounted while a targeted mutation is confirming or reports an error', async () => {
+    const wrapper = mount(SourceExceptionsPanel, {
+      props: {
+        ...baseProps,
+        configurationPending: true,
+        action: {
+          sourceId: overridden.source.sourceId,
+          key: 'downloadConcurrency',
+          saving: true,
+          error: null,
+        },
+      },
+    })
+
+    expect(wrapper.findComponent(SourceConfigurationGroup).exists()).toBe(true)
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').attributes('aria-busy')).toBe('true')
+
+    await wrapper.setProps({
+      configurationPending: false,
+      configurationError: 'Confirmation read failed',
+      action: {
+        sourceId: overridden.source.sourceId,
+        key: 'downloadConcurrency',
+        saving: false,
+        error: 'Confirmation read failed',
+      },
+    })
+    expect(wrapper.findComponent(SourceConfigurationGroup).exists()).toBe(true)
+    expect(wrapper.get('[data-source-setting-target="downloadConcurrency"]').text()).toContain('Confirmation read failed')
+  })
+
+  it('preserves a confirmed catalog behind a distinct retryable catalog failure', async () => {
+    const wrapper = mount(SourceExceptionsPanel, {
+      props: {
+        ...baseProps,
+        catalogLoaded: true,
+        catalogError: 'Source catalog could not be loaded.',
+      },
+    })
+
+    expect(wrapper.text()).toContain('Source catalog could not be loaded.')
+    expect(wrapper.text()).toContain('Comic Asura')
+    expect(wrapper.text()).not.toContain('No sources installed')
+    await wrapper.get('[data-testid="retry-source-catalog"]').trigger('click')
+    expect(wrapper.emitted('retry-catalog')).toHaveLength(1)
+  })
+
+  it('uses the no-sources message only for a successfully confirmed empty catalog', () => {
+    const wrapper = mount(SourceExceptionsPanel, {
+      props: {
+        ...baseProps,
+        sources: [],
+        summaries: [],
+        selectedSourceId: null,
+        configuration: null,
+        catalogLoaded: true,
+      },
+    })
+
+    expect(wrapper.text()).toContain('No sources installed')
+  })
+
   it('focuses an externally highlighted row and scrolls it into view', async () => {
     const scrollIntoView = vi.fn()
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
