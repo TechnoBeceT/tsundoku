@@ -35,19 +35,20 @@ type imageEntry struct {
 type Client struct {
 	mu sync.Mutex
 
-	sources       []sourceengine.Source
-	searchResults map[int64]sourceengine.SearchResult
-	mangaDetails  map[contentKey]sourceengine.MangaDetails
-	chapters      map[contentKey][]sourceengine.Chapter
-	pages         map[contentKey][]sourceengine.Page
-	images        map[contentKey]imageEntry
-	coverImages   map[contentKey]imageEntry
-	extensions    []sourceengine.Extension
-	preferences   map[int64][]sourceengine.Preference
-	repos         []string
-	flareSolverr  sourceengine.FlareSolverrConfig
-	socks         sourceengine.SocksConfig
-	impersonate   sourceengine.ImpersonateConfig
+	sources        []sourceengine.Source
+	searchResults  map[int64]sourceengine.SearchResult
+	mangaDetails   map[contentKey]sourceengine.MangaDetails
+	chapters       map[contentKey][]sourceengine.Chapter
+	pages          map[contentKey][]sourceengine.Page
+	images         map[contentKey]imageEntry
+	coverImages    map[contentKey]imageEntry
+	extensions     []sourceengine.Extension
+	preferences    map[int64][]sourceengine.Preference
+	repos          []string
+	flareSolverr   sourceengine.FlareSolverrConfig
+	socks          sourceengine.SocksConfig
+	impersonate    sourceengine.ImpersonateConfig
+	imageTransport sourceengine.ImageTransportConfig
 
 	lastInstallApkURL string
 
@@ -569,6 +570,23 @@ func (c *Client) SetImpersonate(_ context.Context, patch sourceengine.Impersonat
 			c.impersonate.SourceIDs = append([]int64(nil), *patch.SourceIDs...)
 		}
 		result = c.impersonate
+	})
+	return result, err
+}
+
+// SetImageTransport applies patch's non-nil reuse-source list onto the stored
+// image transport config and returns the updated config. A pointer to an empty
+// slice is retained as an explicit cleared selection; a nil pointer preserves
+// the current selection.
+func (c *Client) SetImageTransport(_ context.Context, patch sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	var result sourceengine.ImageTransportConfig
+	err := c.configCall("SetImageTransport", func() {
+		if patch.ReuseSourceIDs != nil {
+			c.imageTransport.ReuseSourceIDs = append([]int64{}, (*patch.ReuseSourceIDs)...)
+		}
+		result = sourceengine.ImageTransportConfig{
+			ReuseSourceIDs: append([]int64{}, c.imageTransport.ReuseSourceIDs...),
+		}
 	})
 	return result, err
 }

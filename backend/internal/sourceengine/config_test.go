@@ -171,6 +171,75 @@ func TestSetImpersonate_SendsAnExplicitEmptySourceSet(t *testing.T) {
 	}
 }
 
+// TestSetImageTransport_ExactJSONAndReadback pins the image connection-policy
+// RPC wire contract: source IDs are JSON numbers under reuseSourceIds and the
+// read-back uses the same camel-case field name.
+func TestSetImageTransport_ExactJSONAndReadback(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/config/image-transport" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		raw, _ = io.ReadAll(r.Body)
+		writeJSON(t, w, http.StatusOK, map[string]any{"reuseSourceIds": []int64{42, 1998416842837112832}})
+	}))
+	defer srv.Close()
+
+	ids := []int64{42, 1998416842837112832}
+	got, err := newTestClient(t, srv).SetImageTransport(context.Background(), sourceengine.ImageTransportPatch{ReuseSourceIDs: &ids})
+	if err != nil {
+		t.Fatalf("SetImageTransport: %v", err)
+	}
+	if body := string(raw); body != `{"reuseSourceIds":[42,1998416842837112832]}` {
+		t.Errorf("request body = %s, want reuseSourceIds as bare JSON numbers", body)
+	}
+	if !reflect.DeepEqual(got.ReuseSourceIDs, ids) {
+		t.Errorf("read-back ReuseSourceIDs = %v, want %v", got.ReuseSourceIDs, ids)
+	}
+}
+
+// TestSetImageTransport_OmittedListDoesNotSendAClear proves a nil patch
+// field is omitted instead of becoming [] or null, which is the no-clobber
+// representation the host uses to preserve its existing selection.
+func TestSetImageTransport_OmittedListDoesNotSendAClear(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		writeJSON(t, w, http.StatusOK, map[string]any{"reuseSourceIds": []int64{42}})
+	}))
+	defer srv.Close()
+
+	got, err := newTestClient(t, srv).SetImageTransport(context.Background(), sourceengine.ImageTransportPatch{})
+	if err != nil {
+		t.Fatalf("SetImageTransport: %v", err)
+	}
+	if body := string(raw); body != `{}` {
+		t.Errorf("request body = %s, want an empty patch that preserves the host selection", body)
+	}
+	if !reflect.DeepEqual(got.ReuseSourceIDs, []int64{42}) {
+		t.Errorf("read-back ReuseSourceIDs = %v, want preserved host selection", got.ReuseSourceIDs)
+	}
+}
+
+// TestSetImageTransport_ExplicitEmptyListSendsAClear proves an empty but
+// non-nil list reaches the wire as [], distinct from an omitted patch field.
+func TestSetImageTransport_ExplicitEmptyListSendsAClear(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		writeJSON(t, w, http.StatusOK, map[string]any{"reuseSourceIds": []int64{}})
+	}))
+	defer srv.Close()
+
+	empty := []int64{}
+	if _, err := newTestClient(t, srv).SetImageTransport(context.Background(), sourceengine.ImageTransportPatch{ReuseSourceIDs: &empty}); err != nil {
+		t.Fatalf("SetImageTransport: %v", err)
+	}
+	if body := string(raw); body != `{"reuseSourceIds":[]}` {
+		t.Errorf("request body = %s, want an explicit empty reuseSourceIds array", body)
+	}
+}
+
 // TestSetFlareSolverr_BadRequest proves a 400 maps to *BadRequestError.
 func TestSetFlareSolverr_BadRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -280,6 +280,21 @@ type ImpersonateConfig struct {
 	SourceIDs []int64 `json:"sourceIds"`
 }
 
+// ImageTransportPatch is a PARTIAL update to the source image connection
+// policy. ReuseSourceIDs selects sources that use their normal pooled client
+// for cacheless image calls. A nil pointer omits the field (preserving the
+// host selection); a pointer to an empty slice clears the selection.
+type ImageTransportPatch struct {
+	ReuseSourceIDs *[]int64 `json:"reuseSourceIds,omitempty"`
+}
+
+// ImageTransportConfig is the image connection policy read back after a
+// SetImageTransport call. ReuseSourceIDs is normalized by the host into
+// ascending unique source IDs.
+type ImageTransportConfig struct {
+	ReuseSourceIDs []int64 `json:"reuseSourceIds"`
+}
+
 // SocksPatch is a PARTIAL update to the SOCKS-proxy config. Every field is a
 // pointer so that only the caller's explicitly-set fields are marshalled
 // onto the wire — see FlareSolverrPatch's doc comment for the same

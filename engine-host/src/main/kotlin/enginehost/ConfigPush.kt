@@ -162,6 +162,18 @@ object ConfigPush {
             url = ImpersonateConfig.url,
             sourceIds = ImpersonateConfig.sourceIds.toList(),
         )
+
+    /**
+     * Push a partial image connection-policy config. An explicit empty list
+     * clears the selection; an omitted list preserves the prior generation.
+     */
+    fun applyImageTransport(req: ImageTransportConfigRequest) {
+        req.reuseSourceIds?.let { ImageTransportConfig.reuseSourceIds = it.toSortedSet() }
+    }
+
+    /** Read back the current normalized image connection-policy config. */
+    fun readImageTransport(): ImageTransportConfigRequest =
+        ImageTransportConfigRequest(reuseSourceIds = ImageTransportConfig.reuseSourceIds.toList())
 }
 
 /**
@@ -203,5 +215,22 @@ object ImpersonateConfig {
          * image descrambling) in play.
          */
         fun allows(sourceId: Long): Boolean = enabled && url.isNotBlank() && sourceId in sourceIds
+    }
+}
+
+/**
+ * ImageTransportConfig holds the source IDs whose cacheless image calls use
+ * the source's normal pooled client. Every update installs one freshly-built,
+ * sorted set reference, so concurrent readers observe a complete generation.
+ */
+object ImageTransportConfig {
+    @Volatile
+    var reuseSourceIds: Set<Long> = emptySet()
+
+    /** A single image fetch's immutable view of the source selection. */
+    fun snapshot(): Snapshot = Snapshot(reuseSourceIds = reuseSourceIds)
+
+    data class Snapshot(val reuseSourceIds: Set<Long>) {
+        fun reuses(sourceId: Long): Boolean = sourceId in reuseSourceIds
     }
 }

@@ -47,9 +47,9 @@ type HTTPDoer interface {
 //     source's configurable preferences.
 //   - Extensions/InstallExtension/RefreshExtensions/UpdateExtension/
 //     UninstallExtension/Repos/SetRepos: extension package management.
-//   - SetFlareSolverr/SetSocks/SetImpersonate: the FlareSolverr + SOCKS-proxy +
-//     impersonate-gateway config passthrough (replaces the retired Suwayomi
-//     settings-proxy).
+//   - SetFlareSolverr/SetSocks/SetImpersonate/SetImageTransport: the
+//     FlareSolverr + SOCKS-proxy + impersonate-gateway + image-connection
+//     policy config passthrough (replaces the retired Suwayomi settings-proxy).
 //
 // FOOTGUN — adding a method here is never a local change. Every implementor
 // across the tree must gain it, and only two of them are production code that
@@ -167,6 +167,11 @@ type Client interface {
 	// (the Chrome-fingerprint image-fetch gateway, GAP-111) — only patch's
 	// non-nil fields are sent — and returns the config read back.
 	SetImpersonate(ctx context.Context, patch ImpersonatePatch) (ImpersonateConfig, error)
+
+	// SetImageTransport applies a PARTIAL update of the image connection policy.
+	// Only patch's non-nil fields are sent, so an omitted reuse list preserves
+	// the host configuration while an explicitly empty list clears it.
+	SetImageTransport(ctx context.Context, patch ImageTransportPatch) (ImageTransportConfig, error)
 }
 
 // New constructs a Client that talks to the engine host at baseURL (e.g.

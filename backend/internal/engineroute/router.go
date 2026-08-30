@@ -15,7 +15,7 @@ import (
 //
 // Only the SOURCE-ADDRESSED content calls (those taking a sourceID) are routed;
 // engine-GLOBAL management calls (Health, Sources, Extensions, repos, and the
-// FlareSolverr/SOCKS/impersonate config push) always go to the default instance. The default
+// FlareSolverr/SOCKS/impersonate/image-transport config push) always go to the default instance. The default
 // instance is the authoritative registry the boot reconcile provisions;
 // non-default instances are provisioned by ReconcileNetwork (which runs a full
 // reconcile against each), so a routed source's own instance carries the same
@@ -258,4 +258,11 @@ func (r *Router) SetSocks(ctx context.Context, patch sourceengine.SocksPatch) (s
 // pushed by ReconcileNetwork onto each non-default instance directly.
 func (r *Router) SetImpersonate(ctx context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
 	return r.defaultClient.SetImpersonate(ctx, patch)
+}
+
+// SetImageTransport pushes the global image connection policy onto the default
+// instance. Per-profile propagation is deliberately owned by topology
+// reconciliation, not this routing decorator.
+func (r *Router) SetImageTransport(ctx context.Context, patch sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	return r.defaultClient.SetImageTransport(ctx, patch)
 }

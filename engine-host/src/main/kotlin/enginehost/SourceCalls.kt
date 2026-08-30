@@ -358,19 +358,29 @@ object SourceCalls {
             // gated path (config read, SOCKS build, or the fetch itself).
             tryImpersonateGateway(source.id, request, cancellation)?.let { return@run it }
 
-            // Fallback / default: the GAP-110 fresh-connection okhttp path. A fresh-connection client
-            // keeps no idle connection for reuse (see the GAP-110 note above); interceptors, headers,
-            // and timeouts are inherited from the source's own client.
-            val freshClient = http.client.newBuilder()
-                .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
-                .build()
-            val call = freshClient.newCachelessCallWithProgress(request, page)
+            // Gateway success returned above before source-client selection. Only the okhttp fallback
+            // chooses between the opted-in pooled source client and the default fresh client.
+            val call = imageClientFor(source.id, http.client).newCachelessCallWithProgress(request, page)
             cancellation.withCallSuspend(call) { retained ->
                 retained.awaitSuccess().use { response ->
                     val contentType = response.header("Content-Type") ?: "application/octet-stream"
                     response.body.bytes() to contentType
                 }
             }
+        }
+
+    /**
+     * Selects the fallback image client for [sourceId]. Reuse keeps the
+     * source's normal pooled client while every call remains cacheless; Fresh
+     * derives the existing no-idle-pool client for the GAP-110 behavior.
+     */
+    internal fun imageClientFor(sourceId: Long, sourceClient: OkHttpClient): OkHttpClient =
+        if (ImageTransportConfig.snapshot().reuses(sourceId)) {
+            sourceClient
+        } else {
+            sourceClient.newBuilder()
+                .connectionPool(ConnectionPool(0, 1, TimeUnit.NANOSECONDS))
+                .build()
         }
 
     /**

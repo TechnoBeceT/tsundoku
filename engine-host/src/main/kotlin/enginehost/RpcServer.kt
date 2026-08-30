@@ -430,6 +430,11 @@ class RpcServer(
                     ConfigPush.applyImpersonate(request)
                     response.respondJson(200, ConfigPush.readImpersonate())
                 }
+                "/config/image-transport" -> {
+                    val request: ImageTransportConfigRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    ConfigPush.applyImageTransport(request)
+                    response.respondJson(200, ConfigPush.readImageTransport())
+                }
                 else -> response.respondJson(404, ErrorResponse("no route for $path"))
             }
         } catch (e: JacksonException) {

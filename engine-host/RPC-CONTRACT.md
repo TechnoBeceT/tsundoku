@@ -3,6 +3,19 @@
 The engine host serves HTTP/JSON on one port. Existing source, image, configuration, and extension
 routes keep their request and response fields unchanged. The status route below is additive.
 
+## `PUT /config/image-transport`
+
+Applies a partial image connection-policy update and returns the normalized
+current config.
+
+| Field | JSON type | Meaning |
+|---|---:|---|
+| `reuseSourceIds` | array of integers, optional | Source IDs whose fallback image requests use their normal pooled client. Omitted preserves the current selection; `[]` clears it. The response is ascending and duplicate-free. |
+
+The impersonate gateway remains first: a gateway success returns before source-client
+selection. On the fallback path, listed sources use the normal source client through the
+cacheless call API; all others derive the existing no-idle-pool client.
+
 ## `GET /status`
 
 Returns HTTP 200 with one bounded runtime snapshot:

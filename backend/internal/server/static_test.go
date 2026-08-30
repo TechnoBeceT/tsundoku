@@ -99,6 +99,9 @@ func (nullEngineClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (
 func (nullEngineClient) SetImpersonate(_ context.Context, _ sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
 	panic("nullEngineClient.SetImpersonate called in test")
 }
+func (nullEngineClient) SetImageTransport(_ context.Context, _ sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	panic("nullEngineClient.SetImageTransport called in test")
+}
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.

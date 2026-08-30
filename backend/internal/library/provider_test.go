@@ -147,6 +147,9 @@ func (f *fakeAddProviderClient) SetSocks(ctx context.Context, patch sourceengine
 func (f *fakeAddProviderClient) SetImpersonate(ctx context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
 	return sourceengine.ImpersonateConfig{}, nil
 }
+func (f *fakeAddProviderClient) SetImageTransport(ctx context.Context, patch sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	return sourceengine.ImageTransportConfig{}, nil
+}
 
 // diskScanFirst wraps disk.ScanLibrary and returns the first (and, for this
 // test's single-series fixture, only) SeriesFacts found under storage.

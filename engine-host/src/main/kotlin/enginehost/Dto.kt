@@ -226,4 +226,13 @@ data class ImpersonateConfigRequest(
     val sourceIds: List<Long>? = null,
 )
 
+/**
+ * Partial image connection-policy config. [reuseSourceIds] selects sources
+ * whose cacheless image calls reuse the source's normal pooled client. An
+ * absent list preserves the selection; an explicitly empty list clears it.
+ */
+data class ImageTransportConfigRequest(
+    val reuseSourceIds: List<Long>? = null,
+)
+
 data class OkResponse(val ok: Boolean = true)

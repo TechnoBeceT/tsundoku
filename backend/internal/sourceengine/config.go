@@ -25,3 +25,10 @@ func (c *httpClient) SetSocks(ctx context.Context, patch SocksPatch) (SocksConfi
 func (c *httpClient) SetImpersonate(ctx context.Context, patch ImpersonatePatch) (ImpersonateConfig, error) {
 	return doJSON[ImpersonateConfig](ctx, c, http.MethodPut, "/config/impersonate", patch)
 }
+
+// SetImageTransport calls PUT /config/image-transport with patch, sending only
+// its non-nil fields. An explicit empty reuse list therefore clears the host's
+// selection while an omitted list leaves it unchanged.
+func (c *httpClient) SetImageTransport(ctx context.Context, patch ImageTransportPatch) (ImageTransportConfig, error) {
+	return doJSON[ImageTransportConfig](ctx, c, http.MethodPut, "/config/image-transport", patch)
+}

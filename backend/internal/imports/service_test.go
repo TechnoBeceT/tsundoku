@@ -180,6 +180,9 @@ func (f *fakeClient) SetSocks(_ context.Context, _ sourceengine.SocksPatch) (sou
 func (f *fakeClient) SetImpersonate(_ context.Context, _ sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
 	return sourceengine.ImpersonateConfig{}, nil
 }
+func (f *fakeClient) SetImageTransport(_ context.Context, _ sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	return sourceengine.ImageTransportConfig{}, nil
+}
 
 // --- helpers -----------------------------------------------------------------
 

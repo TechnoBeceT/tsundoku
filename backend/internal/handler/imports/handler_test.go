@@ -227,6 +227,10 @@ func (f *fakeEngineClient) SetImpersonate(context.Context, sourceengine.Imperson
 	return sourceengine.ImpersonateConfig{}, nil
 }
 
+func (f *fakeEngineClient) SetImageTransport(context.Context, sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	return sourceengine.ImageTransportConfig{}, nil
+}
+
 // makeChapters builds n stub chapters anchored under urlPrefix, numbered 1..n.
 func makeChapters(urlPrefix string, n int) []sourceengine.Chapter {
 	chs := make([]sourceengine.Chapter, n)
