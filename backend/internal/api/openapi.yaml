@@ -2324,6 +2324,257 @@ components:
                 type: string
                 example: 30m
 
+    SourceIdentity:
+      type: object
+      required: [sourceId, name, language]
+      properties:
+        sourceId:
+          type: string
+          pattern: "^-?[0-9]+$"
+          description: Signed decimal int64 source identity, stringified for lossless JavaScript transport.
+        name:
+          type: string
+        language:
+          type: string
+
+    IntegerPolicyValue:
+      type: object
+      required: [override, effective, inherited]
+      properties:
+        override:
+          type: [integer, "null"]
+        effective:
+          type: integer
+        inherited:
+          type: boolean
+
+    DurationPolicyValue:
+      type: object
+      required: [override, effective, inherited]
+      properties:
+        override:
+          type: [string, "null"]
+        effective:
+          type: string
+        inherited:
+          type: boolean
+
+    BooleanPolicyValue:
+      type: object
+      required: [override, effective, inherited]
+      properties:
+        override:
+          type: [boolean, "null"]
+        effective:
+          type: boolean
+        inherited:
+          type: boolean
+
+    ImageConnectionPolicyValue:
+      type: object
+      required: [override, effective, inherited]
+      properties:
+        override:
+          type: [string, "null"]
+          enum: [fresh, reuse, null]
+        effective:
+          type: string
+          enum: [fresh, reuse]
+        inherited:
+          type: boolean
+
+    BypassSessionPolicyValue:
+      type: object
+      required: [override, effective, inherited, mode]
+      properties:
+        override:
+          type: [boolean, "null"]
+        effective:
+          type: boolean
+        inherited:
+          type: boolean
+        mode:
+          type: string
+          enum: [disabled, disposable, reusable]
+
+    SourceProtectionConfiguration:
+      type: object
+      required: [warmupInterval, warmupSlowThresholdMs, failureThreshold, sourceCooldown, politenessDelay]
+      properties:
+        warmupInterval:
+          type: string
+        warmupSlowThresholdMs:
+          type: integer
+        failureThreshold:
+          type: integer
+        sourceCooldown:
+          type: string
+        politenessDelay:
+          type: string
+
+    SourceImageProxyState:
+      type: object
+      required: [optedIn, gatewayEnabled, gatewayConfigured, effectiveAvailable]
+      properties:
+        optedIn:
+          type: boolean
+        gatewayEnabled:
+          type: boolean
+        gatewayConfigured:
+          type: boolean
+        effectiveAvailable:
+          type: boolean
+
+    ResolvedEndpoint:
+      type: object
+      required: [endpointId, name]
+      properties:
+        endpointId:
+          type: [string, "null"]
+        name:
+          type: [string, "null"]
+
+    SourceRoutingConfiguration:
+      type: object
+      required: [socksMode, socks, bypassMode, bypass]
+      properties:
+        socksMode:
+          type: string
+          enum: [global, endpoint]
+        socks:
+          $ref: "#/components/schemas/ResolvedEndpoint"
+        bypassMode:
+          type: string
+          enum: [none, global, endpoint]
+        bypass:
+          $ref: "#/components/schemas/ResolvedEndpoint"
+
+    SourceRuntimeStatus:
+      type: object
+      required: [status, desiredRevision, appliedRevision, lastApplyAttempt, lastApplyError]
+      properties:
+        status:
+          type: string
+          enum: [applied, pending]
+        desiredRevision:
+          type: integer
+          format: int64
+        appliedRevision:
+          type: integer
+          format: int64
+        lastApplyAttempt:
+          type: [string, "null"]
+          format: date-time
+        lastApplyError:
+          type: string
+
+    SourceExceptionSummary:
+      type: object
+      required: [source, exceptionCount, runtime]
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceIdentity"
+        exceptionCount:
+          type: integer
+          minimum: 0
+          description: >-
+            Field-level count: one for each non-null throughput override, one for
+            each non-null transport override, one when the image proxy is opted
+            in, one when SOCKS names an explicit endpoint, and one when bypass
+            differs from global or names an explicit endpoint. Global values do
+            not contribute.
+        runtime:
+          $ref: "#/components/schemas/SourceRuntimeStatus"
+
+    SourceEffectiveConfiguration:
+      type: object
+      required:
+        - source
+        - downloadConcurrency
+        - imageRequestDelay
+        - protection
+        - bypassEnabled
+        - reuseBypassSession
+        - imageConnectionMode
+        - imageProxy
+        - routing
+        - profileKey
+        - runtime
+      properties:
+        source:
+          $ref: "#/components/schemas/SourceIdentity"
+        downloadConcurrency:
+          $ref: "#/components/schemas/IntegerPolicyValue"
+        imageRequestDelay:
+          $ref: "#/components/schemas/DurationPolicyValue"
+        protection:
+          $ref: "#/components/schemas/SourceProtectionConfiguration"
+        bypassEnabled:
+          type: boolean
+        reuseBypassSession:
+          $ref: "#/components/schemas/BypassSessionPolicyValue"
+        imageConnectionMode:
+          $ref: "#/components/schemas/ImageConnectionPolicyValue"
+        imageProxy:
+          $ref: "#/components/schemas/SourceImageProxyState"
+        routing:
+          $ref: "#/components/schemas/SourceRoutingConfiguration"
+        profileKey:
+          type: string
+        runtime:
+          $ref: "#/components/schemas/SourceRuntimeStatus"
+
+    PolicyPatchMode:
+      type: string
+      enum: [inherit, override]
+
+    BooleanPolicyPatch:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: "#/components/schemas/PolicyPatchMode"
+        value:
+          type: boolean
+
+    ImageConnectionPolicyPatch:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: "#/components/schemas/PolicyPatchMode"
+        value:
+          type: string
+          enum: [fresh, reuse]
+
+    SourceTransportPolicyUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        reuseBypassSession:
+          $ref: "#/components/schemas/BooleanPolicyPatch"
+        imageConnectionMode:
+          $ref: "#/components/schemas/ImageConnectionPolicyPatch"
+
+    SourceImageProxyMembershipUpdate:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
+    SourceMutationResponse:
+      type: object
+      required: [configuration, runtime]
+      properties:
+        configuration:
+          $ref: "#/components/schemas/SourceEffectiveConfiguration"
+        runtime:
+          $ref: "#/components/schemas/SourceRuntimeStatus"
+
     SourceThroughputDefaults:
       type: object
       required: [downloadConcurrency, imageRequestDelay]
@@ -8224,6 +8475,162 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/sources/exceptions:
+    get:
+      operationId: listSourceExceptions
+      summary: List sources with configuration exceptions
+      description: Returns source identities with their field-level exception counts and runtime status.
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Sources that have at least one field-level exception.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SourceExceptionSummary"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/effective-configuration:
+    get:
+      operationId: getSourceEffectiveConfiguration
+      summary: Get one source's effective configuration
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^-?[0-9]+$"
+      responses:
+        "200":
+          description: The source's resolved configuration and runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceEffectiveConfiguration"
+        "400":
+          description: Malformed source id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/transport:
+    patch:
+      operationId: updateSourceTransport
+      summary: Update one source's transport policy
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^-?[0-9]+$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceTransportPolicyUpdate"
+      responses:
+        "200":
+          description: The refreshed effective configuration and runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceMutationResponse"
+        "400":
+          description: Malformed source id or invalid policy update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/sources/{sourceId}/image-proxy:
+    put:
+      operationId: updateSourceImageProxy
+      summary: Set one source's image-proxy membership
+      tags: [sources]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: sourceId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^-?[0-9]+$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceImageProxyMembershipUpdate"
+      responses:
+        "200":
+          description: The refreshed effective configuration and runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceMutationResponse"
+        "400":
+          description: Malformed source id or invalid membership update.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/sources/throughput:
     get:
       operationId: listSourceThroughput
@@ -10438,11 +10845,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /api/network/sources/{sourceId}/binding:
+  /api/network/bindings/{sourceId}:
     put:
       operationId: setNetworkBinding
       summary: Assign a source's network route
-      description: Upserts the source's binding (one binding per source) and returns the persisted binding.
+      description: Upserts the source's binding and returns the refreshed effective configuration and runtime status.
       tags:
         - network
       security:
@@ -10462,11 +10869,11 @@ paths:
               $ref: "#/components/schemas/SourceNetworkBindingUpdate"
       responses:
         "200":
-          description: The persisted binding.
+          description: The refreshed effective configuration and runtime status.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SourceNetworkBinding"
+                $ref: "#/components/schemas/SourceMutationResponse"
         "400":
           description: Malformed sourceId/UUID, or an invalid binding (missing/kind-mismatched endpoint, inconsistent flareMode).
           content:
@@ -10482,7 +10889,7 @@ paths:
     delete:
       operationId: clearNetworkBinding
       summary: Clear a source's network route
-      description: Removes the source's binding, reverting it to the global default.
+      description: Removes the source's binding, reverting it to the global default, and returns the refreshed effective configuration and runtime status.
       tags:
         - network
       security:
@@ -10495,8 +10902,12 @@ paths:
           schema:
             type: string
       responses:
-        "204":
-          description: Binding cleared.
+        "200":
+          description: The refreshed effective configuration and runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceMutationResponse"
         "400":
           description: Malformed sourceId.
           content:

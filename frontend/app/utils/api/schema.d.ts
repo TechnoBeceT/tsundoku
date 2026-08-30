@@ -1776,6 +1776,77 @@ export interface paths {
         patch: operations["updateSettings"];
         trace?: never;
     };
+    "/api/sources/exceptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List sources with configuration exceptions
+         * @description Returns source identities with their field-level exception counts and runtime status.
+         */
+        get: operations["listSourceExceptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/effective-configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one source's effective configuration */
+        get: operations["getSourceEffectiveConfiguration"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update one source's transport policy */
+        patch: operations["updateSourceTransport"];
+        trace?: never;
+    };
+    "/api/sources/{sourceId}/image-proxy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set one source's image-proxy membership */
+        put: operations["updateSourceImageProxy"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sources/throughput": {
         parameters: {
             query?: never;
@@ -2870,7 +2941,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/network/sources/{sourceId}/binding": {
+    "/api/network/bindings/{sourceId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2880,13 +2951,13 @@ export interface paths {
         get?: never;
         /**
          * Assign a source's network route
-         * @description Upserts the source's binding (one binding per source) and returns the persisted binding.
+         * @description Upserts the source's binding and returns the refreshed effective configuration and runtime status.
          */
         put: operations["setNetworkBinding"];
         post?: never;
         /**
          * Clear a source's network route
-         * @description Removes the source's binding, reverting it to the global default.
+         * @description Removes the source's binding, reverting it to the global default, and returns the refreshed effective configuration and runtime status.
          */
         delete: operations["clearNetworkBinding"];
         options?: never;
@@ -4122,6 +4193,118 @@ export interface components {
                 /** @example 30m */
                 value: string;
             }[];
+        };
+        SourceIdentity: {
+            /** @description Signed decimal int64 source identity, stringified for lossless JavaScript transport. */
+            sourceId: string;
+            name: string;
+            language: string;
+        };
+        IntegerPolicyValue: {
+            override: number | null;
+            effective: number;
+            inherited: boolean;
+        };
+        DurationPolicyValue: {
+            override: string | null;
+            effective: string;
+            inherited: boolean;
+        };
+        BooleanPolicyValue: {
+            override: boolean | null;
+            effective: boolean;
+            inherited: boolean;
+        };
+        ImageConnectionPolicyValue: {
+            /** @enum {string|null} */
+            override: "fresh" | "reuse" | null;
+            /** @enum {string} */
+            effective: "fresh" | "reuse";
+            inherited: boolean;
+        };
+        BypassSessionPolicyValue: {
+            override: boolean | null;
+            effective: boolean;
+            inherited: boolean;
+            /** @enum {string} */
+            mode: "disabled" | "disposable" | "reusable";
+        };
+        SourceProtectionConfiguration: {
+            warmupInterval: string;
+            warmupSlowThresholdMs: number;
+            failureThreshold: number;
+            sourceCooldown: string;
+            politenessDelay: string;
+        };
+        SourceImageProxyState: {
+            optedIn: boolean;
+            gatewayEnabled: boolean;
+            gatewayConfigured: boolean;
+            effectiveAvailable: boolean;
+        };
+        ResolvedEndpoint: {
+            endpointId: string | null;
+            name: string | null;
+        };
+        SourceRoutingConfiguration: {
+            /** @enum {string} */
+            socksMode: "global" | "endpoint";
+            socks: components["schemas"]["ResolvedEndpoint"];
+            /** @enum {string} */
+            bypassMode: "none" | "global" | "endpoint";
+            bypass: components["schemas"]["ResolvedEndpoint"];
+        };
+        SourceRuntimeStatus: {
+            /** @enum {string} */
+            status: "applied" | "pending";
+            /** Format: int64 */
+            desiredRevision: number;
+            /** Format: int64 */
+            appliedRevision: number;
+            /** Format: date-time */
+            lastApplyAttempt: string | null;
+            lastApplyError: string;
+        };
+        SourceExceptionSummary: {
+            source: components["schemas"]["SourceIdentity"];
+            /** @description Field-level count: one for each non-null throughput override, one for each non-null transport override, one when the image proxy is opted in, one when SOCKS names an explicit endpoint, and one when bypass differs from global or names an explicit endpoint. Global values do not contribute. */
+            exceptionCount: number;
+            runtime: components["schemas"]["SourceRuntimeStatus"];
+        };
+        SourceEffectiveConfiguration: {
+            source: components["schemas"]["SourceIdentity"];
+            downloadConcurrency: components["schemas"]["IntegerPolicyValue"];
+            imageRequestDelay: components["schemas"]["DurationPolicyValue"];
+            protection: components["schemas"]["SourceProtectionConfiguration"];
+            bypassEnabled: boolean;
+            reuseBypassSession: components["schemas"]["BypassSessionPolicyValue"];
+            imageConnectionMode: components["schemas"]["ImageConnectionPolicyValue"];
+            imageProxy: components["schemas"]["SourceImageProxyState"];
+            routing: components["schemas"]["SourceRoutingConfiguration"];
+            profileKey: string;
+            runtime: components["schemas"]["SourceRuntimeStatus"];
+        };
+        /** @enum {string} */
+        PolicyPatchMode: "inherit" | "override";
+        BooleanPolicyPatch: {
+            mode: components["schemas"]["PolicyPatchMode"];
+            value?: boolean;
+        };
+        ImageConnectionPolicyPatch: {
+            mode: components["schemas"]["PolicyPatchMode"];
+            /** @enum {string} */
+            value?: "fresh" | "reuse";
+        };
+        SourceTransportPolicyUpdate: {
+            reuseBypassSession?: components["schemas"]["BooleanPolicyPatch"];
+            imageConnectionMode?: components["schemas"]["ImageConnectionPolicyPatch"];
+        };
+        SourceImageProxyMembershipUpdate: {
+            enabled: boolean;
+        };
+        SourceMutationResponse: {
+            configuration: components["schemas"]["SourceEffectiveConfiguration"];
+            runtime: components["schemas"]["SourceRuntimeStatus"];
         };
         SourceThroughputDefaults: {
             downloadConcurrency: number;
@@ -9075,6 +9258,190 @@ export interface operations {
             };
         };
     };
+    listSourceExceptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sources that have at least one field-level exception. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceExceptionSummary"][];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getSourceEffectiveConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The source's resolved configuration and runtime status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceEffectiveConfiguration"];
+                };
+            };
+            /** @description Malformed source id. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSourceTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceTransportPolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description The refreshed effective configuration and runtime status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMutationResponse"];
+                };
+            };
+            /** @description Malformed source id or invalid policy update. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    updateSourceImageProxy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceImageProxyMembershipUpdate"];
+            };
+        };
+        responses: {
+            /** @description The refreshed effective configuration and runtime status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceMutationResponse"];
+                };
+            };
+            /** @description Malformed source id or invalid membership update. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     listSourceThroughput: {
         parameters: {
             query?: never;
@@ -11373,13 +11740,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The persisted binding. */
+            /** @description The refreshed effective configuration and runtime status. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SourceNetworkBinding"];
+                    "application/json": components["schemas"]["SourceMutationResponse"];
                 };
             };
             /** @description Malformed sourceId/UUID, or an invalid binding (missing/kind-mismatched endpoint, inconsistent flareMode). */
@@ -11414,12 +11781,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Binding cleared. */
-            204: {
+            /** @description The refreshed effective configuration and runtime status. */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SourceMutationResponse"];
+                };
             };
             /** @description Malformed sourceId. */
             400: {
