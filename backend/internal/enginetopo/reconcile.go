@@ -3,10 +3,12 @@ package enginetopo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -14,7 +16,103 @@ import (
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
+
+// SourceRuntimeApplier serializes topology and source-runtime convergence over
+// one shared launcher/router lifecycle. Runtime applies capture transport
+// policy once, push the full image/proxy configuration to the default and every
+// desired profile, then activate the final routing map. A profile fallback is
+// returned as an error so its desired revision stays pending.
+type SourceRuntimeApplier struct {
+	defaultClient sourceengine.Client
+	network       NetworkReconcileDeps
+	mu            sync.Mutex
+}
+
+// NewSourceRuntimeApplier constructs the shared runtime/topology coordinator.
+func NewSourceRuntimeApplier(defaultClient sourceengine.Client, network NetworkReconcileDeps) *SourceRuntimeApplier {
+	return &SourceRuntimeApplier{defaultClient: defaultClient, network: network}
+}
+
+// ReconcileNetwork serializes an ordinary topology pass with source-runtime
+// applies so both paths use the same non-overlapping launcher/router lifecycle.
+func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkReconcileResult, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	policies, err := a.transportPolicies(ctx)
+	if err != nil {
+		return NetworkReconcileResult{}, err
+	}
+	deps, _ := a.runtimeNetworkDeps(policies)
+	return ReconcileNetwork(ctx, deps)
+}
+
+// ApplySourceRuntime converges one full captured runtime snapshot. sourceID is
+// retained for diagnostics; replace-set configuration necessarily converges all
+// active profiles together rather than mutating only one engine instance.
+func (a *SourceRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	policies, err := a.transportPolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
+	}
+	deps, cfg := a.runtimeNetworkDeps(policies)
+	defaultErr := ApplyRuntimeConfig(ctx, a.defaultClient, cfg)
+
+	result, networkErr := ReconcileNetwork(ctx, deps)
+	return errors.Join(
+		wrapRuntimeApplyError(sourceID, "default profile", defaultErr),
+		wrapRuntimeApplyError(sourceID, "topology", networkErr),
+		wrapRuntimeApplyError(sourceID, "profile fallback", errors.Join(result.Gaps...)),
+	)
+}
+
+func (a *SourceRuntimeApplier) transportPolicies(ctx context.Context) (map[int64]sourcetransport.Override, error) {
+	if a.network.TransportSnapshot == nil {
+		return map[int64]sourcetransport.Override{}, nil
+	}
+	policies, err := a.network.TransportSnapshot.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot transport policies: %w", err)
+	}
+	return policies, nil
+}
+
+func (a *SourceRuntimeApplier) runtimeNetworkDeps(policies map[int64]sourcetransport.Override) (NetworkReconcileDeps, ConfigProvider) {
+	reuseSourceIDs := make([]int64, 0, len(policies))
+	for id, policy := range policies {
+		if policy.ImageConnectionMode != nil && *policy.ImageConnectionMode == sourcetransport.ImageConnectionReuse {
+			reuseSourceIDs = append(reuseSourceIDs, id)
+		}
+	}
+	slices.Sort(reuseSourceIDs)
+
+	cfg := withImageTransportSources(a.network.BaseConfig, reuseSourceIDs)
+	deps := a.network
+	deps.TransportSnapshot = frozenTransportSnapshot(policies)
+	deps.BaseConfig = cfg
+	return deps, cfg
+}
+
+type frozenTransportSnapshot map[int64]sourcetransport.Override
+
+func (s frozenTransportSnapshot) Snapshot(context.Context) (map[int64]sourcetransport.Override, error) {
+	copy := make(map[int64]sourcetransport.Override, len(s))
+	for sourceID, policy := range s {
+		copy[sourceID] = policy
+	}
+	return copy, nil
+}
+
+func wrapRuntimeApplyError(sourceID int64, stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("enginetopo.ApplySourceRuntime source %d %s: %w", sourceID, stage, err)
+}
 
 // ConfigProvider is the narrow read surface Reconcile needs to push Tsundoku's
 // OWN FlareSolverr + SOCKS + impersonate-gateway config onto the engine. It
@@ -601,7 +699,7 @@ func coercePrefValue(kind, stored string) (any, error) {
 // holds. The loss of drift detection here is intentional, not an oversight (see
 // isInSync, which excludes this step from InSync accordingly).
 //
-// SetFlareSolverr, SetSocks and SetImpersonate are each attempted independently
+// SetFlareSolverr, SetSocks, SetImpersonate, and SetImageTransport are each attempted independently
 // so one failing push never blocks the others; each failure is isolated as its
 // own gap. ConfigApplied reports whether ALL of them succeeded.
 func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg ConfigProvider) (bool, []error) {
@@ -620,7 +718,18 @@ func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg Config
 		slog.WarnContext(ctx, "enginetopo: reconcile could not push impersonate config, recording gap", "err", err)
 		gaps = append(gaps, fmt.Errorf("set impersonate config: %w", err))
 	}
+	if _, err := client.SetImageTransport(ctx, desired.imageTransportPatch()); err != nil {
+		slog.WarnContext(ctx, "enginetopo: reconcile could not push image transport config, recording gap", "err", err)
+		gaps = append(gaps, fmt.Errorf("set image transport config: %w", err))
+	}
 	return len(gaps) == 0, gaps
+}
+
+// ApplyRuntimeConfig pushes every owned runtime configuration dimension to one
+// engine instance and returns a joined error if any independent push failed.
+func ApplyRuntimeConfig(ctx context.Context, client sourceengine.Client, cfg ConfigProvider) error {
+	_, gaps := reconcileConfig(ctx, client, cfg)
+	return errors.Join(gaps...)
 }
 
 // desiredConfig is a one-shot snapshot of Tsundoku's owned FlareSolverr + SOCKS
@@ -628,37 +737,39 @@ func reconcileConfig(ctx context.Context, client sourceengine.Client, cfg Config
 // from identical values (and issue no repeated DB reads). socksPort is stored in
 // its wire form (a numeric string) to match sourceengine.SocksPatch.Port.
 type desiredConfig struct {
-	fsEnabled     bool
-	fsURL         string
-	fsTimeout     int
-	fsSessionName string
-	fsSessionTTL  int
-	fsFallback    bool
-	socksEnabled  bool
-	socksHost     string
-	socksPort     string
-	socksVersion  int
-	impEnabled    bool
-	impURL        string
-	impSourceIDs  []int64
+	fsEnabled      bool
+	fsURL          string
+	fsTimeout      int
+	fsSessionName  string
+	fsSessionTTL   int
+	fsFallback     bool
+	socksEnabled   bool
+	socksHost      string
+	socksPort      string
+	socksVersion   int
+	impEnabled     bool
+	impURL         string
+	impSourceIDs   []int64
+	imageSourceIDs []int64
 }
 
 // snapshotConfig reads every ConfigProvider accessor once into a desiredConfig.
 func snapshotConfig(ctx context.Context, cfg ConfigProvider) desiredConfig {
 	return desiredConfig{
-		fsEnabled:     cfg.FlareSolverrEnabled(ctx),
-		fsURL:         cfg.FlareSolverrURL(ctx),
-		fsTimeout:     cfg.FlareSolverrTimeout(ctx),
-		fsSessionName: cfg.FlareSolverrSessionName(ctx),
-		fsSessionTTL:  cfg.FlareSolverrSessionTTL(ctx),
-		fsFallback:    cfg.FlareSolverrResponseFallback(ctx),
-		socksEnabled:  cfg.EngineSocksEnabled(ctx),
-		socksHost:     cfg.EngineSocksHost(ctx),
-		socksPort:     strconv.Itoa(cfg.EngineSocksPort(ctx)),
-		socksVersion:  cfg.EngineSocksVersion(ctx),
-		impEnabled:    cfg.ImpersonateEnabled(ctx),
-		impURL:        cfg.ImpersonateURL(ctx),
-		impSourceIDs:  cfg.ImpersonateSources(ctx),
+		fsEnabled:      cfg.FlareSolverrEnabled(ctx),
+		fsURL:          cfg.FlareSolverrURL(ctx),
+		fsTimeout:      cfg.FlareSolverrTimeout(ctx),
+		fsSessionName:  cfg.FlareSolverrSessionName(ctx),
+		fsSessionTTL:   cfg.FlareSolverrSessionTTL(ctx),
+		fsFallback:     cfg.FlareSolverrResponseFallback(ctx),
+		socksEnabled:   cfg.EngineSocksEnabled(ctx),
+		socksHost:      cfg.EngineSocksHost(ctx),
+		socksPort:      strconv.Itoa(cfg.EngineSocksPort(ctx)),
+		socksVersion:   cfg.EngineSocksVersion(ctx),
+		impEnabled:     cfg.ImpersonateEnabled(ctx),
+		impURL:         cfg.ImpersonateURL(ctx),
+		impSourceIDs:   cfg.ImpersonateSources(ctx),
+		imageSourceIDs: imageTransportSources(ctx, cfg),
 	}
 }
 
@@ -713,6 +824,14 @@ func (d desiredConfig) impersonatePatch() sourceengine.ImpersonatePatch {
 		URL:       &url,
 		SourceIDs: &sourceIDs,
 	}
+}
+
+func (d desiredConfig) imageTransportPatch() sourceengine.ImageTransportPatch {
+	sourceIDs := d.imageSourceIDs
+	if sourceIDs == nil {
+		sourceIDs = []int64{}
+	}
+	return sourceengine.ImageTransportPatch{ReuseSourceIDs: &sourceIDs}
 }
 
 // unionStringSet returns the deduplicated union of a and b, sorted for a

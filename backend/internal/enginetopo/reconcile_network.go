@@ -2,6 +2,7 @@ package enginetopo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -157,8 +158,12 @@ func ensureProvisionedInstance(ctx context.Context, deps NetworkReconcileDeps, p
 	}
 
 	cfg := profileConfigProvider{profile: p, base: deps.BaseConfig}
-	if _, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg, WithoutExtensions()); err != nil {
+	res, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg, WithoutExtensions())
+	if err != nil {
 		return engineroute.Instance{}, fmt.Errorf("provision profile %q instance: %w", p.Key, err)
+	}
+	if len(res.Gaps) > 0 {
+		return engineroute.Instance{}, fmt.Errorf("provision profile %q instance: %w", p.Key, errors.Join(res.Gaps...))
 	}
 
 	// SOCKS credentials are not expressible via ConfigProvider (its socksPatch

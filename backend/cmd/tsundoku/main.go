@@ -26,6 +26,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"log/slog"
 	"net/http"
@@ -66,6 +67,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/account"
@@ -88,6 +90,39 @@ const shutdownTimeout = 15 * time.Second
 // project-scoped mailto is sufficient (push services only require a valid
 // mailto:/https: URI, not a reachable address).
 const vapidSubject = "mailto:tsundoku@localhost"
+
+type sourceTransportDefaults struct {
+	sessions enginetopo.SessionPolicyResolver
+}
+
+func (sourceTransportDefaults) ImageConnectionMode(context.Context) sourcetransport.ImageConnectionMode {
+	return sourcetransport.ImageConnectionFresh
+}
+
+func (d sourceTransportDefaults) ResolveBypassSession(
+	ctx context.Context,
+	sourceID int64,
+	override *bool,
+) (bool, sourcetransport.BypassSessionMode, error) {
+	return d.sessions.ResolveBypassSession(ctx, sourceID, override)
+}
+
+type engineSourceCatalog struct {
+	client sourceengine.Client
+}
+
+func (c engineSourceCatalog) RequireSource(ctx context.Context, sourceID int64) error {
+	sources, err := c.client.Sources(ctx)
+	if err != nil {
+		return err
+	}
+	for _, source := range sources {
+		if source.ID == sourceID {
+			return nil
+		}
+	}
+	return fmt.Errorf("source %d is not installed", sourceID)
+}
 
 func main() {
 	cfg, err := config.Load()
@@ -306,6 +341,13 @@ func main() {
 	// ReconcileNetwork to derive the profiles; a stateless second instance is
 	// safe (mirrors healthSvc), so the HTTP handler keeps constructing its own.
 	networkSvc := network.NewService(entClient)
+	sourceTransportSvc := sourcetransport.NewService(
+		entClient,
+		sourceTransportDefaults{
+			sessions: enginetopo.NewSessionPolicyResolver(networkSvc, settingsSvc),
+		},
+		engineSourceCatalog{client: engineClient},
+	)
 
 	// Shared extension-.apk byte cache (rooted under the engine runtime dir).
 	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
@@ -435,14 +477,20 @@ func main() {
 	// detached), used both on boot (after the default-instance reconcile) and as
 	// the network-mutation write-through. With no bindings it is a pure no-op.
 	netDeps := enginetopo.NetworkReconcileDeps{
-		Snapshot:   networkSvc,
-		Router:     engineRouter,
-		Launcher:   engineLauncher,
-		DB:         entClient,
-		Cache:      apkStore,
-		BaseConfig: settingsSvc,
+		Snapshot:          networkSvc,
+		TransportSnapshot: sourceTransportSvc,
+		Router:            engineRouter,
+		Launcher:          engineLauncher,
+		DB:                entClient,
+		Cache:             apkStore,
+		BaseConfig:        settingsSvc,
 	}
-	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, netDeps) }
+	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
+	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
+	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, runtimeApplier) }
+	runtimeReconcile := func(rctx context.Context) {
+		runSourceRuntimeReconcile(rctx, runtimeApplier, sourceTransportSvc)
+	}
 
 	// Start the download + refresh + extension-check + warm-up tickers. This
 	// also launches the one-shot engine-topology seed (BackfillProviderURLs →
@@ -451,7 +499,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, netReconcile)
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, netReconcile, runtimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -659,6 +707,7 @@ func startEngine(
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
 	netReconcile func(context.Context),
+	runtimeReconcile func(context.Context),
 ) {
 	// Log the currently-resolved cadence (the loops re-read it each cycle, so
 	// these are the values in force right now, not a fixed schedule).
@@ -672,7 +721,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, netReconcile)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, netReconcile, runtimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -716,6 +765,7 @@ func startEngineTopo(
 	apkStore *apkcache.Store,
 	settingsSvc *settings.Service,
 	netReconcile func(context.Context),
+	runtimeReconcile func(context.Context),
 ) {
 	go func() {
 		runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
@@ -724,6 +774,10 @@ func startEngineTopo(
 		// per-profile instances then get their own config. With no non-default
 		// bindings this is a pure no-op (Router routes everything to the default).
 		netReconcile(ctx)
+		// Runtime source policy is replace-set configuration on every engine
+		// instance. Restore it after the initial topology pass, then retry any
+		// durable desired revisions that a prior process could not acknowledge.
+		runtimeReconcile(ctx)
 		enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
 			Client:   engineClient,
 			DB:       entClient,
@@ -800,14 +854,18 @@ func runEngineTopoReconcile(
 // (an unreachable/absent instance surfaces as a per-profile gap, and with no
 // bindings the pass is a pure no-op), so a separate engine probe would add
 // nothing.
-func runNetworkReconcile(ctx context.Context, deps enginetopo.NetworkReconcileDeps) {
+type networkReconciler interface {
+	ReconcileNetwork(context.Context) (enginetopo.NetworkReconcileResult, error)
+}
+
+func runNetworkReconcile(ctx context.Context, reconciler networkReconciler) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.ErrorContext(ctx, "enginetopo: network reconcile panicked — recovered", "panic", r)
 		}
 	}()
 
-	res, err := enginetopo.ReconcileNetwork(ctx, deps)
+	res, err := reconciler.ReconcileNetwork(ctx)
 	if err != nil {
 		slog.ErrorContext(ctx, "enginetopo: network reconcile failed", "err", err)
 		return
@@ -820,5 +878,27 @@ func runNetworkReconcile(ctx context.Context, deps enginetopo.NetworkReconcileDe
 	)
 	for _, gap := range res.Gaps {
 		slog.WarnContext(ctx, "enginetopo: network reconcile gap", "err", gap)
+	}
+}
+
+func runSourceRuntimeReconcile(
+	ctx context.Context,
+	applier sourcetransport.RuntimeApplier,
+	service *sourcetransport.Service,
+) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "source runtime: startup reconcile panicked — recovered", "panic", r)
+		}
+	}()
+
+	// Rebuild the ephemeral engine state even when every durable revision was
+	// acknowledged before restart. The bounded pending pass then records/retries
+	// exact revisions without introducing a second periodic loop.
+	if err := applier.ApplySourceRuntime(ctx, 0); err != nil {
+		slog.WarnContext(ctx, "source runtime: startup restore incomplete", "err", err)
+	}
+	if err := service.ReconcilePending(ctx); err != nil {
+		slog.WarnContext(ctx, "source runtime: pending revision retry incomplete", "err", err)
 	}
 }

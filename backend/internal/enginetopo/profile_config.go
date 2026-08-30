@@ -2,6 +2,7 @@ package enginetopo
 
 import (
 	"context"
+	"slices"
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
 )
@@ -28,6 +29,42 @@ const socksDefaultPort = 1080
 type profileConfigProvider struct {
 	profile engineroute.Profile
 	base    ConfigProvider
+}
+
+// imageTransportConfigProvider decorates the ordinary topology config with the
+// full source set whose image calls reuse pooled connections. Keeping this
+// projection in enginetopo lets sourcetransport remain independent of engine
+// RPC types while every default/non-default instance receives one exact set.
+type imageTransportConfigProvider struct {
+	ConfigProvider
+	reuseSourceIDs []int64
+}
+
+type imageTransportSourceProvider interface {
+	ImageTransportSources(context.Context) []int64
+}
+
+func withImageTransportSources(base ConfigProvider, sourceIDs []int64) ConfigProvider {
+	ids := append([]int64(nil), sourceIDs...)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	return imageTransportConfigProvider{ConfigProvider: base, reuseSourceIDs: ids}
+}
+
+func (p imageTransportConfigProvider) ImageTransportSources(context.Context) []int64 {
+	return append([]int64(nil), p.reuseSourceIDs...)
+}
+
+func imageTransportSources(ctx context.Context, cfg ConfigProvider) []int64 {
+	provider, ok := cfg.(imageTransportSourceProvider)
+	if !ok {
+		return []int64{}
+	}
+	ids := provider.ImageTransportSources(ctx)
+	if ids == nil {
+		return []int64{}
+	}
+	return ids
 }
 
 // Compile-time assertion.
@@ -159,4 +196,11 @@ func (p profileConfigProvider) ImpersonateURL(ctx context.Context) string {
 // there exactly as it would be on the default instance.
 func (p profileConfigProvider) ImpersonateSources(ctx context.Context) []int64 {
 	return p.base.ImpersonateSources(ctx)
+}
+
+// ImageTransportSources forwards the full replace-set carried by the base
+// runtime snapshot. The set is global by source ID, so every profile instance
+// must receive the same value regardless of which sources it currently routes.
+func (p profileConfigProvider) ImageTransportSources(ctx context.Context) []int64 {
+	return imageTransportSources(ctx, p.base)
 }

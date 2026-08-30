@@ -3,6 +3,9 @@ package enginetopo_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -45,6 +48,95 @@ type fakeLauncher struct {
 	profiles    []engineroute.Profile
 	retireCalls int
 	lastKeep    map[string]bool
+}
+
+type runtimeConfigClient struct {
+	*sourceenginefake.Client
+	mu              sync.Mutex
+	imageSourceIDs  []int64
+	proxySourceIDs  []int64
+	flareSession    string
+	beforeImagePush func()
+}
+
+func (c *runtimeConfigClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
+	cfg, err := c.Client.SetFlareSolverr(ctx, patch)
+	if err == nil {
+		c.mu.Lock()
+		c.flareSession = cfg.Session
+		c.mu.Unlock()
+	}
+	return cfg, err
+}
+
+func (c *runtimeConfigClient) SetImageTransport(ctx context.Context, patch sourceengine.ImageTransportPatch) (sourceengine.ImageTransportConfig, error) {
+	if c.beforeImagePush != nil {
+		c.beforeImagePush()
+	}
+	cfg, err := c.Client.SetImageTransport(ctx, patch)
+	if err == nil {
+		c.mu.Lock()
+		c.imageSourceIDs = append([]int64(nil), cfg.ReuseSourceIDs...)
+		c.mu.Unlock()
+	}
+	return cfg, err
+}
+
+func (c *runtimeConfigClient) SetImpersonate(ctx context.Context, patch sourceengine.ImpersonatePatch) (sourceengine.ImpersonateConfig, error) {
+	cfg, err := c.Client.SetImpersonate(ctx, patch)
+	if err == nil {
+		c.mu.Lock()
+		c.proxySourceIDs = append([]int64(nil), cfg.SourceIDs...)
+		c.mu.Unlock()
+	}
+	return cfg, err
+}
+
+func (c *runtimeConfigClient) runtimeSets() ([]int64, []int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]int64(nil), c.imageSourceIDs...), append([]int64(nil), c.proxySourceIDs...)
+}
+
+func (c *runtimeConfigClient) session() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.flareSession
+}
+
+type lifecycleLauncher struct {
+	instances map[string]*runtimeConfigClient
+	fail      map[string]error
+	retired   []string
+	lastKeep  map[string]bool
+	onCreate  func(engineroute.Profile, *runtimeConfigClient)
+}
+
+func (l *lifecycleLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
+	if err := l.fail[p.Key]; err != nil {
+		return engineroute.Instance{}, err
+	}
+	client := l.instances[p.Key]
+	if client == nil {
+		client = &runtimeConfigClient{Client: sourceenginefake.New(
+			sourceenginefake.WithSearchResult(p.SourceIDs[0], sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: p.Key}}}),
+		)}
+		l.instances[p.Key] = client
+		if l.onCreate != nil {
+			l.onCreate(p, client)
+		}
+	}
+	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: client}, nil
+}
+
+func (l *lifecycleLauncher) Retire(_ context.Context, keep map[string]bool) {
+	l.lastKeep = keep
+	for key := range l.instances {
+		if !keep[key] {
+			l.retired = append(l.retired, key)
+			delete(l.instances, key)
+		}
+	}
 }
 
 func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
@@ -264,4 +356,105 @@ func TestReconcileNetwork_ProvisionsAndRoutes(t *testing.T) {
 	if len(launcher.lastKeep) != 1 {
 		t.Fatalf("Retire keep set = %v, want exactly the one live profile", launcher.lastKeep)
 	}
+}
+
+// TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting catches a
+// partial runtime apply: missing image/proxy sets on any active instance,
+// activating a newly-created route before its config lands, retaining an
+// obsolete profile, or treating a fallback as success.
+func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	imageReuse := sourcetransport.ImageConnectionReuse
+	disableSessionReuse := false
+	policies := map[int64]sourcetransport.Override{
+		11: {ImageConnectionMode: &imageReuse, ReuseBypassSession: &disableSessionReuse},
+		22: {ImageConnectionMode: &imageReuse},
+	}
+	bindings := []network.ResolvedBinding{socksBinding(11), socksBinding(22), socksBinding(33)}
+	bindings[0].Socks.ID = "new"
+	bindings[1].Socks.ID = "reused"
+	bindings[2].Socks.ID = "fallback"
+	profiles := engineroute.Derive([]engineroute.BindingInput{
+		{SourceID: 11, Socks: &engineroute.SocksEndpoint{ID: "new"}, FlareMode: engineroute.FlareModeGlobal, DisableBypassSession: true},
+		{SourceID: 22, Socks: &engineroute.SocksEndpoint{ID: "reused"}, FlareMode: engineroute.FlareModeGlobal},
+		{SourceID: 33, Socks: &engineroute.SocksEndpoint{ID: "fallback"}, FlareMode: engineroute.FlareModeGlobal},
+	})
+	keys := map[int64]string{}
+	for _, profile := range profiles {
+		keys[profile.SourceIDs[0]] = profile.Key
+	}
+
+	defaultClient := &runtimeConfigClient{Client: sourceenginefake.New(
+		sourceenginefake.WithSearchResult(11, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "default"}}}),
+		sourceenginefake.WithSearchResult(33, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "default"}}}),
+	)}
+	router := engineroute.NewRouter(defaultClient)
+	reusedClient := &runtimeConfigClient{Client: sourceenginefake.New(
+		sourceenginefake.WithSearchResult(22, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{{URL: "reused"}}}),
+	)}
+	launcher := &lifecycleLauncher{
+		instances: map[string]*runtimeConfigClient{
+			keys[22]:   reusedClient,
+			"obsolete": {Client: sourceenginefake.New()},
+		},
+		fail: map[string]error{keys[33]: errors.New("profile unavailable")},
+	}
+	base := baseConfig()
+	base.impSources = []int64{22, 33}
+
+	newClientConfiguredBeforeRoute := false
+	launcher.onCreate = func(profile engineroute.Profile, client *runtimeConfigClient) {
+		if profile.Key != keys[11] {
+			return
+		}
+		client.beforeImagePush = func() {
+			got, searchErr := router.Search(ctx, 11, "q", 1)
+			newClientConfiguredBeforeRoute = searchErr == nil && len(got.Manga) == 1 && got.Manga[0].URL == "default"
+		}
+	}
+	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
+		Snapshot:          fakeSnapshotter{bindings: bindings},
+		TransportSnapshot: fakeTransportSnapshotter{policies: policies},
+		Router:            router,
+		Launcher:          launcher,
+		DB:                db,
+		Cache:             cache,
+		BaseConfig:        base,
+	})
+
+	err := applier.ApplySourceRuntime(ctx, 11)
+	if err == nil || !strings.Contains(err.Error(), "profile unavailable") {
+		t.Fatalf("ApplySourceRuntime error = %v, want fallback failure", err)
+	}
+	if !newClientConfiguredBeforeRoute {
+		t.Fatal("new profile route became active before its full runtime config completed")
+	}
+	if !slices.Contains(launcher.retired, "obsolete") {
+		t.Fatalf("retired profiles = %v, want obsolete", launcher.retired)
+	}
+	if launcher.lastKeep[keys[33]] {
+		t.Fatalf("fallback profile %q present in keep set", keys[33])
+	}
+
+	for name, client := range map[string]*runtimeConfigClient{
+		"default": defaultClient,
+		"new":     launcher.instances[keys[11]],
+		"reused":  reusedClient,
+	} {
+		images, proxy := client.runtimeSets()
+		if !slices.Equal(images, []int64{11, 22}) {
+			t.Errorf("%s image transport sources = %v, want [11 22]", name, images)
+		}
+		if !slices.Equal(proxy, []int64{22, 33}) {
+			t.Errorf("%s proxy sources = %v, want [22 33]", name, proxy)
+		}
+	}
+	if got := launcher.instances[keys[11]].session(); got != "" {
+		t.Errorf("mixed-policy profile session = %q, want disposable blank session", got)
+	}
+	assertRoutedTo(t, router, 11, keys[11])
+	assertRoutedTo(t, router, 22, "reused")
+	assertRoutedTo(t, router, 33, "default")
 }

@@ -3,6 +3,7 @@ package sourcetransport
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -14,6 +15,8 @@ type Service struct {
 	client   *ent.Client
 	defaults Defaults
 	catalog  SourceCatalog
+	applier  RuntimeApplier
+	applyMu  sync.Mutex
 }
 
 // NewService constructs a source transport service.
@@ -101,7 +104,18 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 	if err != nil {
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
 	}
-	return UpdateResult{Override: override, Effective: effective, Intent: intent}, nil
+	result := UpdateResult{Override: override, Effective: effective, Intent: intent}
+	if s.applier == nil {
+		return result, nil
+	}
+	appliedIntent, err := s.ApplyPending(ctx, sourceID)
+	if appliedIntent.DesiredRevision == result.Intent.DesiredRevision {
+		result.Intent = appliedIntent
+	}
+	if err != nil {
+		return result, fmt.Errorf("sourcetransport.Update: apply source %d runtime: %w", sourceID, err)
+	}
+	return result, nil
 }
 
 // AdvanceIntentTx atomically advances desired runtime intent inside a caller's
