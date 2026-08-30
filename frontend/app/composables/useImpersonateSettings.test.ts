@@ -3,11 +3,10 @@
  * Tsundoku-owned Chrome-fingerprint image-proxy config — its own endpoint).
  *
  * Pins:
- *   1. GET maps the flat ImpersonateSettings DTO onto the screen's
- *      ImpersonateConfig (no renames, no unit conversions — enabled + url +
- *      the per-source gating set).
- *   2. save() PUTs /api/impersonate with the config mapped back to the wire
- *      shape, and drives impersonateSave through idle → saving → success.
+ *   1. GET maps the flat ImpersonateSettings DTO onto the screen's gateway
+ *      config while membership is edited through the per-source endpoint.
+ *   2. save() PUTs /api/impersonate with only global gateway fields and drives
+ *      impersonateSave through idle → saving → success.
  *   3. A save error surfaces the backend's { message } verbatim and does not
  *      clobber the still-loaded config.
  *   4. The picker's source list comes from GET /api/sources, so the owner picks
@@ -85,19 +84,18 @@ describe('useImpersonateSettings', () => {
     ])
   })
 
-  it('save() sends the gating set as ids, and an empty selection as an explicit empty array', async () => {
+  it('save() does not send whole-list source membership through the global gateway endpoint', async () => {
     const { config, save } = useImpersonateSettings()
 
     await vi.waitFor(() => {
       expect(config.value.enabled).toBe(true)
     })
 
-    await save({ enabled: true, url: 'http://impersonate-gateway:8788', sourceIds: [] })
+    await save({ enabled: true, url: 'http://impersonate-gateway:8788' })
 
     expect(putBody).toEqual({
       enabled: true,
       url: 'http://impersonate-gateway:8788',
-      sourceIds: [],
     })
   })
 
@@ -109,10 +107,10 @@ describe('useImpersonateSettings', () => {
     })
     expect(impersonateSave.value.status).toBe('idle')
 
-    await save({ enabled: false, url: 'http://other:8788', sourceIds: ['42'] })
+    await save({ enabled: false, url: 'http://other:8788' })
 
     expect(putPath).toBe('/api/impersonate')
-    expect(putBody).toEqual({ enabled: false, url: 'http://other:8788', sourceIds: ['42'] })
+    expect(putBody).toEqual({ enabled: false, url: 'http://other:8788' })
     expect(impersonateSave.value.status).toBe('success')
 
     // §16: reseeded from the authoritative response, not the local copy.
@@ -131,7 +129,7 @@ describe('useImpersonateSettings', () => {
       expect(config.value.enabled).toBe(true)
     })
 
-    await save({ ...config.value, url: 'not-a-url' })
+    await save({ enabled: config.value.enabled, url: 'not-a-url' })
 
     expect(impersonateSave.value).toEqual({
       status: 'error',

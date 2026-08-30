@@ -4,8 +4,10 @@
  *
  * Fetches GET /api/impersonate and GET /api/sources in parallel, mapping the
  * backend ImpersonateSettings DTO onto the screen's ImpersonateConfig and the
- * engine source list onto the picker's selectable options. Exposes save() with
- * the §16 SaveState lifecycle: idle → saving → success/error.
+ * engine source list onto display options. Exposes save() for the gateway-wide
+ * enabled/url pair with the §16 SaveState lifecycle: idle → saving →
+ * success/error. Per-source membership writes use the narrow image-proxy
+ * endpoint owned by useSourceEffectiveConfiguration.
  *
  * This is TSUNDOKU-OWNED config — its own endpoint, distinct from the
  * FlareSolverr card that renders alongside it. The backend best-effort mirrors
@@ -14,12 +16,9 @@
  * renames or unit conversions, so the mappers are near-identity — kept explicit
  * for parity with useFlareSolverrSettings.
  *
- * 🔴 IDS ON THE WIRE, NAMES ON SCREEN (GAP-131). `config.sourceIds` holds engine
- * source IDS, and ids are the only thing ever sent. The source list exists PURELY
- * so the picker can label an id with its human name — this composable is the only
- * place the two are joined, and the join never travels: no source name is ever
- * submitted, because a name is a display string an extension update can change,
- * while the engine resolves sources by id alone.
+ * 🔴 IDS ON THE WIRE, NAMES ON SCREEN (GAP-131). `config.sourceIds` reflects
+ * engine source IDs returned by the read endpoint. It is never included in this
+ * composable's global save; source membership changes are one-ID-at-a-time.
  */
 import { ref } from 'vue'
 import { apiClient } from '~/utils/api/client'
@@ -29,6 +28,7 @@ import type { ImpersonateConfig, SaveState, SourceOption } from '~/components/sc
 type ImpersonateSettingsDTO = components['schemas']['ImpersonateSettings']
 type ImpersonateUpdateDTO = components['schemas']['ImpersonateUpdate']
 type SourceDTO = components['schemas']['Source']
+type ImpersonateGatewayUpdate = Pick<ImpersonateUpdateDTO, 'enabled' | 'url'>
 
 /** Maps the GET/PUT response DTO onto the screen's editable config shape. */
 function mapSettings(dto: ImpersonateSettingsDTO): ImpersonateConfig {
@@ -45,16 +45,14 @@ function mapSource(dto: SourceDTO): SourceOption {
 }
 
 /**
- * Maps the screen's editable config back onto the PUT request DTO. `sourceIds`
- * is ALWAYS sent, including when empty — an empty array is the meaningful
- * "no source uses the gateway" value, and omitting it would leave a stale
- * selection in place.
+ * Maps the screen's editable gateway config back onto the PUT request DTO.
+ * Source membership is intentionally omitted: it is owned by the narrow
+ * per-source image-proxy endpoint so one edit cannot replace the whole set.
  */
-function buildUpdate(cfg: ImpersonateConfig): ImpersonateUpdateDTO {
+function buildUpdate(cfg: ImpersonateGatewayUpdate): ImpersonateUpdateDTO {
   return {
     enabled: cfg.enabled,
     url: cfg.url,
-    sourceIds: [...cfg.sourceIds],
   }
 }
 
@@ -103,7 +101,7 @@ export function useImpersonateSettings() {
    * The backend best-effort mirrors the saved values to the engine host — that
    * mirror is invisible here, an engine-down mirror failure still returns 200.
    */
-  async function save(next: ImpersonateConfig): Promise<void> {
+  async function save(next: ImpersonateGatewayUpdate): Promise<void> {
     impersonateSave.value = { status: 'saving' }
     try {
       const res = await apiClient.PUT('/api/impersonate', {
