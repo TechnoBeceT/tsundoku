@@ -12,7 +12,15 @@ import (
 	entendpoint "github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	entbinding "github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
+
+// EndpointMutationResult is the updated endpoint and the exact desired runtime
+// revisions atomically committed for every source that references it.
+type EndpointMutationResult struct {
+	EndpointDTO
+	Intents []sourcetransport.Intent
+}
 
 // ListEndpoints returns every network endpoint ordered by name (passwords
 // omitted). An empty (non-nil) slice means the owner has defined none.
@@ -81,11 +89,11 @@ func (s *Service) createEndpoint(ctx context.Context, in EndpointInput) (Endpoin
 // invalid endpoint. A nil Password keeps the stored password (write-only).
 // ErrEndpointNotFound (→404) on a missing id; ErrInvalidEndpoint (→400) on bad
 // merged fields.
-func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointDTO, error) {
+func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointMutationResult, error) {
 	if s.policyCoordinator == nil {
 		return s.updateEndpoint(ctx, id, patch)
 	}
-	var result EndpointDTO
+	var result EndpointMutationResult
 	err := s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
 		row, err := s.endpointByID(ctx, id)
 		if err != nil {
@@ -104,23 +112,35 @@ func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 		return err
 	})
 	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
-		return EndpointDTO{}, fmt.Errorf("%w: %w", ErrInvalidEndpoint, err)
+		return EndpointMutationResult{}, fmt.Errorf("%w: %w", ErrInvalidEndpoint, err)
 	}
 	return result, err
 }
 
-func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointDTO, error) {
-	row, err := s.endpointByID(ctx, id)
+func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointMutationResult, error) {
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
-		return EndpointDTO{}, err
+		return EndpointMutationResult{}, fmt.Errorf("network.UpdateEndpoint: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	txService := *s
+	txService.client = tx.Client()
+
+	row, err := txService.endpointByID(ctx, id)
+	if err != nil {
+		return EndpointMutationResult{}, err
 	}
 
 	merged := applyPatch(row, patch)
 	if err := validateEndpoint(merged); err != nil {
-		return EndpointDTO{}, err
+		return EndpointMutationResult{}, err
+	}
+	affected, err := txService.referencingSources(ctx, id)
+	if err != nil {
+		return EndpointMutationResult{}, err
 	}
 
-	upd := s.client.NetworkEndpoint.UpdateOneID(id).
+	upd := tx.NetworkEndpoint.UpdateOneID(id).
 		SetName(merged.Name).
 		SetKind(merged.Kind).
 		SetEnabled(merged.Enabled).
@@ -139,9 +159,16 @@ func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 	}
 	saved, err := upd.Save(ctx)
 	if err != nil {
-		return EndpointDTO{}, fmt.Errorf("network.UpdateEndpoint: save %s: %w", id, err)
+		return EndpointMutationResult{}, fmt.Errorf("network.UpdateEndpoint: save %s: %w", id, err)
 	}
-	return newEndpointDTO(saved), nil
+	intents, err := s.runtimeIntent.AdvanceIntentsTx(ctx, tx, affected)
+	if err != nil {
+		return EndpointMutationResult{}, fmt.Errorf("network.UpdateEndpoint: advance affected source intents: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return EndpointMutationResult{}, fmt.Errorf("network.UpdateEndpoint: commit %s: %w", id, err)
+	}
+	return EndpointMutationResult{EndpointDTO: newEndpointDTO(saved), Intents: intents}, nil
 }
 
 // DeleteEndpoint removes an endpoint, but ONLY when no binding references it:

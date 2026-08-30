@@ -10,6 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
+	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
@@ -308,6 +310,106 @@ func TestUpdateEndpoint_RevalidatesMergedRow(t *testing.T) {
 	badPort := 0
 	if _, err := svc.UpdateEndpoint(ctx, id, network.EndpointPatch{Port: &badPort}); !errors.Is(err, network.ErrInvalidEndpoint) {
 		t.Fatalf("UpdateEndpoint bad port: want ErrInvalidEndpoint, got %v", err)
+	}
+}
+
+func TestUpdateEndpointAdvancesOnlyAffectedSourceIntents(t *testing.T) {
+	client := testdb.New(t)
+	svc := network.NewService(client)
+	ctx := context.Background()
+	endpoint, err := svc.CreateEndpoint(ctx, socksInput("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := svc.CreateEndpoint(ctx, socksInput("other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointID := uuid.MustParse(endpoint.ID)
+	otherID := uuid.MustParse(other.ID)
+	createSocksBindings(client, ctx, map[int64]uuid.UUID{11: endpointID, 12: endpointID, 13: otherID})
+
+	name := "shared updated"
+	if _, err := svc.UpdateEndpoint(ctx, endpointID, network.EndpointPatch{Name: &name}); err != nil {
+		t.Fatalf("UpdateEndpoint: %v", err)
+	}
+	rows, err := client.SourceRuntimeIntent.Query().Order(ent.Asc(entintent.FieldSourceID)).All(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].SourceID != 11 || rows[0].DesiredRevision != 1 || rows[1].SourceID != 12 || rows[1].DesiredRevision != 1 {
+		t.Fatalf("runtime intents = %+v, want affected sources 11 and 12 at revision 1", rows)
+	}
+}
+
+func createSocksBindings(client *ent.Client, ctx context.Context, bindings map[int64]uuid.UUID) {
+	for sourceID, endpointID := range bindings {
+		client.SourceNetworkBinding.Create().SetSourceID(sourceID).SetSocksEndpointID(endpointID).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	}
+}
+
+func TestUpdateEndpointIntentFailureRollsBackEndpointAndAllIntents(t *testing.T) {
+	client := testdb.New(t)
+	svc := network.NewService(client)
+	ctx := context.Background()
+	endpoint, err := svc.CreateEndpoint(ctx, socksInput("before"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointID := uuid.MustParse(endpoint.ID)
+	for _, sourceID := range []int64{21, 22} {
+		client.SourceNetworkBinding.Create().SetSourceID(sourceID).SetSocksEndpointID(endpointID).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	}
+	client.SourceRuntimeIntent.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if _, ok := mutation.(*ent.SourceRuntimeIntentMutation); ok {
+				return nil, errors.New("forced intent failure")
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+
+	name := "after"
+	if _, err := svc.UpdateEndpoint(ctx, endpointID, network.EndpointPatch{Name: &name}); err == nil {
+		t.Fatal("UpdateEndpoint error = nil, want intent failure")
+	}
+	stored := client.NetworkEndpoint.GetX(ctx, endpointID)
+	if stored.Name != "before" {
+		t.Fatalf("endpoint name = %q, want transaction rollback to before", stored.Name)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("intent rows after rollback = %d, want 0", got)
+	}
+}
+
+func TestUpdateEndpointLoadsAdvancedIntentsInOneBoundedQuery(t *testing.T) {
+	client := testdb.New(t)
+	svc := network.NewService(client)
+	ctx := context.Background()
+	endpoint, err := svc.CreateEndpoint(ctx, socksInput("shared"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointID := uuid.MustParse(endpoint.ID)
+	for sourceID := int64(1); sourceID <= 25; sourceID++ {
+		client.SourceNetworkBinding.Create().SetSourceID(sourceID).SetSocksEndpointID(endpointID).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	}
+	intentQueries := 0
+	client.Intercept(ent.InterceptFunc(func(next ent.Querier) ent.Querier {
+		return ent.QuerierFunc(func(ctx context.Context, query ent.Query) (ent.Value, error) {
+			if _, ok := query.(*ent.SourceRuntimeIntentQuery); ok {
+				intentQueries++
+			}
+			return next.Query(ctx, query)
+		})
+	}))
+
+	name := "updated"
+	if _, err := svc.UpdateEndpoint(ctx, endpointID, network.EndpointPatch{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	if intentQueries != 1 {
+		t.Fatalf("source intent queries = %d, want one bounded bulk reload", intentQueries)
 	}
 }
 

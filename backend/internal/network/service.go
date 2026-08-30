@@ -6,9 +6,10 @@
 // This package owns durable routing truth. It reads and writes NetworkEndpoint
 // (the reusable endpoints), SourceNetworkBinding (the per-source assignment),
 // and advances SourceRuntimeIntent in the same transaction as a changed
-// binding. Endpoint ids are plain UUID columns rather than Ent edges, so their
-// referential rules remain enforced here. The package itself makes no engine
-// calls; synchronous convergence belongs to the HTTP/runtime composition layer.
+// binding or a referenced endpoint patch. Endpoint ids are plain UUID columns
+// rather than Ent edges, so their referential rules remain enforced here. The
+// package itself makes no engine calls; synchronous convergence belongs to the
+// HTTP/runtime composition layer.
 //
 // The Ent predicate packages internal/ent/networkendpoint and
 // internal/ent/sourcenetworkbinding collide with the field vocabulary and are

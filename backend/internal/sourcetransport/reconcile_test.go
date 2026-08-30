@@ -115,6 +115,37 @@ func TestApplyPendingCannotAcknowledgeRevisionCreatedDuringApply(t *testing.T) {
 	}
 }
 
+func TestApplyRevisionNeverAppliesOrAcknowledgesAnotherCommittedRevision(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	for _, patch := range []sourcetransport.Patch{
+		{ReuseBypassSession: sourcetransport.Set(false)},
+		{ImageConnectionMode: sourcetransport.Set(sourcetransport.ImageConnectionReuse)},
+	} {
+		if _, err := plain.Update(ctx, 111, patch); err != nil {
+			t.Fatalf("persist revision: %v", err)
+		}
+	}
+	applied := 0
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error {
+			applied++
+			return nil
+		}))
+
+	got, err := svc.ApplyRevision(ctx, 111, 1)
+	if err != nil {
+		t.Fatalf("ApplyRevision obsolete revision: %v", err)
+	}
+	if applied != 0 {
+		t.Fatalf("runtime applies = %d, want 0 for obsolete committed revision", applied)
+	}
+	if got.DesiredRevision != 2 || got.AppliedRevision != 0 {
+		t.Fatalf("intent = %+v, want newer revision 2 pending", got)
+	}
+}
+
 func TestCanceledSourceApplyPersistsBoundedAttemptMetadata(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)

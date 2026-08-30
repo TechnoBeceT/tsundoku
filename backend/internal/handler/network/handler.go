@@ -14,7 +14,7 @@ import (
 )
 
 type runtimeApplier interface {
-	ApplyPending(context.Context, int64) (sourcetransport.Intent, error)
+	ApplyRevision(context.Context, int64, int64) (sourcetransport.Intent, error)
 }
 
 type configurationReader interface {
@@ -24,9 +24,9 @@ type configurationReader interface {
 // Handler holds the dependencies for the network-routing HTTP handlers. All
 // business logic lives in network.Service; the handler is thin.
 //
-// onChange is the legacy best-effort write-through hook for endpoint changes.
-// A fully composed binding handler uses runtime instead, which applies its exact
-// committed revision synchronously. The hook remains nil-safe.
+// onChange is the legacy best-effort write-through hook used when source runtime
+// convergence is not wired. A fully composed handler applies exact committed
+// revisions synchronously instead. The hook remains nil-safe.
 type Handler struct {
 	svc      *networksvc.Service
 	onChange func()
@@ -95,12 +95,17 @@ func (h *Handler) UpdateEndpoint(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	out, err := h.svc.UpdateEndpoint(c.Request().Context(), id, req.toPatch())
+	ctx := c.Request().Context()
+	result, err := h.svc.UpdateEndpoint(ctx, id, req.toPatch())
 	if err != nil {
 		return mapServiceError(err)
 	}
-	h.notifyChanged()
-	return c.JSON(http.StatusOK, out)
+	if h.runtime == nil {
+		h.notifyChanged()
+	} else {
+		h.applyEndpointCommitted(ctx, result.Intents)
+	}
+	return c.JSON(http.StatusOK, result.EndpointDTO)
 }
 
 // DeleteEndpoint handles DELETE /api/network/endpoints/:id. It removes an
@@ -188,7 +193,7 @@ func (h *Handler) ClearBinding(c echo.Context) error {
 
 func (h *Handler) applyCommitted(ctx context.Context, sourceID int64, result networksvc.BindingMutationResult) sourcetransport.Intent {
 	intent := result.Intent
-	applied, _ := h.runtime.ApplyPending(ctx, sourceID)
+	applied, _ := h.runtime.ApplyRevision(ctx, sourceID, result.Intent.DesiredRevision)
 	if applied.SourceID != sourceID {
 		return intent
 	}
@@ -196,6 +201,12 @@ func (h *Handler) applyCommitted(ctx context.Context, sourceID int64, result net
 		return applied
 	}
 	return intent
+}
+
+func (h *Handler) applyEndpointCommitted(ctx context.Context, intents []sourcetransport.Intent) {
+	for _, intent := range intents {
+		_, _ = h.runtime.ApplyRevision(ctx, intent.SourceID, intent.DesiredRevision)
+	}
 }
 
 // mapServiceError translates a network.Service sentinel into the matching HTTP

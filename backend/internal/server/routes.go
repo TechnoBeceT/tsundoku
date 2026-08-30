@@ -447,10 +447,9 @@ func registerRoutes(
 	// Per-source network routing (QCAT-283 DB layer + QCAT-284 multi-instance
 	// routing). The owner defines reusable SOCKS / FlareSolverr endpoints and
 	// binds individual sources to them; this handler persists + validates the
-	// NetworkEndpoint + SourceNetworkBinding tables. onNetworkChange is the
-	// best-effort write-through that re-derives the engine-host routing profiles
-	// (enginetopo.ReconcileNetwork) after every mutation so a binding change
-	// takes effect promptly, not only on the next boot (nil = DB-truth only).
+	// NetworkEndpoint + SourceNetworkBinding tables. Source-affecting writes use
+	// durable exact-revision convergence; onNetworkChange remains the legacy
+	// best-effort fallback for constructions without source runtime wiring.
 	networkH := networkh.NewHandler(networkSvc, onNetworkChange).
 		WithSourceRuntime(sourceTransportSvc, sourceConfigurationReader)
 	authed.GET("/network/endpoints", networkH.ListEndpoints)

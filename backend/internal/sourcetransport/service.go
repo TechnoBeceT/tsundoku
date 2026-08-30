@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -185,21 +186,66 @@ func (s *Service) applyUpdate(ctx context.Context, sourceID int64, result Update
 // transaction. Proxy and network owners use this primitive alongside their own
 // policy mutations so handlers never advance an intent separately.
 func (s *Service) AdvanceIntentTx(ctx context.Context, tx *ent.Tx, sourceID int64) (Intent, error) {
+	intents, err := s.AdvanceIntentsTx(ctx, tx, []int64{sourceID})
+	if err != nil {
+		return Intent{}, err
+	}
+	return intents[0], nil
+}
+
+// AdvanceIntentsTx advances every source's desired runtime revision with one
+// bulk upsert and reloads the exact committed revisions with one bounded query.
+// Sorting the unique ids also gives concurrent multi-source writers one stable
+// row-lock order.
+func (s *Service) AdvanceIntentsTx(ctx context.Context, tx *ent.Tx, sourceIDs []int64) ([]Intent, error) {
+	sourceIDs = sortedUniqueSourceIDs(sourceIDs)
+	if len(sourceIDs) == 0 {
+		return []Intent{}, nil
+	}
 	now := time.Now()
-	if err := tx.SourceRuntimeIntent.Create().SetSourceID(sourceID).SetDesiredRevision(1).
+	builders := make([]*ent.SourceRuntimeIntentCreate, 0, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		builders = append(builders, tx.SourceRuntimeIntent.Create().SetSourceID(sourceID).SetDesiredRevision(1))
+	}
+	if err := tx.SourceRuntimeIntent.CreateBulk(builders...).
 		OnConflictColumns(entintent.FieldSourceID).
 		Update(func(update *ent.SourceRuntimeIntentUpsert) {
 			update.AddDesiredRevision(1)
 			update.SetUpdatedAt(now)
 		}).
 		Exec(ctx); err != nil {
-		return Intent{}, fmt.Errorf("upsert source %d runtime intent: %w", sourceID, err)
+		return nil, fmt.Errorf("upsert source runtime intents %v: %w", sourceIDs, err)
 	}
-	row, err := tx.SourceRuntimeIntent.Query().Where(entintent.SourceID(sourceID)).Only(ctx)
+	rows, err := tx.SourceRuntimeIntent.Query().
+		Where(entintent.SourceIDIn(sourceIDs...)).
+		Order(entintent.BySourceID()).
+		All(ctx)
 	if err != nil {
-		return Intent{}, fmt.Errorf("query source %d advanced runtime intent: %w", sourceID, err)
+		return nil, fmt.Errorf("query advanced source runtime intents %v: %w", sourceIDs, err)
 	}
-	return intentFromRow(row), nil
+	if len(rows) != len(sourceIDs) {
+		return nil, fmt.Errorf("query advanced source runtime intents %v: got %d rows", sourceIDs, len(rows))
+	}
+	intents := make([]Intent, len(rows))
+	for i, row := range rows {
+		intents[i] = intentFromRow(row)
+	}
+	return intents, nil
+}
+
+func sortedUniqueSourceIDs(sourceIDs []int64) []int64 {
+	if len(sourceIDs) == 0 {
+		return nil
+	}
+	ids := append([]int64(nil), sourceIDs...)
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := ids[:1]
+	for _, sourceID := range ids[1:] {
+		if sourceID != out[len(out)-1] {
+			out = append(out, sourceID)
+		}
+	}
+	return out
 }
 
 // MarkApplied records a successful apply only when revision remains current.

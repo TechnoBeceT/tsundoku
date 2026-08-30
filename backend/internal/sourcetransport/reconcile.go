@@ -30,21 +30,33 @@ func (s *Service) WithRuntimeApplier(applier RuntimeApplier) *Service {
 // cannot be falsely acknowledged because MarkApplied is guarded by the exact
 // attempted desired revision.
 func (s *Service) ApplyPending(ctx context.Context, sourceID int64) (Intent, error) {
+	return s.applyWithLifecycle(ctx, sourceID, nil)
+}
+
+// ApplyRevision applies sourceID only while revision is still the exact desired
+// revision. A newer commit supersedes the request and remains pending; this
+// method never applies or acknowledges that different revision on the older
+// commit's behalf.
+func (s *Service) ApplyRevision(ctx context.Context, sourceID, revision int64) (Intent, error) {
+	return s.applyWithLifecycle(ctx, sourceID, &revision)
+}
+
+func (s *Service) applyWithLifecycle(ctx context.Context, sourceID int64, requiredRevision *int64) (Intent, error) {
 	if lifecycle, ok := s.applier.(interface {
 		RunRuntime(context.Context, func(context.Context) error) error
 	}); ok {
 		var intent Intent
 		err := lifecycle.RunRuntime(ctx, func(ctx context.Context) error {
 			var applyErr error
-			intent, applyErr = s.applyPending(ctx, sourceID)
+			intent, applyErr = s.applyPending(ctx, sourceID, requiredRevision)
 			return applyErr
 		})
 		return intent, err
 	}
-	return s.applyPending(ctx, sourceID)
+	return s.applyPending(ctx, sourceID, requiredRevision)
 }
 
-func (s *Service) applyPending(ctx context.Context, sourceID int64) (Intent, error) {
+func (s *Service) applyPending(ctx context.Context, sourceID int64, requiredRevision *int64) (Intent, error) {
 	if err := s.applySem.Acquire(ctx, 1); err != nil {
 		return Intent{}, fmt.Errorf("sourcetransport.ApplyPending source %d acquire runtime apply: %w", sourceID, err)
 	}
@@ -53,6 +65,9 @@ func (s *Service) applyPending(ctx context.Context, sourceID int64) (Intent, err
 	intent, err := s.loadIntent(ctx, sourceID)
 	if err != nil {
 		return Intent{}, fmt.Errorf("sourcetransport.ApplyPending source %d: %w", sourceID, err)
+	}
+	if requiredRevision != nil && intent.DesiredRevision != *requiredRevision {
+		return intent, nil
 	}
 	if intent.DesiredRevision <= intent.AppliedRevision {
 		return intent, nil

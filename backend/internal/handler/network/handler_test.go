@@ -286,6 +286,84 @@ func TestUpdateEndpoint_NotFound(t *testing.T) {
 	}
 }
 
+func TestUpdateEndpointAppliesExactCommittedRevisionsForEveryBoundSource(t *testing.T) {
+	var applied []int64
+	env := newTestEnvWithApplier(t, runtimeApplierFunc(func(_ context.Context, sourceID int64) error {
+		applied = append(applied, sourceID)
+		return nil
+	}))
+	endpointID := createSocksEndpoint(t, env)
+	bindSources(t, env, endpointID, "41", "42")
+	applied = nil
+	patch := env.do(http.MethodPatch, "/api/network/endpoints/"+endpointID, `{"name":"VPN changed"}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d (%s)", patch.Code, patch.Body.String())
+	}
+	if len(applied) != 2 || applied[0] != 41 || applied[1] != 42 {
+		t.Fatalf("runtime applies = %v, want [41 42]", applied)
+	}
+	assertSourceIntentRevisions(t, env, 2, 2, 41, 42)
+}
+
+func TestUpdateEndpointFailedApplyStaysPendingAndRetries(t *testing.T) {
+	env := newTestEnvWithApplier(t, runtimeApplierFunc(func(context.Context, int64) error {
+		return errors.New("engine canceled\nretry")
+	}))
+	endpointID := createSocksEndpoint(t, env)
+	bindSources(t, env, endpointID, "51")
+	patch := env.do(http.MethodPatch, "/api/network/endpoints/"+endpointID, `{"enabled":false}`)
+	if patch.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d (%s)", patch.Code, patch.Body.String())
+	}
+	intent := env.client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(51)).OnlyX(context.Background())
+	if intent.DesiredRevision != 2 || intent.AppliedRevision != 0 || intent.LastApplyAttempt == nil || intent.LastApplyError == "" || strings.Contains(intent.LastApplyError, "\n") {
+		t.Fatalf("failed apply intent = %+v, want durable pending revision 2", intent)
+	}
+	retry := sourcetransport.NewService(env.client, nil, acceptingCatalog{}).WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error { return nil }))
+	if _, err := retry.ApplyPending(context.Background(), 51); err != nil {
+		t.Fatalf("retry ApplyPending: %v", err)
+	}
+	intent = env.client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(51)).OnlyX(context.Background())
+	if intent.AppliedRevision != 2 || intent.LastApplyError != "" {
+		t.Fatalf("retried intent = %+v, want applied revision 2", intent)
+	}
+}
+
+func createSocksEndpoint(t *testing.T, env *testEnv) string {
+	t.Helper()
+	rec := env.do(http.MethodPost, "/api/network/endpoints", `{"name":"VPN","kind":"socks","host":"vpn.local","port":1080}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create endpoint: %d %s", rec.Code, rec.Body.String())
+	}
+	var endpoint struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	return endpoint.ID
+}
+
+func bindSources(t *testing.T, env *testEnv, endpointID string, sourceIDs ...string) {
+	t.Helper()
+	for _, sourceID := range sourceIDs {
+		body := `{"socksEndpointId":"` + endpointID + `","flareMode":"global"}`
+		if rec := env.do(http.MethodPut, "/api/network/bindings/"+sourceID, body); rec.Code != http.StatusOK {
+			t.Fatalf("bind source %s: %d %s", sourceID, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func assertSourceIntentRevisions(t *testing.T, env *testEnv, desired, applied int64, sourceIDs ...int64) {
+	t.Helper()
+	for _, sourceID := range sourceIDs {
+		intent := env.client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(sourceID)).OnlyX(context.Background())
+		if intent.DesiredRevision != desired || intent.AppliedRevision != applied {
+			t.Fatalf("source %d intent = %+v, want desired %d applied %d", sourceID, intent, desired, applied)
+		}
+	}
+}
+
 // TestDeleteEndpoint_InUseConflict proves deleting a referenced endpoint is a
 // 409 (owner-safety guard).
 func TestDeleteEndpoint_InUseConflict(t *testing.T) {
