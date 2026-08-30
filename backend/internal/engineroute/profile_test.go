@@ -116,3 +116,147 @@ func TestDerive_Deterministic(t *testing.T) {
 		t.Fatalf("profiles not Key-ordered: %q then %q", first[0].Key, first[1].Key)
 	}
 }
+
+// TestDerive_SessionPolicyMatrix proves disposable-session policy participates
+// in profile identity exactly when FlareSolverr can be used. Inherit and On
+// both keep the selected configured session, while Off requires an isolated
+// profile that will push a blank session. Flare mode none ignores the policy
+// because no bypass request can use a session there.
+func TestDerive_SessionPolicyMatrix(t *testing.T) {
+	t.Parallel()
+
+	policies := []struct {
+		name    string
+		disable bool
+	}{
+		{name: "inherit"},
+		{name: "on"},
+		{name: "off", disable: true},
+	}
+	modes := []string{
+		engineroute.FlareModeGlobal,
+		engineroute.FlareModeEndpoint,
+		engineroute.FlareModeNone,
+	}
+	sessions := []struct {
+		name  string
+		value string
+	}{
+		{name: "blank"},
+		{name: "nonblank", value: "shared-session"},
+	}
+
+	for _, policy := range policies {
+		for _, mode := range modes {
+			for _, session := range sessions {
+				name := policy.name + "/" + mode + "/" + session.name
+				t.Run(name, func(t *testing.T) {
+					input := engineroute.BindingInput{
+						SourceID:             41,
+						FlareMode:            mode,
+						DisableBypassSession: policy.disable,
+					}
+					if mode == engineroute.FlareModeEndpoint {
+						input.Flare = &engineroute.FlareEndpoint{
+							ID: "flare-endpoint", URL: "http://flare.test:8191",
+							Session: session.value,
+						}
+					}
+
+					got := engineroute.Derive([]engineroute.BindingInput{input})
+					if mode == engineroute.FlareModeGlobal && !policy.disable {
+						if len(got) != 0 {
+							t.Fatalf("Derive() = %+v, want default-equivalent binding", got)
+						}
+						return
+					}
+					if len(got) != 1 {
+						t.Fatalf("Derive() yielded %d profiles, want 1", len(got))
+					}
+					wantDisable := policy.disable && mode != engineroute.FlareModeNone
+					if got[0].DisableBypassSession != wantDisable {
+						t.Fatalf("profile DisableBypassSession = %v, want %v", got[0].DisableBypassSession, wantDisable)
+					}
+				})
+			}
+		}
+	}
+}
+
+// TestDerive_EquivalentDisposableSessionsGroup proves two sources with the same
+// stable endpoint identities and Off policy share one disposable-session
+// instance. Mutable endpoint fields, including the configured session value,
+// do not split the profile.
+func TestDerive_EquivalentDisposableSessionsGroup(t *testing.T) {
+	t.Parallel()
+
+	got := engineroute.Derive([]engineroute.BindingInput{
+		{
+			SourceID: 8, FlareMode: engineroute.FlareModeEndpoint,
+			Flare:                &engineroute.FlareEndpoint{ID: "flare", URL: "http://old", Session: "old"},
+			DisableBypassSession: true,
+		},
+		{
+			SourceID: 3, FlareMode: engineroute.FlareModeEndpoint,
+			Flare:                &engineroute.FlareEndpoint{ID: "flare", URL: "http://new", Session: "new"},
+			DisableBypassSession: true,
+		},
+	})
+
+	if len(got) != 1 {
+		t.Fatalf("Derive() yielded %d profiles, want 1 equivalent Off profile", len(got))
+	}
+	if !reflect.DeepEqual(got[0].SourceIDs, []int64{3, 8}) {
+		t.Fatalf("profile sources = %v, want [3 8]", got[0].SourceIDs)
+	}
+	if !got[0].DisableBypassSession {
+		t.Fatal("profile DisableBypassSession = false, want true")
+	}
+}
+
+// TestDerive_SessionPolicyUsesStableIdentity proves changing mutable endpoint
+// config does not churn a profile key, while changing Off to inherited policy
+// changes the key because the effective session behavior changes.
+func TestDerive_SessionPolicyUsesStableIdentity(t *testing.T) {
+	t.Parallel()
+
+	deriveKey := func(flare *engineroute.FlareEndpoint, disable bool) string {
+		t.Helper()
+		got := engineroute.Derive([]engineroute.BindingInput{{
+			SourceID: 1, FlareMode: engineroute.FlareModeEndpoint, Flare: flare,
+			DisableBypassSession: disable,
+		}})
+		if len(got) != 1 {
+			t.Fatalf("Derive() yielded %d profiles, want 1", len(got))
+		}
+		return got[0].Key
+	}
+
+	oldKey := deriveKey(&engineroute.FlareEndpoint{ID: "flare", URL: "http://old", Session: "old", Timeout: 10}, true)
+	newKey := deriveKey(&engineroute.FlareEndpoint{ID: "flare", URL: "http://new", Session: "new", Timeout: 20}, true)
+	if oldKey != newKey {
+		t.Fatalf("mutable endpoint edit changed profile key: %q != %q", oldKey, newKey)
+	}
+	if inheritedKey := deriveKey(&engineroute.FlareEndpoint{ID: "flare", URL: "http://new", Session: "new"}, false); inheritedKey == newKey {
+		t.Fatalf("Off and inherited endpoint profiles share key %q", inheritedKey)
+	}
+}
+
+// TestDerive_ClearingSessionOffRestoresDefaultEquivalence proves removing the
+// Off override from an otherwise-global source removes its non-default profile.
+func TestDerive_ClearingSessionOffRestoresDefaultEquivalence(t *testing.T) {
+	t.Parallel()
+
+	off := engineroute.Derive([]engineroute.BindingInput{{
+		SourceID: 1, FlareMode: engineroute.FlareModeGlobal, DisableBypassSession: true,
+	}})
+	if len(off) != 1 {
+		t.Fatalf("Off Derive() yielded %d profiles, want 1", len(off))
+	}
+	inherited := engineroute.Derive([]engineroute.BindingInput{{
+		SourceID: 1, FlareMode: engineroute.FlareModeGlobal,
+	}})
+	if len(inherited) != 0 {
+		t.Fatalf("cleared Off Derive() = %+v, want default-equivalent binding", inherited)
+	}
+}

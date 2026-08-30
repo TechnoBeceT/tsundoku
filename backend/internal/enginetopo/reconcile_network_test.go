@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
 // --- test doubles ------------------------------------------------------------
@@ -20,6 +21,15 @@ import (
 type fakeSnapshotter struct {
 	bindings []network.ResolvedBinding
 	err      error
+}
+
+type fakeTransportSnapshotter struct {
+	policies map[int64]sourcetransport.Override
+	err      error
+}
+
+func (f fakeTransportSnapshotter) Snapshot(context.Context) (map[int64]sourcetransport.Override, error) {
+	return f.policies, f.err
 }
 
 func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBinding, error) {
@@ -32,16 +42,66 @@ type fakeLauncher struct {
 	instance    *sourceenginefake.Client
 	fail        bool
 	ensureCalls int
+	profiles    []engineroute.Profile
 	retireCalls int
 	lastKeep    map[string]bool
 }
 
 func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	f.ensureCalls++
+	f.profiles = append(f.profiles, p)
 	if f.fail {
 		return engineroute.Instance{}, errors.New("launch failed")
 	}
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: f.instance}, nil
+}
+
+// TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources proves profile
+// derivation sees both explicit network bindings and policy-only Off sources.
+// The latter has no SourceNetworkBinding row but still needs a non-default
+// disposable-session profile when the global bypass session is reusable.
+func TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources(t *testing.T) {
+	t.Parallel()
+
+	off := false
+	launcher := &fakeLauncher{fail: true}
+	res := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+		Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{
+			{SourceID: 12, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare", Session: "bound"}},
+		}},
+		TransportSnapshot: fakeTransportSnapshotter{policies: map[int64]sourcetransport.Override{
+			12: {ReuseBypassSession: &off},
+			44: {ReuseBypassSession: &off},
+		}},
+		Router:     engineroute.NewRouter(sourceenginefake.New()),
+		Launcher:   launcher,
+		BaseConfig: baseConfig(),
+	})
+	if res.Profiles != 2 {
+		t.Fatalf("Profiles = %d, want 2 (bound endpoint Off + global policy-only Off)", res.Profiles)
+	}
+	if len(launcher.profiles) != 2 {
+		t.Fatalf("EnsureProfile calls = %d, want 2", len(launcher.profiles))
+	}
+
+	seen := map[int64]engineroute.Profile{}
+	for _, profile := range launcher.profiles {
+		for _, sourceID := range profile.SourceIDs {
+			seen[sourceID] = profile
+		}
+	}
+	for _, sourceID := range []int64{12, 44} {
+		profile, ok := seen[sourceID]
+		if !ok {
+			t.Fatalf("source %d absent from derived profiles: %+v", sourceID, launcher.profiles)
+		}
+		if !profile.DisableBypassSession {
+			t.Fatalf("source %d profile DisableBypassSession = false, want true", sourceID)
+		}
+	}
+	if seen[44].FlareMode != engineroute.FlareModeGlobal || seen[44].Flare != nil || seen[44].Socks != nil {
+		t.Fatalf("policy-only source profile = %+v, want otherwise-global binding", seen[44])
+	}
 }
 
 func (f *fakeLauncher) Retire(_ context.Context, keep map[string]bool) {

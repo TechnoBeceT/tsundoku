@@ -50,11 +50,14 @@ type ResolvedBinding struct {
 	Flare     *ResolvedFlare // non-nil iff FlareMode == endpoint
 }
 
-// RoutingSnapshot loads every per-source binding with its referenced endpoints
-// resolved to their full config (SOCKS password included) — the authoritative
-// input for engine-side profile derivation + per-profile config push. It is a
-// SEPARATE read surface from ListBindings (which returns password-free DTOs for
-// the HTTP layer): this one is for the internal engine-push consumer ONLY.
+// RoutingSnapshot loads every EXPLICIT per-source binding with its referenced
+// endpoints resolved to their full config (SOCKS password included). The
+// engine-side topology adapter unions this network-owned snapshot with any
+// policy-only source that needs a distinct runtime profile. Keeping that union
+// in enginetopo prevents source transport policy from entering this DB-truth
+// network domain. This is a SEPARATE read surface from ListBindings (which
+// returns password-free DTOs for the HTTP layer): this one is for the internal
+// engine-push consumer ONLY.
 //
 // An endpoint that is missing (referential drift) or DISABLED is treated as
 // absent: a SOCKS reference resolves to nil (direct), and a "endpoint" flare mode

@@ -4,10 +4,11 @@
 // network PROFILE.
 //
 // A PROFILE is a distinct {socks-endpoint?, flare-mode(none|global|endpoint) +
-// flare-endpoint?} combination. Every source that shares the same profile is
-// served by the same engine-host instance; a source with no binding (or a
-// binding that is equivalent to today's global config) uses the DEFAULT instance
-// — the already-shipped single engine-host, byte-for-byte unchanged.
+// flare-endpoint?, disposable-bypass-session?} combination. Every source that
+// shares the same profile is served by the same engine-host instance; a source
+// with no binding (or a binding that is equivalent to today's global config)
+// uses the DEFAULT instance — the already-shipped single engine-host,
+// byte-for-byte unchanged.
 //
 // This package owns three concerns, each in its own file:
 //   - profile.go: the pure profile-derivation kernel (Derive) — no engine, no DB.
@@ -73,10 +74,11 @@ type FlareEndpoint struct {
 // referenced endpoints already resolved (a disabled/absent dimension arrives as
 // a nil pointer / global mode, so Derive needs no further filtering).
 type BindingInput struct {
-	SourceID  int64
-	Socks     *SocksEndpoint // nil = direct (no SOCKS override)
-	FlareMode string         // none|global|endpoint ("" is treated as global)
-	Flare     *FlareEndpoint // non-nil iff FlareMode == endpoint
+	SourceID             int64
+	Socks                *SocksEndpoint // nil = direct (no SOCKS override)
+	FlareMode            string         // none|global|endpoint ("" is treated as global)
+	Flare                *FlareEndpoint // non-nil iff FlareMode == endpoint
+	DisableBypassSession bool           // true = push a blank disposable session when bypass can be used
 }
 
 // Profile is one distinct network profile that needs its own engine-host
@@ -94,6 +96,9 @@ type Profile struct {
 	// Flare is this profile's FlareSolverr endpoint (non-nil iff FlareMode ==
 	// endpoint).
 	Flare *FlareEndpoint
+	// DisableBypassSession makes this profile push a blank FlareSolverr session.
+	// It is normalized false for flare mode none, where bypass cannot be used.
+	DisableBypassSession bool
 	// SourceIDs are every source bound to this profile, ascending. Two sources
 	// with the same profile share one instance.
 	SourceIDs []int64
@@ -103,11 +108,12 @@ type Profile struct {
 // profiles they require, each carrying the source ids that map to it.
 //
 // A binding is DEFAULT-equivalent — and therefore contributes NO profile (its
-// source keeps using the default instance) — when it has no SOCKS override AND
-// its flare mode is global (or blank). That is exactly today's global config, so
-// the byte-for-byte-unchanged invariant falls straight out of Derive: with no
-// bindings, or only default-equivalent ones, Derive returns an empty slice and
-// the Router routes everything to the default instance. This is pinned by
+// source keeps using the default instance) — when it has no SOCKS override, its
+// flare mode is global (or blank), and it keeps the configured bypass session.
+// That is exactly today's global config, so the byte-for-byte-unchanged
+// invariant falls straight out of Derive: with no bindings, or only
+// default-equivalent ones, Derive returns an empty slice and the Router routes
+// everything to the default instance. This is pinned by
 // TestDerive_NoBindingsYieldsNoProfiles + TestDerive_DefaultEquivalentBindings.
 //
 // The result is deterministic: profiles are ordered by Key and each profile's
@@ -122,11 +128,13 @@ func Derive(bindings []BindingInput) []Profile {
 		}
 		p, ok := byKey[key]
 		if !ok {
+			mode := normalizeFlareMode(b.FlareMode)
 			p = &Profile{
-				Key:       key,
-				Socks:     b.Socks,
-				FlareMode: normalizeFlareMode(b.FlareMode),
-				Flare:     b.Flare,
+				Key:                  key,
+				Socks:                b.Socks,
+				FlareMode:            mode,
+				Flare:                b.Flare,
+				DisableBypassSession: bypassCanBeUsed(mode) && b.DisableBypassSession,
 			}
 			byKey[key] = p
 		}
@@ -146,22 +154,35 @@ func Derive(bindings []BindingInput) []Profile {
 // for a default-equivalent binding, else a stable composite of the SOCKS
 // endpoint id, the normalized flare mode, and the flare endpoint id. Keying on
 // endpoint IDs (not resolved field values) means an owner editing an endpoint's
-// host/port keeps the SAME profile instance, which is simply re-pushed the new
-// config on the next reconcile — no instance churn on a field edit.
+// host/port/session keeps the SAME profile instance, which is simply re-pushed
+// the new config on the next reconcile — no instance churn on a field edit.
+// Disposable-session policy enters the key only when bypass can be used; flare
+// mode none ignores it because that profile cannot issue a bypass request.
 func profileKey(b BindingInput) string {
 	socksID := ""
 	if b.Socks != nil {
 		socksID = b.Socks.ID
 	}
 	mode := normalizeFlareMode(b.FlareMode)
-	if socksID == "" && mode == FlareModeGlobal {
+	disableSession := bypassCanBeUsed(mode) && b.DisableBypassSession
+	if socksID == "" && mode == FlareModeGlobal && !disableSession {
 		return "" // no SOCKS override + global flare == today's default
 	}
 	flareID := ""
 	if b.Flare != nil {
 		flareID = b.Flare.ID
 	}
-	return strings.Join([]string{socksID, mode, flareID}, "|")
+	key := strings.Join([]string{socksID, mode, flareID}, "|")
+	if disableSession {
+		key += "|session=disposable"
+	}
+	return key
+}
+
+// bypassCanBeUsed reports whether mode can issue FlareSolverr requests whose
+// session choice matters.
+func bypassCanBeUsed(mode string) bool {
+	return mode == FlareModeGlobal || mode == FlareModeEndpoint
 }
 
 // normalizeFlareMode maps a blank/unknown flare mode onto the global default so

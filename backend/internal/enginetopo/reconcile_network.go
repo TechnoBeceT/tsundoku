@@ -25,6 +25,11 @@ type NetworkSnapshotter interface {
 type NetworkReconcileDeps struct {
 	// Snapshot reads the resolved per-source bindings from the network domain.
 	Snapshot NetworkSnapshotter
+	// TransportSnapshot reads nullable per-source transport overrides. It is
+	// composed with Snapshot here so policy-only session-Off sources participate
+	// in profile derivation without leaking source policy into network.
+	// Nil preserves the pre-transport-policy snapshot during staged wiring.
+	TransportSnapshot SourceTransportSnapshotter
 	// Router is the shared engine client seam whose routing table this pass
 	// rebuilds.
 	Router *engineroute.Router
@@ -45,7 +50,7 @@ type NetworkReconcileDeps struct {
 // NetworkReconcileResult reports what a ReconcileNetwork pass did.
 type NetworkReconcileResult struct {
 	// Profiles is the number of distinct non-default profiles derived from the
-	// current bindings.
+	// current network bindings plus source session policy.
 	Profiles int
 	// InstancesRouted is the number of profiles whose instance was successfully
 	// ensured + provisioned and whose sources are now routed to it.
@@ -60,12 +65,13 @@ type NetworkReconcileResult struct {
 }
 
 // ReconcileNetwork is the DB→engine per-source routing reconcile (QCAT-284): it
-// reads the current bindings, derives the distinct non-default network profiles,
-// ensures + provisions an engine-host instance for each, and rebuilds the
-// Router's source-id → instance table so every bound source's RPC egresses
-// through its profile's instance. It is the multi-instance sibling of Reconcile
-// (which provisions the DEFAULT instance) and is called RIGHT AFTER it on boot,
-// so the global config is pushed first (Reconcile) before per-profile config.
+// reads the current network bindings and session policy, derives the distinct
+// non-default network profiles, ensures + provisions an engine-host instance
+// for each, and rebuilds the Router's source-id → instance table so every
+// affected source's RPC egresses through its profile's instance. It is the
+// multi-instance sibling of Reconcile (which provisions the DEFAULT instance)
+// and is called RIGHT AFTER it on boot, so the global config is pushed first
+// (Reconcile) before per-profile config.
 //
 // IDEMPOTENT. Deriving profiles from the same bindings yields the same routing
 // map, and EnsureProfile is required to reuse a running instance, so a pass that
@@ -73,10 +79,10 @@ type NetworkReconcileResult struct {
 // (unchanged) config + re-installs its (already-installed) extensions as no-ops —
 // exactly Reconcile's own idempotency, per instance.
 //
-// ZERO-DISRUPTION. With no bindings (the deploy-day state, and whenever no source
-// has a non-default binding) Derive returns no profiles, the Router's table is
-// cleared, and every source uses the default instance — byte-for-byte today's
-// single-instance behavior. Pinned by
+// ZERO-DISRUPTION. With no network bindings or session-Off overrides (the
+// deploy-day state, and whenever no source needs a non-default profile) Derive
+// returns no profiles, the Router's table is cleared, and every source uses the
+// default instance — byte-for-byte today's single-instance behavior. Pinned by
 // TestReconcileNetwork_NoBindingsClearsRoutes.
 //
 // FAULT ISOLATION + DEGRADE. A profile whose instance cannot be launched
@@ -90,7 +96,7 @@ type NetworkReconcileResult struct {
 func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkReconcileResult, error) {
 	var res NetworkReconcileResult
 
-	snapshot, err := deps.Snapshot.RoutingSnapshot(ctx)
+	snapshot, err := composeRuntimeSnapshot(ctx, deps.Snapshot, deps.TransportSnapshot)
 	if err != nil {
 		return res, fmt.Errorf("enginetopo.ReconcileNetwork: snapshot: %w", err)
 	}
@@ -186,17 +192,18 @@ func pushSocksCredentials(ctx context.Context, client sourceengine.Client, p eng
 	return err
 }
 
-// toBindingInputs maps the DB-truth resolved bindings into the engine-side
-// derive inputs (a pure value copy — no secrets are dropped, they are needed to
-// push each instance's SOCKS config).
-func toBindingInputs(snapshot []network.ResolvedBinding) []engineroute.BindingInput {
+// toBindingInputs maps the composed runtime bindings into the engine-side derive
+// inputs (a pure value copy — no secrets are dropped, they are needed to push
+// each instance's SOCKS config).
+func toBindingInputs(snapshot []runtimeBinding) []engineroute.BindingInput {
 	out := make([]engineroute.BindingInput, len(snapshot))
 	for i, b := range snapshot {
 		out[i] = engineroute.BindingInput{
-			SourceID:  b.SourceID,
-			FlareMode: b.FlareMode,
-			Socks:     toSocksEndpoint(b.Socks),
-			Flare:     toFlareEndpoint(b.Flare),
+			SourceID:             b.SourceID,
+			FlareMode:            b.FlareMode,
+			Socks:                toSocksEndpoint(b.Socks),
+			Flare:                toFlareEndpoint(b.Flare),
+			DisableBypassSession: b.DisableBypassSession,
 		}
 	}
 	return out

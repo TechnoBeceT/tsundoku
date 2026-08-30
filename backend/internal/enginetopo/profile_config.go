@@ -15,7 +15,8 @@ const socksDefaultPort = 1080
 // surface Reconcile pushes onto an engine-host instance, so the profile's OWN
 // FlareSolverr + SOCKS config (not the global default) lands on ITS instance:
 //   - FlareSolverr: "none" ⇒ disabled; "global" ⇒ inherit the base global config;
-//     "endpoint" ⇒ the bound FlareSolverr endpoint's config.
+//     "endpoint" ⇒ the bound FlareSolverr endpoint's config; disposable-session
+//     policy blanks only the selected global/endpoint session.
 //   - SOCKS: no override ⇒ disabled; a bound SOCKS endpoint ⇒ its host/port/
 //     version (credentials are pushed separately — see pushSocksCredentials —
 //     because ConfigProvider's surface can't express them).
@@ -68,9 +69,13 @@ func (p profileConfigProvider) FlareSolverrTimeout(ctx context.Context) int {
 	return p.base.FlareSolverrTimeout(ctx)
 }
 
-// FlareSolverrSessionName returns the endpoint's session for "endpoint" mode,
-// the base global session for "global", and "" for "none".
+// FlareSolverrSessionName returns "" when this profile has disposable-session
+// policy, otherwise the endpoint's session for "endpoint" mode, the base global
+// session for "global", and "" for "none".
 func (p profileConfigProvider) FlareSolverrSessionName(ctx context.Context) string {
+	if p.profile.DisableBypassSession {
+		return ""
+	}
 	switch p.profile.FlareMode {
 	case engineroute.FlareModeEndpoint:
 		return p.profile.Flare.Session
