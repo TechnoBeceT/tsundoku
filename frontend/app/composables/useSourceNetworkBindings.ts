@@ -80,7 +80,7 @@ export function useSourceNetworkBindings() {
   async function setBinding(sourceId: string, update: SourceNetworkBindingUpdateDTO): Promise<void> {
     bindingAction.value = { busyId: sourceId }
     try {
-      const res = await apiClient.PUT('/api/network/sources/{sourceId}/binding', {
+      const res = await apiClient.PUT('/api/network/bindings/{sourceId}', {
         params: { path: { sourceId } },
         body: update,
       })
@@ -103,7 +103,7 @@ export function useSourceNetworkBindings() {
   async function clearBinding(sourceId: string): Promise<void> {
     bindingAction.value = { busyId: sourceId }
     try {
-      const res = await apiClient.DELETE('/api/network/sources/{sourceId}/binding', {
+      const res = await apiClient.DELETE('/api/network/bindings/{sourceId}', {
         params: { path: { sourceId } },
       })
       if (res.error) throw new Error(res.error.message)

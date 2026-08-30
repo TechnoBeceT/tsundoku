@@ -5,7 +5,9 @@
 package network_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,17 +17,39 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	handler "github.com/technobecet/tsundoku/internal/handler/network"
+	configurationhandler "github.com/technobecet/tsundoku/internal/handler/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/middleware"
 	networksvc "github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
 const testSecret = "network-handler-test-secret-value" //nolint:gosec // test fixture, not a real credential
 
 type testEnv struct {
-	e     *echo.Echo
-	token string
+	e      *echo.Echo
+	token  string
+	client *ent.Client
+}
+
+type acceptingCatalog struct{}
+
+func (acceptingCatalog) RequireSource(context.Context, int64) error { return nil }
+
+type runtimeApplierFunc func(context.Context, int64) error
+
+func (f runtimeApplierFunc) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
+	return f(ctx, sourceID)
+}
+
+type configurationGetterFunc func(context.Context, int64) (sourceconfiguration.Configuration, error)
+
+func (f configurationGetterFunc) Get(ctx context.Context, sourceID int64) (sourceconfiguration.Configuration, error) {
+	return f(ctx, sourceID)
 }
 
 // route is one registered network route, used by the 401 sweep.
@@ -42,16 +66,53 @@ func routes() []route {
 		{http.MethodPatch, "/api/network/endpoints/" + uuid.NewString()},
 		{http.MethodDelete, "/api/network/endpoints/" + uuid.NewString()},
 		{http.MethodGet, "/api/network/bindings"},
-		{http.MethodPut, "/api/network/sources/42/binding"},
-		{http.MethodDelete, "/api/network/sources/42/binding"},
+		{http.MethodPut, "/api/network/bindings/42"},
+		{http.MethodDelete, "/api/network/bindings/42"},
 	}
 }
 
 func newTestEnv(t *testing.T) *testEnv {
+	return newTestEnvWithApplier(t, runtimeApplierFunc(func(context.Context, int64) error { return nil }))
+}
+
+func newTestEnvWithApplier(t *testing.T, applier runtimeApplierFunc) *testEnv {
+	return newTestEnvWithCatalog(t, acceptingCatalog{}, applier)
+}
+
+func newTestEnvWithCatalog(t *testing.T, catalog sourcetransport.SourceCatalog, applier runtimeApplierFunc) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
-	h := handler.NewHandler(networksvc.NewService(client), nil)
+	networkService := networksvc.NewService(client, catalog)
+	runtimeService := sourcetransport.NewService(client, nil, catalog).WithRuntimeApplier(applier)
+	reader := configurationhandler.NewDTOReader(configurationGetterFunc(func(ctx context.Context, sourceID int64) (sourceconfiguration.Configuration, error) {
+		configuration := sourceconfiguration.Configuration{
+			Source:  sourceconfiguration.SourceIdentity{SourceID: sourceID, Name: "Source", Language: "en"},
+			Routing: sourceconfiguration.RoutingConfiguration{SocksMode: sourceconfiguration.SocksModeGlobal, BypassMode: networksvc.FlareModeGlobal},
+		}
+		if binding, err := networkService.GetBinding(ctx, sourceID); err == nil {
+			configuration.Routing.BypassMode = binding.FlareMode
+		} else if !errors.Is(err, networksvc.ErrBindingNotFound) {
+			return sourceconfiguration.Configuration{}, err
+		}
+		intent, err := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(sourceID)).Only(ctx)
+		if err == nil {
+			configuration.Runtime = sourceconfiguration.RuntimeStatus{
+				DesiredRevision: intent.DesiredRevision, AppliedRevision: intent.AppliedRevision,
+				LastApplyAttempt: intent.LastApplyAttempt, LastApplyError: intent.LastApplyError,
+			}
+			configuration.Runtime.Status = sourceconfiguration.RuntimePending
+			if intent.DesiredRevision <= intent.AppliedRevision {
+				configuration.Runtime.Status = sourceconfiguration.RuntimeApplied
+			}
+		} else if !ent.IsNotFound(err) {
+			return sourceconfiguration.Configuration{}, err
+		} else {
+			configuration.Runtime.Status = sourceconfiguration.RuntimeApplied
+		}
+		return configuration, nil
+	}))
+	h := handler.NewHandler(networkService, nil).WithSourceRuntime(runtimeService, reader)
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -61,15 +122,19 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.PATCH("/network/endpoints/:id", h.UpdateEndpoint)
 	authed.DELETE("/network/endpoints/:id", h.DeleteEndpoint)
 	authed.GET("/network/bindings", h.ListBindings)
-	authed.PUT("/network/sources/:sourceId/binding", h.SetBinding)
-	authed.DELETE("/network/sources/:sourceId/binding", h.ClearBinding)
+	authed.PUT("/network/bindings/:sourceId", h.SetBinding)
+	authed.DELETE("/network/bindings/:sourceId", h.ClearBinding)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {
 		t.Fatalf("Issue token: %v", err)
 	}
-	return &testEnv{e: e, token: token}
+	return &testEnv{e: e, token: token, client: client}
 }
+
+type rejectingCatalog struct{ err error }
+
+func (c rejectingCatalog) RequireSource(context.Context, int64) error { return c.err }
 
 func (env *testEnv) do(method, target, body string) *httptest.ResponseRecorder {
 	var r *http.Request
@@ -236,7 +301,7 @@ func TestDeleteEndpoint_InUseConflict(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 
-	bind := env.do(http.MethodPut, "/api/network/sources/42/binding",
+	bind := env.do(http.MethodPut, "/api/network/bindings/42",
 		`{"socksEndpointId":"`+created.ID+`","flareMode":"global"}`)
 	if bind.Code != http.StatusOK {
 		t.Fatalf("bind: want 200, got %d (%s)", bind.Code, bind.Body.String())
@@ -252,7 +317,7 @@ func TestDeleteEndpoint_InUseConflict(t *testing.T) {
 // 400 at the HTTP layer.
 func TestSetBinding_InvalidMode(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodPut, "/api/network/sources/42/binding", `{"flareMode":"endpoint"}`)
+	rec := env.do(http.MethodPut, "/api/network/bindings/42", `{"flareMode":"endpoint"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("endpoint mode without id: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -261,7 +326,7 @@ func TestSetBinding_InvalidMode(t *testing.T) {
 // TestSetBinding_MalformedSourceID proves a non-numeric sourceId is a 400.
 func TestSetBinding_MalformedSourceID(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodPut, "/api/network/sources/not-a-number/binding", `{"flareMode":"global"}`)
+	rec := env.do(http.MethodPut, "/api/network/bindings/not-a-number", `{"flareMode":"global"}`)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad sourceId: want 400, got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -270,8 +335,121 @@ func TestSetBinding_MalformedSourceID(t *testing.T) {
 // TestClearBinding_NotFound proves clearing an unbound source is a 404.
 func TestClearBinding_NotFound(t *testing.T) {
 	env := newTestEnv(t)
-	rec := env.do(http.MethodDelete, "/api/network/sources/12345/binding", "")
+	rec := env.do(http.MethodDelete, "/api/network/bindings/12345", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("clear unbound: want 404, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+type sourceMutationResponse struct {
+	Configuration struct {
+		Routing struct {
+			BypassMode string `json:"bypassMode"`
+		} `json:"routing"`
+		Runtime struct {
+			Status          string `json:"status"`
+			DesiredRevision int64  `json:"desiredRevision"`
+			AppliedRevision int64  `json:"appliedRevision"`
+		} `json:"runtime"`
+	} `json:"configuration"`
+	Runtime struct {
+		Status          string `json:"status"`
+		DesiredRevision int64  `json:"desiredRevision"`
+		AppliedRevision int64  `json:"appliedRevision"`
+		LastApplyError  string `json:"lastApplyError"`
+	} `json:"runtime"`
+}
+
+func decodeSourceMutation(t *testing.T, rec *httptest.ResponseRecorder) sourceMutationResponse {
+	t.Helper()
+	var response sourceMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode SourceMutationResponse: %v (%s)", err, rec.Body.String())
+	}
+	return response
+}
+
+// TestSetBinding_RuntimeResponseAndNoOpRevision proves the canonical PUT
+// returns the shared effective-configuration DTO plus the synchronously applied
+// exact revision, while an identical repeat does not create revision churn.
+func TestSetBinding_RuntimeResponseAndNoOpRevision(t *testing.T) {
+	env := newTestEnv(t)
+	for attempt := range 2 {
+		rec := env.do(http.MethodPut, "/api/network/bindings/42", `{"flareMode":"none"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT attempt %d status = %d (%s), want 200", attempt+1, rec.Code, rec.Body.String())
+		}
+		response := decodeSourceMutation(t, rec)
+		if response.Configuration.Routing.BypassMode != networksvc.FlareModeNone {
+			t.Fatalf("configuration routing = %q, want none", response.Configuration.Routing.BypassMode)
+		}
+		if response.Runtime.Status != sourceconfiguration.RuntimeApplied || response.Runtime.DesiredRevision != 1 || response.Runtime.AppliedRevision != 1 {
+			t.Fatalf("runtime after PUT attempt %d = %+v, want applied 1 / 1", attempt+1, response.Runtime)
+		}
+	}
+}
+
+// TestSetBinding_RuntimeApplyFailureReturnsPersistedPending catches both loss
+// of the committed binding and leakage of a raw runtime failure.
+func TestSetBinding_RuntimeApplyFailureReturnsPersistedPending(t *testing.T) {
+	env := newTestEnvWithApplier(t, runtimeApplierFunc(func(context.Context, int64) error {
+		return errors.New("engine unavailable\nretry later")
+	}))
+	rec := env.do(http.MethodPut, "/api/network/bindings/42", `{"flareMode":"none"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d (%s), want persisted pending 200", rec.Code, rec.Body.String())
+	}
+	response := decodeSourceMutation(t, rec)
+	if response.Configuration.Routing.BypassMode != networksvc.FlareModeNone {
+		t.Fatalf("persisted routing = %q, want none", response.Configuration.Routing.BypassMode)
+	}
+	if response.Runtime.Status != sourceconfiguration.RuntimePending || response.Runtime.DesiredRevision != 1 || response.Runtime.AppliedRevision != 0 || response.Runtime.LastApplyError == "" {
+		t.Fatalf("runtime = %+v, want pending 1 / 0 with durable diagnostic", response.Runtime)
+	}
+	if strings.Contains(response.Runtime.LastApplyError, "\n") || len(response.Runtime.LastApplyError) > 512 {
+		t.Fatalf("raw runtime failure leaked: %s", rec.Body.String())
+	}
+}
+
+// TestClearBinding_RuntimeResponse proves an actual DELETE advances and applies
+// its own revision, then returns the effective inherited routing configuration.
+func TestClearBinding_RuntimeResponse(t *testing.T) {
+	env := newTestEnv(t)
+	if rec := env.do(http.MethodPut, "/api/network/bindings/42", `{"flareMode":"none"}`); rec.Code != http.StatusOK {
+		t.Fatalf("seed PUT status = %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec := env.do(http.MethodDelete, "/api/network/bindings/42", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	response := decodeSourceMutation(t, rec)
+	if response.Configuration.Routing.BypassMode != networksvc.FlareModeGlobal {
+		t.Fatalf("routing after delete = %q, want inherited global", response.Configuration.Routing.BypassMode)
+	}
+	if response.Runtime.Status != sourceconfiguration.RuntimeApplied || response.Runtime.DesiredRevision != 2 || response.Runtime.AppliedRevision != 2 {
+		t.Fatalf("runtime after delete = %+v, want applied 2 / 2", response.Runtime)
+	}
+}
+
+func TestBindingMutation_SourceValidationErrorsStaySanitized(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		status  int
+		message string
+	}{
+		{err: errors.Join(sourcetransport.ErrSourceNotFound, errors.New("catalog internals")), status: http.StatusNotFound, message: "source not found"},
+		{err: errors.Join(sourcetransport.ErrCatalogUnavailable, errors.New("dial tcp secret-host")), status: http.StatusServiceUnavailable, message: "source catalog unavailable"},
+	} {
+		env := newTestEnvWithCatalog(t, rejectingCatalog{err: tc.err}, runtimeApplierFunc(func(context.Context, int64) error { return nil }))
+		rec := env.do(http.MethodPut, "/api/network/bindings/42", `{"flareMode":"global"}`)
+		if rec.Code != tc.status || rec.Body.String() != `{"message":"`+tc.message+`"}`+"\n" {
+			t.Fatalf("error %v status=%d body=%s, want %d %q", tc.err, rec.Code, rec.Body.String(), tc.status, tc.message)
+		}
+		if got := env.client.SourceNetworkBinding.Query().CountX(context.Background()); got != 0 {
+			t.Fatalf("binding rows after source validation failure = %d, want 0", got)
+		}
+		if got := env.client.SourceRuntimeIntent.Query().CountX(context.Background()); got != 0 {
+			t.Fatalf("intent rows after source validation failure = %d, want 0", got)
+		}
 	}
 }

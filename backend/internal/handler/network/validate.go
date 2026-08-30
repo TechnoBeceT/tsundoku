@@ -117,7 +117,7 @@ func (r UpdateEndpointRequest) toPatch() networksvc.EndpointPatch {
 	}
 }
 
-// SetBindingRequest is the PUT /api/network/sources/{sourceId}/binding body. The
+// SetBindingRequest is the PUT /api/network/bindings/{sourceId} body. The
 // two endpoint ids are optional stringified UUIDs (null / omitted = no override
 // for that dimension); flareMode is required.
 type SetBindingRequest struct {

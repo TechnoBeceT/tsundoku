@@ -1,32 +1,51 @@
 package network
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 
+	configurationhandler "github.com/technobecet/tsundoku/internal/handler/sourceconfiguration"
 	networksvc "github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
+
+type runtimeApplier interface {
+	ApplyPending(context.Context, int64) (sourcetransport.Intent, error)
+}
+
+type configurationReader interface {
+	Get(context.Context, int64) (configurationhandler.ConfigurationDTO, error)
+}
 
 // Handler holds the dependencies for the network-routing HTTP handlers. All
 // business logic lives in network.Service; the handler is thin.
 //
-// onChange is a best-effort write-through hook fired after every SUCCESSFUL
-// endpoint/binding mutation (create/update/delete an endpoint, set/clear a
-// binding). It re-derives the engine-host routing profiles so an owner's edit
-// takes effect promptly instead of only on the next boot (QCAT-284) — see
-// enginetopo.ReconcileNetwork. It is fire-and-forget (the closure detaches its
-// own goroutine) and nil-safe (tests and the DB-only deploy pass nil).
+// onChange is the legacy best-effort write-through hook for endpoint changes.
+// A fully composed binding handler uses runtime instead, which applies its exact
+// committed revision synchronously. The hook remains nil-safe.
 type Handler struct {
 	svc      *networksvc.Service
 	onChange func()
+	runtime  runtimeApplier
+	configs  configurationReader
 }
 
-// NewHandler constructs a Handler bound to a network.Service. onChange may be nil
-// (no engine-routing write-through — DB-truth only).
+// NewHandler constructs a Handler bound to a network.Service. onChange may be
+// nil when endpoint write-through is not available.
 func NewHandler(svc *networksvc.Service, onChange func()) *Handler {
 	return &Handler{svc: svc, onChange: onChange}
+}
+
+// WithSourceRuntime attaches the shared source-runtime reconciler and the
+// canonical effective-configuration DTO reader used by binding mutations.
+func (h *Handler) WithSourceRuntime(runtime runtimeApplier, configs configurationReader) *Handler {
+	h.runtime = runtime
+	h.configs = configs
+	return h
 }
 
 // notifyChanged fires the write-through hook when one is wired. Best-effort: the
@@ -109,9 +128,9 @@ func (h *Handler) ListBindings(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
-// SetBinding handles PUT /api/network/sources/:sourceId/binding — upsert the
-// source's binding. On success it returns 200 with the persisted DTO (§16). A
-// malformed sourceId/UUID or an invalid binding yields 400.
+// SetBinding handles PUT /api/network/bindings/:sourceId. It commits the
+// binding and source runtime intent together, synchronously attempts the exact
+// committed revision, then returns the frozen mutation response.
 func (h *Handler) SetBinding(c echo.Context) error {
 	sourceID, err := parseSourceID(c.Param("sourceId"))
 	if err != nil {
@@ -125,27 +144,58 @@ func (h *Handler) SetBinding(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.svc.SetBinding(c.Request().Context(), sourceID, in)
+	ctx := c.Request().Context()
+	result, err := h.svc.SetBinding(ctx, sourceID, in)
 	if err != nil {
 		return mapServiceError(err)
 	}
-	h.notifyChanged()
-	return c.JSON(http.StatusOK, out)
+	if h.runtime == nil || h.configs == nil {
+		h.notifyChanged()
+		return c.JSON(http.StatusOK, result.BindingDTO)
+	}
+	intent := h.applyCommitted(ctx, sourceID, result)
+	configuration, err := h.configs.Get(ctx, sourceID)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, newMutationResponse(configuration, intent))
 }
 
-// ClearBinding handles DELETE /api/network/sources/:sourceId/binding — revert
-// the source to the global default. Returns 204 on success; a source with no
-// binding yields 404.
+// ClearBinding handles DELETE /api/network/bindings/:sourceId. An actual
+// deletion advances intent and returns the refreshed effective configuration;
+// a source with no binding retains the existing 404 no-op contract.
 func (h *Handler) ClearBinding(c echo.Context) error {
 	sourceID, err := parseSourceID(c.Param("sourceId"))
 	if err != nil {
 		return err
 	}
-	if err := h.svc.ClearBinding(c.Request().Context(), sourceID); err != nil {
+	ctx := c.Request().Context()
+	result, err := h.svc.ClearBinding(ctx, sourceID)
+	if err != nil {
 		return mapServiceError(err)
 	}
-	h.notifyChanged()
-	return c.NoContent(http.StatusNoContent)
+	if h.runtime == nil || h.configs == nil {
+		h.notifyChanged()
+		return c.NoContent(http.StatusNoContent)
+	}
+	intent := h.applyCommitted(ctx, sourceID, result)
+	configuration, err := h.configs.Get(ctx, sourceID)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, newMutationResponse(configuration, intent))
+}
+
+func (h *Handler) applyCommitted(ctx context.Context, sourceID int64, result networksvc.BindingMutationResult) sourcetransport.Intent {
+	intent := result.Intent
+	applied, _ := h.runtime.ApplyPending(ctx, sourceID)
+	if applied.SourceID != sourceID {
+		return intent
+	}
+	if !result.Changed || applied.DesiredRevision == result.Intent.DesiredRevision {
+		return applied
+	}
+	return intent
 }
 
 // mapServiceError translates a network.Service sentinel into the matching HTTP
@@ -161,6 +211,12 @@ func mapServiceError(err error) error {
 	case errors.Is(err, networksvc.ErrInvalidEndpoint),
 		errors.Is(err, networksvc.ErrInvalidBinding):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, sourcetransport.ErrSourceNotFound),
+		errors.Is(err, sourceconfiguration.ErrSourceNotFound):
+		return echo.NewHTTPError(http.StatusNotFound, "source not found")
+	case errors.Is(err, sourcetransport.ErrCatalogUnavailable),
+		errors.Is(err, sourceconfiguration.ErrCatalogUnavailable):
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "source catalog unavailable")
 	case errors.Is(err, networksvc.ErrEndpointInUse):
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	default:

@@ -3,12 +3,12 @@
 // and binds individual sources to them, so a source can egress over a VPN /
 // dedicated proxy while the rest use the global default.
 //
-// This package is DB-TRUTH ONLY. It reads and writes two Ent entities —
-// NetworkEndpoint (the reusable endpoints) and SourceNetworkBinding (the
-// per-source assignment) — and enforces referential integrity in code (the
-// endpoint ids are plain UUID columns, not Ent edges). The engine push that
-// makes a binding actually route traffic is a SEPARATE later slice; nothing in
-// this package calls the engine or internal/enginetopo.
+// This package owns durable routing truth. It reads and writes NetworkEndpoint
+// (the reusable endpoints), SourceNetworkBinding (the per-source assignment),
+// and advances SourceRuntimeIntent in the same transaction as a changed
+// binding. Endpoint ids are plain UUID columns rather than Ent edges, so their
+// referential rules remain enforced here. The package itself makes no engine
+// calls; synchronous convergence belongs to the HTTP/runtime composition layer.
 //
 // The Ent predicate packages internal/ent/networkendpoint and
 // internal/ent/sourcenetworkbinding collide with the field vocabulary and are
@@ -21,6 +21,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
 // KindSocks / KindFlareSolverr are the two NetworkEndpoint kinds.
@@ -61,12 +62,13 @@ var ErrInvalidBinding = errors.New("invalid network binding")
 // exists for the given source id. The HTTP handler maps it to a 404.
 var ErrBindingNotFound = errors.New("network binding not found")
 
-// Service is the per-source network-routing domain service over the
-// NetworkEndpoint + SourceNetworkBinding tables. It is stateless beyond the Ent
-// client and makes no engine calls.
+// Service owns network endpoints, source bindings, and binding-side runtime
+// intent advancement. It is stateless beyond its injected stores and guards.
 type Service struct {
 	client            *ent.Client
 	policyCoordinator *runtimepolicy.Coordinator
+	runtimeIntent     *sourcetransport.Service
+	sourceCatalog     sourcetransport.SourceCatalog
 }
 
 // WithRuntimePolicyCoordinator joins endpoint and routing writes to the shared
@@ -83,7 +85,12 @@ func (s *Service) mutate(ctx context.Context, proposal func(context.Context) (ru
 	return s.policyCoordinator.MutateDynamic(ctx, proposal, commit)
 }
 
-// NewService constructs a Service over the given Ent client.
-func NewService(client *ent.Client) *Service {
-	return &Service{client: client}
+// NewService constructs a Service over the given Ent client. When supplied,
+// the first catalog validates live source identity before binding persistence.
+func NewService(client *ent.Client, catalogs ...sourcetransport.SourceCatalog) *Service {
+	s := &Service{client: client, runtimeIntent: sourcetransport.NewService(client, nil, nil)}
+	if len(catalogs) > 0 {
+		s.sourceCatalog = catalogs[0]
+	}
+	return s
 }

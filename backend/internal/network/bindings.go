@@ -9,8 +9,19 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entbinding "github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
+	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
+
+// BindingMutationResult is the persisted binding state and exact source
+// runtime revision committed by one PUT or DELETE. BindingDTO is empty for a
+// successful delete. Changed is false only for an identical PUT.
+type BindingMutationResult struct {
+	BindingDTO
+	Intent  sourcetransport.Intent
+	Changed bool
+}
 
 // ListBindings returns every per-source binding (ordered by source id). An empty
 // (non-nil) slice means no source has a non-default route — every source uses
@@ -43,14 +54,18 @@ func (s *Service) GetBinding(ctx context.Context, sourceID int64) (BindingDTO, e
 // per source). It validates the referenced endpoints exist and match the
 // expected kind (a socks_endpoint_id must name a "socks" endpoint, a
 // flare_endpoint_id a "flaresolverr" endpoint) and enforces the flare_mode ↔
-// flare_endpoint_id consistency rule, then creates or updates the row and
-// returns the persisted DTO (§16 round-trip). ErrInvalidBinding (→400) on a bad
-// reference or inconsistent mode.
-func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingDTO, error) {
+// flare_endpoint_id consistency rule, then atomically creates or updates the
+// row with its desired runtime revision. An identical value returns Changed
+// false without advancing intent. ErrInvalidBinding (→400) on a bad reference
+// or inconsistent mode.
+func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingMutationResult, error) {
+	if err := s.requireSource(ctx, sourceID); err != nil {
+		return BindingMutationResult{}, err
+	}
 	if s.policyCoordinator == nil {
 		return s.setBinding(ctx, sourceID, in)
 	}
-	var result BindingDTO
+	var result BindingMutationResult
 	err := s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
 		return runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{sourceID: {
 			FlareMode: in.FlareMode, FlareEndpointID: in.FlareEndpointID,
@@ -61,50 +76,146 @@ func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInpu
 		return err
 	})
 	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
-		return BindingDTO{}, fmt.Errorf("%w: %w", ErrInvalidBinding, err)
+		return BindingMutationResult{}, fmt.Errorf("%w: %w", ErrInvalidBinding, err)
 	}
 	return result, err
 }
 
-func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingDTO, error) {
+func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingMutationResult, error) {
 	if err := validateFlareMode(in.FlareMode, in.FlareEndpointID); err != nil {
-		return BindingDTO{}, err
+		return BindingMutationResult{}, err
 	}
 	if err := s.validateEndpointRef(ctx, in.SocksEndpointID, KindSocks); err != nil {
-		return BindingDTO{}, err
+		return BindingMutationResult{}, err
 	}
 	if err := s.validateEndpointRef(ctx, in.FlareEndpointID, KindFlareSolverr); err != nil {
-		return BindingDTO{}, err
+		return BindingMutationResult{}, err
 	}
 
-	if err := s.upsertBinding(ctx, sourceID, in); err != nil {
-		return BindingDTO{}, err
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return BindingMutationResult{}, fmt.Errorf("network.SetBinding: begin transaction: %w", err)
 	}
-	return s.GetBinding(ctx, sourceID)
+	txService := *s
+	txService.client = tx.Client()
+	existing, existingErr := txService.bindingBySource(ctx, sourceID)
+	if existingErr == nil && bindingMatchesInput(existing, in) {
+		out := newBindingDTO(existing)
+		if err := tx.Commit(); err != nil {
+			return BindingMutationResult{}, fmt.Errorf("network.SetBinding: commit unchanged source %d: %w", sourceID, err)
+		}
+		intent, err := s.currentIntent(ctx, sourceID)
+		if err != nil {
+			return BindingMutationResult{}, err
+		}
+		return BindingMutationResult{BindingDTO: out, Intent: intent}, nil
+	}
+	if existingErr != nil && !errors.Is(existingErr, ErrBindingNotFound) {
+		_ = tx.Rollback()
+		return BindingMutationResult{}, existingErr
+	}
+	if err := txService.upsertBinding(ctx, sourceID, in); err != nil {
+		_ = tx.Rollback()
+		return BindingMutationResult{}, err
+	}
+	intent, err := s.runtimeIntent.AdvanceIntentTx(ctx, tx, sourceID)
+	if err != nil {
+		_ = tx.Rollback()
+		return BindingMutationResult{}, fmt.Errorf("network.SetBinding: advance source %d intent: %w", sourceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return BindingMutationResult{}, fmt.Errorf("network.SetBinding: commit source %d: %w", sourceID, err)
+	}
+	binding, err := s.GetBinding(ctx, sourceID)
+	if err != nil {
+		return BindingMutationResult{}, err
+	}
+	return BindingMutationResult{BindingDTO: binding, Intent: intent, Changed: true}, nil
 }
 
-// ClearBinding removes a source's binding, reverting it to the global default.
-// ErrBindingNotFound (→404) when the source had no binding to clear.
-func (s *Service) ClearBinding(ctx context.Context, sourceID int64) error {
+// ClearBinding removes a source's binding and advances its desired runtime
+// revision in one transaction, reverting it to the global default.
+// ErrBindingNotFound (→404) is a no-op when no binding exists.
+func (s *Service) ClearBinding(ctx context.Context, sourceID int64) (BindingMutationResult, error) {
+	if err := s.requireSource(ctx, sourceID); err != nil {
+		return BindingMutationResult{}, err
+	}
 	if s.policyCoordinator != nil {
-		return s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
+		var result BindingMutationResult
+		err := s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
 			return runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{sourceID: nil}}, nil
-		}, func(ctx context.Context) error { return s.clearBinding(ctx, sourceID) })
+		}, func(ctx context.Context) error {
+			var err error
+			result, err = s.clearBinding(ctx, sourceID)
+			return err
+		})
+		return result, err
 	}
 	return s.clearBinding(ctx, sourceID)
 }
 
-func (s *Service) clearBinding(ctx context.Context, sourceID int64) error {
-	n, err := s.client.SourceNetworkBinding.Delete().
+func (s *Service) requireSource(ctx context.Context, sourceID int64) error {
+	if s.sourceCatalog == nil {
+		return nil
+	}
+	if err := s.sourceCatalog.RequireSource(ctx, sourceID); err != nil {
+		return fmt.Errorf("network binding source %d: %w", sourceID, err)
+	}
+	return nil
+}
+
+func (s *Service) clearBinding(ctx context.Context, sourceID int64) (BindingMutationResult, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return BindingMutationResult{}, fmt.Errorf("network.ClearBinding: begin transaction: %w", err)
+	}
+	n, err := tx.SourceNetworkBinding.Delete().
 		Where(entbinding.SourceID(sourceID)).
 		Exec(ctx)
 	if err != nil {
-		return fmt.Errorf("network.ClearBinding: delete source %d: %w", sourceID, err)
+		_ = tx.Rollback()
+		return BindingMutationResult{}, fmt.Errorf("network.ClearBinding: delete source %d: %w", sourceID, err)
 	}
 	if n == 0 {
-		return ErrBindingNotFound
+		_ = tx.Rollback()
+		return BindingMutationResult{}, ErrBindingNotFound
 	}
-	return nil
+	intent, err := s.runtimeIntent.AdvanceIntentTx(ctx, tx, sourceID)
+	if err != nil {
+		_ = tx.Rollback()
+		return BindingMutationResult{}, fmt.Errorf("network.ClearBinding: advance source %d intent: %w", sourceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return BindingMutationResult{}, fmt.Errorf("network.ClearBinding: commit source %d: %w", sourceID, err)
+	}
+	return BindingMutationResult{Intent: intent, Changed: true}, nil
+}
+
+func (s *Service) currentIntent(ctx context.Context, sourceID int64) (sourcetransport.Intent, error) {
+	row, err := s.client.SourceRuntimeIntent.Query().Where(entintent.SourceID(sourceID)).Only(ctx)
+	if ent.IsNotFound(err) {
+		return sourcetransport.Intent{SourceID: sourceID}, nil
+	}
+	if err != nil {
+		return sourcetransport.Intent{}, fmt.Errorf("network binding source %d runtime intent: %w", sourceID, err)
+	}
+	return sourcetransport.Intent{
+		SourceID: row.SourceID, DesiredRevision: row.DesiredRevision, AppliedRevision: row.AppliedRevision,
+		LastApplyAttempt: row.LastApplyAttempt, LastApplyError: row.LastApplyError,
+	}, nil
+}
+
+func bindingMatchesInput(row *ent.SourceNetworkBinding, in BindingInput) bool {
+	return uuidPointersEqual(row.SocksEndpointID, in.SocksEndpointID) &&
+		row.FlareMode == in.FlareMode &&
+		uuidPointersEqual(row.FlareEndpointID, in.FlareEndpointID)
+}
+
+func uuidPointersEqual(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 // upsertBinding creates or updates the single binding row for sourceID from in.

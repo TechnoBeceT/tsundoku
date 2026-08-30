@@ -5,7 +5,7 @@
  * Pins:
  *   1. refetch loads BOTH the source list + the bindings, mapping each; a
  *      binding's absent (undefined) endpoint id normalises to null.
- *   2. setBinding PUTs to /api/network/sources/{sourceId}/binding with the body,
+ *   2. setBinding PUTs to /api/network/bindings/{sourceId} with the body,
  *      then clears bindingAction.
  *   3. clearBinding DELETEs the binding path.
  *   4. a PUT failure surfaces in bindingAction.error (never swallowed, §16).
@@ -72,7 +72,7 @@ describe('useSourceNetworkBindings', () => {
     await vi.waitFor(() => expect(sources.value.length).toBe(2))
 
     await setBinding('222', { socksEndpointId: 'ep-socks', flareMode: 'global', flareEndpointId: null })
-    expect(lastPut?.path).toBe('/api/network/sources/{sourceId}/binding')
+    expect(lastPut?.path).toBe('/api/network/bindings/{sourceId}')
     expect(lastPut?.id).toBe('222')
     expect(lastPut?.body).toEqual({ socksEndpointId: 'ep-socks', flareMode: 'global', flareEndpointId: null })
     expect(bindingAction.value).toEqual({ busyId: null })
@@ -83,7 +83,7 @@ describe('useSourceNetworkBindings', () => {
     await vi.waitFor(() => expect(sources.value.length).toBe(2))
 
     await clearBinding('222')
-    expect(lastDelete?.path).toBe('/api/network/sources/{sourceId}/binding')
+    expect(lastDelete?.path).toBe('/api/network/bindings/{sourceId}')
     expect(lastDelete?.id).toBe('222')
   })
 
