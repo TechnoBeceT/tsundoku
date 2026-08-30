@@ -81,11 +81,17 @@ type SourceNetworkBinding func(*sql.Selector)
 // SourcePreference is the predicate function for sourcepreference builders.
 type SourcePreference func(*sql.Selector)
 
+// SourceRuntimeIntent is the predicate function for sourceruntimeintent builders.
+type SourceRuntimeIntent func(*sql.Selector)
+
 // SourceSeedState is the predicate function for sourceseedstate builders.
 type SourceSeedState func(*sql.Selector)
 
 // SourceThroughputPolicy is the predicate function for sourcethroughputpolicy builders.
 type SourceThroughputPolicy func(*sql.Selector)
+
+// SourceTransportPolicy is the predicate function for sourcetransportpolicy builders.
+type SourceTransportPolicy func(*sql.Selector)
 
 // SuwayomiSyncState is the predicate function for suwayomisyncstate builders.
 type SuwayomiSyncState func(*sql.Selector)

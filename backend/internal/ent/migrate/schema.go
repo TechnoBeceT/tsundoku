@@ -605,6 +605,23 @@ var (
 			},
 		},
 	}
+	// SourceRuntimeIntentsColumns holds the columns for the "source_runtime_intents" table.
+	SourceRuntimeIntentsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64, Unique: true},
+		{Name: "desired_revision", Type: field.TypeInt64, Default: 0},
+		{Name: "applied_revision", Type: field.TypeInt64, Default: 0},
+		{Name: "last_apply_attempt", Type: field.TypeTime, Nullable: true},
+		{Name: "last_apply_error", Type: field.TypeString, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceRuntimeIntentsTable holds the schema information for the "source_runtime_intents" table.
+	SourceRuntimeIntentsTable = &schema.Table{
+		Name:       "source_runtime_intents",
+		Columns:    SourceRuntimeIntentsColumns,
+		PrimaryKey: []*schema.Column{SourceRuntimeIntentsColumns[0]},
+	}
 	// SourceSeedStatesColumns holds the columns for the "source_seed_states" table.
 	SourceSeedStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeUUID, Unique: true},
@@ -650,6 +667,21 @@ var (
 				Columns: []*schema.Column{SourceThroughputPoliciesColumns[1]},
 			},
 		},
+	}
+	// SourceTransportPoliciesColumns holds the columns for the "source_transport_policies" table.
+	SourceTransportPoliciesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeUUID, Unique: true},
+		{Name: "source_id", Type: field.TypeInt64, Unique: true},
+		{Name: "reuse_bypass_session", Type: field.TypeBool, Nullable: true},
+		{Name: "image_connection_mode", Type: field.TypeEnum, Nullable: true, Enums: []string{"fresh", "reuse"}},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SourceTransportPoliciesTable holds the schema information for the "source_transport_policies" table.
+	SourceTransportPoliciesTable = &schema.Table{
+		Name:       "source_transport_policies",
+		Columns:    SourceTransportPoliciesColumns,
+		PrimaryKey: []*schema.Column{SourceTransportPoliciesColumns[0]},
 	}
 	// SuwayomiSyncStatesColumns holds the columns for the "suwayomi_sync_states" table.
 	SuwayomiSyncStatesColumns = []*schema.Column{
@@ -768,8 +800,10 @@ var (
 		SourceMetricsTable,
 		SourceNetworkBindingsTable,
 		SourcePreferencesTable,
+		SourceRuntimeIntentsTable,
 		SourceSeedStatesTable,
 		SourceThroughputPoliciesTable,
+		SourceTransportPoliciesTable,
 		SuwayomiSyncStatesTable,
 		TrackBindingsTable,
 		TrackerConnectionsTable,

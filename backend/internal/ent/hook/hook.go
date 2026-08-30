@@ -309,6 +309,18 @@ func (f SourcePreferenceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourcePreferenceMutation", m)
 }
 
+// The SourceRuntimeIntentFunc type is an adapter to allow the use of ordinary
+// function as SourceRuntimeIntent mutator.
+type SourceRuntimeIntentFunc func(context.Context, *ent.SourceRuntimeIntentMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceRuntimeIntentFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceRuntimeIntentMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceRuntimeIntentMutation", m)
+}
+
 // The SourceSeedStateFunc type is an adapter to allow the use of ordinary
 // function as SourceSeedState mutator.
 type SourceSeedStateFunc func(context.Context, *ent.SourceSeedStateMutation) (ent.Value, error)
@@ -331,6 +343,18 @@ func (f SourceThroughputPolicyFunc) Mutate(ctx context.Context, m ent.Mutation) 
 		return f(ctx, mv)
 	}
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceThroughputPolicyMutation", m)
+}
+
+// The SourceTransportPolicyFunc type is an adapter to allow the use of ordinary
+// function as SourceTransportPolicy mutator.
+type SourceTransportPolicyFunc func(context.Context, *ent.SourceTransportPolicyMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SourceTransportPolicyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SourceTransportPolicyMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SourceTransportPolicyMutation", m)
 }
 
 // The SuwayomiSyncStateFunc type is an adapter to allow the use of ordinary

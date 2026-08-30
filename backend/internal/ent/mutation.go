@@ -39,8 +39,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
+	"github.com/technobecet/tsundoku/internal/ent/sourcetransportpolicy"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -82,8 +84,10 @@ const (
 	TypeSourceMetric                    = "SourceMetric"
 	TypeSourceNetworkBinding            = "SourceNetworkBinding"
 	TypeSourcePreference                = "SourcePreference"
+	TypeSourceRuntimeIntent             = "SourceRuntimeIntent"
 	TypeSourceSeedState                 = "SourceSeedState"
 	TypeSourceThroughputPolicy          = "SourceThroughputPolicy"
+	TypeSourceTransportPolicy           = "SourceTransportPolicy"
 	TypeSuwayomiSyncState               = "SuwayomiSyncState"
 	TypeTrackBinding                    = "TrackBinding"
 	TypeTrackerConnection               = "TrackerConnection"
@@ -22128,6 +22132,786 @@ func (m *SourcePreferenceMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourcePreference edge %s", name)
 }
 
+// SourceRuntimeIntentMutation represents an operation that mutates the SourceRuntimeIntent nodes in the graph.
+type SourceRuntimeIntentMutation struct {
+	config
+	op                  Op
+	typ                 string
+	id                  *uuid.UUID
+	source_id           *int64
+	addsource_id        *int64
+	desired_revision    *int64
+	adddesired_revision *int64
+	applied_revision    *int64
+	addapplied_revision *int64
+	last_apply_attempt  *time.Time
+	last_apply_error    *string
+	created_at          *time.Time
+	updated_at          *time.Time
+	clearedFields       map[string]struct{}
+	done                bool
+	oldValue            func(context.Context) (*SourceRuntimeIntent, error)
+	predicates          []predicate.SourceRuntimeIntent
+}
+
+var _ ent.Mutation = (*SourceRuntimeIntentMutation)(nil)
+
+// sourceruntimeintentOption allows management of the mutation configuration using functional options.
+type sourceruntimeintentOption func(*SourceRuntimeIntentMutation)
+
+// newSourceRuntimeIntentMutation creates new mutation for the SourceRuntimeIntent entity.
+func newSourceRuntimeIntentMutation(c config, op Op, opts ...sourceruntimeintentOption) *SourceRuntimeIntentMutation {
+	m := &SourceRuntimeIntentMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceRuntimeIntent,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceRuntimeIntentID sets the ID field of the mutation.
+func withSourceRuntimeIntentID(id uuid.UUID) sourceruntimeintentOption {
+	return func(m *SourceRuntimeIntentMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceRuntimeIntent
+		)
+		m.oldValue = func(ctx context.Context) (*SourceRuntimeIntent, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceRuntimeIntent.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceRuntimeIntent sets the old SourceRuntimeIntent of the mutation.
+func withSourceRuntimeIntent(node *SourceRuntimeIntent) sourceruntimeintentOption {
+	return func(m *SourceRuntimeIntentMutation) {
+		m.oldValue = func(context.Context) (*SourceRuntimeIntent, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceRuntimeIntentMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceRuntimeIntentMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceRuntimeIntent entities.
+func (m *SourceRuntimeIntentMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceRuntimeIntentMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceRuntimeIntentMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceRuntimeIntent.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceRuntimeIntentMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceRuntimeIntentMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourceRuntimeIntentMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourceRuntimeIntentMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceRuntimeIntentMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetDesiredRevision sets the "desired_revision" field.
+func (m *SourceRuntimeIntentMutation) SetDesiredRevision(i int64) {
+	m.desired_revision = &i
+	m.adddesired_revision = nil
+}
+
+// DesiredRevision returns the value of the "desired_revision" field in the mutation.
+func (m *SourceRuntimeIntentMutation) DesiredRevision() (r int64, exists bool) {
+	v := m.desired_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesiredRevision returns the old "desired_revision" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldDesiredRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesiredRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesiredRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesiredRevision: %w", err)
+	}
+	return oldValue.DesiredRevision, nil
+}
+
+// AddDesiredRevision adds i to the "desired_revision" field.
+func (m *SourceRuntimeIntentMutation) AddDesiredRevision(i int64) {
+	if m.adddesired_revision != nil {
+		*m.adddesired_revision += i
+	} else {
+		m.adddesired_revision = &i
+	}
+}
+
+// AddedDesiredRevision returns the value that was added to the "desired_revision" field in this mutation.
+func (m *SourceRuntimeIntentMutation) AddedDesiredRevision() (r int64, exists bool) {
+	v := m.adddesired_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDesiredRevision resets all changes to the "desired_revision" field.
+func (m *SourceRuntimeIntentMutation) ResetDesiredRevision() {
+	m.desired_revision = nil
+	m.adddesired_revision = nil
+}
+
+// SetAppliedRevision sets the "applied_revision" field.
+func (m *SourceRuntimeIntentMutation) SetAppliedRevision(i int64) {
+	m.applied_revision = &i
+	m.addapplied_revision = nil
+}
+
+// AppliedRevision returns the value of the "applied_revision" field in the mutation.
+func (m *SourceRuntimeIntentMutation) AppliedRevision() (r int64, exists bool) {
+	v := m.applied_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAppliedRevision returns the old "applied_revision" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldAppliedRevision(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAppliedRevision is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAppliedRevision requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAppliedRevision: %w", err)
+	}
+	return oldValue.AppliedRevision, nil
+}
+
+// AddAppliedRevision adds i to the "applied_revision" field.
+func (m *SourceRuntimeIntentMutation) AddAppliedRevision(i int64) {
+	if m.addapplied_revision != nil {
+		*m.addapplied_revision += i
+	} else {
+		m.addapplied_revision = &i
+	}
+}
+
+// AddedAppliedRevision returns the value that was added to the "applied_revision" field in this mutation.
+func (m *SourceRuntimeIntentMutation) AddedAppliedRevision() (r int64, exists bool) {
+	v := m.addapplied_revision
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetAppliedRevision resets all changes to the "applied_revision" field.
+func (m *SourceRuntimeIntentMutation) ResetAppliedRevision() {
+	m.applied_revision = nil
+	m.addapplied_revision = nil
+}
+
+// SetLastApplyAttempt sets the "last_apply_attempt" field.
+func (m *SourceRuntimeIntentMutation) SetLastApplyAttempt(t time.Time) {
+	m.last_apply_attempt = &t
+}
+
+// LastApplyAttempt returns the value of the "last_apply_attempt" field in the mutation.
+func (m *SourceRuntimeIntentMutation) LastApplyAttempt() (r time.Time, exists bool) {
+	v := m.last_apply_attempt
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastApplyAttempt returns the old "last_apply_attempt" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldLastApplyAttempt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastApplyAttempt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastApplyAttempt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastApplyAttempt: %w", err)
+	}
+	return oldValue.LastApplyAttempt, nil
+}
+
+// ClearLastApplyAttempt clears the value of the "last_apply_attempt" field.
+func (m *SourceRuntimeIntentMutation) ClearLastApplyAttempt() {
+	m.last_apply_attempt = nil
+	m.clearedFields[sourceruntimeintent.FieldLastApplyAttempt] = struct{}{}
+}
+
+// LastApplyAttemptCleared returns if the "last_apply_attempt" field was cleared in this mutation.
+func (m *SourceRuntimeIntentMutation) LastApplyAttemptCleared() bool {
+	_, ok := m.clearedFields[sourceruntimeintent.FieldLastApplyAttempt]
+	return ok
+}
+
+// ResetLastApplyAttempt resets all changes to the "last_apply_attempt" field.
+func (m *SourceRuntimeIntentMutation) ResetLastApplyAttempt() {
+	m.last_apply_attempt = nil
+	delete(m.clearedFields, sourceruntimeintent.FieldLastApplyAttempt)
+}
+
+// SetLastApplyError sets the "last_apply_error" field.
+func (m *SourceRuntimeIntentMutation) SetLastApplyError(s string) {
+	m.last_apply_error = &s
+}
+
+// LastApplyError returns the value of the "last_apply_error" field in the mutation.
+func (m *SourceRuntimeIntentMutation) LastApplyError() (r string, exists bool) {
+	v := m.last_apply_error
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastApplyError returns the old "last_apply_error" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldLastApplyError(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastApplyError is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastApplyError requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastApplyError: %w", err)
+	}
+	return oldValue.LastApplyError, nil
+}
+
+// ResetLastApplyError resets all changes to the "last_apply_error" field.
+func (m *SourceRuntimeIntentMutation) ResetLastApplyError() {
+	m.last_apply_error = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceRuntimeIntentMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceRuntimeIntentMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceRuntimeIntentMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceRuntimeIntentMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceRuntimeIntentMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceRuntimeIntent entity.
+// If the SourceRuntimeIntent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceRuntimeIntentMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceRuntimeIntentMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceRuntimeIntentMutation builder.
+func (m *SourceRuntimeIntentMutation) Where(ps ...predicate.SourceRuntimeIntent) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceRuntimeIntentMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceRuntimeIntentMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceRuntimeIntent, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceRuntimeIntentMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceRuntimeIntentMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceRuntimeIntent).
+func (m *SourceRuntimeIntentMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceRuntimeIntentMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.source_id != nil {
+		fields = append(fields, sourceruntimeintent.FieldSourceID)
+	}
+	if m.desired_revision != nil {
+		fields = append(fields, sourceruntimeintent.FieldDesiredRevision)
+	}
+	if m.applied_revision != nil {
+		fields = append(fields, sourceruntimeintent.FieldAppliedRevision)
+	}
+	if m.last_apply_attempt != nil {
+		fields = append(fields, sourceruntimeintent.FieldLastApplyAttempt)
+	}
+	if m.last_apply_error != nil {
+		fields = append(fields, sourceruntimeintent.FieldLastApplyError)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourceruntimeintent.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourceruntimeintent.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceRuntimeIntentMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		return m.SourceID()
+	case sourceruntimeintent.FieldDesiredRevision:
+		return m.DesiredRevision()
+	case sourceruntimeintent.FieldAppliedRevision:
+		return m.AppliedRevision()
+	case sourceruntimeintent.FieldLastApplyAttempt:
+		return m.LastApplyAttempt()
+	case sourceruntimeintent.FieldLastApplyError:
+		return m.LastApplyError()
+	case sourceruntimeintent.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourceruntimeintent.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceRuntimeIntentMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourceruntimeintent.FieldDesiredRevision:
+		return m.OldDesiredRevision(ctx)
+	case sourceruntimeintent.FieldAppliedRevision:
+		return m.OldAppliedRevision(ctx)
+	case sourceruntimeintent.FieldLastApplyAttempt:
+		return m.OldLastApplyAttempt(ctx)
+	case sourceruntimeintent.FieldLastApplyError:
+		return m.OldLastApplyError(ctx)
+	case sourceruntimeintent.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourceruntimeintent.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceRuntimeIntent field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceRuntimeIntentMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourceruntimeintent.FieldDesiredRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesiredRevision(v)
+		return nil
+	case sourceruntimeintent.FieldAppliedRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAppliedRevision(v)
+		return nil
+	case sourceruntimeintent.FieldLastApplyAttempt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastApplyAttempt(v)
+		return nil
+	case sourceruntimeintent.FieldLastApplyError:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastApplyError(v)
+		return nil
+	case sourceruntimeintent.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourceruntimeintent.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceRuntimeIntent field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceRuntimeIntentMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourceruntimeintent.FieldSourceID)
+	}
+	if m.adddesired_revision != nil {
+		fields = append(fields, sourceruntimeintent.FieldDesiredRevision)
+	}
+	if m.addapplied_revision != nil {
+		fields = append(fields, sourceruntimeintent.FieldAppliedRevision)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceRuntimeIntentMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		return m.AddedSourceID()
+	case sourceruntimeintent.FieldDesiredRevision:
+		return m.AddedDesiredRevision()
+	case sourceruntimeintent.FieldAppliedRevision:
+		return m.AddedAppliedRevision()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceRuntimeIntentMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	case sourceruntimeintent.FieldDesiredRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDesiredRevision(v)
+		return nil
+	case sourceruntimeintent.FieldAppliedRevision:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAppliedRevision(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceRuntimeIntent numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceRuntimeIntentMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourceruntimeintent.FieldLastApplyAttempt) {
+		fields = append(fields, sourceruntimeintent.FieldLastApplyAttempt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceRuntimeIntentMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceRuntimeIntentMutation) ClearField(name string) error {
+	switch name {
+	case sourceruntimeintent.FieldLastApplyAttempt:
+		m.ClearLastApplyAttempt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceRuntimeIntent nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceRuntimeIntentMutation) ResetField(name string) error {
+	switch name {
+	case sourceruntimeintent.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourceruntimeintent.FieldDesiredRevision:
+		m.ResetDesiredRevision()
+		return nil
+	case sourceruntimeintent.FieldAppliedRevision:
+		m.ResetAppliedRevision()
+		return nil
+	case sourceruntimeintent.FieldLastApplyAttempt:
+		m.ResetLastApplyAttempt()
+		return nil
+	case sourceruntimeintent.FieldLastApplyError:
+		m.ResetLastApplyError()
+		return nil
+	case sourceruntimeintent.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourceruntimeintent.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceRuntimeIntent field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceRuntimeIntentMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceRuntimeIntentMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceRuntimeIntentMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceRuntimeIntentMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceRuntimeIntentMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceRuntimeIntentMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceRuntimeIntentMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceRuntimeIntent unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceRuntimeIntentMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceRuntimeIntent edge %s", name)
+}
+
 // SourceSeedStateMutation represents an operation that mutates the SourceSeedState nodes in the graph.
 type SourceSeedStateMutation struct {
 	config
@@ -23533,6 +24317,631 @@ func (m *SourceThroughputPolicyMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *SourceThroughputPolicyMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown SourceThroughputPolicy edge %s", name)
+}
+
+// SourceTransportPolicyMutation represents an operation that mutates the SourceTransportPolicy nodes in the graph.
+type SourceTransportPolicyMutation struct {
+	config
+	op                    Op
+	typ                   string
+	id                    *uuid.UUID
+	source_id             *int64
+	addsource_id          *int64
+	reuse_bypass_session  *bool
+	image_connection_mode *sourcetransportpolicy.ImageConnectionMode
+	created_at            *time.Time
+	updated_at            *time.Time
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*SourceTransportPolicy, error)
+	predicates            []predicate.SourceTransportPolicy
+}
+
+var _ ent.Mutation = (*SourceTransportPolicyMutation)(nil)
+
+// sourcetransportpolicyOption allows management of the mutation configuration using functional options.
+type sourcetransportpolicyOption func(*SourceTransportPolicyMutation)
+
+// newSourceTransportPolicyMutation creates new mutation for the SourceTransportPolicy entity.
+func newSourceTransportPolicyMutation(c config, op Op, opts ...sourcetransportpolicyOption) *SourceTransportPolicyMutation {
+	m := &SourceTransportPolicyMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSourceTransportPolicy,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSourceTransportPolicyID sets the ID field of the mutation.
+func withSourceTransportPolicyID(id uuid.UUID) sourcetransportpolicyOption {
+	return func(m *SourceTransportPolicyMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SourceTransportPolicy
+		)
+		m.oldValue = func(ctx context.Context) (*SourceTransportPolicy, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SourceTransportPolicy.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSourceTransportPolicy sets the old SourceTransportPolicy of the mutation.
+func withSourceTransportPolicy(node *SourceTransportPolicy) sourcetransportpolicyOption {
+	return func(m *SourceTransportPolicyMutation) {
+		m.oldValue = func(context.Context) (*SourceTransportPolicy, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SourceTransportPolicyMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SourceTransportPolicyMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SourceTransportPolicy entities.
+func (m *SourceTransportPolicyMutation) SetID(id uuid.UUID) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SourceTransportPolicyMutation) ID() (id uuid.UUID, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SourceTransportPolicyMutation) IDs(ctx context.Context) ([]uuid.UUID, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []uuid.UUID{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SourceTransportPolicy.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetSourceID sets the "source_id" field.
+func (m *SourceTransportPolicyMutation) SetSourceID(i int64) {
+	m.source_id = &i
+	m.addsource_id = nil
+}
+
+// SourceID returns the value of the "source_id" field in the mutation.
+func (m *SourceTransportPolicyMutation) SourceID() (r int64, exists bool) {
+	v := m.source_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSourceID returns the old "source_id" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldSourceID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSourceID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSourceID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSourceID: %w", err)
+	}
+	return oldValue.SourceID, nil
+}
+
+// AddSourceID adds i to the "source_id" field.
+func (m *SourceTransportPolicyMutation) AddSourceID(i int64) {
+	if m.addsource_id != nil {
+		*m.addsource_id += i
+	} else {
+		m.addsource_id = &i
+	}
+}
+
+// AddedSourceID returns the value that was added to the "source_id" field in this mutation.
+func (m *SourceTransportPolicyMutation) AddedSourceID() (r int64, exists bool) {
+	v := m.addsource_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSourceID resets all changes to the "source_id" field.
+func (m *SourceTransportPolicyMutation) ResetSourceID() {
+	m.source_id = nil
+	m.addsource_id = nil
+}
+
+// SetReuseBypassSession sets the "reuse_bypass_session" field.
+func (m *SourceTransportPolicyMutation) SetReuseBypassSession(b bool) {
+	m.reuse_bypass_session = &b
+}
+
+// ReuseBypassSession returns the value of the "reuse_bypass_session" field in the mutation.
+func (m *SourceTransportPolicyMutation) ReuseBypassSession() (r bool, exists bool) {
+	v := m.reuse_bypass_session
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldReuseBypassSession returns the old "reuse_bypass_session" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldReuseBypassSession(ctx context.Context) (v *bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldReuseBypassSession is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldReuseBypassSession requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldReuseBypassSession: %w", err)
+	}
+	return oldValue.ReuseBypassSession, nil
+}
+
+// ClearReuseBypassSession clears the value of the "reuse_bypass_session" field.
+func (m *SourceTransportPolicyMutation) ClearReuseBypassSession() {
+	m.reuse_bypass_session = nil
+	m.clearedFields[sourcetransportpolicy.FieldReuseBypassSession] = struct{}{}
+}
+
+// ReuseBypassSessionCleared returns if the "reuse_bypass_session" field was cleared in this mutation.
+func (m *SourceTransportPolicyMutation) ReuseBypassSessionCleared() bool {
+	_, ok := m.clearedFields[sourcetransportpolicy.FieldReuseBypassSession]
+	return ok
+}
+
+// ResetReuseBypassSession resets all changes to the "reuse_bypass_session" field.
+func (m *SourceTransportPolicyMutation) ResetReuseBypassSession() {
+	m.reuse_bypass_session = nil
+	delete(m.clearedFields, sourcetransportpolicy.FieldReuseBypassSession)
+}
+
+// SetImageConnectionMode sets the "image_connection_mode" field.
+func (m *SourceTransportPolicyMutation) SetImageConnectionMode(scm sourcetransportpolicy.ImageConnectionMode) {
+	m.image_connection_mode = &scm
+}
+
+// ImageConnectionMode returns the value of the "image_connection_mode" field in the mutation.
+func (m *SourceTransportPolicyMutation) ImageConnectionMode() (r sourcetransportpolicy.ImageConnectionMode, exists bool) {
+	v := m.image_connection_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldImageConnectionMode returns the old "image_connection_mode" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldImageConnectionMode(ctx context.Context) (v *sourcetransportpolicy.ImageConnectionMode, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldImageConnectionMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldImageConnectionMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldImageConnectionMode: %w", err)
+	}
+	return oldValue.ImageConnectionMode, nil
+}
+
+// ClearImageConnectionMode clears the value of the "image_connection_mode" field.
+func (m *SourceTransportPolicyMutation) ClearImageConnectionMode() {
+	m.image_connection_mode = nil
+	m.clearedFields[sourcetransportpolicy.FieldImageConnectionMode] = struct{}{}
+}
+
+// ImageConnectionModeCleared returns if the "image_connection_mode" field was cleared in this mutation.
+func (m *SourceTransportPolicyMutation) ImageConnectionModeCleared() bool {
+	_, ok := m.clearedFields[sourcetransportpolicy.FieldImageConnectionMode]
+	return ok
+}
+
+// ResetImageConnectionMode resets all changes to the "image_connection_mode" field.
+func (m *SourceTransportPolicyMutation) ResetImageConnectionMode() {
+	m.image_connection_mode = nil
+	delete(m.clearedFields, sourcetransportpolicy.FieldImageConnectionMode)
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *SourceTransportPolicyMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *SourceTransportPolicyMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *SourceTransportPolicyMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *SourceTransportPolicyMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *SourceTransportPolicyMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *SourceTransportPolicyMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the SourceTransportPolicyMutation builder.
+func (m *SourceTransportPolicyMutation) Where(ps ...predicate.SourceTransportPolicy) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SourceTransportPolicyMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SourceTransportPolicyMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SourceTransportPolicy, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SourceTransportPolicyMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SourceTransportPolicyMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SourceTransportPolicy).
+func (m *SourceTransportPolicyMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SourceTransportPolicyMutation) Fields() []string {
+	fields := make([]string, 0, 5)
+	if m.source_id != nil {
+		fields = append(fields, sourcetransportpolicy.FieldSourceID)
+	}
+	if m.reuse_bypass_session != nil {
+		fields = append(fields, sourcetransportpolicy.FieldReuseBypassSession)
+	}
+	if m.image_connection_mode != nil {
+		fields = append(fields, sourcetransportpolicy.FieldImageConnectionMode)
+	}
+	if m.created_at != nil {
+		fields = append(fields, sourcetransportpolicy.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, sourcetransportpolicy.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SourceTransportPolicyMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		return m.SourceID()
+	case sourcetransportpolicy.FieldReuseBypassSession:
+		return m.ReuseBypassSession()
+	case sourcetransportpolicy.FieldImageConnectionMode:
+		return m.ImageConnectionMode()
+	case sourcetransportpolicy.FieldCreatedAt:
+		return m.CreatedAt()
+	case sourcetransportpolicy.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SourceTransportPolicyMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		return m.OldSourceID(ctx)
+	case sourcetransportpolicy.FieldReuseBypassSession:
+		return m.OldReuseBypassSession(ctx)
+	case sourcetransportpolicy.FieldImageConnectionMode:
+		return m.OldImageConnectionMode(ctx)
+	case sourcetransportpolicy.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case sourcetransportpolicy.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SourceTransportPolicy field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceTransportPolicyMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSourceID(v)
+		return nil
+	case sourcetransportpolicy.FieldReuseBypassSession:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetReuseBypassSession(v)
+		return nil
+	case sourcetransportpolicy.FieldImageConnectionMode:
+		v, ok := value.(sourcetransportpolicy.ImageConnectionMode)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetImageConnectionMode(v)
+		return nil
+	case sourcetransportpolicy.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case sourcetransportpolicy.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceTransportPolicy field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SourceTransportPolicyMutation) AddedFields() []string {
+	var fields []string
+	if m.addsource_id != nil {
+		fields = append(fields, sourcetransportpolicy.FieldSourceID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SourceTransportPolicyMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		return m.AddedSourceID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SourceTransportPolicyMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSourceID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SourceTransportPolicy numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SourceTransportPolicyMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(sourcetransportpolicy.FieldReuseBypassSession) {
+		fields = append(fields, sourcetransportpolicy.FieldReuseBypassSession)
+	}
+	if m.FieldCleared(sourcetransportpolicy.FieldImageConnectionMode) {
+		fields = append(fields, sourcetransportpolicy.FieldImageConnectionMode)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SourceTransportPolicyMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SourceTransportPolicyMutation) ClearField(name string) error {
+	switch name {
+	case sourcetransportpolicy.FieldReuseBypassSession:
+		m.ClearReuseBypassSession()
+		return nil
+	case sourcetransportpolicy.FieldImageConnectionMode:
+		m.ClearImageConnectionMode()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceTransportPolicy nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SourceTransportPolicyMutation) ResetField(name string) error {
+	switch name {
+	case sourcetransportpolicy.FieldSourceID:
+		m.ResetSourceID()
+		return nil
+	case sourcetransportpolicy.FieldReuseBypassSession:
+		m.ResetReuseBypassSession()
+		return nil
+	case sourcetransportpolicy.FieldImageConnectionMode:
+		m.ResetImageConnectionMode()
+		return nil
+	case sourcetransportpolicy.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case sourcetransportpolicy.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SourceTransportPolicy field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SourceTransportPolicyMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SourceTransportPolicyMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SourceTransportPolicyMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SourceTransportPolicyMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SourceTransportPolicyMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SourceTransportPolicyMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SourceTransportPolicyMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SourceTransportPolicy unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SourceTransportPolicyMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SourceTransportPolicy edge %s", name)
 }
 
 // SuwayomiSyncStateMutation represents an operation that mutates the SuwayomiSyncState nodes in the graph.

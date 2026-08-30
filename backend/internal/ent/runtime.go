@@ -32,8 +32,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
+	"github.com/technobecet/tsundoku/internal/ent/sourcetransportpolicy"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -715,6 +717,34 @@ func init() {
 	sourcepreferenceDescID := sourcepreferenceFields[0].Descriptor()
 	// sourcepreference.DefaultID holds the default value on creation for the id field.
 	sourcepreference.DefaultID = sourcepreferenceDescID.Default.(func() uuid.UUID)
+	sourceruntimeintentFields := schema.SourceRuntimeIntent{}.Fields()
+	_ = sourceruntimeintentFields
+	// sourceruntimeintentDescDesiredRevision is the schema descriptor for desired_revision field.
+	sourceruntimeintentDescDesiredRevision := sourceruntimeintentFields[2].Descriptor()
+	// sourceruntimeintent.DefaultDesiredRevision holds the default value on creation for the desired_revision field.
+	sourceruntimeintent.DefaultDesiredRevision = sourceruntimeintentDescDesiredRevision.Default.(int64)
+	// sourceruntimeintentDescAppliedRevision is the schema descriptor for applied_revision field.
+	sourceruntimeintentDescAppliedRevision := sourceruntimeintentFields[3].Descriptor()
+	// sourceruntimeintent.DefaultAppliedRevision holds the default value on creation for the applied_revision field.
+	sourceruntimeintent.DefaultAppliedRevision = sourceruntimeintentDescAppliedRevision.Default.(int64)
+	// sourceruntimeintentDescLastApplyError is the schema descriptor for last_apply_error field.
+	sourceruntimeintentDescLastApplyError := sourceruntimeintentFields[5].Descriptor()
+	// sourceruntimeintent.DefaultLastApplyError holds the default value on creation for the last_apply_error field.
+	sourceruntimeintent.DefaultLastApplyError = sourceruntimeintentDescLastApplyError.Default.(string)
+	// sourceruntimeintentDescCreatedAt is the schema descriptor for created_at field.
+	sourceruntimeintentDescCreatedAt := sourceruntimeintentFields[6].Descriptor()
+	// sourceruntimeintent.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourceruntimeintent.DefaultCreatedAt = sourceruntimeintentDescCreatedAt.Default.(func() time.Time)
+	// sourceruntimeintentDescUpdatedAt is the schema descriptor for updated_at field.
+	sourceruntimeintentDescUpdatedAt := sourceruntimeintentFields[7].Descriptor()
+	// sourceruntimeintent.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourceruntimeintent.DefaultUpdatedAt = sourceruntimeintentDescUpdatedAt.Default.(func() time.Time)
+	// sourceruntimeintent.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourceruntimeintent.UpdateDefaultUpdatedAt = sourceruntimeintentDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourceruntimeintentDescID is the schema descriptor for id field.
+	sourceruntimeintentDescID := sourceruntimeintentFields[0].Descriptor()
+	// sourceruntimeintent.DefaultID holds the default value on creation for the id field.
+	sourceruntimeintent.DefaultID = sourceruntimeintentDescID.Default.(func() uuid.UUID)
 	sourceseedstateFields := schema.SourceSeedState{}.Fields()
 	_ = sourceseedstateFields
 	// sourceseedstateDescSourceName is the schema descriptor for source_name field.
@@ -759,6 +789,22 @@ func init() {
 	sourcethroughputpolicyDescID := sourcethroughputpolicyFields[0].Descriptor()
 	// sourcethroughputpolicy.DefaultID holds the default value on creation for the id field.
 	sourcethroughputpolicy.DefaultID = sourcethroughputpolicyDescID.Default.(func() uuid.UUID)
+	sourcetransportpolicyFields := schema.SourceTransportPolicy{}.Fields()
+	_ = sourcetransportpolicyFields
+	// sourcetransportpolicyDescCreatedAt is the schema descriptor for created_at field.
+	sourcetransportpolicyDescCreatedAt := sourcetransportpolicyFields[4].Descriptor()
+	// sourcetransportpolicy.DefaultCreatedAt holds the default value on creation for the created_at field.
+	sourcetransportpolicy.DefaultCreatedAt = sourcetransportpolicyDescCreatedAt.Default.(func() time.Time)
+	// sourcetransportpolicyDescUpdatedAt is the schema descriptor for updated_at field.
+	sourcetransportpolicyDescUpdatedAt := sourcetransportpolicyFields[5].Descriptor()
+	// sourcetransportpolicy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	sourcetransportpolicy.DefaultUpdatedAt = sourcetransportpolicyDescUpdatedAt.Default.(func() time.Time)
+	// sourcetransportpolicy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	sourcetransportpolicy.UpdateDefaultUpdatedAt = sourcetransportpolicyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// sourcetransportpolicyDescID is the schema descriptor for id field.
+	sourcetransportpolicyDescID := sourcetransportpolicyFields[0].Descriptor()
+	// sourcetransportpolicy.DefaultID holds the default value on creation for the id field.
+	sourcetransportpolicy.DefaultID = sourcetransportpolicyDescID.Default.(func() uuid.UUID)
 	suwayomisyncstateFields := schema.SuwayomiSyncState{}.Fields()
 	_ = suwayomisyncstateFields
 	// suwayomisyncstateDescLastError is the schema descriptor for last_error field.

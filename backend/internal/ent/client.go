@@ -41,8 +41,10 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent/sourcemetric"
 	"github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourcepreference"
+	"github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/ent/sourceseedstate"
 	"github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
+	"github.com/technobecet/tsundoku/internal/ent/sourcetransportpolicy"
 	"github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ent/trackbinding"
 	"github.com/technobecet/tsundoku/internal/ent/trackerconnection"
@@ -103,10 +105,14 @@ type Client struct {
 	SourceNetworkBinding *SourceNetworkBindingClient
 	// SourcePreference is the client for interacting with the SourcePreference builders.
 	SourcePreference *SourcePreferenceClient
+	// SourceRuntimeIntent is the client for interacting with the SourceRuntimeIntent builders.
+	SourceRuntimeIntent *SourceRuntimeIntentClient
 	// SourceSeedState is the client for interacting with the SourceSeedState builders.
 	SourceSeedState *SourceSeedStateClient
 	// SourceThroughputPolicy is the client for interacting with the SourceThroughputPolicy builders.
 	SourceThroughputPolicy *SourceThroughputPolicyClient
+	// SourceTransportPolicy is the client for interacting with the SourceTransportPolicy builders.
+	SourceTransportPolicy *SourceTransportPolicyClient
 	// SuwayomiSyncState is the client for interacting with the SuwayomiSyncState builders.
 	SuwayomiSyncState *SuwayomiSyncStateClient
 	// TrackBinding is the client for interacting with the TrackBinding builders.
@@ -149,8 +155,10 @@ func (c *Client) init() {
 	c.SourceMetric = NewSourceMetricClient(c.config)
 	c.SourceNetworkBinding = NewSourceNetworkBindingClient(c.config)
 	c.SourcePreference = NewSourcePreferenceClient(c.config)
+	c.SourceRuntimeIntent = NewSourceRuntimeIntentClient(c.config)
 	c.SourceSeedState = NewSourceSeedStateClient(c.config)
 	c.SourceThroughputPolicy = NewSourceThroughputPolicyClient(c.config)
+	c.SourceTransportPolicy = NewSourceTransportPolicyClient(c.config)
 	c.SuwayomiSyncState = NewSuwayomiSyncStateClient(c.config)
 	c.TrackBinding = NewTrackBindingClient(c.config)
 	c.TrackerConnection = NewTrackerConnectionClient(c.config)
@@ -271,8 +279,10 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		SourceMetric:                    NewSourceMetricClient(cfg),
 		SourceNetworkBinding:            NewSourceNetworkBindingClient(cfg),
 		SourcePreference:                NewSourcePreferenceClient(cfg),
+		SourceRuntimeIntent:             NewSourceRuntimeIntentClient(cfg),
 		SourceSeedState:                 NewSourceSeedStateClient(cfg),
 		SourceThroughputPolicy:          NewSourceThroughputPolicyClient(cfg),
+		SourceTransportPolicy:           NewSourceTransportPolicyClient(cfg),
 		SuwayomiSyncState:               NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:                    NewTrackBindingClient(cfg),
 		TrackerConnection:               NewTrackerConnectionClient(cfg),
@@ -320,8 +330,10 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		SourceMetric:                    NewSourceMetricClient(cfg),
 		SourceNetworkBinding:            NewSourceNetworkBindingClient(cfg),
 		SourcePreference:                NewSourcePreferenceClient(cfg),
+		SourceRuntimeIntent:             NewSourceRuntimeIntentClient(cfg),
 		SourceSeedState:                 NewSourceSeedStateClient(cfg),
 		SourceThroughputPolicy:          NewSourceThroughputPolicyClient(cfg),
+		SourceTransportPolicy:           NewSourceTransportPolicyClient(cfg),
 		SuwayomiSyncState:               NewSuwayomiSyncStateClient(cfg),
 		TrackBinding:                    NewTrackBindingClient(cfg),
 		TrackerConnection:               NewTrackerConnectionClient(cfg),
@@ -360,9 +372,9 @@ func (c *Client) Use(hooks ...Hook) {
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
-		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
-		c.SourceThroughputPolicy, c.SuwayomiSyncState, c.TrackBinding,
-		c.TrackerConnection,
+		c.SourceNetworkBinding, c.SourcePreference, c.SourceRuntimeIntent,
+		c.SourceSeedState, c.SourceThroughputPolicy, c.SourceTransportPolicy,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Use(hooks...)
 	}
@@ -378,9 +390,9 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.PushSubscription, c.Series, c.SeriesProvider, c.Settings,
 		c.SourceBreakerNotification, c.SourceBreakerNotificationCursor,
 		c.SourceCircuitState, c.SourceCoverage, c.SourceEvent, c.SourceMetric,
-		c.SourceNetworkBinding, c.SourcePreference, c.SourceSeedState,
-		c.SourceThroughputPolicy, c.SuwayomiSyncState, c.TrackBinding,
-		c.TrackerConnection,
+		c.SourceNetworkBinding, c.SourcePreference, c.SourceRuntimeIntent,
+		c.SourceSeedState, c.SourceThroughputPolicy, c.SourceTransportPolicy,
+		c.SuwayomiSyncState, c.TrackBinding, c.TrackerConnection,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -439,10 +451,14 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.SourceNetworkBinding.mutate(ctx, m)
 	case *SourcePreferenceMutation:
 		return c.SourcePreference.mutate(ctx, m)
+	case *SourceRuntimeIntentMutation:
+		return c.SourceRuntimeIntent.mutate(ctx, m)
 	case *SourceSeedStateMutation:
 		return c.SourceSeedState.mutate(ctx, m)
 	case *SourceThroughputPolicyMutation:
 		return c.SourceThroughputPolicy.mutate(ctx, m)
+	case *SourceTransportPolicyMutation:
+		return c.SourceTransportPolicy.mutate(ctx, m)
 	case *SuwayomiSyncStateMutation:
 		return c.SuwayomiSyncState.mutate(ctx, m)
 	case *TrackBindingMutation:
@@ -3971,6 +3987,139 @@ func (c *SourcePreferenceClient) mutate(ctx context.Context, m *SourcePreference
 	}
 }
 
+// SourceRuntimeIntentClient is a client for the SourceRuntimeIntent schema.
+type SourceRuntimeIntentClient struct {
+	config
+}
+
+// NewSourceRuntimeIntentClient returns a client for the SourceRuntimeIntent from the given config.
+func NewSourceRuntimeIntentClient(c config) *SourceRuntimeIntentClient {
+	return &SourceRuntimeIntentClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourceruntimeintent.Hooks(f(g(h())))`.
+func (c *SourceRuntimeIntentClient) Use(hooks ...Hook) {
+	c.hooks.SourceRuntimeIntent = append(c.hooks.SourceRuntimeIntent, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourceruntimeintent.Intercept(f(g(h())))`.
+func (c *SourceRuntimeIntentClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceRuntimeIntent = append(c.inters.SourceRuntimeIntent, interceptors...)
+}
+
+// Create returns a builder for creating a SourceRuntimeIntent entity.
+func (c *SourceRuntimeIntentClient) Create() *SourceRuntimeIntentCreate {
+	mutation := newSourceRuntimeIntentMutation(c.config, OpCreate)
+	return &SourceRuntimeIntentCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceRuntimeIntent entities.
+func (c *SourceRuntimeIntentClient) CreateBulk(builders ...*SourceRuntimeIntentCreate) *SourceRuntimeIntentCreateBulk {
+	return &SourceRuntimeIntentCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceRuntimeIntentClient) MapCreateBulk(slice any, setFunc func(*SourceRuntimeIntentCreate, int)) *SourceRuntimeIntentCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceRuntimeIntentCreateBulk{err: fmt.Errorf("calling to SourceRuntimeIntentClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceRuntimeIntentCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceRuntimeIntentCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceRuntimeIntent.
+func (c *SourceRuntimeIntentClient) Update() *SourceRuntimeIntentUpdate {
+	mutation := newSourceRuntimeIntentMutation(c.config, OpUpdate)
+	return &SourceRuntimeIntentUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceRuntimeIntentClient) UpdateOne(_m *SourceRuntimeIntent) *SourceRuntimeIntentUpdateOne {
+	mutation := newSourceRuntimeIntentMutation(c.config, OpUpdateOne, withSourceRuntimeIntent(_m))
+	return &SourceRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceRuntimeIntentClient) UpdateOneID(id uuid.UUID) *SourceRuntimeIntentUpdateOne {
+	mutation := newSourceRuntimeIntentMutation(c.config, OpUpdateOne, withSourceRuntimeIntentID(id))
+	return &SourceRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceRuntimeIntent.
+func (c *SourceRuntimeIntentClient) Delete() *SourceRuntimeIntentDelete {
+	mutation := newSourceRuntimeIntentMutation(c.config, OpDelete)
+	return &SourceRuntimeIntentDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceRuntimeIntentClient) DeleteOne(_m *SourceRuntimeIntent) *SourceRuntimeIntentDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceRuntimeIntentClient) DeleteOneID(id uuid.UUID) *SourceRuntimeIntentDeleteOne {
+	builder := c.Delete().Where(sourceruntimeintent.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceRuntimeIntentDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceRuntimeIntent.
+func (c *SourceRuntimeIntentClient) Query() *SourceRuntimeIntentQuery {
+	return &SourceRuntimeIntentQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceRuntimeIntent},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceRuntimeIntent entity by its id.
+func (c *SourceRuntimeIntentClient) Get(ctx context.Context, id uuid.UUID) (*SourceRuntimeIntent, error) {
+	return c.Query().Where(sourceruntimeintent.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceRuntimeIntentClient) GetX(ctx context.Context, id uuid.UUID) *SourceRuntimeIntent {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceRuntimeIntentClient) Hooks() []Hook {
+	return c.hooks.SourceRuntimeIntent
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceRuntimeIntentClient) Interceptors() []Interceptor {
+	return c.inters.SourceRuntimeIntent
+}
+
+func (c *SourceRuntimeIntentClient) mutate(ctx context.Context, m *SourceRuntimeIntentMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceRuntimeIntentCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceRuntimeIntentUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceRuntimeIntentUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceRuntimeIntentDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceRuntimeIntent mutation op: %q", m.Op())
+	}
+}
+
 // SourceSeedStateClient is a client for the SourceSeedState schema.
 type SourceSeedStateClient struct {
 	config
@@ -4234,6 +4383,139 @@ func (c *SourceThroughputPolicyClient) mutate(ctx context.Context, m *SourceThro
 		return (&SourceThroughputPolicyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown SourceThroughputPolicy mutation op: %q", m.Op())
+	}
+}
+
+// SourceTransportPolicyClient is a client for the SourceTransportPolicy schema.
+type SourceTransportPolicyClient struct {
+	config
+}
+
+// NewSourceTransportPolicyClient returns a client for the SourceTransportPolicy from the given config.
+func NewSourceTransportPolicyClient(c config) *SourceTransportPolicyClient {
+	return &SourceTransportPolicyClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `sourcetransportpolicy.Hooks(f(g(h())))`.
+func (c *SourceTransportPolicyClient) Use(hooks ...Hook) {
+	c.hooks.SourceTransportPolicy = append(c.hooks.SourceTransportPolicy, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `sourcetransportpolicy.Intercept(f(g(h())))`.
+func (c *SourceTransportPolicyClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SourceTransportPolicy = append(c.inters.SourceTransportPolicy, interceptors...)
+}
+
+// Create returns a builder for creating a SourceTransportPolicy entity.
+func (c *SourceTransportPolicyClient) Create() *SourceTransportPolicyCreate {
+	mutation := newSourceTransportPolicyMutation(c.config, OpCreate)
+	return &SourceTransportPolicyCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SourceTransportPolicy entities.
+func (c *SourceTransportPolicyClient) CreateBulk(builders ...*SourceTransportPolicyCreate) *SourceTransportPolicyCreateBulk {
+	return &SourceTransportPolicyCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SourceTransportPolicyClient) MapCreateBulk(slice any, setFunc func(*SourceTransportPolicyCreate, int)) *SourceTransportPolicyCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SourceTransportPolicyCreateBulk{err: fmt.Errorf("calling to SourceTransportPolicyClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SourceTransportPolicyCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SourceTransportPolicyCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SourceTransportPolicy.
+func (c *SourceTransportPolicyClient) Update() *SourceTransportPolicyUpdate {
+	mutation := newSourceTransportPolicyMutation(c.config, OpUpdate)
+	return &SourceTransportPolicyUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SourceTransportPolicyClient) UpdateOne(_m *SourceTransportPolicy) *SourceTransportPolicyUpdateOne {
+	mutation := newSourceTransportPolicyMutation(c.config, OpUpdateOne, withSourceTransportPolicy(_m))
+	return &SourceTransportPolicyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SourceTransportPolicyClient) UpdateOneID(id uuid.UUID) *SourceTransportPolicyUpdateOne {
+	mutation := newSourceTransportPolicyMutation(c.config, OpUpdateOne, withSourceTransportPolicyID(id))
+	return &SourceTransportPolicyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SourceTransportPolicy.
+func (c *SourceTransportPolicyClient) Delete() *SourceTransportPolicyDelete {
+	mutation := newSourceTransportPolicyMutation(c.config, OpDelete)
+	return &SourceTransportPolicyDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SourceTransportPolicyClient) DeleteOne(_m *SourceTransportPolicy) *SourceTransportPolicyDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SourceTransportPolicyClient) DeleteOneID(id uuid.UUID) *SourceTransportPolicyDeleteOne {
+	builder := c.Delete().Where(sourcetransportpolicy.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SourceTransportPolicyDeleteOne{builder}
+}
+
+// Query returns a query builder for SourceTransportPolicy.
+func (c *SourceTransportPolicyClient) Query() *SourceTransportPolicyQuery {
+	return &SourceTransportPolicyQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSourceTransportPolicy},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SourceTransportPolicy entity by its id.
+func (c *SourceTransportPolicyClient) Get(ctx context.Context, id uuid.UUID) (*SourceTransportPolicy, error) {
+	return c.Query().Where(sourcetransportpolicy.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SourceTransportPolicyClient) GetX(ctx context.Context, id uuid.UUID) *SourceTransportPolicy {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SourceTransportPolicyClient) Hooks() []Hook {
+	return c.hooks.SourceTransportPolicy
+}
+
+// Interceptors returns the client interceptors.
+func (c *SourceTransportPolicyClient) Interceptors() []Interceptor {
+	return c.inters.SourceTransportPolicy
+}
+
+func (c *SourceTransportPolicyClient) mutate(ctx context.Context, m *SourceTransportPolicyMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SourceTransportPolicyCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SourceTransportPolicyUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SourceTransportPolicyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SourceTransportPolicyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SourceTransportPolicy mutation op: %q", m.Op())
 	}
 }
 
@@ -4676,8 +4958,8 @@ type (
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
 		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
 		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
-		SourceNetworkBinding, SourcePreference, SourceSeedState,
-		SourceThroughputPolicy, SuwayomiSyncState, TrackBinding,
+		SourceNetworkBinding, SourcePreference, SourceRuntimeIntent, SourceSeedState,
+		SourceThroughputPolicy, SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Hook
 	}
 	inters struct {
@@ -4686,8 +4968,8 @@ type (
 		PendingTrackPush, ProviderChapter, PushSubscription, Series, SeriesProvider,
 		Settings, SourceBreakerNotification, SourceBreakerNotificationCursor,
 		SourceCircuitState, SourceCoverage, SourceEvent, SourceMetric,
-		SourceNetworkBinding, SourcePreference, SourceSeedState,
-		SourceThroughputPolicy, SuwayomiSyncState, TrackBinding,
+		SourceNetworkBinding, SourcePreference, SourceRuntimeIntent, SourceSeedState,
+		SourceThroughputPolicy, SourceTransportPolicy, SuwayomiSyncState, TrackBinding,
 		TrackerConnection []ent.Interceptor
 	}
 )
