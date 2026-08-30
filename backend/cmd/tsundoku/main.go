@@ -62,9 +62,11 @@ import (
 	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/server"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -110,8 +112,12 @@ type engineSourceCatalog struct {
 	client sourceengine.Client
 }
 
+func (c engineSourceCatalog) Sources(ctx context.Context) ([]sourceengine.Source, error) {
+	return c.client.Sources(ctx)
+}
+
 func (c engineSourceCatalog) RequireSource(ctx context.Context, sourceID int64) error {
-	sources, err := c.client.Sources(ctx)
+	sources, err := c.Sources(ctx)
 	if err != nil {
 		return fmt.Errorf("engine source catalog: %w: %w", sourcetransport.ErrCatalogUnavailable, err)
 	}
@@ -339,17 +345,19 @@ func main() {
 	// scanner/reconcile (every OTHER top-level dir under storage is a category).
 	engineFetcher := sourceengine.NewFetcher(engineClient, stagingRoot, sourceThroughputSvc)
 
-	// Network-routing domain service (DB-truth: endpoints + bindings). Read by
-	// ReconcileNetwork to derive profiles. The server's handler-side instance is
-	// wired to this same policy coordinator through settingsSvc, so every
-	// authoritative endpoint/routing/session mutation shares one boundary.
-	networkSvc := network.NewService(entClient).WithRuntimePolicyCoordinator(policyCoordinator)
+	// Source-scoped configuration services share one live engine catalog, one
+	// transport-default resolver, and one runtime-policy coordinator. Network
+	// routing remains DB truth for profile reconciliation; source transport owns
+	// revisioned runtime intent and is reused by every mutation handler below.
+	liveSourceCatalog := engineSourceCatalog{client: engineClient}
+	networkSvc := network.NewService(entClient, liveSourceCatalog).WithRuntimePolicyCoordinator(policyCoordinator)
+	transportDefaults := sourceTransportDefaults{
+		sessions: enginetopo.NewSessionPolicyResolver(networkSvc, settingsSvc),
+	}
 	sourceTransportSvc := sourcetransport.NewService(
 		entClient,
-		sourceTransportDefaults{
-			sessions: enginetopo.NewSessionPolicyResolver(networkSvc, settingsSvc),
-		},
-		engineSourceCatalog{client: engineClient},
+		transportDefaults,
+		liveSourceCatalog,
 	).WithRuntimePolicyCoordinator(policyCoordinator)
 
 	// Shared extension-.apk byte cache (rooted under the engine runtime dir).
@@ -490,6 +498,21 @@ func main() {
 	}
 	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
+	sourceConfigurationSvc := sourceconfiguration.NewService(
+		entClient,
+		liveSourceCatalog,
+		settingsSvc,
+		sourceThroughputSvc,
+		sourceTransportSvc,
+		networkSvc,
+		transportDefaults,
+	)
+	sourceImageProxySvc := sourceimageproxy.NewService(
+		entClient,
+		settingsSvc,
+		sourceTransportSvc,
+		liveSourceCatalog,
+	)
 	settingsSvc.WithRuntimeConverger(runtimeApplier)
 	runner.SetRuntimeReconciler(runtimePendingGroup{global: settingsSvc, sources: sourceTransportSvc})
 	netReconcile := func(rctx context.Context) {
@@ -537,7 +560,7 @@ func main() {
 	// async + single-flight per series. It does NOT alter the whole-library cadence.
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange, runner.SetProviderHealer)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange, runner.SetProviderHealer)
 
 	addr := ":" + cfg.Server.Port
 

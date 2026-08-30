@@ -29,8 +29,11 @@ import (
 	reportingh "github.com/technobecet/tsundoku/internal/handler/reporting"
 	seriesh "github.com/technobecet/tsundoku/internal/handler/series"
 	settingsh "github.com/technobecet/tsundoku/internal/handler/settings"
+	sourceconfigurationh "github.com/technobecet/tsundoku/internal/handler/sourceconfiguration"
+	sourceimageproxyh "github.com/technobecet/tsundoku/internal/handler/sourceimageproxy"
 	sourcesh "github.com/technobecet/tsundoku/internal/handler/sources"
 	sourcethroughputh "github.com/technobecet/tsundoku/internal/handler/sourcethroughput"
+	sourcetransporth "github.com/technobecet/tsundoku/internal/handler/sourcetransport"
 	systemh "github.com/technobecet/tsundoku/internal/handler/system"
 	trackersh "github.com/technobecet/tsundoku/internal/handler/trackers"
 	"github.com/technobecet/tsundoku/internal/ignorescanlator"
@@ -48,12 +51,15 @@ import (
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourcecover"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/sourcepurge"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -134,7 +140,11 @@ import (
 //   - /api/network/endpoints (GET/POST)            — list / create reusable SOCKS|FlareSolverr egress endpoints (RequireOwner).
 //   - /api/network/endpoints/:id (PATCH/DELETE)    — update / delete an endpoint (delete blocked 409 when bound) (RequireOwner).
 //   - /api/network/bindings (GET)                  — list every per-source network binding (RequireOwner).
-//   - /api/network/sources/:sourceId/binding (PUT/DELETE) — assign / clear a source's network route (RequireOwner).
+//   - /api/sources/exceptions (GET)               — list sources carrying configuration exceptions (RequireOwner).
+//   - /api/sources/:sourceId/effective-configuration (GET) — read one source's effective configuration (RequireOwner).
+//   - /api/sources/:sourceId/transport (PATCH)    — partially set/clear transport overrides (RequireOwner).
+//   - /api/sources/:sourceId/image-proxy (PUT)    — set image-proxy membership (RequireOwner).
+//   - /api/network/bindings/:sourceId (PUT/DELETE) — assign / clear a source's network route (RequireOwner).
 //   - /api/suwayomi/extensions (GET)                — list Suwayomi extensions (RequireOwner).
 //   - /api/suwayomi/extensions/refresh (POST)       — refresh available extensions from repos (RequireOwner).
 //     The static /repos routes are registered BEFORE the dynamic /:pkgName routes
@@ -194,6 +204,10 @@ func registerRoutes(
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	sourceThroughputSvc *sourcethroughput.Service,
+	sourceConfigurationSvc *sourceconfiguration.Service,
+	sourceImageProxySvc *sourceimageproxy.Service,
+	sourceTransportSvc *sourcetransport.Service,
+	networkSvc *networksvc.Service,
 	metricsSvc *metrics.Service,
 	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
@@ -364,6 +378,18 @@ func registerRoutes(
 	authed.GET("/sources/throughput", sourceThroughputH.List)
 	authed.PATCH("/sources/:sourceId/throughput", sourceThroughputH.Update)
 
+	// Source configuration reads and mutations share one composer and one
+	// source-runtime service. The DTO reader is constructed once so every
+	// mutation returns the same frozen effective-configuration projection.
+	sourceConfigurationH := sourceconfigurationh.NewHandler(sourceConfigurationSvc)
+	sourceConfigurationReader := sourceconfigurationh.NewDTOReader(sourceConfigurationSvc)
+	sourceTransportH := sourcetransporth.NewHandler(sourceTransportSvc, sourceTransportSvc, sourceConfigurationReader)
+	sourceImageProxyH := sourceimageproxyh.NewHandler(sourceImageProxySvc, sourceTransportSvc, sourceConfigurationReader)
+	authed.GET("/sources/exceptions", sourceConfigurationH.Exceptions)
+	authed.GET("/sources/:sourceId/effective-configuration", sourceConfigurationH.Effective)
+	authed.PATCH("/sources/:sourceId/transport", sourceTransportH.Update)
+	authed.PUT("/sources/:sourceId/image-proxy", sourceImageProxyH.Update)
+
 	// Source metrics + anti-bot warm-up API. The handler reads the rolling
 	// per-source performance snapshot (metricsSvc) and triggers a manual warm
 	// pass (warmupSvc); the slow threshold is resolved from the settings overlay
@@ -425,17 +451,15 @@ func registerRoutes(
 	// best-effort write-through that re-derives the engine-host routing profiles
 	// (enginetopo.ReconcileNetwork) after every mutation so a binding change
 	// takes effect promptly, not only on the next boot (nil = DB-truth only).
-	networkH := networkh.NewHandler(
-		networksvc.NewService(client).WithRuntimePolicyCoordinator(settingsSvc.RuntimePolicyCoordinator()),
-		onNetworkChange,
-	)
+	networkH := networkh.NewHandler(networkSvc, onNetworkChange).
+		WithSourceRuntime(sourceTransportSvc, sourceConfigurationReader)
 	authed.GET("/network/endpoints", networkH.ListEndpoints)
 	authed.POST("/network/endpoints", networkH.CreateEndpoint)
 	authed.PATCH("/network/endpoints/:id", networkH.UpdateEndpoint)
 	authed.DELETE("/network/endpoints/:id", networkH.DeleteEndpoint)
 	authed.GET("/network/bindings", networkH.ListBindings)
-	authed.PUT("/network/sources/:sourceId/binding", networkH.SetBinding)
-	authed.DELETE("/network/sources/:sourceId/binding", networkH.ClearBinding)
+	authed.PUT("/network/bindings/:sourceId", networkH.SetBinding)
+	authed.DELETE("/network/bindings/:sourceId", networkH.ClearBinding)
 
 	// Sources & Extensions management (P2 Suwayomi-removal slice 5: repointed
 	// onto the engine host). Like the settings proxy, the handler holds the

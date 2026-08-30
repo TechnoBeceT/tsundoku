@@ -63,7 +63,7 @@ func (h *Handler[C]) Update(c echo.Context) error {
 
 	intent := result.Intent
 	applied, _ := h.runtime.ApplyPending(ctx, sourceID)
-	if applied.SourceID == sourceID && applied.DesiredRevision >= intent.DesiredRevision {
+	if applied.SourceID == sourceID && applied.DesiredRevision == intent.DesiredRevision {
 		intent = applied
 	}
 	configuration, err := h.configs.Get(ctx, sourceID)

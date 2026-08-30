@@ -246,6 +246,24 @@ func TestImageProxyUpdateReturnsAppliedRuntimeAndPreservesInt64Boundary(t *testi
 	}
 }
 
+func TestImageProxyUpdateDoesNotSubstituteNewerConcurrentRevision(t *testing.T) {
+	env := newHandlerEnv(t)
+	env.updater.result = sourceimageproxy.UpdateResult{
+		Enabled: true,
+		Intent:  sourcetransport.Intent{SourceID: 42, DesiredRevision: 7, AppliedRevision: 6},
+	}
+	env.applier.intent = sourcetransport.Intent{SourceID: 42, DesiredRevision: 8, AppliedRevision: 8}
+
+	rec := env.do("/api/sources/42/image-proxy", `{"enabled":true}`, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Update status = %d (%s), want 200", rec.Code, rec.Body.String())
+	}
+	want := `{"configuration":{"marker":"fresh"},"runtime":{"status":"pending","desiredRevision":7,"appliedRevision":6,"lastApplyAttempt":null,"lastApplyError":""}}` + "\n"
+	if got := rec.Body.String(); got != want {
+		t.Fatalf("newer apply response = %s, want exact committed revision %s", got, want)
+	}
+}
+
 func TestImageProxyUpdateReturnsPendingAfterRuntimeApplyFailure(t *testing.T) {
 	env := newHandlerEnv(t)
 	attempt := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)

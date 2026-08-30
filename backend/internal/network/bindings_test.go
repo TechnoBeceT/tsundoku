@@ -121,6 +121,21 @@ func TestBindingMutation_SourceValidationFailsClosed(t *testing.T) {
 			if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
 				t.Fatalf("intent rows after source rejection = %d, want 0", got)
 			}
+
+			unguarded := network.NewService(client)
+			if _, err := unguarded.SetBinding(ctx, 42, network.BindingInput{FlareMode: network.FlareModeGlobal}); err != nil {
+				t.Fatalf("seed binding for DELETE validation: %v", err)
+			}
+			if _, err := svc.ClearBinding(ctx, 42); !errors.Is(err, tc.err) {
+				t.Fatalf("ClearBinding error = %v, want %v", err, tc.err)
+			}
+			if got := client.SourceNetworkBinding.Query().CountX(ctx); got != 1 {
+				t.Fatalf("binding rows after DELETE source rejection = %d, want 1", got)
+			}
+			intent := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(42)).OnlyX(ctx)
+			if intent.DesiredRevision != 1 {
+				t.Fatalf("desired revision after DELETE source rejection = %d, want 1", intent.DesiredRevision)
+			}
 		})
 	}
 }

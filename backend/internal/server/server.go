@@ -17,14 +17,18 @@ import (
 	"github.com/technobecet/tsundoku/internal/metadatasvc"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	mw "github.com/technobecet/tsundoku/internal/middleware"
+	networksvc "github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	pushsvc "github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourceimageproxy"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/tracker"
 	"github.com/technobecet/tsundoku/internal/tracker/bind"
@@ -91,6 +95,10 @@ func New(
 	engineClient sourceengine.Client,
 	settingsSvc *settings.Service,
 	sourceThroughputSvc *sourcethroughput.Service,
+	sourceConfigurationSvc *sourceconfiguration.Service,
+	sourceImageProxySvc *sourceimageproxy.Service,
+	sourceTransportSvc *sourcetransport.Service,
+	networkSvc *networksvc.Service,
 	metricsSvc *metrics.Service,
 	eventsSvc *sourceevents.Service,
 	warmupSvc *warmup.Service,
@@ -131,6 +139,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
 	return e
 }

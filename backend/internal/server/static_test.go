@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/labstack/echo/v4"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/handler/owner"
 	"github.com/technobecet/tsundoku/internal/metadata"
@@ -105,7 +106,7 @@ func (nullEngineClient) SetImageTransport(_ context.Context, _ sourceengine.Imag
 
 // newTestServer builds a server.New instance with stub dependencies and no
 // real DB, suitable for route-level unit tests that do not touch the database.
-func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
+func newTestServer(t *testing.T) (*echo.Echo, *auth.Service) {
 	t.Helper()
 	const secret = "supersecrettestkey1234" // >= 16 chars
 
@@ -140,7 +141,66 @@ func newTestServer(t *testing.T) (http.Handler, *auth.Service) {
 	trackerSyncSvc := syncsvc.NewService(nil, trackerRegistry, retry.NewQueue(nil), trackerBindSvc, settingsSvc)
 	// The trailing nil is the provider-heal sink (registerProviderHealer): these
 	// route-level tests never run a refresh sweep, so no healer is registered.
-	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, nil, metricsSvc, eventsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil, nil, nil, nil), authSvc
+	return server.New(cfg, nil, authSvc, hub, ownerH, nullEngineClient{}, settingsSvc, nil, nil, nil, nil, nil, metricsSvc, eventsSvc, warmupSvc, nil, nil, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, trackerSyncSvc, nil, "", func() {}, nil, nil, nil, nil, nil), authSvc
+}
+
+// TestSourceConfigurationRoutesAreExactAndOwnerAuthorized catches missing,
+// renamed, method-drifted, or publicly mounted source-configuration routes. It
+// also pins the existing network-management surface while retiring the old
+// binding mutation alias.
+func TestSourceConfigurationRoutesAreExactAndOwnerAuthorized(t *testing.T) {
+	e, _ := newTestServer(t)
+
+	routes := make(map[string]struct{}, len(e.Routes()))
+	for _, route := range e.Routes() {
+		routes[route.Method+" "+route.Path] = struct{}{}
+	}
+
+	wantRoutes := []string{
+		http.MethodGet + " /api/sources/exceptions",
+		http.MethodGet + " /api/sources/:sourceId/effective-configuration",
+		http.MethodPatch + " /api/sources/:sourceId/transport",
+		http.MethodPut + " /api/sources/:sourceId/image-proxy",
+		http.MethodGet + " /api/network/endpoints",
+		http.MethodPost + " /api/network/endpoints",
+		http.MethodPatch + " /api/network/endpoints/:id",
+		http.MethodDelete + " /api/network/endpoints/:id",
+		http.MethodGet + " /api/network/bindings",
+		http.MethodPut + " /api/network/bindings/:sourceId",
+		http.MethodDelete + " /api/network/bindings/:sourceId",
+	}
+	for _, want := range wantRoutes {
+		if _, ok := routes[want]; !ok {
+			t.Errorf("route table missing %s", want)
+		}
+	}
+	for _, retired := range []string{
+		http.MethodPut + " /api/network/sources/:sourceId/binding",
+		http.MethodDelete + " /api/network/sources/:sourceId/binding",
+	} {
+		if _, ok := routes[retired]; ok {
+			t.Errorf("route table retains retired alias %s", retired)
+		}
+	}
+
+	for _, request := range []struct {
+		method string
+		target string
+	}{
+		{http.MethodGet, "/api/sources/exceptions"},
+		{http.MethodGet, "/api/sources/42/effective-configuration"},
+		{http.MethodPatch, "/api/sources/42/transport"},
+		{http.MethodPut, "/api/sources/42/image-proxy"},
+		{http.MethodPut, "/api/network/bindings/42"},
+		{http.MethodDelete, "/api/network/bindings/42"},
+	} {
+		req := httptest.NewRequest(request.method, request.target, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s without owner auth: status = %d, want %d", request.method, request.target, rec.Code, http.StatusUnauthorized)
+		}
+	}
 }
 
 // TestUnknownAPIPathReturns404JSON confirms that an unrecognised /api/* path
