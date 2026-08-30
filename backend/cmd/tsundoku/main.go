@@ -515,7 +515,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
+	bootDone := startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -553,7 +553,7 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
-	safeToCloseDependencies = gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher)
+	safeToCloseDependencies = gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher, bootDone)
 }
 
 // gracefulShutdown drains in-flight HTTP requests, closes and joins all runtime
@@ -629,12 +629,23 @@ func closeIfSafe(safe bool, closer engineHostCloser) error {
 	return closer.Close()
 }
 
-func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) bool {
+func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser, bootDone ...<-chan struct{}) bool {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
 	}
 	cancel()
+	if len(bootDone) > 0 && bootDone[0] != nil {
+		bootCtx, cancelBoot := context.WithTimeout(context.Background(), shutdownTimeout)
+		select {
+		case <-bootDone[0]:
+			cancelBoot()
+		case <-bootCtx.Done():
+			cancelBoot()
+			log.Printf("tsundoku: boot task shutdown: %v", bootCtx.Err())
+			return false
+		}
+	}
 
 	// Echo can return on its drain deadline while a handler is still finishing.
 	// Close the shared admission gate next, cancel every admitted convergence,
@@ -790,7 +801,7 @@ func startEngine(
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
 	pendingRuntimeReconcile func(context.Context),
-) {
+) <-chan struct{} {
 	// Log the currently-resolved cadence (the loops re-read it each cycle, so
 	// these are the values in force right now, not a fixed schedule).
 	slog.Info("tsundoku: starting download + refresh + extension-check + warm-up tickers",
@@ -803,7 +814,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
+	return startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -854,8 +865,15 @@ func startEngineTopo(
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
 	pendingRuntimeReconcile func(context.Context),
-) {
+) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
+		defer func() {
+			if r := recover(); r != nil {
+				slog.ErrorContext(ctx, "engine topology boot panicked — recovered", "panic", r)
+			}
+		}()
 		runEngineTopoBootSequence(ctx, runtimeLifecycle, engineTopoBootPhases{
 			reconcile: func(ctx context.Context) {
 				runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
@@ -880,6 +898,7 @@ func startEngineTopo(
 			},
 		})
 	}()
+	return done
 }
 
 type engineTopoBootPhases struct {
@@ -903,7 +922,9 @@ func runEngineTopoBootSequence(ctx context.Context, lifecycle runtimeConvergence
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			phase(ctx)
+			if err := runBootPhase(ctx, phase); err != nil {
+				slog.WarnContext(ctx, "engine topology boot phase panicked — recovered", "err", err)
+			}
 		}
 		return ctx.Err()
 	})
@@ -913,6 +934,16 @@ func runEngineTopoBootSequence(ctx context.Context, lifecycle runtimeConvergence
 	if err == nil && phases.pending != nil && ctx.Err() == nil {
 		phases.pending(ctx)
 	}
+}
+
+func runBootPhase(ctx context.Context, phase func(context.Context)) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic recovered: %v", r)
+		}
+	}()
+	phase(ctx)
+	return nil
 }
 
 func runTrackedRuntimeConvergence(ctx context.Context, lifecycle runtimeConvergenceRunner, run func(context.Context)) {
@@ -1061,10 +1092,19 @@ func runSourceRuntimeReconcile(
 // been released. Each service therefore acquires its apply semaphore before
 // entering the topology serializer, matching the sole runtime lock order.
 func runPendingRuntimeReconcile(ctx context.Context, global, sources pendingRuntimeReconciler) {
-	if err := global.ReconcilePending(ctx); err != nil {
+	if err := runPendingStage(ctx, global); err != nil {
 		slog.WarnContext(ctx, "source runtime: global pending revision retry incomplete", "err", err)
 	}
-	if err := sources.ReconcilePending(ctx); err != nil {
+	if err := runPendingStage(ctx, sources); err != nil {
 		slog.WarnContext(ctx, "source runtime: source pending revision retry incomplete", "err", err)
 	}
+}
+
+func runPendingStage(ctx context.Context, reconciler pendingRuntimeReconciler) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic recovered: %v", r)
+		}
+	}()
+	return reconciler.ReconcilePending(ctx)
 }

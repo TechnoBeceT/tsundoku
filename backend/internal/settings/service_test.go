@@ -1530,8 +1530,8 @@ func TestFlareSolverrSetAndResolve_TimeoutAndSession(t *testing.T) {
 	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionName, "  tsundoku  "); err != nil {
 		t.Fatalf("Set session name: %v", err)
 	}
-	if got := svc.FlareSolverrSessionName(ctx); got != "tsundoku" {
-		t.Errorf("FlareSolverrSessionName after Set = %q, want trimmed \"tsundoku\"", got)
+	if got := svc.FlareSolverrSessionName(ctx); got != "  tsundoku  " {
+		t.Errorf("FlareSolverrSessionName after Set = %q, want exact whitespace preserved", got)
 	}
 
 	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionTTL, "30"); err != nil {

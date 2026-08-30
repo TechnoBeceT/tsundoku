@@ -590,7 +590,7 @@ var tunables = map[string]tunable{
 		KeyFlareSolverrTimeout, "seconds", flareSolverrTimeoutMin, flareSolverrTimeoutMax,
 		func(d Defaults) int { return d.FlareSolverrTimeout },
 	),
-	KeyFlareSolverrSessionName: stringTunable(
+	KeyFlareSolverrSessionName: exactStringTunable(
 		KeyFlareSolverrSessionName, "text",
 		func(d Defaults) string { return d.FlareSolverrSessionName },
 	),
@@ -648,6 +648,14 @@ var tunables = map[string]tunable{
 		KeyImpersonateSources, "source-ids",
 		func(d Defaults) string { return d.ImpersonateSources },
 	),
+}
+
+// exactStringTunable preserves opaque values byte-for-byte. FlareSolverr
+// session identity treats only the exact empty string as absent.
+func exactStringTunable(key, unit string, def func(Defaults) string) tunable {
+	return tunable{key: key, typ: TypeString, unit: unit, validate: func(raw string) (string, error) {
+		return raw, nil
+	}, def: func(d Defaults) string { return def(d) }}
 }
 
 // durationTunable builds a duration-typed tunable that rejects values below min
