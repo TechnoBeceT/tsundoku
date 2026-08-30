@@ -17,6 +17,8 @@
  *
  * Slot:
  *   - default: the trailing control (a DurationInput, a TextField, a status line).
+ *     Receives `accessibleLabel`, the row name, so form controls can reuse the
+ *     visible setting context without duplicating label text at each call site.
  */
 withDefaults(defineProps<{
   /** The row's bold label. */
@@ -39,7 +41,7 @@ withDefaults(defineProps<{
       <div class="setting-row__name">{{ name }}</div>
       <div v-if="hint" class="setting-row__hint">{{ hint }}</div>
     </div>
-    <slot />
+    <slot :accessible-label="name" />
   </div>
 </template>
 

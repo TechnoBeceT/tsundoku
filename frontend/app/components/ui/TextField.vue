@@ -6,6 +6,7 @@
  *
  *   - `modelValue` (v-model): the input's string value.
  *   - `label`: the field label shown above the input (omit for a bare input).
+ *   - `accessibleLabel`: a non-visual label for compact or otherwise bare inputs.
  *   - `type` (default 'text'): the native input type ('text' | 'password' | …).
  *   - `placeholder`: the empty-state hint text.
  *   - `disabled`: blocks input + dims the field.
@@ -25,6 +26,8 @@ withDefaults(defineProps<{
   modelValue: string
   /** Optional label shown above the input. */
   label?: string
+  /** Accessible name when no visible field label is rendered. */
+  accessibleLabel?: string
   /** Native input type. */
   type?: string
   /** Empty-state placeholder. */
@@ -73,6 +76,7 @@ function onInput(event: Event) {
       :disabled="disabled"
       :autocomplete="autocomplete"
       :name="name"
+      :aria-label="accessibleLabel"
       @input="onInput"
       @keydown.enter="emit('enter')"
       @blur="emit('blur')"

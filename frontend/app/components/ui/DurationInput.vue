@@ -9,6 +9,7 @@ import type { DurationUnit, DurationValue, SelectOption } from './forms.types'
  *
  *   - `modelValue` (v-model): `{ value: number; unit: 'h' | 'm' | 's' }`.
  *   - `disabled`: blocks both controls + dims them.
+ *   - `accessibleLabel`: setting context used to distinguish both native controls.
  *
  * Emits `update:modelValue` with the full `{ value, unit }` object whenever
  * either control changes.
@@ -18,6 +19,8 @@ const props = withDefaults(defineProps<{
   modelValue: DurationValue
   /** Blocks both controls + dims them. */
   disabled?: boolean
+  /** Setting context for the value and unit controls' accessible names. */
+  accessibleLabel?: string
 }>(), {
   disabled: false,
 })
@@ -56,6 +59,7 @@ function onUnitChange(unit: string) {
       step="1"
       :value="modelValue.value"
       :disabled="disabled"
+      :aria-label="accessibleLabel ? `${accessibleLabel} value` : undefined"
       @input="onValueInput"
     >
     <SelectField
@@ -63,7 +67,7 @@ function onUnitChange(unit: string) {
       :model-value="modelValue.unit"
       :options="unitOptions"
       :disabled="disabled"
-      aria-label="Duration unit"
+      :aria-label="accessibleLabel ? `${accessibleLabel} unit` : 'Duration unit'"
       @update:model-value="onUnitChange"
     />
   </div>

@@ -135,6 +135,57 @@ describe('DownloadEnginePane', () => {
     expect(wrapper.text()).not.toContain('Sources using the proxy')
   })
 
+  it('gives every global numeric and duration control a unique setting-specific accessible name', async () => {
+    const wrapper = mountPane()
+
+    await wrapper.get('.advanced__toggle').trigger('click')
+
+    const globalSections = [
+      wrapper.get('#download-engine-scheduling'),
+      wrapper.get('#download-engine-protection'),
+      wrapper.get('#download-engine-access'),
+    ]
+    const numberNames = globalSections.flatMap(section => (
+      section.findAll('input[type="number"]').map(control => control.attributes('aria-label'))
+    ))
+    const unitNames = globalSections.flatMap(section => (
+      section.findAll('select').map(control => control.attributes('aria-label'))
+    ))
+
+    expect(numberNames).toEqual([
+      'Refresh interval value',
+      'Download interval value',
+      'Chapter retry backoff value',
+      'Chapter max retries',
+      'Stale-grace days',
+      'Refresh concurrency',
+      'Download concurrency',
+      'Max concurrent downloads',
+      'Warm-up interval value',
+      'Warm-up slow threshold',
+      'Failure threshold',
+      'Source cooldown value',
+      'Politeness delay',
+      'Image request delay',
+      'FlareSolverr request timeout value',
+      'FlareSolverr session TTL value',
+    ])
+    expect(new Set(numberNames).size).toBe(numberNames.length)
+    expect(unitNames).toEqual([
+      'Refresh interval unit',
+      'Download interval unit',
+      'Chapter retry backoff unit',
+      'Warm-up interval unit',
+      'Source cooldown unit',
+      'FlareSolverr request timeout unit',
+      'FlareSolverr session TTL unit',
+    ])
+    expect(new Set(unitNames).size).toBe(unitNames.length)
+    const sourceSpecificControl = wrapper.get('[data-source-setting-target="downloadConcurrency"] label')
+    expect(sourceSpecificControl.text()).toContain('Chapter concurrency override')
+    expect(sourceSpecificControl.find('input[type="number"]').exists()).toBe(true)
+  })
+
   it('targets every contextual shortcut at the one canonical Source exceptions panel', () => {
     const wrapper = mountPane()
     const shortcuts = wrapper.findAll('a[data-source-exceptions-shortcut]')

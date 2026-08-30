@@ -184,20 +184,20 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
           </header>
 
           <SurfaceCard :heading-level="3" title="Cadence & capacity" sub="Schedulers re-read these values on the next tick.">
-            <SettingRow name="Refresh interval" hint="How often to poll titles for new chapters">
-              <DurationInput v-model="libraryDraft.refreshInterval" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Refresh interval" hint="How often to poll titles for new chapters">
+              <DurationInput v-model="libraryDraft.refreshInterval" :accessible-label="accessibleLabel" />
             </SettingRow>
-            <SettingRow name="Download interval" hint="Queue-drain and upgrade-swap cadence">
-              <DurationInput v-model="libraryDraft.downloadInterval" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Download interval" hint="Queue-drain and upgrade-swap cadence">
+              <DurationInput v-model="libraryDraft.downloadInterval" :accessible-label="accessibleLabel" />
             </SettingRow>
-            <SettingRow name="Chapter retry backoff" hint="Wait before retrying a failed chapter">
-              <DurationInput v-model="libraryDraft.retryBackoff" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Chapter retry backoff" hint="Wait before retrying a failed chapter">
+              <DurationInput v-model="libraryDraft.retryBackoff" :accessible-label="accessibleLabel" />
             </SettingRow>
-            <SettingRow name="Chapter max retries" hint="Attempts per source before that source is given up">
-              <TextField compact type="number" :model-value="String(libraryDraft.maxRetries)" @update:model-value="libraryDraft.maxRetries = clampMin1($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Chapter max retries" hint="Attempts per source before that source is given up">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(libraryDraft.maxRetries)" @update:model-value="libraryDraft.maxRetries = clampMin1($event)" />
             </SettingRow>
-            <SettingRow name="Stale-grace days" hint="Health threshold before a source counts as stale">
-              <TextField compact type="number" :model-value="String(libraryDraft.staleGraceDays)" @update:model-value="libraryDraft.staleGraceDays = clampInt($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Stale-grace days" hint="Health threshold before a source counts as stale">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(libraryDraft.staleGraceDays)" @update:model-value="libraryDraft.staleGraceDays = clampInt($event)" />
             </SettingRow>
 
             <div class="advanced">
@@ -205,14 +205,14 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
                 <svg class="advanced__chev" :class="{ 'advanced__chev--open': advancedOpen }" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
                 Advanced capacity
               </button>
-              <SettingRow v-if="advancedOpen" flush name="Refresh concurrency" hint="Parallel source fetches — be gentle on sources">
-                <TextField compact type="number" :model-value="String(libraryDraft.refreshConcurrency)" @update:model-value="libraryDraft.refreshConcurrency = clampInt($event)" />
+              <SettingRow v-if="advancedOpen" v-slot="{ accessibleLabel }" flush name="Refresh concurrency" hint="Parallel source fetches — be gentle on sources">
+                <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(libraryDraft.refreshConcurrency)" @update:model-value="libraryDraft.refreshConcurrency = clampInt($event)" />
               </SettingRow>
-              <SettingRow v-if="advancedOpen" flush name="Download concurrency" hint="Parallel chapter downloads allowed per source">
-                <TextField compact type="number" :model-value="String(libraryDraft.downloadConcurrency)" @update:model-value="libraryDraft.downloadConcurrency = clampInt($event)" />
+              <SettingRow v-if="advancedOpen" v-slot="{ accessibleLabel }" flush name="Download concurrency" hint="Parallel chapter downloads allowed per source">
+                <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(libraryDraft.downloadConcurrency)" @update:model-value="libraryDraft.downloadConcurrency = clampInt($event)" />
               </SettingRow>
-              <SettingRow v-if="advancedOpen" flush name="Max concurrent downloads" hint="Global cap across every source">
-                <TextField compact type="number" :model-value="String(libraryDraft.maxConcurrentDownloads)" @update:model-value="libraryDraft.maxConcurrentDownloads = clampInt($event)" />
+              <SettingRow v-if="advancedOpen" v-slot="{ accessibleLabel }" flush name="Max concurrent downloads" hint="Global cap across every source">
+                <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(libraryDraft.maxConcurrentDownloads)" @update:model-value="libraryDraft.maxConcurrentDownloads = clampInt($event)" />
               </SettingRow>
             </div>
 
@@ -233,23 +233,23 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
           </header>
 
           <SurfaceCard :heading-level="3" title="Anti-block protection" sub="Shared warm-up, circuit-breaker, and request pacing.">
-            <SettingRow name="Warm-up interval" hint="How often to keep anti-bot source sessions warm; 0 disables">
-              <DurationInput v-model="sourceDraft.warmupInterval" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Warm-up interval" hint="How often to keep anti-bot source sessions warm; 0 disables">
+              <DurationInput v-model="sourceDraft.warmupInterval" :accessible-label="accessibleLabel" />
             </SettingRow>
-            <SettingRow name="Warm-up slow threshold" hint="A source slower than this (ms) is treated as needing warming">
-              <TextField compact type="number" :model-value="String(sourceDraft.warmupSlowThresholdMs)" @update:model-value="sourceDraft.warmupSlowThresholdMs = clampInt($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Warm-up slow threshold" hint="A source slower than this (ms) is treated as needing warming">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(sourceDraft.warmupSlowThresholdMs)" @update:model-value="sourceDraft.warmupSlowThresholdMs = clampInt($event)" />
             </SettingRow>
-            <SettingRow name="Failure threshold" hint="Consecutive failures before a source is paused">
-              <TextField compact type="number" :model-value="String(sourceDraft.failureThreshold)" @update:model-value="sourceDraft.failureThreshold = clampMin1($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Failure threshold" hint="Consecutive failures before a source is paused">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(sourceDraft.failureThreshold)" @update:model-value="sourceDraft.failureThreshold = clampMin1($event)" />
             </SettingRow>
-            <SettingRow name="Source cooldown" hint="How long a failing or blocked source stays paused">
-              <DurationInput v-model="sourceDraft.cooldown" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Source cooldown" hint="How long a failing or blocked source stays paused">
+              <DurationInput v-model="sourceDraft.cooldown" :accessible-label="accessibleLabel" />
             </SettingRow>
-            <SettingRow name="Politeness delay" hint="Minimum gap (ms) between requests to one source; 0 disables">
-              <TextField compact type="number" :model-value="String(sourceDraft.minRequestDelayMs)" @update:model-value="sourceDraft.minRequestDelayMs = clampInt($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Politeness delay" hint="Minimum gap (ms) between requests to one source; 0 disables">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(sourceDraft.minRequestDelayMs)" @update:model-value="sourceDraft.minRequestDelayMs = clampInt($event)" />
             </SettingRow>
-            <SettingRow name="Image request delay" hint="Global gap (ms) between individual image requests; 0 disables">
-              <TextField compact type="number" :model-value="String(sourceDraft.imageRequestDelayMs)" @update:model-value="sourceDraft.imageRequestDelayMs = clampInt($event)" />
+            <SettingRow v-slot="{ accessibleLabel }" name="Image request delay" hint="Global gap (ms) between individual image requests; 0 disables">
+              <TextField compact type="number" :accessible-label="accessibleLabel" :model-value="String(sourceDraft.imageRequestDelayMs)" @update:model-value="sourceDraft.imageRequestDelayMs = clampInt($event)" />
             </SettingRow>
             <SaveFooter :state="sourcesFooterState" :dirty="sourcesDirty" label="Save protection settings" @save="saveSources" />
           </SurfaceCard>

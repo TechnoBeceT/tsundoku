@@ -44,12 +44,12 @@ function patch(part: Partial<FlareSolverrConfig>) {
       <div class="field-grid">
         <div class="field">
           <span class="field__label">Request timeout</span>
-          <DurationInput :model-value="modelValue.timeout" @update:model-value="patch({ timeout: $event })" />
+          <DurationInput accessible-label="FlareSolverr request timeout" :model-value="modelValue.timeout" @update:model-value="patch({ timeout: $event })" />
         </div>
         <TextField label="Session name" :model-value="modelValue.session" @update:model-value="patch({ session: $event })" />
         <div class="field">
           <span class="field__label">Session TTL</span>
-          <DurationInput :model-value="modelValue.sessionTtl" @update:model-value="patch({ sessionTtl: $event })" />
+          <DurationInput accessible-label="FlareSolverr session TTL" :model-value="modelValue.sessionTtl" @update:model-value="patch({ sessionTtl: $event })" />
         </div>
         <div class="field field--inline">
           <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->

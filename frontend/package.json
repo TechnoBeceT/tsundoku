@@ -17,6 +17,7 @@
     "check:api-drift": "bun run gen:api && git diff --exit-code app/utils/api/",
     "build:app": "bash scripts/build-into-backend.sh",
     "test": "vitest run",
+    "test:download-engine-accessibility": "node scripts/test-download-engine-accessibility.mjs",
     "test:download-engine-responsive": "node scripts/test-download-engine-responsive.mjs",
     "test:watch": "vitest"
   },
