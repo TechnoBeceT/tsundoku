@@ -324,6 +324,8 @@ describe('SourceExceptionsPanel', () => {
     })
 
     expect(wrapper.text()).toContain('No sources installed')
+    expect(wrapper.find('input[aria-label="Search installed sources"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Source exception overview"]').exists()).toBe(false)
   })
 
   it('focuses an externally highlighted row and scrolls it into view', async () => {

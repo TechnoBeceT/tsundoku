@@ -24,6 +24,7 @@ import type {
   FlareSolverrConfig,
   ImpersonateConfig,
   LibrarySettings,
+  NetworkEndpointInput,
   SettingsPane,
   SourceConfigurationRowKey,
   SourcesSettings,
@@ -244,6 +245,10 @@ async function onSaveFlareSolverr(next: FlareSolverrConfig): Promise<void> {
 async function onSaveImpersonate(next: Pick<ImpersonateConfig, 'enabled' | 'url'>): Promise<void> {
   await saveImpersonate(next)
   if (impersonateSave.value.status === 'success') await refreshSourceConfigurationAfterGlobalChange()
+}
+
+async function onSaveEndpoint(input: NetworkEndpointInput): Promise<void> {
+  if (await saveEndpoint(input)) await refreshSourceConfigurationAfterGlobalChange()
 }
 
 /** { busyId, error } shape TrackersPane expects, derived from useTrackers' own refs. */
@@ -480,7 +485,7 @@ const loading = computed(
       @enable-notifications="enableNotifications"
       @disable-notifications="disableNotifications"
       @set-notifications-global="setNotificationsGlobal"
-      @save-endpoint="saveEndpoint"
+      @save-endpoint="onSaveEndpoint"
       @remove-endpoint="removeEndpoint"
       @dismiss-endpoint-error="clearEndpointActionError"
     />

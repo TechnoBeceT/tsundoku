@@ -114,7 +114,7 @@ export function useNetworkEndpoints() {
    * the pane spins the add-button / the edited dialog. On success `endpointAction`
    * clears to `{ busyId: null }`; on failure it clears busyId but sets `error`.
    */
-  async function saveEndpoint(input: NetworkEndpointInput): Promise<void> {
+  async function saveEndpoint(input: NetworkEndpointInput): Promise<boolean> {
     endpointAction.value = { busyId: input.id ?? ADD_ACTION_ID }
     try {
       const res = input.id === null
@@ -126,12 +126,14 @@ export function useNetworkEndpoints() {
       if (res.error) throw new Error(res.error.message)
       await refetch()
       endpointAction.value = { busyId: null }
+      return true
     }
     catch (e) {
       endpointAction.value = {
         busyId: null,
         error: e instanceof Error ? e.message : 'Failed to save endpoint',
       }
+      return false
     }
   }
 

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
-import { expect, userEvent, within } from 'storybook/test'
+import { expect, fn, userEvent, within } from 'storybook/test'
 import SourceExceptionsPanel from './SourceExceptionsPanel.vue'
 import {
   comicAsuraSourceConfiguration,
@@ -45,6 +45,9 @@ const baseArgs = {
   globalDownloadConcurrency: 5,
   globalImageRequestDelay: '500ms',
   pending: false,
+  catalogPending: false,
+  catalogLoaded: true,
+  catalogError: null,
   configurationPending: false,
   configurationError: null,
   highlightedSourceId: null,
@@ -128,12 +131,48 @@ export const SanitizedError: Story = {
 
 /** Catalog and summary rail loading state. */
 export const Loading: Story = {
-  args: { sources: [], summaries: [], configuration: null, pending: true },
+  args: {
+    sources: [],
+    summaries: [],
+    configuration: null,
+    pending: true,
+    catalogPending: true,
+    catalogLoaded: false,
+  },
 }
 
 /** No extensions means there is no source catalog to search or edit. */
 export const EmptyCatalog: Story = {
-  args: { sources: [], summaries: [], configuration: null, selectedSourceId: null },
+  args: {
+    sources: [],
+    summaries: [],
+    configuration: null,
+    selectedSourceId: null,
+    catalogLoaded: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('No sources installed')).toBeVisible()
+    await expect(canvas.queryByRole('searchbox')).not.toBeInTheDocument()
+    await expect(canvas.queryByLabelText('Source exception overview')).not.toBeInTheDocument()
+  },
+}
+
+/** A failed catalog refresh keeps the last confirmed catalog available behind a retry. */
+export const PreservedCatalogRetry: Story = {
+  args: {
+    catalogLoaded: true,
+    catalogError: 'The installed source catalog could not be refreshed. Try again.',
+    'onRetry-catalog': fn(),
+  },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText('The installed source catalog could not be refreshed. Try again.')).toBeVisible()
+    await expect(canvas.getByRole('button', { name: /Comic Asura/ })).toBeVisible()
+    await expect(canvas.queryByText('No sources installed')).not.toBeInTheDocument()
+    await userEvent.click(canvas.getByRole('button', { name: 'Retry source catalog' }))
+    await expect(args['onRetry-catalog']).toHaveBeenCalledOnce()
+  },
 }
 
 /** A query with no catalog match gives a specific, recoverable empty result. */

@@ -16,6 +16,7 @@ import { mountSuspended } from '@nuxt/test-utils/runtime'
 import type { Router } from 'vue-router'
 import { NuxtPage } from '#components'
 import Settings from '~/components/screens/Settings.vue'
+import type { NetworkEndpointInput } from '~/components/screens/settings.types'
 import {
   comicAsuraSourceConfiguration,
   flareSolverrConfig,
@@ -43,6 +44,7 @@ const apiState = vi.hoisted(() => ({
   sources: [] as unknown[],
   catalogAttempts: 0,
   catalogFailuresRemaining: 0,
+  endpointSaveFailuresRemaining: 0,
 }))
 
 vi.mock('~/utils/api/client', () => {
@@ -103,6 +105,17 @@ vi.mock('~/utils/api/client', () => {
       return ok(settings)
     }
     if (path === '/api/flaresolverr/settings') return ok(options?.body)
+    if (path === '/api/network/endpoints/{id}') {
+      if (apiState.endpointSaveFailuresRemaining > 0) {
+        apiState.endpointSaveFailuresRemaining -= 1
+        return Promise.resolve({
+          data: undefined,
+          error: { message: 'Endpoint could not be saved.' },
+          response: new Response(null, { status: 503 }),
+        })
+      }
+      return ok(options?.body)
+    }
     if (path === '/api/sources/{sourceId}/throughput') {
       return ok({
         sourceId: options?.params?.path?.sourceId ?? '',
@@ -151,6 +164,26 @@ function summary(configuration: SourceConfiguration) {
   }
 }
 
+function endpointInput(overrides: Partial<NetworkEndpointInput> = {}): NetworkEndpointInput {
+  return {
+    id: 'ep-flare',
+    name: 'VPN FlareSolverr',
+    kind: 'flaresolverr',
+    enabled: true,
+    host: '',
+    port: 0,
+    socksVersion: 5,
+    username: '',
+    password: '',
+    url: 'http://flare:8191',
+    session: 'source-session',
+    sessionTtl: 15,
+    timeout: 60,
+    asResponseFallback: false,
+    ...overrides,
+  }
+}
+
 async function mountPage(route: string) {
   const wrapper = await mountSuspended(NuxtPage, {
     route,
@@ -184,6 +217,7 @@ beforeEach(() => {
   apiState.sources = [sourceOption(fullyInheritedSourceConfiguration), sourceOption(comicAsuraSourceConfiguration)]
   apiState.catalogAttempts = 0
   apiState.catalogFailuresRemaining = 0
+  apiState.endpointSaveFailuresRemaining = 0
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     value: vi.fn(),
@@ -305,6 +339,39 @@ describe('Settings page route integration', () => {
     await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(5))
     expect(wrapper.get('[data-testid="source-editor"]').text()).toContain('Gateway enabledYes')
     expect(apiState.summaryAttempts).toBe(5)
+    wrapper.unmount()
+  })
+
+  it('refreshes the selected effective configuration and summaries after an endpoint edit', async () => {
+    const sourceId = fullyInheritedSourceConfiguration.source.sourceId
+    const wrapper = await mountPage(`/settings?pane=download-engine&source=${sourceId}`)
+    const screen = wrapper.getComponent(Settings)
+    apiState.detailById.set(sourceId, {
+      ...fullyInheritedSourceConfiguration,
+      bypassEnabled: false,
+      profileKey: 'endpoint-revision-2',
+    })
+
+    screen.vm.$emit('save-endpoint', endpointInput({ enabled: false }))
+
+    await vi.waitFor(() => expect(apiState.detailSourceIds).toHaveLength(2))
+    expect(wrapper.get('[data-source-setting-target="byparr"]').text()).toContain('Disabled')
+    expect(apiState.summaryAttempts).toBe(2)
+    wrapper.unmount()
+  })
+
+  it('does not refresh source projections after a rejected endpoint edit', async () => {
+    const sourceId = fullyInheritedSourceConfiguration.source.sourceId
+    const wrapper = await mountPage(`/settings?pane=download-engine&source=${sourceId}`)
+    const screen = wrapper.getComponent(Settings)
+    apiState.endpointSaveFailuresRemaining = 1
+
+    screen.vm.$emit('save-endpoint', endpointInput({ enabled: false }))
+
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Endpoint could not be saved.'))
+    expect(apiState.detailSourceIds).toEqual([sourceId])
+    expect(apiState.summaryAttempts).toBe(1)
+    expect(wrapper.get('[data-source-setting-target="byparr"]').text()).toContain('Enabled')
     wrapper.unmount()
   })
 
