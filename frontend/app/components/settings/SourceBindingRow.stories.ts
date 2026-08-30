@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { expect, within } from 'storybook/test'
 import SourceBindingRow from './SourceBindingRow.vue'
 import { networkEndpoints } from '../../fixtures/settings'
 import type { NetworkSource, SourceBinding } from '../screens/settings.types'
@@ -36,6 +37,25 @@ export const Unbound: Story = {}
 /** Bound — routed through both VPN endpoints (accent left rule + Clear enabled). */
 export const Bound: Story = {
   args: { binding: boundBinding },
+}
+
+/** Stored routes remain visible and clearable when one endpoint is missing and the other is disabled. */
+export const UnavailableBindings: Story = {
+  parameters: { viewport: { defaultViewport: 'mobile1' } },
+  args: {
+    binding: {
+      ...boundBinding,
+      socksEndpointId: 'missing-socks-endpoint',
+    },
+    flareEndpoints: flareEndpoints.map(endpoint => ({ ...endpoint, enabled: false })),
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByRole('combobox', { name: `SOCKS route for ${source.name}` })).toHaveValue('missing-socks-endpoint')
+    await expect(canvas.getByRole('option', { name: 'Missing endpoint (missing-socks-endpoint)' })).toBeVisible()
+    await expect(canvas.getByRole('option', { name: 'VPN FlareSolverr (disabled)' })).toBeVisible()
+    await expect(canvas.getByRole('button', { name: 'Use global default' })).toBeEnabled()
+  },
 }
 
 /** §16 busy: the row dims + spins while its set/clear mutation runs. */

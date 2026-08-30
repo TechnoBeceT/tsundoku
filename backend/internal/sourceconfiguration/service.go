@@ -50,7 +50,7 @@ func NewService(
 
 func newService(deps dependencies) *Service { return &Service{deps: deps} }
 
-// Get returns one live source's complete effective configuration.
+// Get returns one live source's stored policy intent and effective configuration.
 func (s *Service) Get(ctx context.Context, sourceID int64) (Configuration, error) {
 	sources, err := s.loadCatalog(ctx)
 	if err != nil {

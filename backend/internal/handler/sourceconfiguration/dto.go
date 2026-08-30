@@ -69,12 +69,23 @@ type ResolvedEndpointDTO struct {
 	Name       *string `json:"name"`
 }
 
-// RoutingConfigurationDTO is the effective routing wire projection.
-type RoutingConfigurationDTO struct {
+// StoredRoutingConfigurationDTO is the persisted binding projection before
+// endpoint availability is resolved.
+type StoredRoutingConfigurationDTO struct {
+	Configured bool                `json:"configured"`
 	SocksMode  string              `json:"socksMode"`
 	Socks      ResolvedEndpointDTO `json:"socks"`
 	BypassMode string              `json:"bypassMode"`
 	Bypass     ResolvedEndpointDTO `json:"bypass"`
+}
+
+// RoutingConfigurationDTO carries both persisted and effective routing.
+type RoutingConfigurationDTO struct {
+	Stored     StoredRoutingConfigurationDTO `json:"stored"`
+	SocksMode  string                        `json:"socksMode"`
+	Socks      ResolvedEndpointDTO           `json:"socks"`
+	BypassMode string                        `json:"bypassMode"`
+	Bypass     ResolvedEndpointDTO           `json:"bypass"`
 }
 
 // RuntimeStatusDTO is one source profile's durable apply state on the wire.
@@ -134,6 +145,13 @@ func newConfigurationDTO(value configuration.Configuration) ConfigurationDTO {
 			GatewayConfigured: value.ImageProxy.GatewayConfigured, EffectiveAvailable: value.ImageProxy.EffectiveAvailable,
 		},
 		Routing: RoutingConfigurationDTO{
+			Stored: StoredRoutingConfigurationDTO{
+				Configured: value.Routing.Stored.Configured,
+				SocksMode:  value.Routing.Stored.SocksMode,
+				Socks:      ResolvedEndpointDTO{EndpointID: value.Routing.Stored.Socks.EndpointID, Name: value.Routing.Stored.Socks.Name},
+				BypassMode: value.Routing.Stored.BypassMode,
+				Bypass:     ResolvedEndpointDTO{EndpointID: value.Routing.Stored.Bypass.EndpointID, Name: value.Routing.Stored.Bypass.Name},
+			},
 			SocksMode:  value.Routing.SocksMode,
 			Socks:      ResolvedEndpointDTO{EndpointID: value.Routing.Socks.EndpointID, Name: value.Routing.Socks.Name},
 			BypassMode: value.Routing.BypassMode,

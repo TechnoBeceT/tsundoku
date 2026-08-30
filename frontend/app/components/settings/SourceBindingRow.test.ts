@@ -87,4 +87,34 @@ describe('SourceBindingRow', () => {
     await clear.trigger('click')
     expect(w.emitted('clear')![0]).toEqual(['222'])
   })
+
+  it('renders a disabled referenced endpoint as bound and keeps Clear enabled', () => {
+    const binding: SourceBinding = { sourceId: '222', socksEndpointId: 'ep-socks', flareMode: 'global', flareEndpointId: null }
+    const w = mountRow({ binding, socksEndpoints: [{ ...socksEndpoints[0]!, enabled: false }] })
+
+    expect((socksSelect(w).element as HTMLSelectElement).value).toBe('ep-socks')
+    expect(socksSelect(w).text()).toContain('VPN SOCKS (disabled)')
+    expect(clearButton(w).attributes('disabled')).toBeUndefined()
+  })
+
+  it('renders a missing referenced endpoint without losing the hidden id on another-dimension edit', async () => {
+    const binding: SourceBinding = {
+      sourceId: '222',
+      socksEndpointId: 'missing-socks-id',
+      flareMode: 'endpoint',
+      flareEndpointId: 'missing-flare-id',
+    }
+    const w = mountRow({ binding, socksEndpoints: [], flareEndpoints })
+
+    expect((socksSelect(w).element as HTMLSelectElement).value).toBe('missing-socks-id')
+    expect(socksSelect(w).text()).toContain('Missing endpoint (missing-socks-id)')
+    expect(clearButton(w).attributes('disabled')).toBeUndefined()
+    await flareSelect(w).setValue('global')
+    expect(w.emitted('set')![0]![0]).toEqual({
+      sourceId: '222',
+      socksEndpointId: 'missing-socks-id',
+      flareMode: 'global',
+      flareEndpointId: null,
+    })
+  })
 })

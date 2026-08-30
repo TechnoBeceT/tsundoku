@@ -2434,6 +2434,10 @@ components:
 
     ResolvedEndpoint:
       type: object
+      description: >-
+        An endpoint reference. Stored routing retains endpointId even when the
+        endpoint is disabled or missing; name is null for a missing row.
+        Effective routing populates this only for an available endpoint.
       required: [endpointId, name]
       properties:
         endpointId:
@@ -2441,10 +2445,35 @@ components:
         name:
           type: [string, "null"]
 
+    SourceStoredRoutingConfiguration:
+      type: object
+      description: >-
+        The persisted source binding before endpoint availability is resolved.
+        configured distinguishes an explicit all-global binding row from no row.
+      required: [configured, socksMode, socks, bypassMode, bypass]
+      properties:
+        configured:
+          type: boolean
+        socksMode:
+          type: string
+          enum: [global, endpoint]
+        socks:
+          $ref: "#/components/schemas/ResolvedEndpoint"
+        bypassMode:
+          type: string
+          enum: [none, global, endpoint]
+        bypass:
+          $ref: "#/components/schemas/ResolvedEndpoint"
+
     SourceRoutingConfiguration:
       type: object
-      required: [socksMode, socks, bypassMode, bypass]
+      description: >-
+        Stored binding intent plus effective routing after disabled or missing
+        endpoints have fallen back to direct/global behavior.
+      required: [stored, socksMode, socks, bypassMode, bypass]
       properties:
+        stored:
+          $ref: "#/components/schemas/SourceStoredRoutingConfiguration"
         socksMode:
           type: string
           enum: [global, endpoint]

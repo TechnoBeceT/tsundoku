@@ -75,14 +75,29 @@ type ImageProxyState struct {
 	EffectiveAvailable bool
 }
 
-// ResolvedEndpoint identifies an available routing endpoint for display.
+// ResolvedEndpoint identifies a routing endpoint for display. A stored
+// reference can retain its id when the endpoint is missing, in which case Name
+// is nil. An effective reference is populated only for an available endpoint.
 type ResolvedEndpoint struct {
 	EndpointID *string
 	Name       *string
 }
 
-// RoutingConfiguration contains effective SOCKS and bypass routing choices.
+// StoredRoutingConfiguration is the owner's persisted source binding before
+// endpoint availability is resolved. Configured distinguishes a real binding
+// row whose two dimensions both select global from no binding row at all.
+type StoredRoutingConfiguration struct {
+	Configured bool
+	SocksMode  string
+	Socks      ResolvedEndpoint
+	BypassMode string
+	Bypass     ResolvedEndpoint
+}
+
+// RoutingConfiguration contains the stored binding and the independently
+// resolved effective SOCKS and bypass routing choices.
 type RoutingConfiguration struct {
+	Stored     StoredRoutingConfiguration
 	SocksMode  string
 	Socks      ResolvedEndpoint
 	BypassMode string

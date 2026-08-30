@@ -64,6 +64,13 @@ const configuration: EffectiveConfiguration = {
     effectiveAvailable: true,
   },
   routing: {
+    stored: {
+      configured: true,
+      socksMode: 'endpoint',
+      socks: { endpointId: 'socks-id', name: 'VPN' },
+      bypassMode: 'global',
+      bypass: { endpointId: null, name: null },
+    },
     socksMode: 'endpoint',
     socks: { endpointId: 'socks-id', name: 'VPN' },
     bypassMode: 'global',
@@ -120,8 +127,15 @@ describe('source configuration generated contract', () => {
     })
   })
 
-  it('resolves SOCKS and bypass routing without collapsing their modes', () => {
+  it('keeps stored routing distinct from resolved SOCKS and bypass modes', () => {
     expect(configuration.routing).toEqual({
+      stored: {
+        configured: true,
+        socksMode: 'endpoint',
+        socks: { endpointId: 'socks-id', name: 'VPN' },
+        bypassMode: 'global',
+        bypass: { endpointId: null, name: null },
+      },
       socksMode: 'endpoint',
       socks: { endpointId: 'socks-id', name: 'VPN' },
       bypassMode: 'global',

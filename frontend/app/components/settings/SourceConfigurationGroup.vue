@@ -72,8 +72,8 @@ const source = computed(() => ({
   lang: props.configuration.source.language,
 }))
 const binding = computed<SourceBinding | null>(() => {
-  const routing = props.configuration.routing
-  if (routing.socksMode === 'global' && routing.bypassMode === 'global') return null
+  const routing = props.configuration.routing.stored
+  if (!routing.configured) return null
   return {
     sourceId: sourceId.value,
     socksEndpointId: routing.socksMode === 'endpoint' ? routing.socks.endpointId : null,

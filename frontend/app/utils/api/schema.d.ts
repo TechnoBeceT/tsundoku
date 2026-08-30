@@ -4249,11 +4249,24 @@ export interface components {
             gatewayConfigured: boolean;
             effectiveAvailable: boolean;
         };
+        /** @description An endpoint reference. Stored routing retains endpointId even when the endpoint is disabled or missing; name is null for a missing row. Effective routing populates this only for an available endpoint. */
         ResolvedEndpoint: {
             endpointId: string | null;
             name: string | null;
         };
+        /** @description The persisted source binding before endpoint availability is resolved. configured distinguishes an explicit all-global binding row from no row. */
+        SourceStoredRoutingConfiguration: {
+            configured: boolean;
+            /** @enum {string} */
+            socksMode: "global" | "endpoint";
+            socks: components["schemas"]["ResolvedEndpoint"];
+            /** @enum {string} */
+            bypassMode: "none" | "global" | "endpoint";
+            bypass: components["schemas"]["ResolvedEndpoint"];
+        };
+        /** @description Stored binding intent plus effective routing after disabled or missing endpoints have fallen back to direct/global behavior. */
         SourceRoutingConfiguration: {
+            stored: components["schemas"]["SourceStoredRoutingConfiguration"];
             /** @enum {string} */
             socksMode: "global" | "endpoint";
             socks: components["schemas"]["ResolvedEndpoint"];

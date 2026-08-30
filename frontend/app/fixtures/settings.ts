@@ -193,6 +193,13 @@ export const fullyInheritedSourceConfiguration = {
     effectiveAvailable: false,
   },
   routing: {
+    stored: {
+      configured: false,
+      socksMode: 'global',
+      socks: { endpointId: null, name: null },
+      bypassMode: 'global',
+      bypass: { endpointId: null, name: null },
+    },
     socksMode: 'global',
     socks: { endpointId: null, name: null },
     bypassMode: 'global',
@@ -245,6 +252,13 @@ export const comicAsuraSourceConfiguration = {
     effectiveAvailable: false,
   },
   routing: {
+    stored: {
+      configured: true,
+      socksMode: 'endpoint',
+      socks: { endpointId: 'ep-vpn-socks', name: 'VPN SOCKS' },
+      bypassMode: 'endpoint',
+      bypass: { endpointId: 'ep-vpn-flare', name: 'VPN FlareSolverr' },
+    },
     socksMode: 'endpoint',
     socks: { endpointId: 'ep-vpn-socks', name: 'VPN SOCKS' },
     bypassMode: 'endpoint',
@@ -297,6 +311,13 @@ export const hiveProxySourceConfiguration = {
     effectiveAvailable: true,
   },
   routing: {
+    stored: {
+      configured: false,
+      socksMode: 'global',
+      socks: { endpointId: null, name: null },
+      bypassMode: 'global',
+      bypass: { endpointId: null, name: null },
+    },
     socksMode: 'global',
     socks: { endpointId: null, name: null },
     bypassMode: 'global',

@@ -58,7 +58,16 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertTypes(t, propertyAt(t, schemas, "ResolvedEndpoint", "endpointId"), []any{"string", "null"})
 		assertTypes(t, propertyAt(t, schemas, "ResolvedEndpoint", "name"), []any{"string", "null"})
 
-		assertObjectSchema(t, schemas, "SourceRoutingConfiguration", []string{"socksMode", "socks", "bypassMode", "bypass"}, []string{"socksMode", "socks", "bypassMode", "bypass"})
+		storedRoutingFields := []string{"configured", "socksMode", "socks", "bypassMode", "bypass"}
+		assertObjectSchema(t, schemas, "SourceStoredRoutingConfiguration", storedRoutingFields, storedRoutingFields)
+		assertType(t, propertyAt(t, schemas, "SourceStoredRoutingConfiguration", "configured"), "boolean")
+		assertEnum(t, propertyAt(t, schemas, "SourceStoredRoutingConfiguration", "socksMode"), []any{"global", "endpoint"})
+		assertRef(t, propertyAt(t, schemas, "SourceStoredRoutingConfiguration", "socks"), "#/components/schemas/ResolvedEndpoint")
+		assertEnum(t, propertyAt(t, schemas, "SourceStoredRoutingConfiguration", "bypassMode"), []any{"none", "global", "endpoint"})
+		assertRef(t, propertyAt(t, schemas, "SourceStoredRoutingConfiguration", "bypass"), "#/components/schemas/ResolvedEndpoint")
+
+		assertObjectSchema(t, schemas, "SourceRoutingConfiguration", []string{"stored", "socksMode", "socks", "bypassMode", "bypass"}, []string{"stored", "socksMode", "socks", "bypassMode", "bypass"})
+		assertRef(t, propertyAt(t, schemas, "SourceRoutingConfiguration", "stored"), "#/components/schemas/SourceStoredRoutingConfiguration")
 		assertEnum(t, propertyAt(t, schemas, "SourceRoutingConfiguration", "socksMode"), []any{"global", "endpoint"})
 		assertRef(t, propertyAt(t, schemas, "SourceRoutingConfiguration", "socks"), "#/components/schemas/ResolvedEndpoint")
 		assertEnum(t, propertyAt(t, schemas, "SourceRoutingConfiguration", "bypassMode"), []any{"none", "global", "endpoint"})

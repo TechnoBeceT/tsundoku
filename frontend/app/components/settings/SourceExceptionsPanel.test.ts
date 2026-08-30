@@ -44,6 +44,11 @@ const inherited: SourceConfiguration = {
   imageConnectionMode: { override: null, global: 'fresh', effective: 'fresh', inherited: true },
   imageProxy: { optedIn: false, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: false },
   routing: {
+    stored: {
+      configured: false,
+      socksMode: 'global', socks: { endpointId: null, name: null },
+      bypassMode: 'global', bypass: { endpointId: null, name: null },
+    },
     socksMode: 'global', socks: { endpointId: null, name: null },
     bypassMode: 'global', bypass: { endpointId: null, name: null },
   },
@@ -63,6 +68,11 @@ const overridden: SourceConfiguration = {
   imageConnectionMode: { override: 'reuse', global: 'fresh', effective: 'reuse', inherited: false },
   imageProxy: { optedIn: true, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: true },
   routing: {
+    stored: {
+      configured: true,
+      socksMode: 'endpoint', socks: { endpointId: 'ep-socks', name: 'VPN SOCKS' },
+      bypassMode: 'endpoint', bypass: { endpointId: 'ep-flare', name: 'VPN FlareSolverr' },
+    },
     socksMode: 'endpoint', socks: { endpointId: 'ep-socks', name: 'VPN SOCKS' },
     bypassMode: 'endpoint', bypass: { endpointId: 'ep-flare', name: 'VPN FlareSolverr' },
   },
@@ -371,6 +381,45 @@ describe('SourceExceptionsPanel', () => {
 
     await routing.findAll('button').find(button => button.text() === 'Use global default')!.trigger('click')
     expect(wrapper.emitted('clear-binding')?.[0]).toEqual([overridden.source.sourceId])
+  })
+
+  it('edits from stored routing when referenced endpoints are unavailable effectively', async () => {
+    const unavailable: SourceConfiguration = {
+      ...overridden,
+      routing: {
+        stored: {
+          configured: true,
+          socksMode: 'endpoint',
+          socks: { endpointId: 'missing-socks', name: null },
+          bypassMode: 'endpoint',
+          bypass: { endpointId: 'ep-flare', name: 'VPN FlareSolverr' },
+        },
+        socksMode: 'global',
+        socks: { endpointId: null, name: null },
+        bypassMode: 'global',
+        bypass: { endpointId: null, name: null },
+      },
+    }
+    const disabledEndpoints = endpoints.map(endpoint => endpoint.id === 'ep-flare' ? { ...endpoint, enabled: false } : endpoint)
+    const wrapper = mount(SourceExceptionsPanel, {
+      props: { ...baseProps, configuration: unavailable, endpoints: disabledEndpoints },
+    })
+    const routing = wrapper.getComponent(SourceBindingRow)
+    const socks = routing.get(`select[aria-label="SOCKS route for ${overridden.source.name}"]`)
+    const flare = routing.get(`select[aria-label="FlareSolverr route for ${overridden.source.name}"]`)
+    expect((socks.element as HTMLSelectElement).value).toBe('missing-socks')
+    expect(socks.text()).toContain('Missing endpoint (missing-socks)')
+    expect((flare.element as HTMLSelectElement).value).toBe('ep-flare')
+    expect(flare.text()).toContain('VPN FlareSolverr (disabled)')
+    expect(routing.findAll('button').find(button => button.text() === 'Use global default')!.attributes('disabled')).toBeUndefined()
+
+    await socks.setValue('ep-socks')
+    expect(wrapper.emitted('set-binding')?.[0]).toEqual([{
+      sourceId: overridden.source.sourceId,
+      socksEndpointId: 'ep-socks',
+      flareMode: 'endpoint',
+      flareEndpointId: 'ep-flare',
+    }])
   })
 
   it('emits keyed row mutations upward and isolates saving/error state to that row', () => {

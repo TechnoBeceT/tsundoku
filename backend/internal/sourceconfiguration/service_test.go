@@ -113,6 +113,87 @@ func imageModePtr(v sourcetransport.ImageConnectionMode) *sourcetransport.ImageC
 	return &v
 }
 
+func TestStoredRoutingSurvivesUnavailableEffectiveEndpoints(t *testing.T) {
+	const (
+		disabledID int64 = 601
+		missingID  int64 = 602
+	)
+	disabledSocksID := "00000000-0000-0000-0000-000000000601"
+	disabledFlareID := "00000000-0000-0000-0000-000000000602"
+	missingSocksID := "00000000-0000-0000-0000-000000000603"
+	missingFlareID := "00000000-0000-0000-0000-000000000604"
+	svc := newService(dependencies{
+		catalog:    &catalogStub{sources: []sourceengine.Source{{ID: disabledID}, {ID: missingID}}},
+		globals:    &globalsStub{},
+		throughput: &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{}}},
+		transport:  &transportStub{value: transportSnapshot{Overrides: map[int64]sourcetransport.Override{}}},
+		routing: &routingStub{value: routingSnapshot{
+			Resolved: map[int64]network.ResolvedBinding{
+				disabledID: {SourceID: disabledID, FlareMode: network.FlareModeGlobal},
+				missingID:  {SourceID: missingID, FlareMode: network.FlareModeGlobal},
+			},
+			Stored: map[int64]network.ConfigurationBinding{
+				disabledID: {SourceID: disabledID, SocksEndpointID: &disabledSocksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &disabledFlareID},
+				missingID:  {SourceID: missingID, SocksEndpointID: &missingSocksID, FlareMode: network.FlareModeEndpoint, FlareEndpointID: &missingFlareID},
+			},
+			EndpointNames: map[string]string{disabledSocksID: "Disabled SOCKS", disabledFlareID: "Disabled Flare"},
+		}},
+		runtime: &runtimeStub{value: map[int64]sourcetransport.Intent{}},
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		assertUnavailableStoredRouting(t, svc, disabledID, disabledSocksID, disabledFlareID, "Disabled SOCKS", "Disabled Flare")
+	})
+	t.Run("missing", func(t *testing.T) {
+		assertUnavailableStoredRouting(t, svc, missingID, missingSocksID, missingFlareID, "", "")
+	})
+}
+
+func assertUnavailableStoredRouting(t *testing.T, svc *Service, sourceID int64, wantSocksID, wantFlareID, wantSocksName, wantFlareName string) {
+	t.Helper()
+	got, err := svc.Get(context.Background(), sourceID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	assertEffectiveRoutingFallback(t, got.Routing)
+	assertStoredRoutingMode(t, got.Routing.Stored)
+	assertStoredEndpoint(t, "SOCKS", got.Routing.Stored.Socks, wantSocksID, wantSocksName)
+	assertStoredEndpoint(t, "bypass", got.Routing.Stored.Bypass, wantFlareID, wantFlareName)
+}
+
+func assertEffectiveRoutingFallback(t *testing.T, routing RoutingConfiguration) {
+	t.Helper()
+	if routing.SocksMode != SocksModeGlobal || routing.Socks.EndpointID != nil || routing.BypassMode != network.FlareModeGlobal || routing.Bypass.EndpointID != nil {
+		t.Fatalf("effective routing = %+v, want direct/global fallback", routing)
+	}
+}
+
+func assertStoredRoutingMode(t *testing.T, stored StoredRoutingConfiguration) {
+	t.Helper()
+	if !stored.Configured || stored.SocksMode != SocksModeEndpoint || stored.BypassMode != network.FlareModeEndpoint {
+		t.Fatalf("stored selection = %+v", stored)
+	}
+}
+
+func assertStoredEndpoint(t *testing.T, label string, got ResolvedEndpoint, wantID, wantName string) {
+	t.Helper()
+	if got.EndpointID == nil {
+		t.Fatalf("stored %s endpoint id = nil, want %q", label, wantID)
+	}
+	if *got.EndpointID != wantID {
+		t.Fatalf("stored %s endpoint id = %q, want %q", label, *got.EndpointID, wantID)
+	}
+	if wantName == "" {
+		if got.Name != nil {
+			t.Fatalf("missing %s endpoint name = %v, want nil", label, got.Name)
+		}
+		return
+	}
+	if got.Name == nil || *got.Name != wantName {
+		t.Fatalf("stored %s name = %v, want %q", label, got.Name, wantName)
+	}
+}
+
 func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *testing.T) {
 	const (
 		inheritedID     int64 = 101

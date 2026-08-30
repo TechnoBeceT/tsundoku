@@ -61,10 +61,16 @@ const current = computed(() => ({
 
 // Append " (disabled)" so a bound-but-disabled endpoint is legible in the picker.
 const epLabel = (ep: NetworkEndpoint): string => (ep.enabled ? ep.name : `${ep.name} (disabled)`)
+const missingOption = (endpointId: string | null, endpoints: NetworkEndpoint[]): SelectOption[] => (
+  endpointId !== null && !endpoints.some(endpoint => endpoint.id === endpointId)
+    ? [{ value: endpointId, label: `Missing endpoint (${endpointId})` }]
+    : []
+)
 
 // ── SOCKS select ────────────────────────────────────────────────────────────
 const socksOptions = computed<SelectOption[]>(() => [
   { value: '', label: 'Global default' },
+  ...missingOption(current.value.socksEndpointId, props.socksEndpoints),
   ...props.socksEndpoints.map(ep => ({ value: ep.id, label: epLabel(ep) })),
 ])
 const socksValue = computed(() => current.value.socksEndpointId ?? '')
@@ -83,6 +89,7 @@ function onSocksChange(value: string): void {
 const flareOptions = computed<SelectOption[]>(() => [
   { value: 'none', label: 'None' },
   { value: 'global', label: 'Global default' },
+  ...missingOption(current.value.flareMode === 'endpoint' ? current.value.flareEndpointId : null, props.flareEndpoints),
   ...props.flareEndpoints.map(ep => ({ value: ep.id, label: epLabel(ep) })),
 ])
 const flareValue = computed(() =>

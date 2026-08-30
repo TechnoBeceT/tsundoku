@@ -23,11 +23,12 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		imageMode = *transportOverride.ImageConnectionMode
 	}
 	binding := effectiveBinding(sourceID, snapshot.routing)
+	storedBinding, configured := snapshot.routing.Stored[sourceID]
 	reuseGlobal, _ := resolveBypassSession(snapshot.globals.BypassSession, binding, nil)
 	reuse, sessionMode := resolveBypassSession(snapshot.globals.BypassSession, binding, transportOverride.ReuseBypassSession)
 	optedIn := containsSourceID(snapshot.globals.ProxySourceIDs, sourceID)
 	proxyConfigured := snapshot.globals.ProxyURL != ""
-	routing := routingConfiguration(binding, snapshot.routing.EndpointNames)
+	routing := routingConfiguration(binding, storedBinding, configured, snapshot.routing.EndpointNames)
 	return Configuration{
 		Source: identity(source),
 		DownloadConcurrency: IntegerPolicyValue{
@@ -102,8 +103,12 @@ func bypassEnabled(binding network.ResolvedBinding, globals globalSnapshot) bool
 	}
 }
 
-func routingConfiguration(binding network.ResolvedBinding, names map[string]string) RoutingConfiguration {
-	out := RoutingConfiguration{SocksMode: SocksModeGlobal, BypassMode: binding.FlareMode}
+func routingConfiguration(binding network.ResolvedBinding, stored network.ConfigurationBinding, configured bool, names map[string]string) RoutingConfiguration {
+	out := RoutingConfiguration{
+		Stored:     storedRoutingConfiguration(stored, configured, names),
+		SocksMode:  SocksModeGlobal,
+		BypassMode: binding.FlareMode,
+	}
 	if out.BypassMode == "" {
 		out.BypassMode = network.FlareModeGlobal
 	}
@@ -115,6 +120,28 @@ func routingConfiguration(binding network.ResolvedBinding, names map[string]stri
 		out.Bypass = resolvedEndpoint(binding.Flare.ID, names)
 	}
 	return out
+}
+
+func storedRoutingConfiguration(binding network.ConfigurationBinding, configured bool, names map[string]string) StoredRoutingConfiguration {
+	out := StoredRoutingConfiguration{Configured: configured, SocksMode: SocksModeGlobal, BypassMode: binding.FlareMode}
+	if out.BypassMode == "" {
+		out.BypassMode = network.FlareModeGlobal
+	}
+	if binding.SocksEndpointID != nil {
+		out.SocksMode = SocksModeEndpoint
+		out.Socks = storedEndpoint(binding.SocksEndpointID, names)
+	}
+	if binding.FlareEndpointID != nil {
+		out.Bypass = storedEndpoint(binding.FlareEndpointID, names)
+	}
+	return out
+}
+
+func storedEndpoint(id *string, names map[string]string) ResolvedEndpoint {
+	if id == nil {
+		return ResolvedEndpoint{}
+	}
+	return resolvedEndpoint(*id, names)
 }
 
 func resolvedEndpoint(id string, names map[string]string) ResolvedEndpoint {

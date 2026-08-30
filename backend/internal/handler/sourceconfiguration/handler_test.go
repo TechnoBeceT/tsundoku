@@ -116,14 +116,14 @@ func TestEffectiveConfigurationUsesExactSignedDecimalInt64Grammar(t *testing.T) 
 	}
 }
 
-func TestEffectiveConfigurationMapsFrozenDTOExactly(t *testing.T) {
+func TestEffectiveConfigurationMapsUnavailableStoredRoutingExactly(t *testing.T) {
 	env := newHandlerEnv(t)
 	concurrency := 7
 	delay := time.Duration(0)
 	reuse := false
 	mode := sourcetransport.ImageConnectionReuse
-	socksID, socksName := "socks-id", "VPN SOCKS"
-	flareID, flareName := "flare-id", "Bypass EU"
+	socksID, socksName := "disabled-socks-id", "Disabled VPN SOCKS"
+	flareID := "missing-flare-id"
 	attempt := time.Date(2026, 8, 30, 12, 30, 0, 0, time.UTC)
 	env.service.configuration = sourceconfiguration.Configuration{
 		Source:              sourceconfiguration.SourceIdentity{SourceID: 1998416842837112832, Name: "Large", Language: "en"},
@@ -142,10 +142,15 @@ func TestEffectiveConfigurationMapsFrozenDTOExactly(t *testing.T) {
 			OptedIn: true, GatewayEnabled: true, GatewayConfigured: true, EffectiveAvailable: true,
 		},
 		Routing: sourceconfiguration.RoutingConfiguration{
-			SocksMode:  sourceconfiguration.SocksModeEndpoint,
-			Socks:      sourceconfiguration.ResolvedEndpoint{EndpointID: &socksID, Name: &socksName},
-			BypassMode: "endpoint",
-			Bypass:     sourceconfiguration.ResolvedEndpoint{EndpointID: &flareID, Name: &flareName},
+			Stored: sourceconfiguration.StoredRoutingConfiguration{
+				Configured: true,
+				SocksMode:  sourceconfiguration.SocksModeEndpoint,
+				Socks:      sourceconfiguration.ResolvedEndpoint{EndpointID: &socksID, Name: &socksName},
+				BypassMode: "endpoint",
+				Bypass:     sourceconfiguration.ResolvedEndpoint{EndpointID: &flareID},
+			},
+			SocksMode:  sourceconfiguration.SocksModeGlobal,
+			BypassMode: "global",
 		},
 		ProfileKey: "profile-key",
 		Runtime: sourceconfiguration.RuntimeStatus{
@@ -158,7 +163,7 @@ func TestEffectiveConfigurationMapsFrozenDTOExactly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d (%s), want 200", rec.Code, rec.Body.String())
 	}
-	want := `{"source":{"sourceId":"1998416842837112832","name":"Large","language":"en"},"downloadConcurrency":{"override":7,"effective":7,"inherited":false},"imageRequestDelay":{"override":"0s","effective":"0s","inherited":false},"protection":{"warmupInterval":"15m0s","warmupSlowThresholdMs":1250,"failureThreshold":4,"sourceCooldown":"20m0s","politenessDelay":"750ms"},"bypassEnabled":true,"reuseBypassSession":{"override":false,"global":true,"effective":false,"inherited":false,"mode":"disposable"},"imageConnectionMode":{"override":"reuse","global":"fresh","effective":"reuse","inherited":false},"imageProxy":{"optedIn":true,"gatewayEnabled":true,"gatewayConfigured":true,"effectiveAvailable":true},"routing":{"socksMode":"endpoint","socks":{"endpointId":"socks-id","name":"VPN SOCKS"},"bypassMode":"endpoint","bypass":{"endpointId":"flare-id","name":"Bypass EU"}},"profileKey":"profile-key","runtime":{"status":"pending","desiredRevision":5,"appliedRevision":4,"lastApplyAttempt":"2026-08-30T12:30:00Z","lastApplyError":"engine unavailable"}}` + "\n"
+	want := `{"source":{"sourceId":"1998416842837112832","name":"Large","language":"en"},"downloadConcurrency":{"override":7,"effective":7,"inherited":false},"imageRequestDelay":{"override":"0s","effective":"0s","inherited":false},"protection":{"warmupInterval":"15m0s","warmupSlowThresholdMs":1250,"failureThreshold":4,"sourceCooldown":"20m0s","politenessDelay":"750ms"},"bypassEnabled":true,"reuseBypassSession":{"override":false,"global":true,"effective":false,"inherited":false,"mode":"disposable"},"imageConnectionMode":{"override":"reuse","global":"fresh","effective":"reuse","inherited":false},"imageProxy":{"optedIn":true,"gatewayEnabled":true,"gatewayConfigured":true,"effectiveAvailable":true},"routing":{"stored":{"configured":true,"socksMode":"endpoint","socks":{"endpointId":"disabled-socks-id","name":"Disabled VPN SOCKS"},"bypassMode":"endpoint","bypass":{"endpointId":"missing-flare-id","name":null}},"socksMode":"global","socks":{"endpointId":null,"name":null},"bypassMode":"global","bypass":{"endpointId":null,"name":null}},"profileKey":"profile-key","runtime":{"status":"pending","desiredRevision":5,"appliedRevision":4,"lastApplyAttempt":"2026-08-30T12:30:00Z","lastApplyError":"engine unavailable"}}` + "\n"
 	if got := rec.Body.String(); got != want {
 		t.Fatalf("response = %s\nwant     = %s", got, want)
 	}
