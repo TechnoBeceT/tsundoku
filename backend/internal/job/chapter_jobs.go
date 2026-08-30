@@ -148,6 +148,7 @@ type Runner struct {
 	runtimeStopping   bool
 	runtimeStopped    bool
 	runtimeStopDone   chan struct{}
+	runtimePending    bool
 }
 
 type runtimeRetryGeneration struct {
@@ -435,11 +436,24 @@ func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool, ru
 func (r *Runner) requestRuntimeRetry(epoch uint64) {
 	r.runtimeMu.Lock()
 	defer r.runtimeMu.Unlock()
-	if epoch != r.runtimeEpoch || r.runtimeStopped || r.runtimeStopping || r.runtimeStarts == 0 {
+	if epoch != r.runtimeEpoch || r.runtimeStarts == 0 {
+		return
+	}
+	if r.runtimeStopping {
+		if !r.runtimeStopped {
+			r.runtimePending = true
+		}
+		return
+	}
+	if r.runtimeStopped {
 		return
 	}
 	generation := r.ensureRuntimeRetryLocked()
-	if generation == nil || generation.ctx.Err() != nil {
+	if generation == nil {
+		return
+	}
+	if generation.ctx.Err() != nil {
+		r.runtimePending = true
 		return
 	}
 	select {
@@ -448,28 +462,19 @@ func (r *Runner) requestRuntimeRetry(epoch uint64) {
 	}
 }
 
-func (r *Runner) startRuntimeRetry(ctx context.Context) (uint64, bool) {
+func (r *Runner) startRuntimeRetry(context.Context) (uint64, bool) {
 	if r.runtimeReconciler == nil {
 		return 0, false
 	}
-	for {
-		r.runtimeMu.Lock()
-		if !r.runtimeStopping {
-			r.runtimeStopped = false
-			r.runtimeStarts++
-			epoch := r.runtimeEpoch
-			r.ensureRuntimeRetryLocked()
-			r.runtimeMu.Unlock()
-			return epoch, true
-		}
-		stopped := r.runtimeStopDone
-		r.runtimeMu.Unlock()
-		select {
-		case <-ctx.Done():
-			return 0, false
-		case <-stopped:
-		}
+	r.runtimeMu.Lock()
+	defer r.runtimeMu.Unlock()
+	r.runtimeStopped = false
+	r.runtimeStarts++
+	epoch := r.runtimeEpoch
+	if !r.runtimeStopping {
+		r.ensureRuntimeRetryLocked()
 	}
+	return epoch, true
 }
 
 func (r *Runner) ensureRuntimeRetryLocked() *runtimeRetryGeneration {
@@ -497,8 +502,11 @@ func (r *Runner) stopRuntimeRetry(epoch uint64) {
 		return
 	}
 	r.runtimeStarts--
-	if r.runtimeStarts == 0 && r.runtimeGeneration != nil {
-		r.runtimeGeneration.cancel()
+	if r.runtimeStarts == 0 {
+		r.runtimePending = false
+		if r.runtimeGeneration != nil {
+			r.runtimeGeneration.cancel()
+		}
 	}
 }
 
@@ -535,20 +543,34 @@ func (r *Runner) finishRuntimeRetryGeneration(generation *runtimeRetryGeneration
 	if r.runtimeStopping {
 		runtimeStopping := r.runtimeStopDone
 		r.runtimeStopping = false
+		if r.runtimeStarts > 0 && !r.runtimeStopped {
+			r.signalPendingRuntimeRetryLocked(r.ensureRuntimeRetryLocked())
+		}
 		close(runtimeStopping)
 		return
 	}
 	if r.runtimeStarts > 0 && !r.runtimeStopped {
-		r.ensureRuntimeRetryLocked()
+		r.signalPendingRuntimeRetryLocked(r.ensureRuntimeRetryLocked())
+	}
+}
+
+func (r *Runner) signalPendingRuntimeRetryLocked(generation *runtimeRetryGeneration) {
+	if !r.runtimePending || generation == nil || generation.ctx.Err() != nil {
+		return
+	}
+	r.runtimePending = false
+	select {
+	case generation.retry <- struct{}{}:
+	default:
 	}
 }
 
 // ShutdownRuntimeRetry invalidates the current Start epoch, cancels and joins
 // its retry generation, and drops its coalesced signal. It is safe to call
-// repeatedly or concurrently with Start: a racing Start waits for the old
-// generation to finish before registering a fresh epoch, and the mutex-owned
-// stop channel avoids WaitGroup Add/Wait races. A timed-out caller may retry the
-// same join later.
+// repeatedly or concurrently with Start: a racing Start registers in the new
+// epoch immediately, while at most one cadence request is retained until the
+// old generation finishes. The mutex-owned stop channel avoids WaitGroup
+// Add/Wait races. A timed-out caller may retry the same join later.
 func (r *Runner) ShutdownRuntimeRetry(ctx context.Context) error {
 	r.runtimeMu.Lock()
 	if r.runtimeStopping {
@@ -565,6 +587,7 @@ func (r *Runner) ShutdownRuntimeRetry(ctx context.Context) error {
 	r.runtimeStopped = true
 	r.runtimeEpoch++
 	r.runtimeStarts = 0
+	r.runtimePending = false
 	r.runtimeStopDone = make(chan struct{})
 	stopped := r.runtimeStopDone
 	if generation := r.runtimeGeneration; generation == nil {

@@ -1347,7 +1347,16 @@ func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) {
 	<-startCalling
 	select {
 	case <-startReturned:
-		t.Fatal("Start racing shutdown returned before the old generation joined")
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement Start blocked behind the canceled generation tail")
+	}
+
+	// This is a legitimate request from the replacement Start generation. It
+	// must survive the old generation's cancellation tail, but cannot overlap it.
+	r.Trigger()
+	select {
+	case call := <-probe.started:
+		t.Fatalf("replacement retry %d overlapped canceled generation tail", call)
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(probe.tailRelease)
@@ -1359,13 +1368,6 @@ func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ShutdownRuntimeRetry did not join first generation")
 	}
-	select {
-	case <-startReturned:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Start racing shutdown did not establish its lifecycle")
-	}
-
-	r.Trigger()
 	select {
 	case call := <-probe.started:
 		if call != 2 {

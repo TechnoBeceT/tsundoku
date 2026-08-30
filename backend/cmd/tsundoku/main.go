@@ -505,7 +505,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, netReconcile, runtimeReconcile)
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, runtimeApplier, netReconcile, runtimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -597,6 +597,11 @@ type runtimeRetryShutdowner interface {
 
 type runtimeConvergenceRunner interface {
 	RunRuntime(context.Context, func(context.Context) error) error
+}
+
+type runtimeConvergenceSerializer interface {
+	runtimeConvergenceRunner
+	RunSerializedRuntime(context.Context, func(context.Context) error) error
 }
 
 type runtimeConvergenceShutdowner interface {
@@ -751,6 +756,7 @@ func startEngine(
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
 ) {
@@ -766,7 +772,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, netReconcile, runtimeReconcile)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, runtimeLifecycle, netReconcile, runtimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -795,8 +801,9 @@ func startEngine(
 // in-flight Reconcile install/push. Neither call can delay the HTTP server or
 // the tickers, which have already started by the time this goroutine is
 // launched. Its network and runtime convergence sections enter the shared
-// admission lifecycle, so shutdown cancels and joins those complete callbacks
-// even though the enclosing boot goroutine is detached.
+// serialization lifecycle as one operation. Shutdown therefore cancels and
+// joins every outer phase, including default provisioning and seed capture,
+// before launcher or database dependencies close.
 //
 // (QCAT-253, P2 Suwayomi-removal slice 5): targets engineClient
 // (internal/sourceengine) now, not the Suwayomi client — the seed's repo/
@@ -811,28 +818,57 @@ func startEngineTopo(
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
 	settingsSvc *settings.Service,
+	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
 ) {
 	go func() {
-		runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
-		// Per-source network routing (QCAT-284) runs AFTER the default-instance
-		// reconcile so the global FlareSolverr/SOCKS config is pushed first; the
-		// per-profile instances then get their own config. With no non-default
-		// bindings this is a pure no-op (Router routes everything to the default).
-		netReconcile(ctx)
-		// Runtime source policy is replace-set configuration on every engine
-		// instance. Restore it after the initial topology pass, then retry any
-		// durable desired revisions that a prior process could not acknowledge.
-		runtimeReconcile(ctx)
-		enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-			Client:   engineClient,
-			DB:       entClient,
-			Cache:    apkStore,
-			HTTPGet:  http.Get,
-			Retained: settingsSvc.RetainedVersions,
+		runEngineTopoBootSequence(ctx, runtimeLifecycle, engineTopoBootPhases{
+			reconcile: func(ctx context.Context) {
+				runEngineTopoReconcile(ctx, engineClient, entClient, apkStore, settingsSvc)
+			},
+			network: netReconcile,
+			runtime: runtimeReconcile,
+			seed: func(ctx context.Context) {
+				enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
+					Client:   engineClient,
+					DB:       entClient,
+					Cache:    apkStore,
+					HTTPGet:  http.Get,
+					Retained: settingsSvc.RetainedVersions,
+				})
+			},
 		})
 	}()
+}
+
+type engineTopoBootPhases struct {
+	reconcile func(context.Context)
+	network   func(context.Context)
+	runtime   func(context.Context)
+	seed      func(context.Context)
+}
+
+// runEngineTopoBootSequence keeps every boot-time engine/DB dependency use in
+// one serialized convergence admission. The network and runtime phases may
+// re-enter the same coordinator through their ordinary wrappers; the live
+// admission token makes that nesting safe without reacquiring the serializer.
+func runEngineTopoBootSequence(ctx context.Context, lifecycle runtimeConvergenceSerializer, phases engineTopoBootPhases) {
+	err := lifecycle.RunSerializedRuntime(ctx, func(ctx context.Context) error {
+		for _, phase := range []func(context.Context){phases.reconcile, phases.network, phases.runtime, phases.seed} {
+			if phase == nil {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			phase(ctx)
+		}
+		return ctx.Err()
+	})
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+		slog.WarnContext(ctx, "engine topology boot convergence failed", "err", err)
+	}
 }
 
 func runTrackedRuntimeConvergence(ctx context.Context, lifecycle runtimeConvergenceRunner, run func(context.Context)) {

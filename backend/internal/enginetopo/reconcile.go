@@ -47,11 +47,7 @@ func NewSourceRuntimeApplier(defaultClient sourceengine.Client, network NetworkR
 // applies so both paths use the same non-overlapping launcher/router lifecycle.
 func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkReconcileResult, error) {
 	var result NetworkReconcileResult
-	err := a.RunRuntime(ctx, func(ctx context.Context) error {
-		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-			return fmt.Errorf("enginetopo.SourceRuntimeApplier.ReconcileNetwork: acquire lifecycle: %w", err)
-		}
-		defer a.lifecycle.Release(1)
+	err := a.RunSerializedRuntime(ctx, func(ctx context.Context) error {
 		policies, err := a.transportPolicies(ctx)
 		if err != nil {
 			return err
@@ -69,11 +65,7 @@ func (a *SourceRuntimeApplier) ReconcileNetwork(ctx context.Context) (NetworkRec
 // ReconcileRuntime converges the complete persisted engine runtime config
 // through the same lifecycle used by source-intent and topology changes.
 func (a *SourceRuntimeApplier) ReconcileRuntime(ctx context.Context) error {
-	return a.RunRuntime(ctx, func(ctx context.Context) error {
-		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-			return fmt.Errorf("enginetopo.ReconcileRuntime: acquire lifecycle: %w", err)
-		}
-		defer a.lifecycle.Release(1)
+	return a.RunSerializedRuntime(ctx, func(ctx context.Context) error {
 		return a.reconcileRuntimeLocked(ctx)
 	})
 }
@@ -82,11 +74,7 @@ func (a *SourceRuntimeApplier) ReconcileRuntime(ctx context.Context) error {
 // retained for diagnostics; replace-set configuration necessarily converges all
 // active profiles together rather than mutating only one engine instance.
 func (a *SourceRuntimeApplier) ApplySourceRuntime(ctx context.Context, sourceID int64) error {
-	return a.RunRuntime(ctx, func(ctx context.Context) error {
-		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
-			return fmt.Errorf("enginetopo.ApplySourceRuntime source %d acquire lifecycle: %w", sourceID, err)
-		}
-		defer a.lifecycle.Release(1)
+	return a.RunSerializedRuntime(ctx, func(ctx context.Context) error {
 		if err := a.reconcileRuntimeLocked(ctx); err != nil {
 			return fmt.Errorf("enginetopo.ApplySourceRuntime source %d: %w", sourceID, err)
 		}

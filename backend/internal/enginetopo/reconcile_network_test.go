@@ -733,6 +733,150 @@ func TestSourceRuntimeApplierShutdownClosesAdmissionsAndJoinsActiveTail(t *testi
 	}
 }
 
+func TestSourceRuntimeApplierEscapedAdmissionContextCannotReenter(t *testing.T) {
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	var escaped context.Context
+	if err := applier.RunRuntime(context.Background(), func(ctx context.Context) error {
+		escaped = context.WithoutCancel(ctx)
+		return nil
+	}); err != nil {
+		t.Fatalf("outer RunRuntime: %v", err)
+	}
+
+	executed := false
+	err := applier.RunRuntime(escaped, func(context.Context) error {
+		executed = true
+		return nil
+	})
+	if !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+		t.Fatalf("escaped RunRuntime error = %v, want ErrRuntimeConvergenceClosed", err)
+	}
+	if executed {
+		t.Fatal("escaped admission context executed after its outer operation returned")
+	}
+}
+
+func TestSourceRuntimeApplierEscapedContextCannotEnterAfterShutdownStarts(t *testing.T) {
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	escapedReady := make(chan context.Context, 1)
+	outerCanceled := make(chan struct{})
+	releaseOuter := make(chan struct{})
+	outerDone := make(chan error, 1)
+	go func() {
+		outerDone <- applier.RunRuntime(context.Background(), func(ctx context.Context) error {
+			escapedReady <- context.WithoutCancel(ctx)
+			<-ctx.Done()
+			close(outerCanceled)
+			<-releaseOuter
+			return ctx.Err()
+		})
+	}()
+	escaped := <-escapedReady
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- applier.ShutdownRuntimeConvergence(context.Background()) }()
+	<-outerCanceled
+
+	executed := false
+	err := applier.RunRuntime(escaped, func(context.Context) error {
+		executed = true
+		return nil
+	})
+	if !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+		t.Fatalf("post-shutdown escaped RunRuntime error = %v, want ErrRuntimeConvergenceClosed", err)
+	}
+	if executed {
+		t.Fatal("escaped admission context executed after convergence shutdown started")
+	}
+	close(releaseOuter)
+	if err := <-outerDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("outer RunRuntime error = %v, want context canceled", err)
+	}
+	if err := <-shutdownDone; err != nil {
+		t.Fatalf("ShutdownRuntimeConvergence: %v", err)
+	}
+}
+
+func TestSourceRuntimeApplierOuterReturnJoinsConcurrentNestedUse(t *testing.T) {
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	nestedEntered := make(chan struct{})
+	releaseNested := make(chan struct{})
+	outerDone := make(chan error, 1)
+	var nestedDone chan error
+	go func() {
+		outerDone <- applier.RunRuntime(context.Background(), func(ctx context.Context) error {
+			nestedDone = make(chan error, 1)
+			nestedCtx := context.WithoutCancel(ctx)
+			go func() {
+				nestedDone <- applier.RunRuntime(nestedCtx, func(context.Context) error {
+					close(nestedEntered)
+					<-releaseNested
+					return nil
+				})
+			}()
+			<-nestedEntered
+			return nil
+		})
+	}()
+
+	<-nestedEntered
+	select {
+	case err := <-outerDone:
+		t.Fatalf("outer admission returned before nested use completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseNested)
+	if err := <-nestedDone; err != nil {
+		t.Fatalf("nested RunRuntime: %v", err)
+	}
+	if err := <-outerDone; err != nil {
+		t.Fatalf("outer RunRuntime: %v", err)
+	}
+}
+
+func TestSourceRuntimeApplierSerializedScopeJoinsNestedUseBeforeRelease(t *testing.T) {
+	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
+	nestedEntered := make(chan struct{})
+	releaseNested := make(chan struct{})
+	outerCallbackReturned := make(chan struct{})
+	outerDone := make(chan error, 1)
+	go func() {
+		outerDone <- applier.RunSerializedRuntime(context.Background(), func(ctx context.Context) error {
+			go func() {
+				_ = applier.RunSerializedRuntime(context.WithoutCancel(ctx), func(context.Context) error {
+					close(nestedEntered)
+					<-releaseNested
+					return nil
+				})
+			}()
+			<-nestedEntered
+			close(outerCallbackReturned)
+			return nil
+		})
+	}()
+	<-outerCallbackReturned
+
+	independentEntered := make(chan struct{})
+	independentDone := make(chan error, 1)
+	go func() {
+		independentDone <- applier.RunSerializedRuntime(context.Background(), func(context.Context) error {
+			close(independentEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-independentEntered:
+		t.Fatal("serializer released while a nested serialized use was still active")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseNested)
+	if err := <-outerDone; err != nil {
+		t.Fatalf("outer serialized runtime: %v", err)
+	}
+	if err := <-independentDone; err != nil {
+		t.Fatalf("independent serialized runtime: %v", err)
+	}
+}
+
 type shutdownTransportSnapshotter struct {
 	entered  chan struct{}
 	canceled chan struct{}

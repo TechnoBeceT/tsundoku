@@ -22,6 +22,62 @@ type runtimeConvergenceLifecycle struct {
 }
 
 type runtimeConvergenceContextKey struct{}
+type runtimeSerializationContextKey struct{}
+
+// runtimeScopeToken is a revocable capability carried by one admitted or
+// serialized outer scope. The nested-use count closes the small race where a
+// child starts just as its outer scope finishes: the child either enters while
+// the token is live and is joined, or observes the revoked token and fails
+// closed without executing through an expired scope.
+type runtimeScopeToken struct {
+	lifecycle *runtimeConvergenceLifecycle
+	mu        sync.Mutex
+	active    bool
+	users     int
+	idle      chan struct{}
+}
+
+func newRuntimeScopeToken(lifecycle *runtimeConvergenceLifecycle) *runtimeScopeToken {
+	idle := make(chan struct{})
+	close(idle)
+	return &runtimeScopeToken{lifecycle: lifecycle, active: true, idle: idle}
+}
+
+func (t *runtimeScopeToken) enter() (func(), bool) {
+	t.mu.Lock()
+	if !t.active {
+		t.mu.Unlock()
+		return nil, false
+	}
+	t.lifecycle.mu.Lock()
+	closed := t.lifecycle.closed
+	t.lifecycle.mu.Unlock()
+	if closed {
+		t.mu.Unlock()
+		return nil, false
+	}
+	if t.users == 0 {
+		t.idle = make(chan struct{})
+	}
+	t.users++
+	t.mu.Unlock()
+	return func() {
+		t.mu.Lock()
+		t.users--
+		if t.users == 0 {
+			close(t.idle)
+		}
+		t.mu.Unlock()
+	}, true
+}
+
+func (t *runtimeScopeToken) revokeAndJoin() {
+	t.mu.Lock()
+	t.active = false
+	idle := t.idle
+	t.mu.Unlock()
+	<-idle
+}
 
 func newRuntimeConvergenceLifecycle() *runtimeConvergenceLifecycle {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -35,8 +91,17 @@ func newRuntimeConvergenceLifecycle() *runtimeConvergenceLifecycle {
 // allowing those services to keep their detached failure-metadata tails inside
 // the same shutdown join without deadlocking on re-entry.
 func (a *SourceRuntimeApplier) RunRuntime(ctx context.Context, run func(context.Context) error) error {
-	if owner, _ := ctx.Value(runtimeConvergenceContextKey{}).(*runtimeConvergenceLifecycle); owner == a.admissions {
-		return run(ctx)
+	if token, _ := ctx.Value(runtimeConvergenceContextKey{}).(*runtimeScopeToken); token != nil && token.lifecycle == a.admissions {
+		leave, live := token.enter()
+		if !live {
+			return ErrRuntimeConvergenceClosed
+		}
+		defer leave()
+		nestedCtx, cancel := context.WithCancel(ctx)
+		stopLifecycleCancel := context.AfterFunc(a.admissions.ctx, cancel)
+		defer stopLifecycleCancel()
+		defer cancel()
+		return run(nestedCtx)
 	}
 	opCtx, finish, err := a.admissions.admit(ctx)
 	if err != nil {
@@ -44,6 +109,30 @@ func (a *SourceRuntimeApplier) RunRuntime(ctx context.Context, run func(context.
 	}
 	defer finish()
 	return run(opCtx)
+}
+
+// RunSerializedRuntime admits and serializes one complete dependency-using
+// convergence sequence. Calls made by that sequence through ReconcileNetwork,
+// ReconcileRuntime, or ApplySourceRuntime reuse the held serializer, so the boot
+// pipeline can be one atomic lifecycle without deadlocking on nested entry.
+func (a *SourceRuntimeApplier) RunSerializedRuntime(ctx context.Context, run func(context.Context) error) error {
+	return a.RunRuntime(ctx, func(ctx context.Context) error {
+		if scope, _ := ctx.Value(runtimeSerializationContextKey{}).(*runtimeScopeToken); scope != nil && scope.lifecycle == a.admissions {
+			leave, live := scope.enter()
+			if !live {
+				return ErrRuntimeConvergenceClosed
+			}
+			defer leave()
+			return run(ctx)
+		}
+		if err := a.lifecycle.Acquire(ctx, 1); err != nil {
+			return fmt.Errorf("enginetopo.SourceRuntimeApplier.RunSerializedRuntime: acquire lifecycle: %w", err)
+		}
+		defer a.lifecycle.Release(1)
+		scope := newRuntimeScopeToken(a.admissions)
+		defer scope.revokeAndJoin()
+		return run(context.WithValue(ctx, runtimeSerializationContextKey{}, scope))
+	})
 }
 
 func (l *runtimeConvergenceLifecycle) admit(caller context.Context) (context.Context, func(), error) {
@@ -63,10 +152,12 @@ func (l *runtimeConvergenceLifecycle) admit(caller context.Context) (context.Con
 
 	opCtx, cancel := context.WithCancel(caller)
 	stopLifecycleCancel := context.AfterFunc(l.ctx, cancel)
-	opCtx = context.WithValue(opCtx, runtimeConvergenceContextKey{}, l)
+	token := newRuntimeScopeToken(l)
+	opCtx = context.WithValue(opCtx, runtimeConvergenceContextKey{}, token)
 	finish := func() {
 		stopLifecycleCancel()
 		cancel()
+		token.revokeAndJoin()
 		l.mu.Lock()
 		l.active--
 		if l.active == 0 {
