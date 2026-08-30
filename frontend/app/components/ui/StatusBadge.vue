@@ -12,10 +12,14 @@ import type { ChapterState } from './types'
  * with the foreground text colour.
  *
  *   - `state` (required): one of the eight `ChapterState` values.
+ *   - `label`: optional domain-specific wording while retaining the state's
+ *     semantic palette (for compact applied/pending settings status).
  */
 const props = defineProps<{
   /** The chapter state to render — drives both the label and the colour. */
   state: ChapterState
+  /** Optional wording override; chapter consumers keep the canonical label. */
+  label?: string
 }>()
 
 // Human-facing label per state — wording matches the prototype's badge maps
@@ -32,7 +36,7 @@ const LABELS: Record<ChapterState, string> = {
   ignored: 'Ignored',
 }
 
-const label = computed(() => LABELS[props.state])
+const resolvedLabel = computed(() => props.label ?? LABELS[props.state])
 
 // Local custom-props point at the per-state token triple — the class then
 // reads them, so the colour wiring lives once (no per-state CSS rule).
@@ -46,7 +50,7 @@ const vars = computed(() => ({
 <template>
   <span class="badge" :style="vars">
     <span class="badge__dot" aria-hidden="true" />
-    {{ label }}
+    {{ resolvedLabel }}
   </span>
 </template>
 
