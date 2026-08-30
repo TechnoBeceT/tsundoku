@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -49,7 +48,7 @@ type Coordinator struct {
 type admissionKey struct{}
 
 func New(client *ent.Client, defaultGlobal string) *Coordinator {
-	return &Coordinator{client: client, defaultGlobal: strings.TrimSpace(defaultGlobal), gate: semaphore.NewWeighted(1)}
+	return &Coordinator{client: client, defaultGlobal: defaultGlobal, gate: semaphore.NewWeighted(1)}
 }
 
 // Mutate validates the prospective state and runs commit without allowing a
@@ -104,12 +103,12 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 	global := c.defaultGlobal
 	row, err := c.client.Settings.Query().Where(entsettings.Key(globalSessionKey)).Only(ctx)
 	if err == nil {
-		global = strings.TrimSpace(row.Value)
+		global = row.Value
 	} else if !ent.IsNotFound(err) {
 		return fmt.Errorf("runtimepolicy: query global session: %w", err)
 	}
 	if p.GlobalSession != nil {
-		global = strings.TrimSpace(*p.GlobalSession)
+		global = *p.GlobalSession
 	}
 
 	selectedPolicies := make(map[int64]bool, len(policies))
@@ -138,14 +137,14 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 	}
 	selectedEndpoints := make(map[uuid.UUID]Endpoint, len(endpoints))
 	for _, row := range endpoints {
-		selectedEndpoints[row.ID] = Endpoint{Kind: row.Kind, Session: strings.TrimSpace(row.Session), Enabled: row.Enabled}
+		selectedEndpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}
 	}
 	for id, value := range p.Endpoints {
 		if value == nil {
 			delete(selectedEndpoints, id)
 		} else {
 			selectedEndpoints[id] = *value
-			selectedEndpoints[id] = Endpoint{Kind: value.Kind, Session: strings.TrimSpace(value.Session), Enabled: value.Enabled}
+			selectedEndpoints[id] = Endpoint{Kind: value.Kind, Session: value.Session, Enabled: value.Enabled}
 		}
 	}
 	impacted := make(map[int64]bool)
@@ -185,7 +184,7 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 				session = endpoint.Session
 			}
 		}
-		if strings.TrimSpace(session) == "" {
+		if session == "" {
 			return fmt.Errorf("%w: source %d", ErrInvalidSelection, sourceID)
 		}
 	}

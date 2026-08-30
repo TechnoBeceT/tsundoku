@@ -70,8 +70,14 @@ func (s *Service) Snapshot(ctx context.Context) (map[int64]Override, error) {
 // Update validates the live source before beginning its transaction, then
 // mutates policy and advances desired runtime intent atomically.
 func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (UpdateResult, error) {
-	if s.policyCoordinator == nil || patch.ReuseBypassSession.Operation == PatchKeep {
-		return s.update(ctx, sourceID, patch)
+	if s.policyCoordinator == nil {
+		return s.update(ctx, sourceID, patch, true, false)
+	}
+	if err := validatePatch(patch); err != nil {
+		return UpdateResult{}, err
+	}
+	if err := s.catalog.RequireSource(ctx, sourceID); err != nil {
+		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: require source %d: %w", sourceID, err)
 	}
 	var result UpdateResult
 	var updateErr error
@@ -82,7 +88,7 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		}
 		return runtimepolicy.Proposal{Policies: map[int64]*bool{sourceID: applyPatch(stored, patch).ReuseBypassSession}}, nil
 	}, func(ctx context.Context) error {
-		result, updateErr = s.update(ctx, sourceID, patch)
+		result, updateErr = s.update(ctx, sourceID, patch, false, true)
 		return updateErr
 	})
 	if err != nil {
@@ -91,15 +97,20 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		}
 		return result, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
-	return result, nil
+	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep {
+		return result, nil
+	}
+	return s.applyUpdate(ctx, sourceID, result)
 }
 
-func (s *Service) update(ctx context.Context, sourceID int64, patch Patch) (UpdateResult, error) {
-	if err := validatePatch(patch); err != nil {
-		return UpdateResult{}, err
-	}
-	if err := s.catalog.RequireSource(ctx, sourceID); err != nil {
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: require source %d: %w", sourceID, err)
+func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply, prevalidated bool) (UpdateResult, error) {
+	if !prevalidated {
+		if err := validatePatch(patch); err != nil {
+			return UpdateResult{}, err
+		}
+		if err := s.catalog.RequireSource(ctx, sourceID); err != nil {
+			return UpdateResult{}, fmt.Errorf("sourcetransport.Update: require source %d: %w", sourceID, err)
+		}
 	}
 
 	stored, err := s.loadOverride(ctx, sourceID)
@@ -150,6 +161,13 @@ func (s *Service) update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
 	}
 	result := UpdateResult{Override: override, Effective: effective, Intent: intent}
+	if !apply {
+		return result, nil
+	}
+	return s.applyUpdate(ctx, sourceID, result)
+}
+
+func (s *Service) applyUpdate(ctx context.Context, sourceID int64, result UpdateResult) (UpdateResult, error) {
 	if s.applier == nil {
 		return result, nil
 	}

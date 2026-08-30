@@ -392,10 +392,12 @@ func (s *Service) Set(ctx context.Context, key, value string) error {
 // pending for a bounded retry and never rolls back durable settings.
 func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 	if s.policyCoordinator == nil {
-		return s.setMany(ctx, updates)
+		return s.setMany(ctx, updates, true)
 	}
 	var proposed *string
+	runtimeChanged := false
 	for _, update := range updates {
+		runtimeChanged = runtimeChanged || runtimeConfigKey(update.Key)
 		if update.Key != KeyFlareSolverrSessionName {
 			continue
 		}
@@ -405,19 +407,23 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 		}
 		proposed = &canonical
 	}
-	if proposed == nil {
-		return s.setMany(ctx, updates)
+	if !runtimeChanged {
+		return s.setMany(ctx, updates, true)
 	}
 	err := s.policyCoordinator.Mutate(ctx, runtimepolicy.Proposal{GlobalSession: proposed}, func(ctx context.Context) error {
-		return s.setMany(ctx, updates)
+		return s.setMany(ctx, updates, false)
 	})
 	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
 		return fmt.Errorf("%w: %w", ErrInvalidSetting, err)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	s.applyRuntime(ctx)
+	return nil
 }
 
-func (s *Service) setMany(ctx context.Context, updates []KeyValue) error {
+func (s *Service) setMany(ctx context.Context, updates []KeyValue, apply bool) error {
 	type canonical struct{ key, value string }
 	pending := make([]canonical, 0, len(updates))
 	runtimeChanged := false
@@ -453,12 +459,18 @@ func (s *Service) setMany(ctx context.Context, updates []KeyValue) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("settings.SetMany: commit tx: %w", err)
 	}
-	if runtimeChanged && s.runtimeConverger != nil {
+	if apply && runtimeChanged {
+		s.applyRuntime(ctx)
+	}
+	return nil
+}
+
+func (s *Service) applyRuntime(ctx context.Context) {
+	if s.runtimeConverger != nil {
 		if _, err := s.ApplyPending(ctx); err != nil {
 			slog.WarnContext(ctx, "settings: engine runtime convergence failed (settings already persisted)", "err", err)
 		}
 	}
-	return nil
 }
 
 var runtimeConfigKeys = []string{

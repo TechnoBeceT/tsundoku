@@ -48,6 +48,68 @@ func TestSetManyRejectsGlobalSessionClearWithoutChangingSettingOrIntent(t *testi
 	}
 }
 
+func TestRuntimeApplyWaitDoesNotHoldPolicyMutationGate(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	coordinator := runtimepolicy.New(client, "")
+	applyEntered := make(chan struct{})
+	releaseApply := make(chan struct{})
+	svc := settings.NewService(client, testDefaults()).
+		WithRuntimePolicyCoordinator(coordinator).
+		WithRuntimeConverger(runtimeConvergerFunc(func(context.Context) error {
+			close(applyEntered)
+			<-releaseApply
+			return nil
+		}))
+	setDone := make(chan error, 1)
+	go func() { setDone <- svc.Set(ctx, settings.KeyImpersonateURL, "http://gateway:8191") }()
+	<-applyEntered
+	gateDone := make(chan error, 1)
+	go func() {
+		gateDone <- coordinator.Mutate(ctx, runtimepolicy.Proposal{}, func(context.Context) error { return nil })
+	}()
+	select {
+	case err := <-gateDone:
+		if err != nil {
+			t.Fatalf("second gate admission: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime apply retained policy mutation gate")
+	}
+	close(releaseApply)
+	if err := <-setDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNonSessionRuntimeSettingWaitsForPolicyMutationGate(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	coordinator := runtimepolicy.New(client, "")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		_ = coordinator.Mutate(ctx, runtimepolicy.Proposal{}, func(context.Context) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	svc := settings.NewService(client, testDefaults()).WithRuntimePolicyCoordinator(coordinator)
+	done := make(chan error, 1)
+	go func() { done <- svc.Set(ctx, settings.KeyImpersonateURL, "http://gateway:8191") }()
+	select {
+	case err := <-done:
+		t.Fatalf("runtime setting bypassed gate: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type runtimeConvergerFunc func(context.Context) error
 
 func (f runtimeConvergerFunc) ReconcileRuntime(ctx context.Context) error { return f(ctx) }

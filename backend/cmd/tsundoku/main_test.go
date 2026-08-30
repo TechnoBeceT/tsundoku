@@ -132,12 +132,15 @@ func (r convergenceDeadlineRecorder) ShutdownRuntimeConvergence(ctx context.Cont
 func TestGracefulShutdownBoundsConvergenceJoinAndKeepsDependenciesOpenOnTimeout(t *testing.T) {
 	bounded := make(chan bool, 1)
 	launcherClosed := make(chan struct{})
-	gracefulShutdown(
+	joined := gracefulShutdown(
 		shutdownRecorder{steps: new([]string), step: "http"},
 		convergenceDeadlineRecorder{bounded: bounded},
 		shutdownRecorder{steps: new([]string), step: "runtime"},
 		closeSignal{closed: launcherClosed},
 	)
+	if joined {
+		t.Fatal("gracefulShutdown reported joined after timeout")
+	}
 	if !<-bounded {
 		t.Fatal("convergence shutdown context has no deadline")
 	}
@@ -145,6 +148,26 @@ func TestGracefulShutdownBoundsConvergenceJoinAndKeepsDependenciesOpenOnTimeout(
 	case <-launcherClosed:
 		t.Fatal("launcher closed after convergence join timed out")
 	default:
+	}
+}
+
+type countingCloser struct{ calls int }
+
+func (c *countingCloser) Close() error { c.calls++; return nil }
+
+func TestCloseIfSafeGuardsDeferredDependencyClose(t *testing.T) {
+	closer := &countingCloser{}
+	if err := closeIfSafe(false, closer); err != nil {
+		t.Fatal(err)
+	}
+	if closer.calls != 0 {
+		t.Fatalf("unsafe close calls = %d, want 0", closer.calls)
+	}
+	if err := closeIfSafe(true, closer); err != nil {
+		t.Fatal(err)
+	}
+	if closer.calls != 1 {
+		t.Fatalf("joined close calls = %d, want 1", closer.calls)
 	}
 }
 

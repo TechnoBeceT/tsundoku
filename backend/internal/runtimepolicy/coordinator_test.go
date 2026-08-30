@@ -139,3 +139,14 @@ func TestCoordinatorFailsClosedOnLegacyInvalidExplicitReuse(t *testing.T) {
 		t.Fatalf("ValidateCurrent error = %v, want ErrInvalidSelection", err)
 	}
 }
+
+func TestCoordinatorPreservesWhitespaceOnlySessionAsNonblank(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(10).SetReuseBypassSession(true).Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtimepolicy.New(client, "   ").ValidateCurrent(ctx); err != nil {
+		t.Fatalf("whitespace-only configured session rejected: %v", err)
+	}
+}

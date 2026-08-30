@@ -138,8 +138,9 @@ func main() {
 		log.Fatalf("tsundoku: database: %v", err)
 	}
 	defer stop()
+	safeToCloseDependencies := true
 	defer func() {
-		if err := entClient.Close(); err != nil {
+		if err := closeIfSafe(safeToCloseDependencies, entClient); err != nil {
 			log.Printf("tsundoku: database close: %v", err)
 		}
 	}()
@@ -547,7 +548,7 @@ func main() {
 	// Block until a shutdown signal arrives.
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
-	gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher)
+	safeToCloseDependencies = gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher)
 }
 
 // gracefulShutdown drains in-flight HTTP requests, closes and joins all runtime
@@ -616,7 +617,14 @@ type engineHostCloser interface {
 	Close() error
 }
 
-func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) {
+func closeIfSafe(safe bool, closer engineHostCloser) error {
+	if !safe {
+		return nil
+	}
+	return closer.Close()
+}
+
+func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdowner, runner runtimeRetryShutdowner, engineHostLauncher engineHostCloser) bool {
 	shutCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	if err := e.Shutdown(shutCtx); err != nil {
 		log.Printf("tsundoku: graceful shutdown: %v", err)
@@ -635,7 +643,7 @@ func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdown
 		// An active convergence call may still hold the launcher or database.
 		// Leave dependencies open rather than racing their use; process exit will
 		// reclaim them after this bounded shutdown attempt returns.
-		return
+		return false
 	}
 	cancelConvergence()
 
@@ -647,13 +655,14 @@ func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdown
 	if err := runner.ShutdownRuntimeRetry(retryCtx); err != nil {
 		log.Printf("tsundoku: runtime retry shutdown: %v", err)
 		cancelRetry()
-		return
+		return false
 	}
 	cancelRetry()
 
 	if err := engineHostLauncher.Close(); err != nil {
 		log.Printf("tsundoku: engine-host launcher close: %v", err)
 	}
+	return true
 }
 
 // buildNotifier wires the Web Push sender + new-chapter notifier into the runner
