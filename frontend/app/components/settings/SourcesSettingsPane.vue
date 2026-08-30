@@ -1,35 +1,18 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
-import DurationInput from '../ui/DurationInput.vue'
-import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
-import TextField from '../ui/TextField.vue'
 import LibraryDedupDialog from './LibraryDedupDialog.vue'
 import RedownloadDialog from './RedownloadDialog.vue'
-import SettingRow from './SettingRow.vue'
-import SourceThroughputControl from './SourceThroughputControl.vue'
-import FormError from '../ui/FormError.vue'
-import AppButton from '../ui/AppButton.vue'
 import type { SaveState, SourceOption, SourcesSettings } from '../screens/settings.types'
 import type { RedownloadFilter, RedownloadPreview } from '~/composables/useRedownload'
 import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
 
 /**
- * SourcesSettingsPane — the anti-IP-block runtime knobs (source-politeness
- * spec): the warm-up job's cadence + slow-source threshold, then the
- * per-source circuit-breaker's failure threshold + cooldown, then the
- * politeness delay between requests to one source. Sits above the existing
- * SourceMetricsPane in the same "Sources" nav area (Settings.vue stacks the
- * two), mirroring how LibraryPane stacks its own two SurfaceCards.
+ * Owner-triggered library actions that deliberately remain outside the
+ * Download engine and its Source exceptions editor. The legacy protection and
+ * throughput props stay declared for compatibility while the Settings container
+ * adopts the consolidated pane; this pane no longer renders or mutates them.
  *
- * Keeps a LOCAL editable copy seeded from `sources`; Save emits that copy, and
- * when the parent reflects the persisted value back the copy re-seeds (§16
- * round-trip). The Save button disables until the copy is dirty.
- *
- *   - `sources`: the 5 runtime-editable knobs (the source of truth).
- *   - `save`: the §16 state of the Save button.
- *
- * Also renders a second "Library maintenance" card, which COMPOSES
+ * Renders a "Library maintenance" card, which COMPOSES
  * LibraryDedupDialog: the trigger for the library-wide duplicate-source dedup
  * sweep (`POST /api/library/dedup-providers`, fire-and-forget 202 — see
  * useLibraryMaintenance), gated behind the shared destructive ConfirmModal
@@ -40,7 +23,7 @@ import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
  * count of series the finished sweep had to skip because a merge was already
  * running on them — its own actionable line, not part of the summary sentence.
  *
- * A third "Re-download from a source" card COMPOSES RedownloadDialog: the
+ * A second "Re-download from a source" card COMPOSES RedownloadDialog: the
  * owner-triggered, previewed bulk re-queue of already-downloaded chapters from
  * one source (`GET`/`POST /api/downloads/redownload`, see useRedownload), also
  * gated behind the shared ConfirmModal (QCAT-222) because it sweeps the whole
@@ -48,11 +31,11 @@ import type { SourceThroughputPolicy } from '~/composables/useSourceThroughput'
  * Nothing is deleted by it — every existing CBZ stays on disk until its
  * replacement lands.
  *
- * Emits `save` with the full edited copy, `dedupAll` to trigger the sweep, and
- * `redownloadPreview` / `redownload` / `redownloadReset` for the re-download.
+ * Emits `dedupAll` to trigger the sweep, and `redownloadPreview` /
+ * `redownload` / `redownloadReset` for the re-download.
  */
-const props = withDefaults(defineProps<{
-  /** The runtime-editable warm-up/politeness knobs. */
+withDefaults(defineProps<{
+  /** Transitional prop; global protection now belongs to DownloadEnginePane. */
   sources: SourcesSettings
   throughputPolicies?: SourceThroughputPolicy[]
   throughputSources?: SourceOption[]
@@ -107,7 +90,7 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  /** Persist the edited knobs — carries the full edited copy. */
+  /** Transitional events retained until the screen wiring migration. */
   save: [settings: SourcesSettings]
   saveConcurrency: [sourceId: string, value: number]
   inheritConcurrency: [sourceId: string]
@@ -123,132 +106,45 @@ const emit = defineEmits<{
   /** The re-download filter changed — discard the loaded preview/outcome. */
   redownloadReset: []
 }>()
-
-// Deep-clone so the local copy is fully detached from the prop object.
-const cloneSources = (s: SourcesSettings): SourcesSettings => ({
-  warmupInterval: { ...s.warmupInterval },
-  warmupSlowThresholdMs: s.warmupSlowThresholdMs,
-  failureThreshold: s.failureThreshold,
-  cooldown: { ...s.cooldown },
-  minRequestDelayMs: s.minRequestDelayMs,
-  imageRequestDelayMs: s.imageRequestDelayMs,
-})
-
-const src = reactive(cloneSources(props.sources))
-
-// Re-seed on every source-of-truth change (post-save rehydrate, §16): dirty
-// resets to false once the persisted values flow back.
-watch(() => props.sources, v => Object.assign(src, cloneSources(v)), { deep: true })
-
-const dirty = computed(() => JSON.stringify(src) !== JSON.stringify(props.sources))
-
-// SaveFooter speaks the ui SaveState (`error`); the screen prop carries `message`.
-const footerState = computed(() => ({ status: props.save.status, error: props.save.message }))
-
-// Clamp a raw integer-field input to a non-negative integer (NaN / negatives → 0).
-const clampInt = (raw: string): number => Math.max(0, Number.parseInt(raw, 10) || 0)
-// Failure threshold is a floor-1 count (the backend rejects 0 with a 400) — a
-// breaker must always require at least one failure before it can trip.
-const clampMin1 = (raw: string): number => Math.max(1, Number.parseInt(raw, 10) || 1)
-
-function onSave() {
-  if (!dirty.value || props.save.status === 'saving') return
-  emit('save', cloneSources(src))
-}
-const onSaveConcurrency = (sourceId: string, value: number) => emit('saveConcurrency', sourceId, value)
-const onSaveImageDelay = (sourceId: string, value: string) => emit('saveImageDelay', sourceId, value)
 </script>
 
 <template>
-  <SurfaceCard
-    title="Anti-Block Protection"
-    sub="Warm-up cadence + per-source circuit-breaker. Protects against a source hard-blocking this deployment's IP."
-  >
-    <SettingRow name="Warm-up interval" hint="How often to keep anti-bot source sessions warm; 0 disables (recommended if a source keeps getting IP-blocked)">
-      <DurationInput v-model="src.warmupInterval" />
-    </SettingRow>
+  <div class="pane-stack">
+    <SurfaceCard
+      title="Library maintenance"
+      sub="One-shot cleanup. Merges the same physical source represented twice on a series (a disk-import artifact) across your whole library — no re-downloading."
+    >
+      <LibraryDedupDialog
+        :busy="dedupAllBusy"
+        :message="dedupAllMessage"
+        :error="dedupAllError"
+        :skipped-busy="dedupAllSkippedBusy"
+        @confirm="emit('dedupAll')"
+      />
+    </SurfaceCard>
 
-    <SettingRow name="Warm-up slow threshold" hint="A source slower than this (ms) is treated as needing warming">
-      <TextField compact type="number" :model-value="String(src.warmupSlowThresholdMs)" @update:model-value="src.warmupSlowThresholdMs = clampInt($event)" />
-    </SettingRow>
-
-    <SettingRow name="Failure threshold" hint="Consecutive failures before a source is paused">
-      <TextField compact type="number" :model-value="String(src.failureThreshold)" @update:model-value="src.failureThreshold = clampMin1($event)" />
-    </SettingRow>
-
-    <SettingRow name="Source cooldown" hint="How long a failing/blocked source is paused">
-      <DurationInput v-model="src.cooldown" />
-    </SettingRow>
-
-    <SettingRow name="Politeness delay" hint="Minimum gap (ms) between requests to one source; protects against IP blocks — 0 disables">
-      <TextField compact type="number" :model-value="String(src.minRequestDelayMs)" @update:model-value="src.minRequestDelayMs = clampInt($event)" />
-    </SettingRow>
-
-    <SettingRow name="Image request delay" hint="Gap (ms) between individual image requests; 0 disables. Per-source overrides are below.">
-      <TextField compact type="number" :model-value="String(src.imageRequestDelayMs)" @update:model-value="src.imageRequestDelayMs = clampInt($event)" />
-    </SettingRow>
-
-    <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
-  </SurfaceCard>
-
-  <SurfaceCard
-    title="Per-source download pace"
-    sub="Keep the global throughput for most sources, then slow down only providers that enforce tighter request limits."
-  >
-    <p v-if="throughputLoading" class="throughput-status" role="status">Loading source policies…</p>
-    <div v-else-if="throughputLoadError" class="throughput-failure">
-      <FormError :message="throughputLoadError" />
-      <AppButton data-testid="retry-throughput" variant="text" size="sm" @click="emit('reloadThroughput')">Retry loading policies</AppButton>
-    </div>
-    <FormError v-if="throughputError" :message="throughputError" />
-    <SourceThroughputControl
-      v-for="policy in (throughputReady && !throughputLoading && !throughputLoadError ? throughputPolicies : [])"
-      :key="policy.sourceId"
-      :policy="policy"
-      :source-name="throughputSources.find(source => source.id === policy.sourceId)?.name"
-      :global-concurrency="globalDownloadConcurrency"
-      :global-image-delay="`${sources.imageRequestDelayMs}ms`"
-      :saving="throughputSavingSourceId !== null"
-      @save-concurrency="onSaveConcurrency"
-      @inherit-concurrency="emit('inheritConcurrency', $event)"
-      @save-image-delay="onSaveImageDelay"
-      @inherit-image-delay="emit('inheritImageDelay', $event)"
-    />
-    <p v-if="throughputReady && !throughputLoading && !throughputLoadError && throughputPolicies.length === 0" class="throughput-status">No sources are available to configure.</p>
-  </SurfaceCard>
-
-  <SurfaceCard
-    title="Library maintenance"
-    sub="One-shot cleanup. Merges the same physical source represented twice on a series (a disk-import artifact) across your whole library — no re-downloading."
-  >
-    <LibraryDedupDialog
-      :busy="dedupAllBusy"
-      :message="dedupAllMessage"
-      :error="dedupAllError"
-      :skipped-busy="dedupAllSkippedBusy"
-      @confirm="emit('dedupAll')"
-    />
-  </SurfaceCard>
-
-  <SurfaceCard
-    title="Re-download from a source"
-    sub="Fetch already-downloaded chapters again from one source — for when its stored files turn out to be wrong. Nothing is deleted: each file stays on disk until its replacement lands."
-  >
-    <RedownloadDialog
-      :preview="redownloadPreview"
-      :preview-busy="redownloadPreviewBusy"
-      :preview-error="redownloadPreviewError"
-      :applying="redownloadApplying"
-      :apply-message="redownloadMessage"
-      :apply-error="redownloadError"
-      @preview="emit('redownloadPreview', $event)"
-      @confirm="emit('redownload', $event)"
-      @reset="emit('redownloadReset')"
-    />
-  </SurfaceCard>
+    <SurfaceCard
+      title="Re-download from a source"
+      sub="Fetch already-downloaded chapters again from one source — for when its stored files turn out to be wrong. Nothing is deleted: each file stays on disk until its replacement lands."
+    >
+      <RedownloadDialog
+        :preview="redownloadPreview"
+        :preview-busy="redownloadPreviewBusy"
+        :preview-error="redownloadPreviewError"
+        :applying="redownloadApplying"
+        :apply-message="redownloadMessage"
+        :apply-error="redownloadError"
+        @preview="emit('redownloadPreview', $event)"
+        @confirm="emit('redownload', $event)"
+        @reset="emit('redownloadReset')"
+      />
+    </SurfaceCard>
+  </div>
 </template>
 
 <style scoped>
-.throughput-status { margin: 0; color: var(--muted); font-size: var(--text-sm); }
-.throughput-failure { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.pane-stack {
+  display: grid;
+  gap: var(--space-base);
+}
 </style>

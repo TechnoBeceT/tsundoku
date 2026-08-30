@@ -263,7 +263,7 @@ const emit = defineEmits<{
   /** Persist the edited Tsundoku-owned FlareSolverr config. */
   'save-flaresolverr': [config: FlareSolverrConfig]
   /** Persist the edited Tsundoku-owned impersonate-gateway config. */
-  'save-impersonate': [config: ImpersonateConfig]
+  'save-impersonate': [config: Pick<ImpersonateConfig, 'enabled' | 'url'>]
   /** Add a new category by name. */
   'add-category': [name: string]
   /** Rename a category. */

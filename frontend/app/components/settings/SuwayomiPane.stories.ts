@@ -7,11 +7,11 @@ import { flareSolverrConfig, impersonateConfig } from '../../fixtures/settings'
 import '../../assets/css/tokens/settings.css'
 
 /**
- * Stories for the "Server config" pane — two Tsundoku-owned cards, each with its
+ * Stories for the global Access & bypass controls — two Tsundoku-owned cards, each with its
  * own §16 SaveFooter: the FlareSolverr card (QCAT-238) and the impersonate-gateway
  * card (GAP-111). The proxied Suwayomi SOCKS card was RETIRED with the P2
- * Suwayomi-removal backend cutover. Flip the Storybook theme toolbar to confirm
- * both dark and light.
+ * Suwayomi-removal backend cutover. Per-source proxy membership now lives only
+ * in Source exceptions. Flip the theme toolbar to confirm both themes.
  */
 const meta = {
   title: 'Settings/SuwayomiPane',

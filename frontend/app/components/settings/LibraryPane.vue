@@ -1,42 +1,32 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import DurationInput from '../ui/DurationInput.vue'
 import LockedRow from '../ui/LockedRow.vue'
-import SaveFooter from '../ui/SaveFooter.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
-import TextField from '../ui/TextField.vue'
 import Toggle from '../ui/Toggle.vue'
 import SettingRow from './SettingRow.vue'
 import type { LibrarySettings, SaveState, SystemInfo } from '../screens/settings.types'
 
 /**
- * LibraryPane — the "Schedules & Behavior" pane: the runtime-editable library
- * knobs (three duration rows + three integer rows + an advanced disclosure),
- * the metadata-engine auto-identify toggle, and the read-only System card of
- * deploy-time facts.
+ * Library-only settings that remain after scheduling and capacity move to the
+ * Download engine pane: metadata auto-identification plus read-only deploy
+ * facts. The legacy library/save props remain declared for compatibility while
+ * the Settings container adopts the consolidated pane, but this pane neither
+ * renders nor owns those controls.
  *
- * Keeps a LOCAL editable copy seeded from `library`; Save emits that copy, and
- * when the parent reflects the persisted value back the copy re-seeds (§16
- * round-trip). The Save button disables until the copy is dirty.
- *
- *   - `library`: the runtime-editable knobs (the source of truth).
  *   - `system`: read-only deploy-time facts for the System card.
- *   - `save`: the §16 save lifecycle (loading / success / error).
  *   - `autoIdentify`: the current `metadata.auto_identify` setting value —
  *     mirrors TrackersPane's own `autoUpdateTrack` toggle wiring (a
  *     standalone tunable, saved independently of the Save-button batch above,
  *     since flipping it takes effect immediately rather than needing Save).
  *   - `autoIdentifyBusy`: true while the toggle's own save is in flight.
  *
- * Emits `save` with the full edited copy, and `toggle-auto-identify` with the
- * new boolean value.
+ * Emits `toggle-auto-identify` with the new boolean value.
  */
-const props = withDefaults(defineProps<{
-  /** The runtime-editable library knobs. */
-  library: LibrarySettings
+withDefaults(defineProps<{
+  /** Transitional screen prop; scheduling is rendered by DownloadEnginePane. */
+  library?: LibrarySettings
   /** Read-only deploy-time facts (env-sourced). */
   system: SystemInfo
-  /** §16 state of the Save button. */
+  /** Transitional screen prop; scheduling save state moved with its controls. */
   save?: SaveState
   /** The current `metadata.auto_identify` setting value. */
   autoIdentify?: boolean
@@ -49,99 +39,21 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  /** Persist the edited knobs — carries the full edited copy. */
-  save: [settings: LibrarySettings]
   /** The auto-identify toggle was flipped — carries the new value. */
   'toggle-auto-identify': [value: boolean]
 }>()
-
-// Deep-clone so the local copy is fully detached from the prop object.
-const cloneLibrary = (l: LibrarySettings): LibrarySettings => ({
-  refreshInterval: { ...l.refreshInterval },
-  downloadInterval: { ...l.downloadInterval },
-  retryBackoff: { ...l.retryBackoff },
-  maxRetries: l.maxRetries,
-  staleGraceDays: l.staleGraceDays,
-  refreshConcurrency: l.refreshConcurrency,
-  downloadConcurrency: l.downloadConcurrency,
-  maxConcurrentDownloads: l.maxConcurrentDownloads,
-})
-
-const lib = reactive(cloneLibrary(props.library))
-
-// Re-seed on every source-of-truth change (post-save rehydrate, §16): dirty
-// resets to false once the persisted values flow back.
-watch(() => props.library, v => Object.assign(lib, cloneLibrary(v)), { deep: true })
-
-const dirty = computed(() => JSON.stringify(lib) !== JSON.stringify(props.library))
-
-// SaveFooter speaks the ui SaveState (`error`); the screen prop carries `message`.
-const footerState = computed(() => ({ status: props.save.status, error: props.save.message }))
-
-const advancedOpen = ref(false)
-
-// Clamp a raw integer-field input to a non-negative integer (NaN / negatives → 0).
-const clampInt = (raw: string): number => Math.max(0, Number.parseInt(raw, 10) || 0)
-// Chapter max retries is a PER-SOURCE budget with a hard floor of 1 (a source must
-// always get at least one attempt — the backend rejects 0 with a 400).
-const clampMin1 = (raw: string): number => Math.max(1, Number.parseInt(raw, 10) || 1)
-
-function onSave() {
-  if (!dirty.value || props.save.status === 'saving') return
-  emit('save', cloneLibrary(lib))
-}
 </script>
 
 <template>
   <div class="pane-stack">
     <SurfaceCard
-      title="Schedules & Behavior"
-      sub="Runtime-editable timing. The job schedulers re-read these on the next tick."
+      title="Library behavior"
+      sub="Metadata behavior that is independent of the download engine."
     >
-      <SettingRow name="Refresh interval" hint="How often to poll titles for new chapters">
-        <DurationInput v-model="lib.refreshInterval" />
-      </SettingRow>
-
-      <SettingRow name="Download interval" hint="Queue-drain & upgrade-swap cadence">
-        <DurationInput v-model="lib.downloadInterval" />
-      </SettingRow>
-
-      <SettingRow name="Chapter retry backoff" hint="Wait before retrying a failed chapter">
-        <DurationInput v-model="lib.retryBackoff" />
-      </SettingRow>
-
-      <SettingRow name="Chapter max retries" hint="Attempts per source before that source is given up; a chapter fails only when all its sources are exhausted">
-        <TextField compact type="number" :model-value="String(lib.maxRetries)" @update:model-value="lib.maxRetries = clampMin1($event)" />
-      </SettingRow>
-
-      <SettingRow name="Stale-grace days" hint="Health threshold before a source counts as stale">
-        <TextField compact type="number" :model-value="String(lib.staleGraceDays)" @update:model-value="lib.staleGraceDays = clampInt($event)" />
-      </SettingRow>
-
       <SettingRow name="Auto-identify new series" hint="Automatically match + merge rich metadata for a freshly adopted/imported series. Applies immediately (no Save needed) and never overrides a series you've hand-picked matches for.">
         <!-- eslint-disable-next-line vue/attribute-hyphenation -- camelCase :ariaLabel binds the REQUIRED prop; kebab :aria-label routes to the native attr, leaving it unset (vue-tsc error). -->
         <Toggle :model-value="autoIdentify" :ariaLabel="'Auto-identify new series'" :disabled="autoIdentifyBusy" @update:model-value="emit('toggle-auto-identify', $event)" />
       </SettingRow>
-
-      <div class="advanced">
-        <button type="button" class="advanced__toggle" @click="advancedOpen = !advancedOpen">
-          <svg class="advanced__chev" :class="{ 'advanced__chev--open': advancedOpen }" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
-          Advanced
-        </button>
-        <SettingRow v-if="advancedOpen" flush name="Refresh concurrency" hint="Parallel source fetches — be gentle on sources">
-          <TextField compact type="number" :model-value="String(lib.refreshConcurrency)" @update:model-value="lib.refreshConcurrency = clampInt($event)" />
-        </SettingRow>
-
-        <SettingRow v-if="advancedOpen" flush name="Download concurrency" hint="Parallel downloads per source — how many of a source's chapters download at once">
-          <TextField compact type="number" :model-value="String(lib.downloadConcurrency)" @update:model-value="lib.downloadConcurrency = clampInt($event)" />
-        </SettingRow>
-
-        <SettingRow v-if="advancedOpen" flush name="Max concurrent downloads" hint="GLOBAL cap on total downloads across ALL sources at once (protects the Cloudflare solver). Each source still respects Download concurrency; this caps the total.">
-          <TextField compact type="number" :model-value="String(lib.maxConcurrentDownloads)" @update:model-value="lib.maxConcurrentDownloads = clampInt($event)" />
-        </SettingRow>
-      </div>
-
-      <SaveFooter :state="footerState" :dirty="dirty" label="Save changes" @save="onSave" />
     </SurfaceCard>
 
     <SurfaceCard
@@ -163,32 +75,4 @@ function onSave() {
   gap: 16px;
 }
 
-/* ---- Advanced disclosure -------------------------------------------------- */
-.advanced {
-  border-top: 1px solid var(--border);
-  padding-top: 11px;
-  margin-top: 2px;
-}
-
-.advanced__toggle {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-family: var(--font-sans);
-  font-size: 12.5px;
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  padding: 0;
-}
-
-.advanced__chev {
-  transition: transform 0.15s;
-}
-
-.advanced__chev--open {
-  transform: rotate(90deg);
-}
 </style>

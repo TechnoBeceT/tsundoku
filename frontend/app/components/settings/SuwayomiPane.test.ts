@@ -1,6 +1,6 @@
 /**
  * SuwayomiPane — toggle + dirty/Save wiring for its two cards (Tsundoku-owned
- * FlareSolverr, QCAT-238, and the impersonate gateway, GAP-111/GAP-131). The
+ * FlareSolverr, QCAT-238, and the global impersonate gateway, GAP-111). The
  * proxied Suwayomi SOCKS card
  * was RETIRED with the P2 Suwayomi-removal backend cutover — do not re-add
  * a second card/composable here.
@@ -22,7 +22,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SuwayomiPane from './SuwayomiPane.vue'
-import type { FlareSolverrConfig, ImpersonateConfig, SourceOption } from '../screens/settings.types'
+import type { FlareSolverrConfig, ImpersonateConfig } from '../screens/settings.types'
 
 const baseFlareSolverr: FlareSolverrConfig = {
   enabled: false,
@@ -39,23 +39,16 @@ const baseImpersonate: ImpersonateConfig = {
   sourceIds: [],
 }
 
-const impersonateSources: SourceOption[] = [
-  { id: '1998416842837112832', name: 'Hive Scans', lang: 'en' },
-  { id: '42', name: 'Comix', lang: 'en' },
-]
-
 function mountPane(
   overrides: Partial<{
     flareSolverr: FlareSolverrConfig
     impersonate: ImpersonateConfig
-    impersonateSources: SourceOption[]
   }> = {},
 ) {
   return mount(SuwayomiPane, {
     props: {
       flareSolverr: baseFlareSolverr,
       impersonate: baseImpersonate,
-      impersonateSources,
       ...overrides,
     },
   })
@@ -113,45 +106,22 @@ describe('SuwayomiPane', () => {
 
     await impSaveBtn().trigger('click')
 
-    // §16: the emitted payload carries the full merged impersonate config.
+    // §16: the global save boundary carries only the gateway pair.
     const emitted = wrapper.emitted('save-impersonate')
     expect(emitted).toBeTruthy()
-    const saved = emitted![0]![0] as ImpersonateConfig
-    expect(saved.enabled).toBe(true)
-    expect(saved.url).toBe('http://impersonate-gateway:8788')
+    expect(emitted![0]![0]).toEqual({
+      enabled: true,
+      url: 'http://impersonate-gateway:8788',
+    })
   })
 
-  it('ticking a source flips the impersonate Save button and emits that source id (GAP-131)', async () => {
+  it('does not render the retired whole-list proxy membership picker', () => {
     const wrapper = mountPane({
-      impersonate: { enabled: true, url: 'http://impersonate-gateway:8788', sourceIds: [] },
+      impersonate: { enabled: true, url: 'http://impersonate-gateway:8788', sourceIds: ['1998416842837112832'] },
     })
 
-    const impSaveBtn = () => wrapper.findAll('button[type="submit"]')[1]!
-    expect(impSaveBtn().attributes('disabled')).toBeDefined()
-
-    // Non-vacuous: the tick has to travel card → local copy → dirty → Save. Drop
-    // the card's `sourceIds` out of the emitted patch (or bind the picker to the
-    // prop instead of the local copy) and the Save button below stays disabled.
-    await wrapper.find('[aria-label="Use the image proxy for Hive Scans"]').trigger('click')
-
-    expect(impSaveBtn().attributes('disabled')).toBeUndefined()
-
-    await impSaveBtn().trigger('click')
-
-    const saved = wrapper.emitted('save-impersonate')![0]![0] as ImpersonateConfig
-    // The ID is what travels, never the display name.
-    expect(saved.sourceIds).toEqual(['1998416842837112832'])
-  })
-
-  it('unticking the last source emits an EMPTY set rather than dropping the field', async () => {
-    const wrapper = mountPane({
-      impersonate: { enabled: true, url: 'http://gw:8788', sourceIds: ['42'] },
-    })
-
-    await wrapper.find('[aria-label="Use the image proxy for Comix"]').trigger('click')
-    await wrapper.findAll('button[type="submit"]')[1]!.trigger('click')
-
-    const saved = wrapper.emitted('save-impersonate')![0]![0] as ImpersonateConfig
-    expect(saved.sourceIds).toEqual([])
+    expect(wrapper.findAll('[aria-label^="Use the image proxy for "]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('Sources using the proxy')
+    expect(wrapper.text()).not.toContain('selected')
   })
 })

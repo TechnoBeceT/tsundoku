@@ -6,7 +6,7 @@ import ImpersonateCard from './ImpersonateCard.vue'
 import type { FlareSolverrConfig, ImpersonateConfig, SaveState, SourceOption } from '../screens/settings.types'
 
 /**
- * SuwayomiPane — the "Server config" settings pane. Holds two Tsundoku-owned
+ * Global Access & bypass controls. Holds two Tsundoku-owned
  * cards, each with its own §16 SaveFooter: the FlareSolverr (Cloudflare-bypass)
  * card (QCAT-238) and the impersonate-gateway (Chrome-fingerprint image proxy)
  * card (GAP-111). The proxied Suwayomi SOCKS-proxy card + read-only DB display
@@ -28,8 +28,8 @@ import type { FlareSolverrConfig, ImpersonateConfig, SaveState, SourceOption } f
  *   - `flareSolverrSave`: the §16 save lifecycle for the FlareSolverr card.
  *   - `impersonate`: the Tsundoku-owned impersonate-gateway config.
  *   - `impersonateSave`: the §16 save lifecycle for the impersonate card.
- *   - `impersonateSources`: the engine sources the impersonate card offers as
- *     per-source opt-ins (labels for the ids the config carries).
+ *   - `impersonateSources`: transitional screen prop only; membership moved to
+ *     the canonical Source exceptions panel.
  *
  * Emits `save-flaresolverr` / `save-impersonate` with the full merged config.
  */
@@ -42,7 +42,7 @@ const props = withDefaults(defineProps<{
   impersonate: ImpersonateConfig
   /** §16 state of the impersonate Save button. */
   impersonateSave?: SaveState
-  /** The engine sources the impersonate card offers as per-source opt-ins. */
+  /** Transitional screen prop; membership is no longer rendered here. */
   impersonateSources?: SourceOption[]
 }>(), {
   flareSolverrSave: () => ({ status: 'idle' }),
@@ -53,8 +53,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   /** Persist the edited FlareSolverr config — carries the full merged object. */
   'save-flaresolverr': [config: FlareSolverrConfig]
-  /** Persist the edited impersonate config — carries the full merged object. */
-  'save-impersonate': [config: ImpersonateConfig]
+  /** Persist only the global gateway pair; membership has a narrow endpoint. */
+  'save-impersonate': [config: Pick<ImpersonateConfig, 'enabled' | 'url'>]
 }>()
 
 // Deep-clone helper keeps the local FlareSolverr copy fully detached from the prop.
@@ -97,7 +97,7 @@ const impFooterState = computed(() => ({ status: props.impersonateSave.status, e
 
 function onSaveImpersonate() {
   if (!impDirty.value || props.impersonateSave.status === 'saving') return
-  emit('save-impersonate', cloneImp(imp))
+  emit('save-impersonate', { enabled: imp.enabled, url: imp.url })
 }
 </script>
 
@@ -105,7 +105,7 @@ function onSaveImpersonate() {
   <div class="pane-stack">
     <FlareSolverrCard :model-value="flare" @update:model-value="v => Object.assign(flare, v)" />
     <SaveFooter :state="flareFooterState" :dirty="flareDirty" label="Save FlareSolverr settings" @save="onSaveFlareSolverr" />
-    <ImpersonateCard :model-value="imp" :sources="impersonateSources" @update:model-value="v => Object.assign(imp, v)" />
+    <ImpersonateCard :model-value="imp" @update:model-value="v => Object.assign(imp, v)" />
     <SaveFooter :state="impFooterState" :dirty="impDirty" label="Save image-proxy settings" @save="onSaveImpersonate" />
   </div>
 </template>

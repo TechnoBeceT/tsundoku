@@ -6,7 +6,6 @@ import FormError from '../ui/FormError.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import NetworkEndpointRow from './NetworkEndpointRow.vue'
 import NetworkEndpointDialog from './NetworkEndpointDialog.vue'
-import SourceBindingRow from './SourceBindingRow.vue'
 import {
   ADD_ACTION_ID,
   type FlareMode,
@@ -18,20 +17,18 @@ import {
 } from '../screens/settings.types'
 
 /**
- * NetworkPane — the "Network" settings pane: two stacked cards for per-source
- * network routing (QCAT-283). Card 1 is the reusable-endpoint manager
- * (add / edit / remove SOCKS + FlareSolverr endpoints via a dialog); card 2 is
- * the per-source assignment table (a SOCKS + FlareSolverr route select per engine
- * source, with a "use global default" clear).
+ * Reusable endpoint manager for the Download engine Routing section. Add, edit,
+ * and remove SOCKS + FlareSolverr endpoints here. Per-source assignment moved
+ * to the canonical Source exceptions editor so there is only one membership
+ * form.
  *
  * Presentation-only: ALL data arrives via props and every mutation is emitted —
  * the composables live in the page. The pane owns only local UI state: which
  * endpoint the editor dialog is editing, and it closes that dialog on the save
  * success edge (`endpointAction.busyId` clears with no error), mirroring how
  * CategoriesPane/ExtensionsPane close their modals. All §16 states are visible:
- * per-card loading skeletons, inline load errors, the endpoint save error inside
- * the dialog, the delete-in-use 409 as a dismissible card banner (its message
- * lists the referencing sources), and the binding error inline.
+ * loading skeletons, inline load errors, the endpoint save error inside the
+ * dialog, and the delete-in-use 409 as a dismissible card banner.
  */
 const props = withDefaults(defineProps<{
   /** The defined egress endpoints. */
@@ -42,10 +39,10 @@ const props = withDefaults(defineProps<{
   endpointsPending?: boolean
   /** An endpoint-list load failure, surfaced inline. */
   endpointsError?: string | null
-  /** The engine sources (assignment table rows). */
-  sources: NetworkSource[]
+  /** Transitional screen prop; source routes render in Source exceptions. */
+  sources?: NetworkSource[]
   /** The per-source bindings (a source absent here uses the global default). */
-  bindings: SourceBinding[]
+  bindings?: SourceBinding[]
   /** §16 state of the binding set/clear mutation (busy source + error). */
   bindingAction?: RowActionState
   /** Whether the sources/bindings are loading. */
@@ -56,6 +53,8 @@ const props = withDefaults(defineProps<{
   endpointAction: () => ({ busyId: null }),
   endpointsPending: false,
   endpointsError: null,
+  sources: () => [],
+  bindings: () => [],
   bindingAction: () => ({ busyId: null }),
   bindingsPending: false,
   bindingsError: null,
@@ -113,21 +112,7 @@ const cardError = computed(() => (dialogOpen.value ? '' : props.endpointAction.e
 // Per-row endpoint busy (the single in-flight endpoint id).
 const endpointRowBusy = (id: string): boolean => props.endpointAction.busyId === id
 
-// ── Per-source assignment table ──────────────────────────────────────────────
-const socksEndpoints = computed(() => props.endpoints.filter(ep => ep.kind === 'socks'))
-const flareEndpoints = computed(() => props.endpoints.filter(ep => ep.kind === 'flaresolverr'))
-
-// Fast lookup of a source's binding (absent = unbound = global default).
-const bindingBySource = computed(() => {
-  const map = new Map<string, SourceBinding>()
-  for (const b of props.bindings) map.set(b.sourceId, b)
-  return map
-})
-const bindingFor = (sourceId: string): SourceBinding | null => bindingBySource.value.get(sourceId) ?? null
-const bindingRowBusy = (sourceId: string): boolean => props.bindingAction.busyId === sourceId
-
 const endpointSkeletons = [0, 1]
-const bindingSkeletons = [0, 1, 2]
 </script>
 
 <template>
@@ -179,47 +164,6 @@ const bindingSkeletons = [0, 1, 2]
       </div>
     </SurfaceCard>
 
-    <!-- Card 2 — per-source assignment table ----------------------------------- -->
-    <SurfaceCard
-      title="Per-source routing"
-      sub="Route each source through an endpoint, or leave it on the global default. Unbound sources use the global SOCKS + FlareSolverr config."
-    >
-      <!-- §16 binding set/clear failure. -->
-      <div v-if="bindingAction.error" class="net-binding-error">
-        <FormError :message="bindingAction.error" />
-      </div>
-
-      <!-- Loading skeletons -->
-      <div v-if="bindingsPending" class="net-list">
-        <div v-for="n in bindingSkeletons" :key="n" class="skeleton-row" />
-      </div>
-
-      <!-- Load error -->
-      <div v-else-if="bindingsError" class="net-load-error">
-        <FormError :message="bindingsError" />
-      </div>
-
-      <!-- Empty -->
-      <p v-else-if="sources.length === 0" class="net-empty">
-        No sources installed yet — install a source extension to assign a route.
-      </p>
-
-      <!-- The source rows -->
-      <div v-else>
-        <SourceBindingRow
-          v-for="s in sources"
-          :key="s.id"
-          :source="s"
-          :binding="bindingFor(s.id)"
-          :socks-endpoints="socksEndpoints"
-          :flare-endpoints="flareEndpoints"
-          :busy="bindingRowBusy(s.id)"
-          @set="emit('set-binding', $event)"
-          @clear="emit('clear-binding', $event)"
-        />
-      </div>
-    </SurfaceCard>
-
     <!-- Add / edit endpoint dialog. -->
     <NetworkEndpointDialog
       v-model:open="dialogOpen"
@@ -232,8 +176,7 @@ const bindingSkeletons = [0, 1, 2]
 </template>
 
 <style scoped>
-/* Two stacked cards with the shared 16px inter-card rhythm — same shape as the
-   Sources pane's own pane-stack. */
+/* One endpoint card plus its sibling dialog. */
 .pane-stack {
   display: flex;
   flex-direction: column;
@@ -244,7 +187,6 @@ const bindingSkeletons = [0, 1, 2]
   margin-bottom: 12px;
 }
 
-.net-binding-error,
 .net-load-error {
   margin-bottom: 12px;
 }
