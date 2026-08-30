@@ -14,6 +14,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/database"
+	"github.com/technobecet/tsundoku/internal/settings"
 )
 
 // containerDSN spins an ephemeral postgres:17-alpine container and returns
@@ -85,6 +86,45 @@ func TestOpenMigratesAndConnects(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected 0 owners after fresh migration, got %d", count)
+	}
+}
+
+func TestOpenBackfillsRuntimeIntentForUpgradedSettingsIdempotently(t *testing.T) {
+	cfg := containerDSN(t)
+	ctx := context.Background()
+
+	beforeUpgrade, err := database.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	beforeUpgrade.Settings.Create().
+		SetKey(settings.KeyImpersonateEnabled).
+		SetValue("true").
+		SaveX(ctx)
+	if got := beforeUpgrade.GlobalRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("global intents before upgraded startup = %d, want zero", got)
+	}
+	if err := beforeUpgrade.Close(); err != nil {
+		t.Fatalf("close pre-upgrade client: %v", err)
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		client, err := database.Open(ctx, cfg)
+		if err != nil {
+			t.Fatalf("upgraded Open pass %d: %v", pass, err)
+		}
+		rows, err := client.GlobalRuntimeIntent.Query().All(ctx)
+		if err != nil {
+			_ = client.Close()
+			t.Fatalf("query global intent pass %d: %v", pass, err)
+		}
+		if len(rows) != 1 || rows[0].DesiredRevision != 1 || rows[0].AppliedRevision != 0 {
+			_ = client.Close()
+			t.Fatalf("global intent after upgraded Open pass %d = %+v, want one desired 1 / applied 0 row", pass, rows)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatalf("close upgraded client pass %d: %v", pass, err)
+		}
 	}
 }
 

@@ -488,6 +488,7 @@ func main() {
 	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
 	settingsSvc.WithRuntimeConverger(runtimeApplier)
+	runner.SetRuntimeReconciler(runtimePendingGroup{global: settingsSvc, sources: sourceTransportSvc})
 	netReconcile := func(rctx context.Context) { runNetworkReconcile(rctx, runtimeApplier) }
 	runtimeReconcile := func(rctx context.Context) {
 		runSourceRuntimeReconcile(rctx, runtimeApplier, settingsSvc, sourceTransportSvc)
@@ -888,6 +889,15 @@ type runtimeRestorer interface {
 
 type pendingRuntimeReconciler interface {
 	ReconcilePending(context.Context) error
+}
+
+type runtimePendingGroup struct {
+	global  pendingRuntimeReconciler
+	sources pendingRuntimeReconciler
+}
+
+func (g runtimePendingGroup) ReconcilePending(ctx context.Context) error {
+	return errors.Join(g.global.ReconcilePending(ctx), g.sources.ReconcilePending(ctx))
 }
 
 func runSourceRuntimeReconcile(

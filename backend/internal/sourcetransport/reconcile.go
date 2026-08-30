@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
+
+const metadataWriteTimeout = time.Second
 
 // RuntimeApplier converges one source's desired runtime policy. Implementations
 // may rebuild a full engine snapshot because image and proxy selections are
@@ -45,7 +48,9 @@ func (s *Service) ApplyPending(ctx context.Context, sourceID int64) (Intent, err
 
 	attemptedRevision := intent.DesiredRevision
 	if applyErr := s.applier.ApplySourceRuntime(ctx, sourceID); applyErr != nil {
-		markErr := s.MarkPending(ctx, sourceID, attemptedRevision, applyErr.Error())
+		metadataCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataWriteTimeout)
+		markErr := s.MarkPending(metadataCtx, sourceID, attemptedRevision, applyErr.Error())
+		cancel()
 		current, loadErr := s.loadIntent(ctx, sourceID)
 		return current, errors.Join(applyErr, markErr, loadErr)
 	}

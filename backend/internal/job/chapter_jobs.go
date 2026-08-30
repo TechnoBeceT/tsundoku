@@ -14,6 +14,8 @@
 //     (period_loop.go) until the context is cancelled — a cycle starts every
 //     interval measured from the previous cycle's START, ticks landing mid-cycle
 //     are skipped, and cycles never overlap.
+//   - SetRuntimeReconciler: a bounded durable runtime-intent scan on that same
+//     download cadence, inheriting its trigger coalescing and no-overlap shape.
 //   - ScheduleSnapshot: the race-free read model behind GET /api/engine/schedule
 //     (schedule.go) — is a cycle running, and when may the next one start.
 //   - Reconcile: thin wrapper around disk.Reconcile for the on-demand trigger.
@@ -127,6 +129,13 @@ type Runner struct {
 	// SetProviderHealer.
 	healMu sync.RWMutex
 	healer ProviderHealer
+	// runtimeReconciler retries durable global and per-source engine-runtime
+	// revisions on the existing download cadence. It is wired before Start and
+	// runs on that loop's sole goroutine, inheriting Trigger coalescing,
+	// cancellation, and the no-overlap guarantee without another timer.
+	runtimeReconciler interface {
+		ReconcilePending(context.Context) error
+	}
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -136,6 +145,14 @@ func (r *Runner) SetNotifier(n interface {
 	NotifyNewChapters(context.Context) error
 }) {
 	r.notifier = n
+}
+
+// SetRuntimeReconciler registers the bounded pending-runtime scan run before
+// each download cycle. It must be called during construction, before Start.
+func (r *Runner) SetRuntimeReconciler(reconciler interface {
+	ReconcilePending(context.Context) error
+}) {
+	r.runtimeReconciler = reconciler
 }
 
 // NewRunner creates a Runner that delegates to the given Dispatcher (which
@@ -374,6 +391,14 @@ func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
 	msg := "download cycle error"
 	if triggered {
 		msg = "triggered download cycle error"
+	}
+	if r.runtimeReconciler != nil {
+		if err := r.runtimeReconciler.ReconcilePending(ctx); err != nil {
+			slog.WarnContext(ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
+		}
+	}
+	if ctx.Err() != nil {
+		return
 	}
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)

@@ -28,6 +28,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 	"github.com/technobecet/tsundoku/internal/sse"
 	"github.com/technobecet/tsundoku/internal/warmup"
 )
@@ -735,6 +736,172 @@ func TestRunner_Trigger_Coalesces(t *testing.T) {
 	// No Start → nothing drains the channel. Many triggers must not block/panic.
 	for i := 0; i < 100; i++ {
 		r.Trigger()
+	}
+}
+
+type runtimePendingPair struct {
+	global  interface{ ReconcilePending(context.Context) error }
+	sources interface{ ReconcilePending(context.Context) error }
+}
+
+func (p runtimePendingPair) ReconcilePending(ctx context.Context) error {
+	return errors.Join(p.global.ReconcilePending(ctx), p.sources.ReconcilePending(ctx))
+}
+
+type recoverableRuntimeApplier struct {
+	mu          sync.Mutex
+	failing     bool
+	globalCalls int
+	sourceCalls []int64
+}
+
+func (a *recoverableRuntimeApplier) ReconcileRuntime(context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.globalCalls++
+	if a.failing {
+		return errors.New("engine unavailable")
+	}
+	return nil
+}
+
+func (a *recoverableRuntimeApplier) ApplySourceRuntime(_ context.Context, sourceID int64) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sourceCalls = append(a.sourceCalls, sourceID)
+	if a.failing {
+		return errors.New("engine unavailable")
+	}
+	return nil
+}
+
+func (a *recoverableRuntimeApplier) recover() {
+	a.mu.Lock()
+	a.failing = false
+	a.mu.Unlock()
+}
+
+type runtimeTransportDefaults struct{}
+
+func (runtimeTransportDefaults) ImageConnectionMode(context.Context) sourcetransport.ImageConnectionMode {
+	return sourcetransport.ImageConnectionFresh
+}
+
+func (runtimeTransportDefaults) ResolveBypassSession(context.Context, int64, *bool) (bool, sourcetransport.BypassSessionMode, error) {
+	return false, sourcetransport.BypassSessionDisabled, nil
+}
+
+type runtimeSourceCatalog struct{}
+
+func (runtimeSourceCatalog) RequireSource(context.Context, int64) error { return nil }
+
+func TestRunnerTriggerRetriesPostStartupGlobalAndSourceRuntimeIntents(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	applier := &recoverableRuntimeApplier{failing: true}
+	global := settings.NewService(client, settings.Defaults{}).WithRuntimeConverger(applier)
+	sources := sourcetransport.NewService(client, runtimeTransportDefaults{}, runtimeSourceCatalog{}).WithRuntimeApplier(applier)
+
+	if err := global.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("persist failed global runtime write: %v", err)
+	}
+	if _, err := sources.Update(ctx, 707, sourcetransport.Patch{
+		ImageConnectionMode: sourcetransport.Set(sourcetransport.ImageConnectionReuse),
+	}); err == nil {
+		t.Fatal("source Update error = nil, want initial engine failure")
+	}
+	applier.recover()
+
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	r.SetRuntimeReconciler(runtimePendingPair{global: global, sources: sources})
+	r.Start(ctx)
+	r.Trigger()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		globalIntent, err := global.RuntimeIntent(ctx)
+		if err != nil {
+			t.Fatalf("RuntimeIntent: %v", err)
+		}
+		pendingSources, err := sources.Pending(ctx)
+		if err != nil {
+			t.Fatalf("source Pending: %v", err)
+		}
+		if globalIntent.DesiredRevision == 1 && globalIntent.AppliedRevision == 1 && len(pendingSources) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runtime trigger did not converge exact pending revisions: global=%+v sources=%+v", globalIntent, pendingSources)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	row := client.SourceRuntimeIntent.Query().OnlyX(ctx)
+	if row.DesiredRevision != 1 || row.AppliedRevision != 1 || row.SourceID != 707 {
+		t.Fatalf("source intent after cadence retry = %+v, want source 707 exact revision 1", row)
+	}
+}
+
+type blockingRuntimeReconciler struct {
+	started chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+	active  int
+	max     int
+}
+
+func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error {
+	r.mu.Lock()
+	r.calls++
+	r.active++
+	if r.active > r.max {
+		r.max = r.active
+	}
+	if r.calls == 1 {
+		close(r.started)
+	}
+	r.mu.Unlock()
+	select {
+	case <-ctx.Done():
+	case <-r.release:
+	}
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+	return ctx.Err()
+}
+
+func TestRunnerRuntimeRetryCoalescesWithoutOverlapAndStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &blockingRuntimeReconciler{started: make(chan struct{}), release: make(chan struct{})}
+	r.SetRuntimeReconciler(probe)
+	r.Start(ctx)
+	r.Trigger()
+	select {
+	case <-probe.started:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatal("runtime retry did not start")
+	}
+	for i := 0; i < 100; i++ {
+		r.Trigger()
+	}
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if probe.calls != 1 || probe.max != 1 || probe.active != 0 {
+		t.Fatalf("runtime retry calls=%d max=%d active=%d, want one non-overlapping canceled pass", probe.calls, probe.max, probe.active)
 	}
 }
 

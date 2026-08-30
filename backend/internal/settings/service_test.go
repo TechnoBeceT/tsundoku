@@ -168,6 +168,192 @@ func TestRuntimeSettingsRollbackLeavesNoIntentRevision(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeIntentBackfillsOnlyExistingRuntimeSettings(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+
+	if err := settings.EnsureRuntimeIntent(ctx, client); err != nil {
+		t.Fatalf("EnsureRuntimeIntent on empty install: %v", err)
+	}
+	if got := client.GlobalRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("global intents on empty install = %d, want zero", got)
+	}
+
+	client.Settings.Create().
+		SetKey(settings.KeyImpersonateEnabled).
+		SetValue("true").
+		SaveX(ctx)
+	for i := 0; i < 2; i++ {
+		if err := settings.EnsureRuntimeIntent(ctx, client); err != nil {
+			t.Fatalf("EnsureRuntimeIntent pass %d: %v", i+1, err)
+		}
+	}
+	intent, err := settings.NewService(client, testDefaults()).RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 {
+		t.Fatalf("backfilled intent = %+v, want desired 1 / applied 0", intent)
+	}
+	if got := client.GlobalRuntimeIntent.Query().CountX(ctx); got != 1 {
+		t.Fatalf("global intent rows after two passes = %d, want one", got)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("source intents after global backfill = %d, want zero", got)
+	}
+}
+
+func TestBackfilledRuntimeIntentSurvivesFailedFirstRestore(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	client.Settings.Create().
+		SetKey(settings.KeyEngineSocksEnabled).
+		SetValue("true").
+		SaveX(ctx)
+	if err := settings.EnsureRuntimeIntent(ctx, client); err != nil {
+		t.Fatalf("EnsureRuntimeIntent: %v", err)
+	}
+
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(context.Context) error { return errors.New("engine unavailable") }),
+	)
+	if err := svc.ReconcilePending(ctx); err == nil {
+		t.Fatal("ReconcilePending error = nil, want failed first restore")
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 || intent.LastApplyAttempt == nil || !strings.Contains(intent.LastApplyError, "engine unavailable") {
+		t.Fatalf("intent after failed first restore = %+v, want durable pending failure", intent)
+	}
+}
+
+func TestCanceledRuntimeApplyPersistsBoundedAttemptMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := settings.NewService(client, testDefaults())
+	if err := plain.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("persist pending runtime setting: %v", err)
+	}
+
+	started := make(chan struct{})
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return errors.New(" apply cancelled\r\n" + strings.Repeat("x", 600))
+		}),
+	)
+	applyCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { _, err := svc.ApplyPending(applyCtx); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want cancellation failure")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyPending did not finish within detached metadata bound")
+	}
+
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 || intent.LastApplyAttempt == nil {
+		t.Fatalf("intent after canceled apply = %+v, want pending revision with attempt", intent)
+	}
+	if intent.LastApplyError == "" || len(intent.LastApplyError) > 512 || strings.ContainsAny(intent.LastApplyError, "\r\n") {
+		t.Fatalf("last apply error = %q, want sanitized bounded metadata", intent.LastApplyError)
+	}
+}
+
+func TestCanceledRuntimeApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := settings.NewService(client, testDefaults())
+	if err := plain.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("persist pending runtime setting: %v", err)
+	}
+	client.GlobalRuntimeIntent.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if m, ok := mutation.(*ent.GlobalRuntimeIntentMutation); ok {
+				if _, metadataWrite := m.LastApplyError(); metadataWrite {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+
+	started := make(chan struct{})
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}),
+	)
+	applyCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { _, err := svc.ApplyPending(applyCtx); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want canceled apply and metadata timeout")
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Fatalf("ApplyPending held shutdown for %v, want bounded under 2s", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyPending held shutdown beyond detached metadata timeout")
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 1 || intent.AppliedRevision != 0 {
+		t.Fatalf("intent after metadata timeout = %+v, want revision 1 pending", intent)
+	}
+}
+
+func TestFailedRuntimeApplyDoesNotOverwriteNewerRevisionMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := settings.NewService(client, testDefaults())
+	if err := plain.Set(ctx, settings.KeyImpersonateEnabled, "true"); err != nil {
+		t.Fatalf("persist first runtime revision: %v", err)
+	}
+
+	var newerErr error
+	svc := settings.NewService(client, testDefaults()).WithRuntimeConverger(
+		runtimeConvergerFunc(func(context.Context) error {
+			newerErr = plain.Set(ctx, settings.KeyImpersonateURL, "http://newer.test:8788")
+			return errors.New("obsolete revision failed")
+		}),
+	)
+	if _, err := svc.ApplyPending(ctx); err == nil {
+		t.Fatal("ApplyPending error = nil, want obsolete apply failure")
+	}
+	if newerErr != nil {
+		t.Fatalf("persist newer revision: %v", newerErr)
+	}
+	intent, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatalf("RuntimeIntent: %v", err)
+	}
+	if intent.DesiredRevision != 2 || intent.AppliedRevision != 0 || intent.LastApplyAttempt != nil || intent.LastApplyError != "" {
+		t.Fatalf("newer intent metadata = %+v, want untouched pending revision 2", intent)
+	}
+}
+
 func TestRuntimeConfigSnapshotReadsOneCommittedDatabaseState(t *testing.T) {
 	ctx := context.Background()
 	client, sqlDB := testdb.NewWithSQL(t)

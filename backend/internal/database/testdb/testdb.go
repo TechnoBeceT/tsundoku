@@ -81,6 +81,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
@@ -208,6 +209,9 @@ func mirrorProductionSeedSequence(t *testing.T, ctx context.Context, client *ent
 	}
 	if err := category.DropLegacyColumn(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy category column: %v", err)
+	}
+	if err := settings.EnsureRuntimeIntent(ctx, client); err != nil {
+		t.Fatalf("testdb: ensure runtime intent: %v", err)
 	}
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		t.Fatalf("testdb: drop legacy import_entries columns: %v", err)

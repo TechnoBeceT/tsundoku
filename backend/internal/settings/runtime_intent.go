@@ -10,12 +10,46 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/globalruntimeintent"
+	entsettings "github.com/technobecet/tsundoku/internal/ent/settings"
 )
 
 const (
 	runtimeIntentScope   = "engine_config"
 	maxRuntimeApplyError = 512
+	metadataWriteTimeout = time.Second
 )
+
+// EnsureRuntimeIntent gives upgraded installations a durable first convergence
+// revision when they already contain an engine-runtime setting written before
+// GlobalRuntimeIntent existed. Fresh installations with no persisted runtime
+// overrides remain row-free. The transaction and conflict-ignore make the
+// backfill atomic and idempotent alongside ordinary SetMany revision advances.
+func EnsureRuntimeIntent(ctx context.Context, client *ent.Client) error {
+	tx, err := client.Tx(ctx)
+	if err != nil {
+		return fmt.Errorf("settings.EnsureRuntimeIntent: begin tx: %w", err)
+	}
+	present, err := tx.Settings.Query().Where(entsettings.KeyIn(runtimeConfigKeys...)).Exist(ctx)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("settings.EnsureRuntimeIntent: query runtime settings: %w", err)
+	}
+	if present {
+		if err := tx.GlobalRuntimeIntent.Create().
+			SetScope(runtimeIntentScope).
+			SetDesiredRevision(1).
+			OnConflictColumns(entintent.FieldScope).
+			Ignore().
+			Exec(ctx); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("settings.EnsureRuntimeIntent: create pending revision: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("settings.EnsureRuntimeIntent: commit: %w", err)
+	}
+	return nil
+}
 
 // RuntimeIntent loads the singleton global runtime revision. A missing row is
 // the zero revision, which is already applied and needs no convergence.
@@ -53,7 +87,9 @@ func (s *Service) ApplyPending(ctx context.Context) (RuntimeIntent, error) {
 
 	attemptedRevision := intent.DesiredRevision
 	if applyErr := s.runtimeConverger.ReconcileRuntime(ctx); applyErr != nil {
-		markErr := s.markRuntimePending(ctx, attemptedRevision, applyErr.Error())
+		metadataCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataWriteTimeout)
+		markErr := s.markRuntimePending(metadataCtx, attemptedRevision, applyErr.Error())
+		cancel()
 		current, loadErr := s.RuntimeIntent(ctx)
 		return current, errors.Join(applyErr, markErr, loadErr)
 	}

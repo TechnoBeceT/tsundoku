@@ -23,6 +23,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 )
 
@@ -114,6 +115,9 @@ func Open(ctx context.Context, cfg config.DatabaseConfig) (*ent.Client, error) {
 func runPostMigrationCleanup(ctx context.Context, client *ent.Client, db *sql.DB) error {
 	if err := seedCategories(ctx, client, db); err != nil {
 		return err
+	}
+	if err := settings.EnsureRuntimeIntent(ctx, client); err != nil {
+		return fmt.Errorf("database: ensure runtime intent: %w", err)
 	}
 	if err := library.DropLegacyImportEntryColumns(ctx, db); err != nil {
 		return fmt.Errorf("database: drop legacy import_entries columns: %w", err)

@@ -100,6 +100,130 @@ func TestApplyPendingCannotAcknowledgeRevisionCreatedDuringApply(t *testing.T) {
 	}
 }
 
+func TestCanceledSourceApplyPersistsBoundedAttemptMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	if _, err := plain.Update(ctx, 202, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(false)}); err != nil {
+		t.Fatalf("persist pending source revision: %v", err)
+	}
+
+	started := make(chan struct{})
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(ctx context.Context, _ int64) error {
+			close(started)
+			<-ctx.Done()
+			return errors.New(" source cancelled\r\n" + strings.Repeat("x", 600))
+		}))
+	applyCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { _, err := svc.ApplyPending(applyCtx, 202); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want cancellation failure")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyPending did not finish within detached metadata bound")
+	}
+
+	pending, err := svc.Pending(ctx)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].DesiredRevision != 1 || pending[0].AppliedRevision != 0 || pending[0].LastApplyAttempt == nil {
+		t.Fatalf("pending after canceled apply = %+v, want revision 1 with attempt", pending)
+	}
+	if pending[0].LastApplyError == "" || len(pending[0].LastApplyError) > 512 || strings.ContainsAny(pending[0].LastApplyError, "\r\n") {
+		t.Fatalf("last apply error = %q, want sanitized bounded metadata", pending[0].LastApplyError)
+	}
+}
+
+func TestCanceledSourceApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	if _, err := plain.Update(ctx, 204, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(false)}); err != nil {
+		t.Fatalf("persist pending source revision: %v", err)
+	}
+	client.SourceRuntimeIntent.Use(func(next ent.Mutator) ent.Mutator {
+		return ent.MutateFunc(func(ctx context.Context, mutation ent.Mutation) (ent.Value, error) {
+			if m, ok := mutation.(*ent.SourceRuntimeIntentMutation); ok {
+				if _, metadataWrite := m.LastApplyError(); metadataWrite {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+			}
+			return next.Mutate(ctx, mutation)
+		})
+	})
+
+	started := make(chan struct{})
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(ctx context.Context, _ int64) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		}))
+	applyCtx, cancel := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() { _, err := svc.ApplyPending(applyCtx, 204); done <- err }()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("ApplyPending error = nil, want canceled apply and metadata timeout")
+		}
+		if elapsed := time.Since(start); elapsed > 2*time.Second {
+			t.Fatalf("ApplyPending held shutdown for %v, want bounded under 2s", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyPending held shutdown beyond detached metadata timeout")
+	}
+	pending, err := svc.Pending(ctx)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].DesiredRevision != 1 || pending[0].AppliedRevision != 0 {
+		t.Fatalf("pending after metadata timeout = %+v, want revision 1 pending", pending)
+	}
+}
+
+func TestFailedSourceApplyDoesNotOverwriteNewerRevisionMetadata(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
+	if _, err := plain.Update(ctx, 203, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(false)}); err != nil {
+		t.Fatalf("persist first source revision: %v", err)
+	}
+
+	var newerErr error
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error {
+			_, newerErr = plain.Update(ctx, 203, sourcetransport.Patch{
+				ImageConnectionMode: sourcetransport.Set(sourcetransport.ImageConnectionReuse),
+			})
+			return errors.New("obsolete source revision failed")
+		}))
+	if _, err := svc.ApplyPending(ctx, 203); err == nil {
+		t.Fatal("ApplyPending error = nil, want obsolete apply failure")
+	}
+	if newerErr != nil {
+		t.Fatalf("persist newer source revision: %v", newerErr)
+	}
+	pending, err := svc.Pending(ctx)
+	if err != nil {
+		t.Fatalf("Pending: %v", err)
+	}
+	if len(pending) != 1 || pending[0].DesiredRevision != 2 || pending[0].AppliedRevision != 0 || pending[0].LastApplyAttempt != nil || pending[0].LastApplyError != "" {
+		t.Fatalf("newer intent metadata = %+v, want untouched pending revision 2", pending)
+	}
+}
+
 func TestReconcilePendingRetriesPersistedIntentAtStartup(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
