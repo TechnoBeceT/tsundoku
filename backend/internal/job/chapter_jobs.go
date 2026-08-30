@@ -14,8 +14,9 @@
 //     (period_loop.go) until the context is cancelled — a cycle starts every
 //     interval measured from the previous cycle's START, ticks landing mid-cycle
 //     are skipped, and cycles never overlap.
-//   - SetRuntimeReconciler: a bounded durable runtime-intent scan on that same
-//     download cadence, inheriting its trigger coalescing and no-overlap shape.
+//   - SetRuntimeReconciler: a bounded durable runtime-intent scan dispatched
+//     asynchronously from that same download cadence through one context-owned,
+//     cap-1 worker, so retries coalesce without delaying chapter cycles.
 //   - ScheduleSnapshot: the race-free read model behind GET /api/engine/schedule
 //     (schedule.go) — is a cycle running, and when may the next one start.
 //   - Reconcile: thin wrapper around disk.Reconcile for the on-demand trigger.
@@ -130,12 +131,16 @@ type Runner struct {
 	healMu sync.RWMutex
 	healer ProviderHealer
 	// runtimeReconciler retries durable global and per-source engine-runtime
-	// revisions on the existing download cadence. It is wired before Start and
-	// runs on that loop's sole goroutine, inheriting Trigger coalescing,
-	// cancellation, and the no-overlap guarantee without another timer.
+	// revisions when the existing download cadence requests a pass. It is wired
+	// before Start and owned by one context-bound worker, keeping retries
+	// single-flight without redefining the download loop's running state.
 	runtimeReconciler interface {
 		ReconcilePending(context.Context) error
 	}
+	// runtimeRetry receives non-blocking requests from download-cycle starts. A
+	// single Start-owned worker drains it, so a blocked scan cannot delay chapter
+	// work and can accumulate at most one later retry.
+	runtimeRetry chan struct{}
 }
 
 // SetNotifier registers the post-cycle new-chapter notifier. Nil-safe: passing
@@ -147,8 +152,9 @@ func (r *Runner) SetNotifier(n interface {
 	r.notifier = n
 }
 
-// SetRuntimeReconciler registers the bounded pending-runtime scan run before
-// each download cycle. It must be called during construction, before Start.
+// SetRuntimeReconciler registers the bounded pending-runtime scan requested
+// asynchronously by each download-cycle start. It must be called during
+// construction, before Start.
 func (r *Runner) SetRuntimeReconciler(reconciler interface {
 	ReconcilePending(context.Context) error
 }) {
@@ -168,12 +174,13 @@ func (r *Runner) SetRuntimeReconciler(reconciler interface {
 // periods, read at the top of each loop iteration (hot reload).
 func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub, storage string, intervals Intervals) *Runner {
 	return &Runner{
-		dispatcher: dispatcher,
-		client:     client,
-		hub:        hub,
-		storage:    storage,
-		intervals:  intervals,
-		trigger:    make(chan struct{}, 1),
+		dispatcher:   dispatcher,
+		client:       client,
+		hub:          hub,
+		storage:      storage,
+		intervals:    intervals,
+		trigger:      make(chan struct{}, 1),
+		runtimeRetry: make(chan struct{}, 1),
 	}
 }
 
@@ -375,6 +382,9 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 // simply suspended; the API server continues running. Reconcile does not use
 // the fetcher and is live since M1.
 func (r *Runner) Start(ctx context.Context) {
+	if r.runtimeReconciler != nil {
+		go r.runRuntimeRetryLoop(ctx)
+	}
 	periodLoop{
 		name:     "download",
 		interval: r.intervals.DownloadInterval,
@@ -392,16 +402,47 @@ func (r *Runner) runDownloadCycleLogging(ctx context.Context, triggered bool) {
 	if triggered {
 		msg = "triggered download cycle error"
 	}
-	if r.runtimeReconciler != nil {
-		if err := r.runtimeReconciler.ReconcilePending(ctx); err != nil {
-			slog.WarnContext(ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
-		}
-	}
+	r.requestRuntimeRetry()
 	if ctx.Err() != nil {
 		return
 	}
 	if err := r.RunDownloadCycle(ctx); err != nil {
 		slog.ErrorContext(ctx, "job.Runner: "+msg, "err", err)
+	}
+}
+
+// requestRuntimeRetry attaches one retry request to a download-cycle start
+// without waiting for engine convergence. The cap-1 channel collapses requests
+// arriving while the single worker is busy into at most one later pass.
+func (r *Runner) requestRuntimeRetry() {
+	if r.runtimeReconciler == nil {
+		return
+	}
+	select {
+	case r.runtimeRetry <- struct{}{}:
+	default:
+	}
+}
+
+// runRuntimeRetryLoop owns runtime reconciliation for Runner's lifetime. There
+// is exactly one worker per Start call, so passes never overlap. Explicit
+// cancellation checks ensure a buffered retry cannot start during shutdown.
+func (r *Runner) runRuntimeRetryLoop(ctx context.Context) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.runtimeRetry:
+			if ctx.Err() != nil {
+				return
+			}
+			if err := r.runtimeReconciler.ReconcilePending(ctx); err != nil {
+				slog.WarnContext(ctx, "job.Runner: pending engine runtime retry incomplete", "err", err)
+			}
+		}
 	}
 }
 

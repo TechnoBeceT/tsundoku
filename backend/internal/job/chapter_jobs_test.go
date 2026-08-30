@@ -848,6 +848,7 @@ func TestRunnerTriggerRetriesPostStartupGlobalAndSourceRuntimeIntents(t *testing
 type blockingRuntimeReconciler struct {
 	started chan struct{}
 	release chan struct{}
+	done    chan struct{}
 	mu      sync.Mutex
 	calls   int
 	active  int
@@ -857,11 +858,12 @@ type blockingRuntimeReconciler struct {
 func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error {
 	r.mu.Lock()
 	r.calls++
+	first := r.calls == 1
 	r.active++
 	if r.active > r.max {
 		r.max = r.active
 	}
-	if r.calls == 1 {
+	if first {
 		close(r.started)
 	}
 	r.mu.Unlock()
@@ -872,7 +874,65 @@ func (r *blockingRuntimeReconciler) ReconcilePending(ctx context.Context) error 
 	r.mu.Lock()
 	r.active--
 	r.mu.Unlock()
+	if r.done != nil && first {
+		close(r.done)
+	}
 	return ctx.Err()
+}
+
+func TestRunnerRuntimeRetryDoesNotBlockDownloadNowCycle(t *testing.T) {
+	assertRuntimeRetryDoesNotBlockDownloadCycle(t, time.Hour, func(r *job.Runner) { r.Trigger() })
+}
+
+func TestRunnerRuntimeRetryDoesNotBlockScheduledDownloadCycle(t *testing.T) {
+	assertRuntimeRetryDoesNotBlockDownloadCycle(t, 100*time.Millisecond, nil)
+}
+
+func assertRuntimeRetryDoesNotBlockDownloadCycle(t *testing.T, interval time.Duration, trigger func(*job.Runner)) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	storage := t.TempDir()
+	hub := sse.NewHub()
+
+	seriesRow := client.Series.Create().SetTitle("Runtime Retry Series").SetSlug("runtime-retry-series").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(seriesRow).SetProvider("mangadex").SetImportance(10).SaveX(ctx)
+	client.ProviderChapter.Create().SetSeriesProviderID(provider.ID).SetChapterKey("ch-runtime-1").
+		SetURL("https://example.test/ch-runtime-1").SetProviderIndex(0).SaveX(ctx)
+	chapterRow := client.Chapter.Create().SetSeries(seriesRow).SetChapterKey("ch-runtime-1").SaveX(ctx)
+
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: interval})
+	probe := &blockingRuntimeReconciler{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(probe.release)
+	r.SetRuntimeReconciler(probe)
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
+	r.Start(ctx)
+	if trigger != nil {
+		trigger(r)
+	}
+
+	select {
+	case <-probe.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runtime retry did not start")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for client.Chapter.GetX(ctx, chapterRow.ID).State != entchapter.StateDownloaded {
+		if time.Now().After(deadline) {
+			t.Fatal("download did not progress while runtime retry was blocked")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cycleStart, cycleDone := collectCycleEvents(events, 2*time.Second)
+	if !cycleStart || !cycleDone {
+		t.Fatalf("cycle events start/done = %v/%v, want both before runtime retry release", cycleStart, cycleDone)
+	}
+	waitForSchedule(t, r, func(s job.Schedule) bool { return !s.Download.Running },
+		"the completed download cycle to clear running while runtime retry remains blocked")
 }
 
 func TestRunnerRuntimeRetryCoalescesWithoutOverlapAndStopsOnCancellation(t *testing.T) {
@@ -882,7 +942,7 @@ func TestRunnerRuntimeRetryCoalescesWithoutOverlapAndStopsOnCancellation(t *test
 	storage := t.TempDir()
 	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
-	probe := &blockingRuntimeReconciler{started: make(chan struct{}), release: make(chan struct{})}
+	probe := &blockingRuntimeReconciler{started: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
 	r.SetRuntimeReconciler(probe)
 	r.Start(ctx)
 	r.Trigger()
@@ -896,12 +956,68 @@ func TestRunnerRuntimeRetryCoalescesWithoutOverlapAndStopsOnCancellation(t *test
 		r.Trigger()
 	}
 	cancel()
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-probe.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked runtime retry did not stop promptly with runner context")
+	}
+	// Give a wrongly queued pass a chance to start after the canceled first pass.
+	time.Sleep(50 * time.Millisecond)
 
 	probe.mu.Lock()
 	defer probe.mu.Unlock()
 	if probe.calls != 1 || probe.max != 1 || probe.active != 0 {
 		t.Fatalf("runtime retry calls=%d max=%d active=%d, want one non-overlapping canceled pass", probe.calls, probe.max, probe.active)
+	}
+}
+
+type retryRuntimeReconciler struct {
+	calls chan int
+	mu    sync.Mutex
+	count int
+}
+
+func (r *retryRuntimeReconciler) ReconcilePending(context.Context) error {
+	r.mu.Lock()
+	r.count++
+	call := r.count
+	r.mu.Unlock()
+	r.calls <- call
+	if call == 1 {
+		return errors.New("runtime still unavailable")
+	}
+	return nil
+}
+
+func TestRunnerRuntimeRetryRunsAgainOnLaterExistingTrigger(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	hub := sse.NewHub()
+	storage := t.TempDir()
+	d := download.New(client, fake.New(), hub, download.Config{Storage: storage}, settings.Static{Retries: 1, Backoff: time.Hour}, nil)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
+	probe := &retryRuntimeReconciler{calls: make(chan int, 2)}
+	r.SetRuntimeReconciler(probe)
+	r.Start(ctx)
+
+	r.Trigger()
+	select {
+	case call := <-probe.calls:
+		if call != 1 {
+			t.Fatalf("first runtime retry call = %d, want 1", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first existing-cadence runtime retry did not run")
+	}
+	r.Trigger()
+	select {
+	case call := <-probe.calls:
+		if call != 2 {
+			t.Fatalf("recovered runtime retry call = %d, want 2", call)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("later existing trigger did not retry recovered pending work")
 	}
 }
 
