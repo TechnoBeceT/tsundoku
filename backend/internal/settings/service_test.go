@@ -1440,18 +1440,18 @@ func TestImpersonateSourcesSetAndResolve(t *testing.T) {
 	svc := settings.NewService(db, testDefaults())
 	ctx := context.Background()
 
-	if err := svc.Set(ctx, settings.KeyImpersonateSources, " 1998416842837112832 , 42, 42 "); err != nil {
+	if err := svc.Set(ctx, settings.KeyImpersonateSources, " 1998416842837112832 , 42, 42, -1 "); err != nil {
 		t.Fatalf("Set sources: %v", err)
 	}
 	got := svc.ImpersonateSources(ctx)
-	want := []int64{42, 1998416842837112832}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	want := []int64{-1, 42, 1998416842837112832}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Errorf("ImpersonateSources = %v, want %v (deduped + ascending)", got, want)
 	}
 	// The stored canonical form is the normalised one, not the raw submission.
 	row := findSetting(t, svc.List(ctx), settings.KeyImpersonateSources)
-	if row.Value != "42,1998416842837112832" {
-		t.Errorf("stored value = %q, want %q", row.Value, "42,1998416842837112832")
+	if row.Value != "-1,42,1998416842837112832" {
+		t.Errorf("stored value = %q, want %q", row.Value, "-1,42,1998416842837112832")
 	}
 
 	if err := svc.Set(ctx, settings.KeyImpersonateSources, ""); err != nil {
@@ -1471,7 +1471,7 @@ func TestImpersonateSourcesRejectsNonNumeric(t *testing.T) {
 	svc := settings.NewService(db, testDefaults())
 	ctx := context.Background()
 
-	for _, raw := range []string{"Hive Scans", "42,Comix", "42,,43", "1e9", "-1"} {
+	for _, raw := range []string{"Hive Scans", "42,Comix", "42,,43", "1e9"} {
 		if err := svc.Set(ctx, settings.KeyImpersonateSources, raw); !errors.Is(err, settings.ErrInvalidSetting) {
 			t.Errorf("Set %q err = %v, want ErrInvalidSetting", raw, err)
 		}

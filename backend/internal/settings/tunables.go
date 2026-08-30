@@ -277,7 +277,7 @@ const (
 	// scoped.
 	KeyImpersonateURL = "impersonate.url"
 	// KeyImpersonateSources is the per-source gating set (GAP-131): a
-	// comma-separated list of engine-host source IDs (decimal, non-negative)
+	// comma-separated list of engine-host source IDs (signed decimal int64)
 	// allowed to use the gateway. Empty (the default) means NO source uses it.
 	//
 	// 🔴 WHY THIS EXISTS AND WHY IT DEFAULTS EMPTY. The gateway path and the
@@ -786,7 +786,7 @@ func stringTunable(key, unit string, def func(Defaults) string) tunable {
 
 // sourceIDSetTunable builds a string-typed tunable holding a SET of engine-host
 // source ids as a comma-separated decimal list. Validation is fail-closed: every
-// token must parse as a non-negative int64, so a source NAME (or any other
+// token must parse as an int64, so a source NAME (or any other
 // non-numeric token) is rejected rather than silently stored — the settings
 // overlay is the last place that can stop a name reaching the engine wire, where
 // only ids resolve.
@@ -815,8 +815,8 @@ func sourceIDSetTunable(key, unit string, def func(Defaults) string) tunable {
 // parseSourceIDSet parses a comma-separated source-id list into a de-duplicated,
 // ascending []int64. Surrounding whitespace on the whole value and on each token
 // is ignored; a blank value is the empty set. An empty token ("1,,2"), a
-// non-numeric token, or a negative id is an error — the caller wraps it with
-// ErrInvalidSetting and the key name. Shared by the tunable's validator and the
+// non-numeric token is an error — the caller wraps it with ErrInvalidSetting and
+// the key name. Shared by the tunable's validator and the
 // typed accessor so "what is a valid source-id set" is defined exactly once.
 func parseSourceIDSet(raw string) ([]int64, error) {
 	trimmed := strings.TrimSpace(raw)
@@ -828,8 +828,8 @@ func parseSourceIDSet(raw string) ([]int64, error) {
 	for _, tok := range strings.Split(trimmed, ",") {
 		tok = strings.TrimSpace(tok)
 		id, err := strconv.ParseInt(tok, 10, 64)
-		if err != nil || id < 0 {
-			return nil, fmt.Errorf("must be a comma-separated list of non-negative source ids (bad entry %q)", tok)
+		if err != nil {
+			return nil, fmt.Errorf("must be a comma-separated list of signed 64-bit source ids (bad entry %q)", tok)
 		}
 		if !seen[id] {
 			seen[id] = true
