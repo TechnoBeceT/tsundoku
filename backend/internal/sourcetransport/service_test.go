@@ -17,8 +17,6 @@ import (
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
-var errUnavailableSource = errors.New("live source catalog unavailable")
-
 type fakeCatalog struct{ err error }
 
 func (c fakeCatalog) RequireSource(context.Context, int64) error { return c.err }
@@ -450,14 +448,21 @@ func TestUpdateAbortsBeforePersistingWhenResolverRejectsExplicitReuse(t *testing
 
 func TestUpdateRejectsUnknownOrUnavailableCatalogWithoutPersisting(t *testing.T) {
 	ctx := context.Background()
-	for _, name := range []string{"unknown", "unavailable"} {
-		t.Run(name, func(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "unknown", err: errors.Join(sourcetransport.ErrSourceNotFound, errors.New("source 101 missing")), want: sourcetransport.ErrSourceNotFound},
+		{name: "unavailable", err: errors.Join(sourcetransport.ErrCatalogUnavailable, errors.New("dial tcp engine secret-host")), want: sourcetransport.ErrCatalogUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			client := testdb.New(t)
-			svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{err: errUnavailableSource})
+			svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{err: tc.err})
 
 			_, err := svc.Update(ctx, 101, sourcetransport.Patch{ReuseBypassSession: sourcetransport.Set(true)})
-			if !errors.Is(err, errUnavailableSource) {
-				t.Fatalf("Update error = %v, want source catalog error", err)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Update error = %v, want %v", err, tc.want)
 			}
 			if policies := client.SourceTransportPolicy.Query().CountX(ctx); policies != 0 {
 				t.Fatalf("policy rows = %d, want 0", policies)

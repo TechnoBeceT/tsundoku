@@ -113,14 +113,14 @@ type engineSourceCatalog struct {
 func (c engineSourceCatalog) RequireSource(ctx context.Context, sourceID int64) error {
 	sources, err := c.client.Sources(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("engine source catalog: %w: %w", sourcetransport.ErrCatalogUnavailable, err)
 	}
 	for _, source := range sources {
 		if source.ID == sourceID {
 			return nil
 		}
 	}
-	return fmt.Errorf("source %d is not installed", sourceID)
+	return fmt.Errorf("%w: source %d is not installed", sourcetransport.ErrSourceNotFound, sourceID)
 }
 
 func main() {

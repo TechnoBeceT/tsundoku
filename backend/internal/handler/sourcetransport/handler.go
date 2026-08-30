@@ -80,9 +80,9 @@ func mapServiceError(err error) error {
 	switch {
 	case errors.Is(err, transport.ErrInvalidPolicy):
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid source transport policy")
-	case errors.Is(err, sourceconfiguration.ErrSourceNotFound):
+	case errors.Is(err, transport.ErrSourceNotFound), errors.Is(err, sourceconfiguration.ErrSourceNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "source not found")
-	case errors.Is(err, sourceconfiguration.ErrCatalogUnavailable):
+	case errors.Is(err, transport.ErrCatalogUnavailable), errors.Is(err, sourceconfiguration.ErrCatalogUnavailable):
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "source catalog unavailable")
 	default:
 		return err

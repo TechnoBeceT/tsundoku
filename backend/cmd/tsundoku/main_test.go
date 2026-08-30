@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
+	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
 type runtimeRestoreFunc func(context.Context) error
@@ -18,6 +20,25 @@ func (f runtimeRestoreFunc) ReconcileRuntime(ctx context.Context) error { return
 type pendingRuntimeFunc func(context.Context) error
 
 func (f pendingRuntimeFunc) ReconcilePending(ctx context.Context) error { return f(ctx) }
+
+func TestEngineSourceCatalogClassifiesUnknownSourceAndCatalogOutage(t *testing.T) {
+	unknownClient := sourceenginefake.New(sourceenginefake.WithSources([]sourceengine.Source{{ID: 7, Name: "installed", Lang: "en"}}))
+	err := (engineSourceCatalog{client: unknownClient}).RequireSource(context.Background(), 8)
+	if !errors.Is(err, sourcetransport.ErrSourceNotFound) {
+		t.Fatalf("unknown source error = %v, want ErrSourceNotFound", err)
+	}
+
+	raw := errors.New("dial tcp engine secret-host")
+	unavailableClient := sourceenginefake.New(sourceenginefake.WithError("Sources", raw))
+	err = (engineSourceCatalog{client: unavailableClient}).RequireSource(context.Background(), 8)
+	if !errors.Is(err, sourcetransport.ErrCatalogUnavailable) || !errors.Is(err, raw) {
+		t.Fatalf("catalog outage error = %v, want ErrCatalogUnavailable wrapping raw cause", err)
+	}
+
+	if err := (engineSourceCatalog{client: unknownClient}).RequireSource(context.Background(), 7); err != nil {
+		t.Fatalf("installed source rejected: %v", err)
+	}
+}
 
 func TestRunSourceRuntimeReconcileRetriesGlobalAndSourceIntents(t *testing.T) {
 	var restoreCalls, globalCalls, sourceCalls int

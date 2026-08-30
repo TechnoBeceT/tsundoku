@@ -241,8 +241,8 @@ func TestTransportPatchMapsCanonicalErrorsWithoutRawDetails(t *testing.T) {
 		status  int
 		message string
 	}{
-		{err: errors.Join(sourceconfiguration.ErrSourceNotFound, errors.New("catalog detail")), status: http.StatusNotFound, message: "source not found"},
-		{err: errors.Join(sourceconfiguration.ErrCatalogUnavailable, errors.New("dial tcp secret-host")), status: http.StatusServiceUnavailable, message: "source catalog unavailable"},
+		{err: errors.Join(sourcetransport.ErrSourceNotFound, errors.New("catalog detail")), status: http.StatusNotFound, message: "source not found"},
+		{err: errors.Join(sourcetransport.ErrCatalogUnavailable, errors.New("dial tcp secret-host")), status: http.StatusServiceUnavailable, message: "source catalog unavailable"},
 		{err: errors.Join(sourcetransport.ErrInvalidPolicy, errors.New("selected session internal detail")), status: http.StatusBadRequest, message: "invalid source transport policy"},
 	}
 	for _, tc := range cases {

@@ -2,7 +2,17 @@ package sourcetransport
 
 import (
 	"context"
+	"errors"
 	"time"
+)
+
+var (
+	// ErrSourceNotFound reports that the requested source is absent from the
+	// current live engine catalog.
+	ErrSourceNotFound = errors.New("source not found")
+	// ErrCatalogUnavailable reports that the live installed-source catalog
+	// could not be loaded. Updates fail closed before policy or intent writes.
+	ErrCatalogUnavailable = errors.New("source catalog unavailable")
 )
 
 // ImageConnectionMode controls whether image requests use fresh or reused
