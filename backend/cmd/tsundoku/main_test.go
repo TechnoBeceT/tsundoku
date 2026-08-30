@@ -121,6 +121,33 @@ func (s closeSignal) Close() error {
 	return nil
 }
 
+type convergenceDeadlineRecorder struct{ bounded chan bool }
+
+func (r convergenceDeadlineRecorder) ShutdownRuntimeConvergence(ctx context.Context) error {
+	_, ok := ctx.Deadline()
+	r.bounded <- ok
+	return context.DeadlineExceeded
+}
+
+func TestGracefulShutdownBoundsConvergenceJoinAndKeepsDependenciesOpenOnTimeout(t *testing.T) {
+	bounded := make(chan bool, 1)
+	launcherClosed := make(chan struct{})
+	gracefulShutdown(
+		shutdownRecorder{steps: new([]string), step: "http"},
+		convergenceDeadlineRecorder{bounded: bounded},
+		shutdownRecorder{steps: new([]string), step: "runtime"},
+		closeSignal{closed: launcherClosed},
+	)
+	if !<-bounded {
+		t.Fatal("convergence shutdown context has no deadline")
+	}
+	select {
+	case <-launcherClosed:
+		t.Fatal("launcher closed after convergence join timed out")
+	default:
+	}
+}
+
 func TestGracefulShutdownAfterHTTPDrainTimeoutStillJoinsConvergenceBeforeClose(t *testing.T) {
 	convergenceEntered := make(chan struct{})
 	releaseConvergence := make(chan struct{})

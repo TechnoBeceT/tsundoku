@@ -418,7 +418,9 @@ func (h *Handler) captureInstallOrUpdate(ctx context.Context, pkgName string, ex
 			"pkg_name", pkgName)
 		return
 	}
-	enginetopo.OnExtensionInstalled(ctx, h.db, h.cache, h.httpGet, ext, h.retainedCount(ctx))
+	enginetopo.OnExtensionInstalled(ctx, h.db, h.cache, func(_ context.Context, url string) (*http.Response, error) {
+		return h.httpGet(url)
+	}, ext, h.retainedCount(ctx))
 }
 
 // findExtension returns the extension with the given pkgName from exts.

@@ -11,7 +11,38 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
+
+func TestUpdateEndpointRejectsClearingSelectedExplicitSession(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	in := flareInput("selected")
+	in.Session = "named"
+	endpoint, err := svc.CreateEndpoint(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.MustParse(endpoint.ID)
+	if _, err := svc.SetBinding(ctx, 77, network.BindingInput{FlareMode: network.FlareModeEndpoint, FlareEndpointID: &id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(77).SetReuseBypassSession(true).Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	blank := ""
+	if _, err := svc.UpdateEndpoint(ctx, id, network.EndpointPatch{Session: &blank}); !errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		t.Fatalf("UpdateEndpoint error = %v, want ErrInvalidSelection", err)
+	}
+	got, err := svc.ListEndpoints(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Session != "named" {
+		t.Fatalf("endpoint after rejected clear = %+v", got)
+	}
+}
 
 // socksInput returns a valid SOCKS endpoint input for the tests.
 func socksInput(name string) network.EndpointInput {

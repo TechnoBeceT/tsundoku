@@ -9,6 +9,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entbinding "github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 // ListBindings returns every per-source binding (ordered by source id). An empty
@@ -46,6 +47,26 @@ func (s *Service) GetBinding(ctx context.Context, sourceID int64) (BindingDTO, e
 // returns the persisted DTO (§16 round-trip). ErrInvalidBinding (→400) on a bad
 // reference or inconsistent mode.
 func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingDTO, error) {
+	if s.policyCoordinator == nil {
+		return s.setBinding(ctx, sourceID, in)
+	}
+	var result BindingDTO
+	err := s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
+		return runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{sourceID: {
+			FlareMode: in.FlareMode, FlareEndpointID: in.FlareEndpointID,
+		}}}, nil
+	}, func(ctx context.Context) error {
+		var err error
+		result, err = s.setBinding(ctx, sourceID, in)
+		return err
+	})
+	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		return BindingDTO{}, fmt.Errorf("%w: %w", ErrInvalidBinding, err)
+	}
+	return result, err
+}
+
+func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingDTO, error) {
 	if err := validateFlareMode(in.FlareMode, in.FlareEndpointID); err != nil {
 		return BindingDTO{}, err
 	}
@@ -65,6 +86,15 @@ func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInpu
 // ClearBinding removes a source's binding, reverting it to the global default.
 // ErrBindingNotFound (→404) when the source had no binding to clear.
 func (s *Service) ClearBinding(ctx context.Context, sourceID int64) error {
+	if s.policyCoordinator != nil {
+		return s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
+			return runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{sourceID: nil}}, nil
+		}, func(ctx context.Context) error { return s.clearBinding(ctx, sourceID) })
+	}
+	return s.clearBinding(ctx, sourceID)
+}
+
+func (s *Service) clearBinding(ctx context.Context, sourceID int64) error {
 	n, err := s.client.SourceNetworkBinding.Delete().
 		Where(entbinding.SourceID(sourceID)).
 		Exec(ctx)

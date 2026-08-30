@@ -57,6 +57,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/push"
 	"github.com/technobecet/tsundoku/internal/refresh"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/seriessync"
 	"github.com/technobecet/tsundoku/internal/server"
@@ -177,7 +178,9 @@ func main() {
 	// every consumer that reads a tunable at use-time (dispatcher retry policy,
 	// job tickers, refresh concurrency, series stale-grace) so an owner's change
 	// via the settings API applies on the next cycle without a restart.
-	settingsSvc := settings.NewService(entClient, defaultsFromConfig(cfg))
+	runtimeDefaults := defaultsFromConfig(cfg)
+	policyCoordinator := runtimepolicy.New(entClient, runtimeDefaults.FlareSolverrSessionName)
+	settingsSvc := settings.NewService(entClient, runtimeDefaults).WithRuntimePolicyCoordinator(policyCoordinator)
 	sourceThroughputSvc := sourcethroughput.NewService(entClient, settingsSvc)
 
 	// Source-performance metrics store (best-effort recorder + reader). The
@@ -336,16 +339,17 @@ func main() {
 	engineFetcher := sourceengine.NewFetcher(engineClient, stagingRoot, sourceThroughputSvc)
 
 	// Network-routing domain service (DB-truth: endpoints + bindings). Read by
-	// ReconcileNetwork to derive the profiles; a stateless second instance is
-	// safe (mirrors healthSvc), so the HTTP handler keeps constructing its own.
-	networkSvc := network.NewService(entClient)
+	// ReconcileNetwork to derive profiles. The server's handler-side instance is
+	// wired to this same policy coordinator through settingsSvc, so every
+	// authoritative endpoint/routing/session mutation shares one boundary.
+	networkSvc := network.NewService(entClient).WithRuntimePolicyCoordinator(policyCoordinator)
 	sourceTransportSvc := sourcetransport.NewService(
 		entClient,
 		sourceTransportDefaults{
 			sessions: enginetopo.NewSessionPolicyResolver(networkSvc, settingsSvc),
 		},
 		engineSourceCatalog{client: engineClient},
-	)
+	).WithRuntimePolicyCoordinator(policyCoordinator)
 
 	// Shared extension-.apk byte cache (rooted under the engine runtime dir).
 	// Constructed ONCE here and handed to BOTH the boot-time engine-topology seed
@@ -505,7 +509,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, runtimeApplier, netReconcile, runtimeReconcile)
+	startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -624,17 +628,28 @@ func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdown
 	// and join complete settings/source/startup/network tails before dependencies
 	// disappear. New post-timeout handler admissions now fail fast and leave their
 	// durable revision pending.
-	if err := convergence.ShutdownRuntimeConvergence(context.Background()); err != nil {
+	convergenceCtx, cancelConvergence := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := convergence.ShutdownRuntimeConvergence(convergenceCtx); err != nil {
 		log.Printf("tsundoku: runtime convergence shutdown: %v", err)
+		cancelConvergence()
+		// An active convergence call may still hold the launcher or database.
+		// Leave dependencies open rather than racing their use; process exit will
+		// reclaim them after this bounded shutdown attempt returns.
+		return
 	}
+	cancelConvergence()
 
 	// The retry generation's cancellation contract is itself bounded: external
 	// calls receive its canceled context and failure metadata has a one-second
 	// detached cap. Join unconditionally so launcher/database teardown can never
 	// race that tail.
-	if err := runner.ShutdownRuntimeRetry(context.Background()); err != nil {
+	retryCtx, cancelRetry := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := runner.ShutdownRuntimeRetry(retryCtx); err != nil {
 		log.Printf("tsundoku: runtime retry shutdown: %v", err)
+		cancelRetry()
+		return
 	}
+	cancelRetry()
 
 	if err := engineHostLauncher.Close(); err != nil {
 		log.Printf("tsundoku: engine-host launcher close: %v", err)
@@ -756,6 +771,7 @@ func startEngine(
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	httpClient *http.Client,
 	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
@@ -772,7 +788,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, runtimeLifecycle, netReconcile, runtimeReconcile)
+	startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -818,6 +834,7 @@ func startEngineTopo(
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
 	settingsSvc *settings.Service,
+	httpClient *http.Client,
 	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
 	runtimeReconcile func(context.Context),
@@ -831,10 +848,16 @@ func startEngineTopo(
 			runtime: runtimeReconcile,
 			seed: func(ctx context.Context) {
 				enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-					Client:   engineClient,
-					DB:       entClient,
-					Cache:    apkStore,
-					HTTPGet:  http.Get,
+					Client: engineClient,
+					DB:     entClient,
+					Cache:  apkStore,
+					HTTPGet: func(ctx context.Context, url string) (*http.Response, error) {
+						req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+						if err != nil {
+							return nil, err
+						}
+						return httpClient.Do(req)
+					},
 					Retained: settingsSvc.RetainedVersions,
 				})
 			},

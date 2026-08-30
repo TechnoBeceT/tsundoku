@@ -425,7 +425,10 @@ func registerRoutes(
 	// best-effort write-through that re-derives the engine-host routing profiles
 	// (enginetopo.ReconcileNetwork) after every mutation so a binding change
 	// takes effect promptly, not only on the next boot (nil = DB-truth only).
-	networkH := networkh.NewHandler(networksvc.NewService(client), onNetworkChange)
+	networkH := networkh.NewHandler(
+		networksvc.NewService(client).WithRuntimePolicyCoordinator(settingsSvc.RuntimePolicyCoordinator()),
+		onNetworkChange,
+	)
 	authed.GET("/network/endpoints", networkH.ListEndpoints)
 	authed.POST("/network/endpoints", networkH.CreateEndpoint)
 	authed.PATCH("/network/endpoints/:id", networkH.UpdateEndpoint)

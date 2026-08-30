@@ -42,9 +42,10 @@ type SeedDeps struct {
 	// Cache is the SHARED apk byte cache (constructed once in main.go and also
 	// held by the /internal apk-serving handler) SeedExtensions caches into.
 	Cache *apkcache.Store
-	// HTTPGet fetches repo indexes + .apk bytes for SeedExtensions (http.Get in
-	// production; a stub in tests).
-	HTTPGet func(url string) (*http.Response, error)
+	// HTTPGet fetches repo indexes + .apk bytes for SeedExtensions. Production
+	// binds each request to the convergence context and the configured engine
+	// HTTP timeout; tests provide deterministic context-aware stubs.
+	HTTPGet func(context.Context, string) (*http.Response, error)
 	// Retained resolves the apk-cache rollback-history depth
 	// (extensions.retained_versions) at seed time — how many .apk versions per
 	// extension SeedExtensions keeps after caching a new one. Nil ⇒ the built-in

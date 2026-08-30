@@ -64,7 +64,7 @@ func SeedExtensions(
 	client sourceengine.Client,
 	db *ent.Client,
 	cache *apkcache.Store,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	retainedFn func(context.Context) int,
 ) (Result, error) {
 	var res Result
@@ -88,7 +88,7 @@ func SeedExtensions(
 		return res, fmt.Errorf("enginetopo.SeedExtensions: list extensions: %w", err)
 	}
 
-	indexes := newIndexResolver(httpGet)
+	indexes := newIndexResolver(ctx, httpGet)
 	for _, ext := range exts {
 		if !ext.IsInstalled {
 			continue
@@ -137,7 +137,7 @@ func seedOneExtension(
 	db *ent.Client,
 	cache *apkcache.Store,
 	indexes *indexResolver,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	ext sourceengine.Extension,
 	retained int,
 ) (cached bool, err error) {
@@ -176,11 +176,11 @@ func RecordInstalledExtension(
 	ctx context.Context,
 	db *ent.Client,
 	cache *apkcache.Store,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	ext sourceengine.Extension,
 	retained int,
 ) error {
-	return recordInstalledExtension(ctx, db, cache, newIndexResolver(httpGet), httpGet, ext, retained)
+	return recordInstalledExtension(ctx, db, cache, newIndexResolver(ctx, httpGet), httpGet, ext, retained)
 }
 
 // recordInstalledExtension is the resolver-injected caching core shared by the
@@ -195,7 +195,7 @@ func recordInstalledExtension(
 	db *ent.Client,
 	cache *apkcache.Store,
 	indexes *indexResolver,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	ext sourceengine.Extension,
 	retained int,
 ) error {
@@ -205,7 +205,7 @@ func recordInstalledExtension(
 		return err
 	}
 
-	sha, err := downloadAndCache(cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
+	sha, err := downloadAndCache(ctx, cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
 	if err != nil {
 		return err
 	}
@@ -277,13 +277,14 @@ func (c *cappedReader) Read(p []byte) (int, error) {
 // partial apk is cached — cache.Put drops its temp file on the read error) rather
 // than filling the cache volume.
 func downloadAndCache(
+	ctx context.Context,
 	cache *apkcache.Store,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	apkURL, pkgName string,
 	version int,
 	maxBytes int64,
 ) (string, error) {
-	resp, err := httpGet(apkURL)
+	resp, err := httpGet(ctx, apkURL)
 	if err != nil {
 		return "", fmt.Errorf("download apk %q: %w", apkURL, err)
 	}
@@ -477,13 +478,14 @@ type indexResult struct {
 // extension's .apk download URL + version from them, mirroring engine-host's URL
 // scheme.
 type indexResolver struct {
-	httpGet func(url string) (*http.Response, error)
+	ctx     context.Context
+	httpGet func(context.Context, string) (*http.Response, error)
 	byRepo  map[string]indexResult
 }
 
 // newIndexResolver builds an indexResolver over httpGet.
-func newIndexResolver(httpGet func(url string) (*http.Response, error)) *indexResolver {
-	return &indexResolver{httpGet: httpGet, byRepo: make(map[string]indexResult)}
+func newIndexResolver(ctx context.Context, httpGet func(context.Context, string) (*http.Response, error)) *indexResolver {
+	return &indexResolver{ctx: ctx, httpGet: httpGet, byRepo: make(map[string]indexResult)}
 }
 
 // resolve returns the .apk download URL AND the version code for pkgName within
@@ -513,15 +515,15 @@ func (r *indexResolver) entriesFor(repoURL string) ([]repoIndexEntry, error) {
 	if cached, ok := r.byRepo[repoURL]; ok {
 		return cached.entries, cached.err
 	}
-	entries, err := fetchIndex(r.httpGet, repoURL)
+	entries, err := fetchIndex(r.ctx, r.httpGet, repoURL)
 	r.byRepo[repoURL] = indexResult{entries: entries, err: err}
 	return entries, err
 }
 
 // fetchIndex GETs and decodes a repo's index.min.json.
-func fetchIndex(httpGet func(url string) (*http.Response, error), repoURL string) ([]repoIndexEntry, error) {
+func fetchIndex(ctx context.Context, httpGet func(context.Context, string) (*http.Response, error), repoURL string) ([]repoIndexEntry, error) {
 	indexURL := indexURLFor(repoURL)
-	resp, err := httpGet(indexURL)
+	resp, err := httpGet(ctx, indexURL)
 	if err != nil {
 		return nil, fmt.Errorf("fetch repo index %q: %w", indexURL, err)
 	}

@@ -50,7 +50,7 @@ func OnExtensionInstalled(
 	ctx context.Context,
 	db *ent.Client,
 	cache *apkcache.Store,
-	httpGet func(url string) (*http.Response, error),
+	httpGet func(context.Context, string) (*http.Response, error),
 	ext sourceengine.Extension,
 	retained int,
 ) {

@@ -39,7 +39,7 @@ type stubHTTP struct {
 	calls  int
 }
 
-func (h *stubHTTP) get(url string) (*http.Response, error) {
+func (h *stubHTTP) get(_ context.Context, url string) (*http.Response, error) {
 	h.mu.Lock()
 	h.calls++
 	h.mu.Unlock()

@@ -2,21 +2,31 @@ package sourcetransport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"golang.org/x/sync/semaphore"
 )
 
 // Service persists and resolves per-source transport policy and runtime intent.
 type Service struct {
-	client   *ent.Client
-	defaults Defaults
-	catalog  SourceCatalog
-	applier  RuntimeApplier
-	applySem *semaphore.Weighted
+	client            *ent.Client
+	defaults          Defaults
+	catalog           SourceCatalog
+	applier           RuntimeApplier
+	applySem          *semaphore.Weighted
+	policyCoordinator *runtimepolicy.Coordinator
+}
+
+// WithRuntimePolicyCoordinator joins source-policy mutations to the shared
+// selected-session invariant boundary.
+func (s *Service) WithRuntimePolicyCoordinator(c *runtimepolicy.Coordinator) *Service {
+	s.policyCoordinator = c
+	return s
 }
 
 // NewService constructs a source transport service.
@@ -41,6 +51,11 @@ func (s *Service) Resolve(ctx context.Context, sourceID int64) (Effective, error
 
 // Snapshot loads all persisted source overrides in one query.
 func (s *Service) Snapshot(ctx context.Context) (map[int64]Override, error) {
+	if s.policyCoordinator != nil {
+		if err := s.policyCoordinator.ValidateCurrent(ctx); err != nil {
+			return nil, fmt.Errorf("sourcetransport.Snapshot: %w", err)
+		}
+	}
 	rows, err := s.client.SourceTransportPolicy.Query().All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("sourcetransport.Snapshot: query policies: %w", err)
@@ -55,6 +70,31 @@ func (s *Service) Snapshot(ctx context.Context) (map[int64]Override, error) {
 // Update validates the live source before beginning its transaction, then
 // mutates policy and advances desired runtime intent atomically.
 func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (UpdateResult, error) {
+	if s.policyCoordinator == nil || patch.ReuseBypassSession.Operation == PatchKeep {
+		return s.update(ctx, sourceID, patch)
+	}
+	var result UpdateResult
+	var updateErr error
+	err := s.policyCoordinator.MutateDynamic(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
+		stored, err := s.loadOverride(ctx, sourceID)
+		if err != nil {
+			return runtimepolicy.Proposal{}, err
+		}
+		return runtimepolicy.Proposal{Policies: map[int64]*bool{sourceID: applyPatch(stored, patch).ReuseBypassSession}}, nil
+	}, func(ctx context.Context) error {
+		result, updateErr = s.update(ctx, sourceID, patch)
+		return updateErr
+	})
+	if err != nil {
+		if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+			return result, fmt.Errorf("%w: %w", ErrInvalidPolicy, err)
+		}
+		return result, fmt.Errorf("sourcetransport.Update: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Service) update(ctx context.Context, sourceID int64, patch Patch) (UpdateResult, error) {
 	if err := validatePatch(patch); err != nil {
 		return UpdateResult{}, err
 	}

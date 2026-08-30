@@ -16,9 +16,11 @@
 package network
 
 import (
+	"context"
 	"errors"
 
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 // KindSocks / KindFlareSolverr are the two NetworkEndpoint kinds.
@@ -63,7 +65,22 @@ var ErrBindingNotFound = errors.New("network binding not found")
 // NetworkEndpoint + SourceNetworkBinding tables. It is stateless beyond the Ent
 // client and makes no engine calls.
 type Service struct {
-	client *ent.Client
+	client            *ent.Client
+	policyCoordinator *runtimepolicy.Coordinator
+}
+
+// WithRuntimePolicyCoordinator joins endpoint and routing writes to the shared
+// selected-session invariant boundary.
+func (s *Service) WithRuntimePolicyCoordinator(c *runtimepolicy.Coordinator) *Service {
+	s.policyCoordinator = c
+	return s
+}
+
+func (s *Service) mutate(ctx context.Context, proposal func(context.Context) (runtimepolicy.Proposal, error), commit func(context.Context) error) error {
+	if s.policyCoordinator == nil {
+		return commit(ctx)
+	}
+	return s.policyCoordinator.MutateDynamic(ctx, proposal, commit)
 }
 
 // NewService constructs a Service over the given Ent client.

@@ -6,14 +6,68 @@ package enginetopo
 // the JVM — just an in-memory apk cache and a stub httpGet.
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 )
+
+func TestFetchIndexCancellationInterruptsStalledHeaders(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := fetchIndex(ctx, func(callCtx context.Context, _ string) (*http.Response, error) {
+			close(started)
+			<-callCtx.Done()
+			return nil, callCtx.Err()
+		}, "https://repo.test")
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("fetchIndex error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fetchIndex did not stop after cancellation")
+	}
+}
+
+type cancellationBody struct{ ctx context.Context }
+
+func (b cancellationBody) Read([]byte) (int, error) { <-b.ctx.Done(); return 0, b.ctx.Err() }
+func (cancellationBody) Close() error               { return nil }
+
+func TestDownloadAndCacheCancellationInterruptsStalledBody(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, err := downloadAndCache(ctx, apkcache.New(t.TempDir()), func(callCtx context.Context, _ string) (*http.Response, error) {
+			close(started)
+			return &http.Response{StatusCode: http.StatusOK, Body: cancellationBody{ctx: callCtx}}, nil
+		}, "https://repo.test/a.apk", "pkg", 1, 1024)
+		done <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("downloadAndCache error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("downloadAndCache did not stop after cancellation")
+	}
+}
 
 // TestCappedReader_ErrorsPastCapWithoutTruncating proves the reader surfaces
 // errAPKTooLarge once its cap is exceeded (fail-clean), while a stream exactly AT
@@ -116,7 +170,7 @@ func TestDownloadAndCache_OversizedBodyErrorsAndCachesNothing(t *testing.T) {
 	cache := apkcache.New(t.TempDir())
 	const apkURL = "https://repo.test/repo/apk/huge.apk"
 
-	httpGet := func(string) (*http.Response, error) {
+	httpGet := func(context.Context, string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(strings.Repeat("A", 100))),
@@ -124,7 +178,7 @@ func TestDownloadAndCache_OversizedBodyErrorsAndCachesNothing(t *testing.T) {
 	}
 
 	// A 10-byte cap against a 100-byte body must fail.
-	if _, err := downloadAndCache(cache, httpGet, apkURL, "pkg.huge", 1, 10); err == nil {
+	if _, err := downloadAndCache(context.Background(), cache, httpGet, apkURL, "pkg.huge", 1, 10); err == nil {
 		t.Fatal("downloadAndCache: want error for an oversized body, got nil")
 	}
 	if cache.Exists("pkg.huge", 1) {

@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entendpoint "github.com/technobecet/tsundoku/internal/ent/networkendpoint"
 	entbinding "github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 // ListEndpoints returns every network endpoint ordered by name (passwords
@@ -31,6 +33,24 @@ func (s *Service) ListEndpoints(ctx context.Context) ([]EndpointDTO, error) {
 // CreateEndpoint validates in by kind and creates the endpoint, returning the
 // persisted DTO (§16 round-trip). ErrInvalidEndpoint (→400) on bad fields.
 func (s *Service) CreateEndpoint(ctx context.Context, in EndpointInput) (EndpointDTO, error) {
+	if s.policyCoordinator != nil {
+		var result EndpointDTO
+		id := uuid.New()
+		err := s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
+			return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: {
+				Kind: in.Kind, Session: in.Session, Enabled: in.Enabled,
+			}}}, nil
+		}, func(ctx context.Context) error {
+			var err error
+			result, err = s.createEndpoint(ctx, in)
+			return err
+		})
+		return result, err
+	}
+	return s.createEndpoint(ctx, in)
+}
+
+func (s *Service) createEndpoint(ctx context.Context, in EndpointInput) (EndpointDTO, error) {
 	if err := validateEndpoint(in); err != nil {
 		return EndpointDTO{}, err
 	}
@@ -62,6 +82,34 @@ func (s *Service) CreateEndpoint(ctx context.Context, in EndpointInput) (Endpoin
 // ErrEndpointNotFound (→404) on a missing id; ErrInvalidEndpoint (→400) on bad
 // merged fields.
 func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointDTO, error) {
+	if s.policyCoordinator == nil {
+		return s.updateEndpoint(ctx, id, patch)
+	}
+	var result EndpointDTO
+	err := s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
+		row, err := s.endpointByID(ctx, id)
+		if err != nil {
+			return runtimepolicy.Proposal{}, err
+		}
+		merged := applyPatch(row, patch)
+		if err := validateEndpoint(merged); err != nil {
+			return runtimepolicy.Proposal{}, err
+		}
+		return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: {
+			Kind: merged.Kind, Session: merged.Session, Enabled: merged.Enabled,
+		}}}, nil
+	}, func(ctx context.Context) error {
+		var err error
+		result, err = s.updateEndpoint(ctx, id, patch)
+		return err
+	})
+	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		return EndpointDTO{}, fmt.Errorf("%w: %w", ErrInvalidEndpoint, err)
+	}
+	return result, err
+}
+
+func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch EndpointPatch) (EndpointDTO, error) {
 	row, err := s.endpointByID(ctx, id)
 	if err != nil {
 		return EndpointDTO{}, err
@@ -101,6 +149,21 @@ func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 // blocked with ErrEndpointInUse (→409, owner-safety bias) whose message lists
 // the referencing source ids. ErrEndpointNotFound (→404) on a missing id.
 func (s *Service) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
+	if s.policyCoordinator != nil {
+		return s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
+			row, err := s.endpointByID(ctx, id)
+			if err != nil {
+				return runtimepolicy.Proposal{}, err
+			}
+			return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: {
+				Kind: row.Kind, Session: row.Session, Enabled: row.Enabled,
+			}}}, nil
+		}, func(ctx context.Context) error { return s.deleteEndpoint(ctx, id) })
+	}
+	return s.deleteEndpoint(ctx, id)
+}
+
+func (s *Service) deleteEndpoint(ctx context.Context, id uuid.UUID) error {
 	if _, err := s.endpointByID(ctx, id); err != nil {
 		return err
 	}

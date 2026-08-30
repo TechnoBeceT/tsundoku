@@ -13,9 +13,40 @@ import (
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/ent"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/settings"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
 )
+
+func TestSetManyRejectsGlobalSessionClearWithoutChangingSettingOrIntent(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	plain := settings.NewService(client, testDefaults())
+	if err := plain.Set(ctx, settings.KeyFlareSolverrSessionName, "named"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(42).SetReuseBypassSession(true).Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before, err := plain.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := settings.NewService(client, testDefaults()).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	if err := svc.Set(ctx, settings.KeyFlareSolverrSessionName, ""); !errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		t.Fatalf("Set error = %v, want ErrInvalidSelection", err)
+	}
+	if got := svc.FlareSolverrSessionName(ctx); got != "named" {
+		t.Fatalf("session = %q, want named", got)
+	}
+	after, err := svc.RuntimeIntent(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.DesiredRevision != before.DesiredRevision {
+		t.Fatalf("desired revision = %d, want unchanged %d", after.DesiredRevision, before.DesiredRevision)
+	}
+}
 
 type runtimeConvergerFunc func(context.Context) error
 

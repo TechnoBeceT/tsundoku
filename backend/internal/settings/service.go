@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entsettings "github.com/technobecet/tsundoku/internal/ent/settings"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -18,11 +20,23 @@ import (
 // Ent client is safe for concurrent use, so the typed accessors are safe to call
 // from the ticker + dispatcher goroutines without extra locking.
 type Service struct {
-	client           *ent.Client
-	defaults         Defaults
-	runtimeConverger RuntimeConverger
-	runtimeApplySem  *semaphore.Weighted
+	client            *ent.Client
+	defaults          Defaults
+	runtimeConverger  RuntimeConverger
+	runtimeApplySem   *semaphore.Weighted
+	policyCoordinator *runtimepolicy.Coordinator
 }
+
+// WithRuntimePolicyCoordinator joins global-session writes to the shared
+// selected-session invariant boundary.
+func (s *Service) WithRuntimePolicyCoordinator(c *runtimepolicy.Coordinator) *Service {
+	s.policyCoordinator = c
+	return s
+}
+
+// RuntimePolicyCoordinator exposes the construction-time shared boundary to
+// sibling runtime-setting services wired by the server composition root.
+func (s *Service) RuntimePolicyCoordinator() *runtimepolicy.Coordinator { return s.policyCoordinator }
 
 // RuntimeConverger restores the complete persisted engine runtime config for a
 // durable global intent. The implementation owns engine lifecycle
@@ -377,6 +391,33 @@ func (s *Service) Set(ctx context.Context, key, value string) error {
 // After commit it attempts one best-effort full convergence; failure remains
 // pending for a bounded retry and never rolls back durable settings.
 func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
+	if s.policyCoordinator == nil {
+		return s.setMany(ctx, updates)
+	}
+	var proposed *string
+	for _, update := range updates {
+		if update.Key != KeyFlareSolverrSessionName {
+			continue
+		}
+		canonical, err := tunables[update.Key].validate(update.Value)
+		if err != nil {
+			return err
+		}
+		proposed = &canonical
+	}
+	if proposed == nil {
+		return s.setMany(ctx, updates)
+	}
+	err := s.policyCoordinator.Mutate(ctx, runtimepolicy.Proposal{GlobalSession: proposed}, func(ctx context.Context) error {
+		return s.setMany(ctx, updates)
+	})
+	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		return fmt.Errorf("%w: %w", ErrInvalidSetting, err)
+	}
+	return err
+}
+
+func (s *Service) setMany(ctx context.Context, updates []KeyValue) error {
 	type canonical struct{ key, value string }
 	pending := make([]canonical, 0, len(updates))
 	runtimeChanged := false
