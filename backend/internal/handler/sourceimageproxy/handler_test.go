@@ -132,6 +132,33 @@ func TestImageProxyUpdateRejectsMalformedBoundaryInput(t *testing.T) {
 	}
 }
 
+func TestImageProxyUpdateRejectsOutOfContractSourceIDGrammar(t *testing.T) {
+	for _, target := range []string{
+		"/api/sources/+42/image-proxy",
+		"/api/sources/%2042%20/image-proxy",
+	} {
+		env := newHandlerEnv(t)
+		rec := env.do(target, `{"enabled":true}`, true)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("PUT %s: status = %d (%s), want 400", target, rec.Code, rec.Body.String())
+		}
+		if env.updater.called {
+			t.Errorf("PUT %s reached service with source id %d", target, env.updater.gotID)
+		}
+	}
+}
+
+func TestImageProxyUpdateRequiresExactEnabledPropertyName(t *testing.T) {
+	env := newHandlerEnv(t)
+	rec := env.do("/api/sources/42/image-proxy", `{"Enabled":true}`, true)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("capitalized property status = %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+	if env.updater.called {
+		t.Fatal("capitalized property reached service")
+	}
+}
+
 func TestImageProxyUpdateMapsSourceAndCatalogErrorsWithoutLeakingDetail(t *testing.T) {
 	cases := []struct {
 		err     error
