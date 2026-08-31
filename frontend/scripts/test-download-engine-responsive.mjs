@@ -77,6 +77,10 @@ async function measure(width) {
   await command('Page.navigate', { url: `${storyUrl}&viewport=${width}` })
   await loaded
   await poll(`Boolean(document.querySelector('[data-testid="download-engine-pane"]'))`)
+  await command('Runtime.evaluate', {
+    expression: `document.querySelector('[role="tab"][aria-controls="download-engine-routing"]')?.click()`,
+  })
+  await poll(`!document.querySelector('#download-engine-routing').hidden`)
 
   const evaluation = await command('Runtime.evaluate', {
     expression: `(() => {
@@ -85,6 +89,8 @@ async function measure(width) {
         scrollWidth: element.scrollWidth,
       })
       const pane = document.querySelector('[data-testid="download-engine-pane"]')
+      const tablist = pane.querySelector('[role="tablist"]')
+      const tabs = [...tablist.querySelectorAll('[role="tab"]')]
       const routing = document.querySelector('#download-engine-routing')
       const card = routing.querySelector('.surface-card')
       const endpointRows = [...routing.querySelectorAll('.ep-row')]
@@ -114,6 +120,13 @@ async function measure(width) {
         document: size(document.documentElement),
         body: size(document.body),
         pane: size(pane),
+        tablist: size(tablist),
+        tabs: tabs.map(tab => ({
+          ...size(tab),
+          label: tab.textContent.trim(),
+          whiteSpace: getComputedStyle(tab).whiteSpace,
+          textOverflow: getComputedStyle(tab).textOverflow,
+        })),
         routing: size(routing),
         card: size(card),
         endpointRows: endpointRows.map(size),
@@ -129,7 +142,7 @@ async function measure(width) {
 
 function assertFits(dimensions) {
   const failures = []
-  for (const key of ['document', 'body', 'pane', 'routing', 'card']) {
+  for (const key of ['document', 'body', 'pane', 'tablist', 'routing', 'card']) {
     const box = dimensions[key]
     if (box.scrollWidth > box.clientWidth) {
       failures.push(`${key} ${box.clientWidth}/${box.scrollWidth}`)
@@ -138,6 +151,11 @@ function assertFits(dimensions) {
   dimensions.endpointRows.forEach((box, index) => {
     if (box.scrollWidth > box.clientWidth) {
       failures.push(`endpointRows[${index}] ${box.clientWidth}/${box.scrollWidth}`)
+    }
+  })
+  dimensions.tabs.forEach((tab, index) => {
+    if (!tab.label || tab.scrollWidth > tab.clientWidth || tab.textOverflow === 'ellipsis') {
+      failures.push(`tabs[${index}] does not keep its label readable`)
     }
   })
   if (dimensions.viewport === 375) {

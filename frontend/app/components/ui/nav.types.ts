@@ -5,11 +5,13 @@
  */
 
 /** One tab in a `SegmentedTabs` bar: a stable `key` (the emitted value), a human
- *  `label`, and an optional `count` rendered as a trailing pill. */
+ *  `label`, an optional `count`, and optional tab/panel IDs for ARIA linkage. */
 export interface TabItem {
   key: string
   label: string
   count?: number
+  id?: string
+  panelId?: string
 }
 
 /** One step in a `Stepper`: a stable `key` (matched against the active

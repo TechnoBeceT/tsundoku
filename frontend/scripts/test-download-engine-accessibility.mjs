@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const storybookUrl = process.env.STORYBOOK_URL ?? 'http://127.0.0.1:6006'
-const storyUrl = `${storybookUrl}/iframe.html?id=settings-downloadenginepane--desktop&viewMode=story`
+const storyUrl = `${storybookUrl}/iframe.html?id=settings-downloadenginepane--source-exceptions&viewMode=story`
 const chromiumPath = process.env.CHROMIUM_PATH ?? '/usr/bin/chromium'
 const profile = await mkdtemp(join(process.env.TMPDIR ?? tmpdir(), 'tsundoku-accessibility-'))
 
@@ -154,20 +154,57 @@ try {
   await loaded
   await poll(`Boolean(document.querySelector('[data-testid="download-engine-pane"]'))`)
 
-  const opened = await command('Runtime.evaluate', {
-    expression: `(() => {
-      const toggle = document.querySelector('.advanced__toggle')
-      if (!toggle) return false
-      toggle.click()
-      return true
+  const tabContract = await command('Runtime.evaluate', {
+    expression: `(async () => {
+      const tablist = document.querySelector('[role="tablist"][aria-label="Download engine sections"]')
+      const tabs = [...(tablist?.querySelectorAll('[role="tab"]') ?? [])]
+      const panels = [...document.querySelectorAll('[role="tabpanel"]')]
+      if (tabs.length !== 5 || panels.length !== 5) return { valid: false, reason: 'expected five linked tabs and panels' }
+      const linked = tabs.every(tab => {
+        const panel = document.getElementById(tab.getAttribute('aria-controls'))
+        return panel?.getAttribute('aria-labelledby') === tab.id
+      })
+      tabs[0].focus()
+      tabs[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      const wrapped = document.activeElement === tabs[4] && tabs[4].getAttribute('aria-selected') === 'true'
+      tabs[4].dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      const homed = document.activeElement === tabs[0] && tabs[0].getAttribute('aria-selected') === 'true'
+      return { valid: linked && wrapped && homed, linked, wrapped, homed }
     })()`,
     returnByValue: true,
+    awaitPromise: true,
   })
-  if (!opened.result.value) throw new Error('Advanced capacity toggle is missing')
-  await poll(`document.querySelectorAll('#download-engine-scheduling input[type="number"]').length === 8`)
+  if (!tabContract.result.value.valid) {
+    throw new Error(`Invalid tab contract: ${JSON.stringify(tabContract.result.value)}`)
+  }
 
-  const { nodes } = await command('Accessibility.getFullAXTree')
-  const controls = nodes.filter(node => !node.ignored && formControlRoles.has(node.role?.value))
+  const controls = []
+  for (const panelId of [
+    'download-engine-scheduling',
+    'download-engine-protection',
+    'download-engine-access',
+    'download-engine-routing',
+    'download-engine-source-exceptions',
+  ]) {
+    const activated = await command('Runtime.evaluate', {
+      expression: `(() => {
+        const tab = document.querySelector('[role="tab"][aria-controls="${panelId}"]')
+        if (!tab) return false
+        tab.click()
+        if ('${panelId}' === 'download-engine-scheduling') document.querySelector('.advanced__toggle')?.click()
+        return true
+      })()`,
+      returnByValue: true,
+    })
+    if (!activated.result.value) throw new Error(`Tab for ${panelId} is missing`)
+    await poll(`!document.querySelector('#${panelId}').hidden`)
+    if (panelId === 'download-engine-scheduling') {
+      await poll(`document.querySelectorAll('#download-engine-scheduling input[type="number"]').length === 8`)
+    }
+    const { nodes } = await command('Accessibility.getFullAXTree')
+    controls.push(...nodes.filter(node => !node.ignored && formControlRoles.has(node.role?.value)))
+  }
   const unnamed = controls.filter(node => !(node.name?.value ?? '').trim())
   const durationUnitNames = controls
     .filter(node => node.role?.value === 'combobox' && (node.name?.value ?? '').endsWith(' unit'))

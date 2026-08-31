@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import DurationInput from '../ui/DurationInput.vue'
 import SaveFooter from '../ui/SaveFooter.vue'
+import SegmentedTabs from '../ui/SegmentedTabs.vue'
 import SurfaceCard from '../ui/SurfaceCard.vue'
 import TextField from '../ui/TextField.vue'
 import NetworkPane from './NetworkPane.vue'
@@ -106,12 +107,31 @@ const emit = defineEmits<{
 }>()
 
 const sectionLinks = [
-  { id: 'download-engine-scheduling', label: 'Scheduling' },
-  { id: 'download-engine-protection', label: 'Protection' },
-  { id: 'download-engine-access', label: 'Access & bypass' },
-  { id: 'download-engine-routing', label: 'Routing' },
-  { id: 'download-engine-source-exceptions', label: 'Source exceptions' },
+  { key: 'download-engine-scheduling', label: 'Scheduling', id: 'download-engine-scheduling-tab', panelId: 'download-engine-scheduling' },
+  { key: 'download-engine-protection', label: 'Protection', id: 'download-engine-protection-tab', panelId: 'download-engine-protection' },
+  { key: 'download-engine-access', label: 'Access & bypass', id: 'download-engine-access-tab', panelId: 'download-engine-access' },
+  { key: 'download-engine-routing', label: 'Routing', id: 'download-engine-routing-tab', panelId: 'download-engine-routing' },
+  { key: 'download-engine-source-exceptions', label: 'Source exceptions', id: 'download-engine-source-exceptions-tab', panelId: 'download-engine-source-exceptions' },
 ] as const
+const sourceExceptionsSectionId = sectionLinks[4].key
+const activeSectionId = ref<string>(sectionLinks[0].key)
+const sourceExceptionsPanel = ref<HTMLElement | null>(null)
+
+watch(
+  () => [props.selectedSourceId, props.highlightedSourceId, props.highlightedSetting] as const,
+  ([selectedSourceId, highlightedSourceId, highlightedSetting]) => {
+    if (selectedSourceId || highlightedSourceId || highlightedSetting) {
+      activeSectionId.value = sourceExceptionsSectionId
+    }
+  },
+  { flush: 'sync', immediate: true },
+)
+
+async function showSourceExceptions(): Promise<void> {
+  activeSectionId.value = sourceExceptionsSectionId
+  await nextTick()
+  sourceExceptionsPanel.value?.focus()
+}
 
 const cloneLibrary = (library: LibrarySettings): LibrarySettings => ({
   refreshInterval: { ...library.refreshInterval },
@@ -175,15 +195,15 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
     </header>
 
     <div class="download-engine__layout">
-      <nav class="section-spine" data-testid="engine-section-nav" aria-label="Download engine sections">
-        <a v-for="link in sectionLinks" :key="link.id" :href="`#${link.id}`">
-          <span aria-hidden="true" />
-          {{ link.label }}
-        </a>
-      </nav>
+      <SegmentedTabs
+        v-model="activeSectionId"
+        data-testid="engine-section-nav"
+        :tabs="sectionLinks"
+        accessible-label="Download engine sections"
+      />
 
       <div class="download-engine__sections">
-        <section id="download-engine-scheduling" class="engine-section" data-engine-section aria-labelledby="download-engine-scheduling-title">
+        <section v-show="activeSectionId === sectionLinks[0].key" id="download-engine-scheduling" class="engine-section" data-engine-section role="tabpanel" tabindex="-1" :hidden="activeSectionId !== sectionLinks[0].key" :aria-labelledby="sectionLinks[0].id">
           <header class="engine-section__header">
             <p class="engine-section__eyebrow">Global defaults</p>
             <h2 id="download-engine-scheduling-title">Scheduling</h2>
@@ -228,11 +248,11 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
           <p class="engine-shortcut">
             One source needs a slower pace?
-            <a href="#download-engine-source-exceptions" data-source-exceptions-shortcut>Set a source exception</a>.
+            <button type="button" data-source-exceptions-shortcut @click="showSourceExceptions">Set a source exception</button>.
           </p>
         </section>
 
-        <section id="download-engine-protection" class="engine-section" data-engine-section aria-labelledby="download-engine-protection-title">
+        <section v-show="activeSectionId === sectionLinks[1].key" id="download-engine-protection" class="engine-section" data-engine-section role="tabpanel" tabindex="-1" :hidden="activeSectionId !== sectionLinks[1].key" :aria-labelledby="sectionLinks[1].id">
           <header class="engine-section__header">
             <p class="engine-section__eyebrow">Global defaults</p>
             <h2 id="download-engine-protection-title">Protection</h2>
@@ -263,11 +283,11 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
           <p class="engine-shortcut">
             A provider needs stricter protection?
-            <a href="#download-engine-source-exceptions" data-source-exceptions-shortcut>Set a source exception</a>.
+            <button type="button" data-source-exceptions-shortcut @click="showSourceExceptions">Set a source exception</button>.
           </p>
         </section>
 
-        <section id="download-engine-access" class="engine-section" data-engine-section aria-labelledby="download-engine-access-title">
+        <section v-show="activeSectionId === sectionLinks[2].key" id="download-engine-access" class="engine-section" data-engine-section role="tabpanel" tabindex="-1" :hidden="activeSectionId !== sectionLinks[2].key" :aria-labelledby="sectionLinks[2].id">
           <header class="engine-section__header">
             <p class="engine-section__eyebrow">Shared services</p>
             <h2 id="download-engine-access-title">Access &amp; bypass</h2>
@@ -286,11 +306,11 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
           <p class="engine-shortcut">
             Proxy membership and source-specific session behavior live in
-            <a href="#download-engine-source-exceptions" data-source-exceptions-shortcut>Source exceptions</a>.
+            <button type="button" data-source-exceptions-shortcut @click="showSourceExceptions">Source exceptions</button>.
           </p>
         </section>
 
-        <section id="download-engine-routing" class="engine-section" data-engine-section aria-labelledby="download-engine-routing-title">
+        <section v-show="activeSectionId === sectionLinks[3].key" id="download-engine-routing" class="engine-section" data-engine-section role="tabpanel" tabindex="-1" :hidden="activeSectionId !== sectionLinks[3].key" :aria-labelledby="sectionLinks[3].id">
           <header class="engine-section__header">
             <p class="engine-section__eyebrow">Reusable routes</p>
             <h2 id="download-engine-routing-title">Routing</h2>
@@ -310,11 +330,11 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
           <p class="engine-shortcut">
             Assign an endpoint to a source in
-            <a href="#download-engine-source-exceptions" data-source-exceptions-shortcut>Source exceptions</a>.
+            <button type="button" data-source-exceptions-shortcut @click="showSourceExceptions">Source exceptions</button>.
           </p>
         </section>
 
-        <section id="download-engine-source-exceptions" class="engine-section engine-section--exceptions" data-engine-section aria-labelledby="download-engine-source-exceptions-title">
+        <section v-show="activeSectionId === sectionLinks[4].key" id="download-engine-source-exceptions" ref="sourceExceptionsPanel" class="engine-section engine-section--exceptions" data-engine-section role="tabpanel" tabindex="-1" :hidden="activeSectionId !== sectionLinks[4].key" :aria-labelledby="sectionLinks[4].id">
           <header class="engine-section__header">
             <p class="engine-section__eyebrow">Per-source differences</p>
             <h2 id="download-engine-source-exceptions-title">Source exceptions</h2>
@@ -394,58 +414,9 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
 .download-engine__layout {
   display: grid;
-  grid-template-columns: minmax(11rem, 0.28fr) minmax(0, 1fr);
   align-items: start;
-  gap: var(--space-2xl);
+  gap: var(--space-xl);
   min-width: 0;
-}
-
-.section-spine {
-  position: sticky;
-  top: var(--space-xl);
-  display: grid;
-  min-width: 0;
-  padding-left: var(--space-lg);
-  border-left: 1px solid var(--border2);
-}
-
-.section-spine a {
-  position: relative;
-  min-width: 0;
-  padding: var(--space-sm) 0;
-  color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-}
-
-.section-spine a:hover,
-.section-spine a:focus-visible {
-  color: var(--accentBright);
-}
-
-.section-spine a:focus-visible {
-  border-radius: var(--radius-sm);
-  outline: none;
-  box-shadow: var(--ring-focus);
-}
-
-.section-spine a span {
-  position: absolute;
-  top: 50%;
-  left: calc(-1 * var(--space-lg) - 0.3125rem);
-  width: 0.625rem;
-  height: 0.625rem;
-  border: 2px solid var(--surface);
-  border-radius: 50%;
-  background: var(--border2);
-  transform: translateY(-50%);
-}
-
-.section-spine a:hover span,
-.section-spine a:focus-visible span {
-  background: var(--accentBright);
 }
 
 .download-engine__sections {
@@ -485,13 +456,19 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
   font-size: var(--text-xs);
 }
 
-.engine-shortcut a {
+.engine-shortcut button {
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--accentBright);
+  font: inherit;
   font-weight: var(--weight-bold);
+  text-decoration: underline;
   text-underline-offset: 0.18em;
+  cursor: pointer;
 }
 
-.engine-shortcut a:focus-visible {
+.engine-shortcut button:focus-visible {
   border-radius: var(--radius-sm);
   outline: none;
   box-shadow: var(--ring-focus);
@@ -533,13 +510,7 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
 
 @media (max-width: 900px) {
   .download-engine__layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .section-spine {
-    position: static;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0 var(--space-base);
+    gap: var(--space-lg);
   }
 }
 
@@ -551,10 +522,6 @@ function useGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowKey
   .download-engine__layout,
   .download-engine__sections {
     gap: var(--space-xl);
-  }
-
-  .section-spine {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .engine-section__header {
