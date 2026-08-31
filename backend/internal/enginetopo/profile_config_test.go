@@ -60,7 +60,7 @@ func TestProfileConfigProvider_ResponseFallbackInheritsBase(t *testing.T) {
 // is resolved independently for Inherit, On, and Off. The resolver lets mutation
 // preflight reject explicit On with no selected session before persistence
 // rather than silently turning it into disposable behavior.
-func TestSessionPolicyResolver_Matrix(t *testing.T) {
+func TestSessionPolicyResolver_Matrix(t *testing.T) { //nolint:gocognit,cyclop // Table-driven policy matrix intentionally checks each independent result dimension.
 	t.Parallel()
 
 	policies := []struct {
@@ -132,7 +132,7 @@ func TestSessionPolicyResolver_Matrix(t *testing.T) {
 // TestProfileConfigProvider_DisposableSessionBlanksOnlySession proves Off
 // propagates a blank session for both global and endpoint profiles while every
 // unrelated FlareSolverr field keeps its selected value.
-func TestProfileConfigProvider_DisposableSessionBlanksOnlySession(t *testing.T) {
+func TestProfileConfigProvider_DisposableSessionBlanksOnlySession(t *testing.T) { //nolint:cyclop // Configuration oracle asserts all fields remain unchanged except the session.
 	t.Parallel()
 	ctx := context.Background()
 

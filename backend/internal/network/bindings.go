@@ -82,13 +82,7 @@ func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInpu
 }
 
 func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInput) (BindingMutationResult, error) {
-	if err := validateFlareMode(in.FlareMode, in.FlareEndpointID); err != nil {
-		return BindingMutationResult{}, err
-	}
-	if err := s.validateEndpointRef(ctx, in.SocksEndpointID, KindSocks); err != nil {
-		return BindingMutationResult{}, err
-	}
-	if err := s.validateEndpointRef(ctx, in.FlareEndpointID, KindFlareSolverr); err != nil {
+	if err := s.validateBindingInput(ctx, in); err != nil {
 		return BindingMutationResult{}, err
 	}
 
@@ -99,20 +93,12 @@ func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInpu
 	txService := *s
 	txService.client = tx.Client()
 	existing, existingErr := txService.bindingBySource(ctx, sourceID)
-	if existingErr == nil && bindingMatchesInput(existing, in) {
-		out := newBindingDTO(existing)
-		if err := tx.Commit(); err != nil {
-			return BindingMutationResult{}, fmt.Errorf("network.SetBinding: commit unchanged source %d: %w", sourceID, err)
-		}
-		intent, err := s.currentIntent(ctx, sourceID)
-		if err != nil {
-			return BindingMutationResult{}, err
-		}
-		return BindingMutationResult{BindingDTO: out, Intent: intent}, nil
+	if unchanged := existingErr == nil && bindingMatchesInput(existing, in); unchanged {
+		return s.commitUnchangedBinding(ctx, tx, sourceID, existing)
 	}
-	if existingErr != nil && !errors.Is(existingErr, ErrBindingNotFound) {
+	if err := rejectUnexpectedBindingLookupError(existingErr); err != nil {
 		_ = tx.Rollback()
-		return BindingMutationResult{}, existingErr
+		return BindingMutationResult{}, err
 	}
 	if err := txService.upsertBinding(ctx, sourceID, in); err != nil {
 		_ = tx.Rollback()
@@ -131,6 +117,35 @@ func (s *Service) setBinding(ctx context.Context, sourceID int64, in BindingInpu
 		return BindingMutationResult{}, err
 	}
 	return BindingMutationResult{BindingDTO: binding, Intent: intent, Changed: true}, nil
+}
+
+func rejectUnexpectedBindingLookupError(err error) error {
+	if err == nil || errors.Is(err, ErrBindingNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (s *Service) validateBindingInput(ctx context.Context, in BindingInput) error {
+	if err := validateFlareMode(in.FlareMode, in.FlareEndpointID); err != nil {
+		return err
+	}
+	if err := s.validateEndpointRef(ctx, in.SocksEndpointID, KindSocks); err != nil {
+		return err
+	}
+	return s.validateEndpointRef(ctx, in.FlareEndpointID, KindFlareSolverr)
+}
+
+func (s *Service) commitUnchangedBinding(ctx context.Context, tx *ent.Tx, sourceID int64, existing *ent.SourceNetworkBinding) (BindingMutationResult, error) {
+	out := newBindingDTO(existing)
+	if err := tx.Commit(); err != nil {
+		return BindingMutationResult{}, fmt.Errorf("network.SetBinding: commit unchanged source %d: %w", sourceID, err)
+	}
+	intent, err := s.currentIntent(ctx, sourceID)
+	if err != nil {
+		return BindingMutationResult{}, err
+	}
+	return BindingMutationResult{BindingDTO: out, Intent: intent}, nil
 }
 
 // ClearBinding removes a source's binding and advances its desired runtime

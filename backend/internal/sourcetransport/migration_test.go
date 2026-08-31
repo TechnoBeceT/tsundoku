@@ -50,7 +50,7 @@ func (d migrationTransportDefaults) ResolveBypassSession(
 	return d.sessions.ResolveBypassSession(ctx, sourceID, override)
 }
 
-func TestMigrationPreservesExistingBehavior(t *testing.T) {
+func TestMigrationPreservesExistingBehavior(t *testing.T) { //nolint:gocognit,cyclop // Migration matrix validates all legacy combinations and stored rows.
 	cases := []struct {
 		name            string
 		globalSession   string
@@ -220,7 +220,7 @@ func captureMigrationBehavior(t *testing.T, client *ent.Client) migrationBehavio
 	}
 }
 
-func assertRepresentativeLegacyBehavior(t *testing.T, got migrationBehavior, wantSession string) {
+func assertRepresentativeLegacyBehavior(t *testing.T, got migrationBehavior, wantSession string) { //nolint:cyclop // Full legacy-behavior oracle intentionally compares every field.
 	t.Helper()
 	if got.sessionName != wantSession {
 		t.Fatalf("legacy configured session = %q, want %q", got.sessionName, wantSession)

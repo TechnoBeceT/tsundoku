@@ -424,20 +424,9 @@ func (s *Service) SetMany(ctx context.Context, updates []KeyValue) error {
 }
 
 func (s *Service) setMany(ctx context.Context, updates []KeyValue, apply bool) error {
-	type canonical struct{ key, value string }
-	pending := make([]canonical, 0, len(updates))
-	runtimeChanged := false
-	for _, u := range updates {
-		t, ok := tunables[u.Key]
-		if !ok {
-			return fmt.Errorf("%w: %q", ErrUnknownSetting, u.Key)
-		}
-		c, err := t.validate(u.Value)
-		if err != nil {
-			return err // already wraps ErrInvalidSetting and names the key
-		}
-		pending = append(pending, canonical{key: u.Key, value: c})
-		runtimeChanged = runtimeChanged || runtimeConfigKey(u.Key)
+	pending, runtimeChanged, err := canonicalizeUpdates(updates)
+	if err != nil {
+		return err
 	}
 
 	tx, err := s.client.Tx(ctx)
@@ -463,6 +452,26 @@ func (s *Service) setMany(ctx context.Context, updates []KeyValue, apply bool) e
 		s.applyRuntime(ctx)
 	}
 	return nil
+}
+
+type canonicalSetting struct{ key, value string }
+
+func canonicalizeUpdates(updates []KeyValue) ([]canonicalSetting, bool, error) {
+	pending := make([]canonicalSetting, 0, len(updates))
+	runtimeChanged := false
+	for _, update := range updates {
+		tunable, ok := tunables[update.Key]
+		if !ok {
+			return nil, false, fmt.Errorf("%w: %q", ErrUnknownSetting, update.Key)
+		}
+		value, err := tunable.validate(update.Value)
+		if err != nil {
+			return nil, false, err
+		}
+		pending = append(pending, canonicalSetting{key: update.Key, value: value})
+		runtimeChanged = runtimeChanged || runtimeConfigKey(update.Key)
+	}
+	return pending, runtimeChanged, nil
 }
 
 func (s *Service) applyRuntime(ctx context.Context) {

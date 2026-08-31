@@ -88,105 +88,126 @@ func (c *Coordinator) ValidateCurrent(ctx context.Context) error {
 }
 
 func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
+	state, err := c.prospectiveState(ctx, p)
+	if err != nil {
+		return err
+	}
+	for sourceID, reuse := range state.policies {
+		if !state.shouldValidate(sourceID) || !reuse {
+			continue
+		}
+		if state.selectedSession(sourceID) == "" {
+			return fmt.Errorf("%w: source %d", ErrInvalidSelection, sourceID)
+		}
+	}
+	return nil
+}
+
+type prospectiveState struct {
+	global      string
+	policies    map[int64]bool
+	bindings    map[int64]Binding
+	endpoints   map[uuid.UUID]Endpoint
+	impacted    map[int64]bool
+	validateAll bool
+}
+
+func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospectiveState, error) {
 	policies, err := c.client.SourceTransportPolicy.Query().All(ctx)
 	if err != nil {
-		return fmt.Errorf("runtimepolicy: query policies: %w", err)
+		return prospectiveState{}, fmt.Errorf("runtimepolicy: query policies: %w", err)
 	}
 	bindings, err := c.client.SourceNetworkBinding.Query().All(ctx)
 	if err != nil {
-		return fmt.Errorf("runtimepolicy: query bindings: %w", err)
+		return prospectiveState{}, fmt.Errorf("runtimepolicy: query bindings: %w", err)
 	}
 	endpoints, err := c.client.NetworkEndpoint.Query().All(ctx)
 	if err != nil {
-		return fmt.Errorf("runtimepolicy: query endpoints: %w", err)
+		return prospectiveState{}, fmt.Errorf("runtimepolicy: query endpoints: %w", err)
 	}
+	global, err := c.prospectiveGlobalSession(ctx, p.GlobalSession)
+	if err != nil {
+		return prospectiveState{}, err
+	}
+	state := newProspectiveState(global, policies, bindings, endpoints, p)
+	applyOptionalMap(state.policies, p.Policies)
+	applyOptionalMap(state.bindings, p.Bindings)
+	applyOptionalMap(state.endpoints, p.Endpoints)
+	for id := range p.Policies {
+		state.impacted[id] = true
+	}
+	for id := range p.Bindings {
+		state.impacted[id] = true
+	}
+	for sourceID, binding := range state.bindings {
+		if binding.FlareEndpointID != nil {
+			if _, changed := p.Endpoints[*binding.FlareEndpointID]; changed {
+				state.impacted[sourceID] = true
+			}
+		}
+	}
+	return state, nil
+}
+
+func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, bindings []*ent.SourceNetworkBinding, endpoints []*ent.NetworkEndpoint, p Proposal) prospectiveState {
+	state := prospectiveState{
+		global: global, policies: make(map[int64]bool, len(policies)),
+		bindings: make(map[int64]Binding, len(bindings)), endpoints: make(map[uuid.UUID]Endpoint, len(endpoints)),
+		impacted: make(map[int64]bool), validateAll: p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0),
+	}
+	for _, row := range policies {
+		if row.ReuseBypassSession != nil {
+			state.policies[row.SourceID] = *row.ReuseBypassSession
+		}
+	}
+	for _, row := range bindings {
+		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID}
+	}
+	for _, row := range endpoints {
+		state.endpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}
+	}
+	return state
+}
+
+func (c *Coordinator) prospectiveGlobalSession(ctx context.Context, proposed *string) (string, error) {
 	global := c.defaultGlobal
 	row, err := c.client.Settings.Query().Where(entsettings.Key(globalSessionKey)).Only(ctx)
 	if err == nil {
 		global = row.Value
 	} else if !ent.IsNotFound(err) {
-		return fmt.Errorf("runtimepolicy: query global session: %w", err)
+		return "", fmt.Errorf("runtimepolicy: query global session: %w", err)
 	}
-	if p.GlobalSession != nil {
-		global = *p.GlobalSession
+	if proposed != nil {
+		global = *proposed
 	}
+	return global, nil
+}
 
-	selectedPolicies := make(map[int64]bool, len(policies))
-	for _, row := range policies {
-		if row.ReuseBypassSession != nil {
-			selectedPolicies[row.SourceID] = *row.ReuseBypassSession
-		}
-	}
-	for id, value := range p.Policies {
+func applyOptionalMap[K comparable, V any](target map[K]V, patch map[K]*V) {
+	for id, value := range patch {
 		if value == nil {
-			delete(selectedPolicies, id)
-		} else {
-			selectedPolicies[id] = *value
-		}
-	}
-	selectedBindings := make(map[int64]Binding, len(bindings))
-	for _, row := range bindings {
-		selectedBindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID}
-	}
-	for id, value := range p.Bindings {
-		if value == nil {
-			delete(selectedBindings, id)
-		} else {
-			selectedBindings[id] = *value
-		}
-	}
-	selectedEndpoints := make(map[uuid.UUID]Endpoint, len(endpoints))
-	for _, row := range endpoints {
-		selectedEndpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}
-	}
-	for id, value := range p.Endpoints {
-		if value == nil {
-			delete(selectedEndpoints, id)
-		} else {
-			selectedEndpoints[id] = *value
-			selectedEndpoints[id] = Endpoint{Kind: value.Kind, Session: value.Session, Enabled: value.Enabled}
-		}
-	}
-	impacted := make(map[int64]bool)
-	validateAll := p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0)
-	for id := range p.Policies {
-		impacted[id] = true
-	}
-	for id := range p.Bindings {
-		impacted[id] = true
-	}
-	for sourceID, binding := range selectedBindings {
-		if binding.FlareEndpointID == nil {
+			delete(target, id)
 			continue
 		}
-		if _, changed := p.Endpoints[*binding.FlareEndpointID]; changed {
-			impacted[sourceID] = true
-		}
+		target[id] = *value
 	}
+}
 
-	for sourceID, reuse := range selectedPolicies {
-		if !validateAll && !impacted[sourceID] {
-			continue
-		}
-		if !reuse {
-			continue
-		}
-		binding, bound := selectedBindings[sourceID]
-		if bound && binding.FlareMode == "none" {
-			continue
-		}
-		session := global
-		if bound && binding.FlareMode == "endpoint" && binding.FlareEndpointID != nil {
-			endpoint, ok := selectedEndpoints[*binding.FlareEndpointID]
-			if !ok || endpoint.Kind != "flaresolverr" || !endpoint.Enabled {
-				session = global
-			} else {
-				session = endpoint.Session
-			}
-		}
-		if session == "" {
-			return fmt.Errorf("%w: source %d", ErrInvalidSelection, sourceID)
-		}
+func (s prospectiveState) shouldValidate(sourceID int64) bool {
+	return s.validateAll || s.impacted[sourceID]
+}
+
+func (s prospectiveState) selectedSession(sourceID int64) string {
+	binding, bound := s.bindings[sourceID]
+	if bound && binding.FlareMode == "none" {
+		return "disabled"
 	}
-	return nil
+	if !bound || binding.FlareMode != "endpoint" || binding.FlareEndpointID == nil {
+		return s.global
+	}
+	endpoint, ok := s.endpoints[*binding.FlareEndpointID]
+	if !ok || endpoint.Kind != "flaresolverr" || !endpoint.Enabled {
+		return s.global
+	}
+	return endpoint.Session
 }

@@ -952,12 +952,20 @@ func runEngineTopoBootSequence(ctx context.Context, lifecycle runtimeConvergence
 		}
 		return ctx.Err()
 	})
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed) {
+	if reportRuntimeConvergenceError(err) {
 		slog.WarnContext(ctx, "engine topology boot convergence failed", "err", err)
 	}
-	if err == nil && phases.pending != nil && ctx.Err() == nil {
+	if bootSequenceCompleted(err, ctx, phases.pending) {
 		phases.pending(ctx)
 	}
+}
+
+func reportRuntimeConvergenceError(err error) bool {
+	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, enginetopo.ErrRuntimeConvergenceClosed)
+}
+
+func bootSequenceCompleted(err error, ctx context.Context, pending func(context.Context)) bool {
+	return err == nil && pending != nil && ctx.Err() == nil
 }
 
 func runBootPhase(ctx context.Context, phase func(context.Context)) (err error) {

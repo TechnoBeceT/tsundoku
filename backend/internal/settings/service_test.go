@@ -337,7 +337,7 @@ func TestBackfilledRuntimeIntentSurvivesFailedFirstRestore(t *testing.T) {
 	}
 }
 
-func TestCanceledRuntimeApplyPersistsBoundedAttemptMetadata(t *testing.T) {
+func TestCanceledRuntimeApplyPersistsBoundedAttemptMetadata(t *testing.T) { //nolint:cyclop // Cancellation test asserts every bounded metadata field.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := settings.NewService(client, testDefaults())
@@ -379,7 +379,7 @@ func TestCanceledRuntimeApplyPersistsBoundedAttemptMetadata(t *testing.T) {
 	}
 }
 
-func TestCanceledRuntimeApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
+func TestCanceledRuntimeApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) { //nolint:gocognit,cyclop // Concurrency timeline needs explicit cancellation and timeout diagnostics.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := settings.NewService(client, testDefaults())
@@ -432,7 +432,7 @@ func TestCanceledRuntimeApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
 	}
 }
 
-func TestRuntimeConvergenceShutdownJoinsSettingsMetadataTail(t *testing.T) {
+func TestRuntimeConvergenceShutdownJoinsSettingsMetadataTail(t *testing.T) { //nolint:gocognit,cyclop // Shutdown test observes both convergence and metadata tails.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := settings.NewService(client, testDefaults())
@@ -698,7 +698,7 @@ func runtimeSettingValues(label string, enabled bool, sourceID int64) []settings
 	}
 }
 
-func assertRuntimeSnapshot(t *testing.T, got settings.RuntimeConfigSnapshot, label string, enabled bool, sourceID int64) {
+func assertRuntimeSnapshot(t *testing.T, got settings.RuntimeConfigSnapshot, label string, enabled bool, sourceID int64) { //nolint:cyclop // Full snapshot oracle intentionally compares every independent field.
 	t.Helper()
 	wantTimeout, wantTTL, wantPort, wantVersion := 60, 15, 1080, 5
 	if enabled {

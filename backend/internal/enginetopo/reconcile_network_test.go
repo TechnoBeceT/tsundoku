@@ -241,7 +241,7 @@ func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (
 // derivation sees both explicit network bindings and policy-only Off sources.
 // The latter has no SourceNetworkBinding row but still needs a non-default
 // disposable-session profile when the global bypass session is reusable.
-func TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources(t *testing.T) {
+func TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources(t *testing.T) { //nolint:cyclop // Snapshot union scenario asserts the complete resulting topology.
 	t.Parallel()
 
 	off := false
@@ -451,7 +451,7 @@ func TestReconcileNetwork_ProvisionsAndRoutes(t *testing.T) {
 // partial runtime apply: missing image/proxy sets on any active instance,
 // activating a newly-created route before its config lands, retaining an
 // obsolete profile, or treating a fallback as success.
-func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testing.T) {
+func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testing.T) { //nolint:cyclop // Ordering test intentionally checks every phase and instance.
 	ctx := context.Background()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
@@ -655,7 +655,7 @@ func TestSourceRuntimeApplierQueuedWaitHonorsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestSourceRuntimeApplierShutdownClosesAdmissionsAndJoinsActiveTail(t *testing.T) {
+func TestSourceRuntimeApplierShutdownClosesAdmissionsAndJoinsActiveTail(t *testing.T) { //nolint:cyclop // Concurrency test keeps admission, shutdown, and join assertions in one timeline.
 	applier := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
 	entered := make(chan struct{})
 	canceled := make(chan struct{})
@@ -891,7 +891,7 @@ func (s *shutdownTransportSnapshotter) Snapshot(ctx context.Context) (map[int64]
 	return nil, ctx.Err()
 }
 
-func TestSourceRuntimeApplierShutdownJoinsDirectRuntimeCall(t *testing.T) {
+func TestSourceRuntimeApplierShutdownJoinsDirectRuntimeCall(t *testing.T) { //nolint:cyclop // Concurrency timeline requires multiple timeout failure branches.
 	snapshot := &shutdownTransportSnapshotter{
 		entered:  make(chan struct{}),
 		canceled: make(chan struct{}),
@@ -939,7 +939,7 @@ func TestSourceRuntimeApplierShutdownJoinsDirectRuntimeCall(t *testing.T) {
 	}
 }
 
-func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) {
+func TestRuntimeSettingsWriteConvergesThroughSourceApplyLifecycle(t *testing.T) { //nolint:gocognit,cyclop // End-to-end lifecycle oracle validates each persisted and applied state.
 	ctx := context.Background()
 	db := testdb.New(t)
 	settingsSvc := settings.NewService(db, settings.Defaults{

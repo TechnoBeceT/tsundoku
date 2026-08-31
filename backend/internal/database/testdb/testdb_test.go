@@ -53,7 +53,7 @@ func TestNewIsIsolated(t *testing.T) {
 // TestNewUnmigratedIsIsolatedAndReopenable pins the migration-test seam: each
 // call receives a schema-free database on the shared test server, and the
 // returned production config addresses that exact database for a later Open.
-func TestNewUnmigratedIsIsolatedAndReopenable(t *testing.T) {
+func TestNewUnmigratedIsIsolatedAndReopenable(t *testing.T) { //nolint:cyclop // Isolation test keeps all lifecycle assertions in one scenario.
 	ctx := context.Background()
 	clientA, dbA, cfgA := testdb.NewUnmigrated(t)
 	_, dbB, cfgB := testdb.NewUnmigrated(t)

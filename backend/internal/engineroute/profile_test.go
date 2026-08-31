@@ -122,7 +122,7 @@ func TestDerive_Deterministic(t *testing.T) {
 // both keep the selected configured session, while Off requires an isolated
 // profile that will push a blank session. Flare mode none ignores the policy
 // because no bypass request can use a session there.
-func TestDerive_SessionPolicyMatrix(t *testing.T) {
+func TestDerive_SessionPolicyMatrix(t *testing.T) { //nolint:gocognit,cyclop // Table-driven routing matrix intentionally checks each independent result dimension.
 	t.Parallel()
 
 	policies := []struct {

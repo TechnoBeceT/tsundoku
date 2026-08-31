@@ -137,37 +137,59 @@ func decodeSetBindingRequest(body io.Reader) (SetBindingRequest, error) {
 	if err := decoder.Decode(&fields); err != nil || fields == nil {
 		return SetBindingRequest{}, invalidBindingBody()
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	if err := requireJSONEOF(decoder); err != nil {
 		return SetBindingRequest{}, echo.NewHTTPError(http.StatusBadRequest, "request body must contain one JSON object")
 	}
 
-	rawMode, ok := fields["flareMode"]
+	request, err := decodeRequiredFlareMode(fields)
+	if err != nil {
+		return SetBindingRequest{}, err
+	}
+	for name, raw := range fields {
+		if err := decodeBindingField(&request, name, raw); err != nil {
+			return SetBindingRequest{}, err
+		}
+	}
+	return request, nil
+}
+
+func decodeRequiredFlareMode(fields map[string]json.RawMessage) (SetBindingRequest, error) {
+	raw, ok := fields["flareMode"]
 	if !ok {
 		return SetBindingRequest{}, echo.NewHTTPError(http.StatusBadRequest, "flareMode is required")
 	}
 	var mode *string
-	if err := json.Unmarshal(rawMode, &mode); err != nil || mode == nil {
+	if err := json.Unmarshal(raw, &mode); err != nil || mode == nil {
 		return SetBindingRequest{}, invalidBindingBody()
 	}
+	return SetBindingRequest{FlareMode: *mode}, nil
+}
 
-	request := SetBindingRequest{FlareMode: *mode}
-	for name, raw := range fields {
-		switch name {
-		case "flareMode":
-		case "socksEndpointId":
-			if err := json.Unmarshal(raw, &request.SocksEndpointID); err != nil {
-				return SetBindingRequest{}, invalidBindingBody()
-			}
-		case "flareEndpointId":
-			if err := json.Unmarshal(raw, &request.FlareEndpointID); err != nil {
-				return SetBindingRequest{}, invalidBindingBody()
-			}
-		default:
-			return SetBindingRequest{}, invalidBindingBody()
+func decodeBindingField(request *SetBindingRequest, name string, raw json.RawMessage) error {
+	switch name {
+	case "flareMode":
+		return nil
+	case "socksEndpointId":
+		if err := json.Unmarshal(raw, &request.SocksEndpointID); err != nil {
+			return invalidBindingBody()
 		}
+		return nil
+	case "flareEndpointId":
+		if err := json.Unmarshal(raw, &request.FlareEndpointID); err != nil {
+			return invalidBindingBody()
+		}
+		return nil
+	default:
+		return invalidBindingBody()
 	}
-	return request, nil
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return invalidBindingBody()
+	}
+	return nil
 }
 
 func invalidBindingBody() error {

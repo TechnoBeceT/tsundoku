@@ -354,7 +354,7 @@ func TestTransportServiceApplyFailureReturnsItsCommittedPendingRevision(t *testi
 	}
 }
 
-func TestTransportExplicitReuseRejectsExactlyBlankSessionBeforePersistenceButAcceptsWhitespace(t *testing.T) {
+func TestTransportExplicitReuseRejectsExactlyBlankSessionBeforePersistenceButAcceptsWhitespace(t *testing.T) { //nolint:gocognit // Boundary test compares two complete request outcomes.
 	for _, tc := range []struct {
 		name       string
 		session    string

@@ -11,7 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
-func TestCoordinatorSerializesExplicitOnAgainstGlobalClearInBothOrderings(t *testing.T) {
+func TestCoordinatorSerializesExplicitOnAgainstGlobalClearInBothOrderings(t *testing.T) { //nolint:gocognit,cyclop // Concurrency matrix deliberately exercises and observes both orderings.
 	for _, tc := range []struct {
 		name    string
 		onFirst bool

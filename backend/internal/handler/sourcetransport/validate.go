@@ -91,23 +91,9 @@ func decodeBooleanPatch(raw json.RawMessage) (sourcetransport.PatchField[bool], 
 	}
 	switch mode {
 	case "inherit":
-		if len(fields) != 1 {
-			return sourcetransport.PatchField[bool]{}, invalidBody()
-		}
-		return sourcetransport.Clear[bool](), nil
+		return decodeInheritedPatch[bool](fields)
 	case "override":
-		if len(fields) != 2 {
-			return sourcetransport.PatchField[bool]{}, invalidBody()
-		}
-		rawValue, ok := fields["value"]
-		if !ok {
-			return sourcetransport.PatchField[bool]{}, invalidBody()
-		}
-		var value *bool
-		if err := json.Unmarshal(rawValue, &value); err != nil || value == nil {
-			return sourcetransport.PatchField[bool]{}, invalidBody()
-		}
-		return sourcetransport.Set(*value), nil
+		return decodeOverridePatch[bool](fields, nil)
 	default:
 		return sourcetransport.PatchField[bool]{}, invalidBody()
 	}
@@ -124,27 +110,39 @@ func decodeImageConnectionPatch(raw json.RawMessage) (sourcetransport.PatchField
 	}
 	switch mode {
 	case "inherit":
-		if len(fields) != 1 {
-			return sourcetransport.PatchField[sourcetransport.ImageConnectionMode]{}, invalidBody()
-		}
-		return sourcetransport.Clear[sourcetransport.ImageConnectionMode](), nil
+		return decodeInheritedPatch[sourcetransport.ImageConnectionMode](fields)
 	case "override":
-		if len(fields) != 2 {
-			return sourcetransport.PatchField[sourcetransport.ImageConnectionMode]{}, invalidBody()
-		}
-		rawValue, ok := fields["value"]
-		if !ok {
-			return sourcetransport.PatchField[sourcetransport.ImageConnectionMode]{}, invalidBody()
-		}
-		var value *sourcetransport.ImageConnectionMode
-		if err := json.Unmarshal(rawValue, &value); err != nil || value == nil ||
-			(*value != sourcetransport.ImageConnectionFresh && *value != sourcetransport.ImageConnectionReuse) {
-			return sourcetransport.PatchField[sourcetransport.ImageConnectionMode]{}, invalidBody()
-		}
-		return sourcetransport.Set(*value), nil
+		return decodeOverridePatch(fields, func(value sourcetransport.ImageConnectionMode) bool {
+			return value == sourcetransport.ImageConnectionFresh || value == sourcetransport.ImageConnectionReuse
+		})
 	default:
 		return sourcetransport.PatchField[sourcetransport.ImageConnectionMode]{}, invalidBody()
 	}
+}
+
+func decodeInheritedPatch[T any](fields map[string]json.RawMessage) (sourcetransport.PatchField[T], error) {
+	if len(fields) != 1 {
+		return sourcetransport.PatchField[T]{}, invalidBody()
+	}
+	return sourcetransport.Clear[T](), nil
+}
+
+func decodeOverridePatch[T any](fields map[string]json.RawMessage, valid func(T) bool) (sourcetransport.PatchField[T], error) {
+	if len(fields) != 2 {
+		return sourcetransport.PatchField[T]{}, invalidBody()
+	}
+	rawValue, ok := fields["value"]
+	if !ok {
+		return sourcetransport.PatchField[T]{}, invalidBody()
+	}
+	var value *T
+	if err := json.Unmarshal(rawValue, &value); err != nil || value == nil {
+		return sourcetransport.PatchField[T]{}, invalidBody()
+	}
+	if valid != nil && !valid(*value) {
+		return sourcetransport.PatchField[T]{}, invalidBody()
+	}
+	return sourcetransport.Set(*value), nil
 }
 
 func decodeRawObject(raw json.RawMessage) (map[string]json.RawMessage, error) {

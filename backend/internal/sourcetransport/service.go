@@ -107,13 +107,8 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 }
 
 func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply, prevalidated bool) (UpdateResult, error) {
-	if !prevalidated {
-		if err := validatePatch(patch); err != nil {
-			return UpdateResult{}, err
-		}
-		if err := s.catalog.RequireSource(ctx, sourceID); err != nil {
-			return UpdateResult{}, fmt.Errorf("sourcetransport.Update: require source %d: %w", sourceID, err)
-		}
+	if err := s.validateUpdate(ctx, sourceID, patch, prevalidated); err != nil {
+		return UpdateResult{}, err
 	}
 
 	stored, err := s.loadOverride(ctx, sourceID)
@@ -127,37 +122,12 @@ func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
 	}
 	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep {
-		intent, err := s.loadIntent(ctx, sourceID)
-		if err != nil {
-			return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
-		}
-		effective, err := s.resolveOverride(ctx, sourceID, stored)
-		if err != nil {
-			return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
-		}
-		return UpdateResult{Override: stored, Effective: effective, Intent: intent}, nil
+		return s.unchangedUpdate(ctx, sourceID, stored)
 	}
 
-	tx, err := s.client.Tx(ctx)
+	override, intent, err := s.persistUpdate(ctx, sourceID, patch)
 	if err != nil {
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: begin transaction: %w", err)
-	}
-	if err := s.persistPatchTx(ctx, tx, sourceID, patch); err != nil {
-		_ = tx.Rollback()
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
-	}
-	intent, err := s.AdvanceIntentTx(ctx, tx, sourceID)
-	if err != nil {
-		_ = tx.Rollback()
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: advance source %d intent: %w", sourceID, err)
-	}
-	override, err := loadOverrideTx(ctx, tx, sourceID)
-	if err != nil {
-		_ = tx.Rollback()
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: commit source %d: %w", sourceID, err)
+		return UpdateResult{}, err
 	}
 	effective, err := s.resolveOverride(ctx, sourceID, override)
 	if err != nil {
@@ -168,6 +138,56 @@ func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply
 		return result, nil
 	}
 	return s.applyUpdate(ctx, sourceID, result)
+}
+
+func (s *Service) validateUpdate(ctx context.Context, sourceID int64, patch Patch, prevalidated bool) error {
+	if prevalidated {
+		return nil
+	}
+	if err := validatePatch(patch); err != nil {
+		return err
+	}
+	if err := s.catalog.RequireSource(ctx, sourceID); err != nil {
+		return fmt.Errorf("sourcetransport.Update: require source %d: %w", sourceID, err)
+	}
+	return nil
+}
+
+func (s *Service) persistUpdate(ctx context.Context, sourceID int64, patch Patch) (Override, Intent, error) {
+	tx, err := s.client.Tx(ctx)
+	if err != nil {
+		return Override{}, Intent{}, fmt.Errorf("sourcetransport.Update: begin transaction: %w", err)
+	}
+	if err := s.persistPatchTx(ctx, tx, sourceID, patch); err != nil {
+		_ = tx.Rollback()
+		return Override{}, Intent{}, fmt.Errorf("sourcetransport.Update: %w", err)
+	}
+	intent, err := s.AdvanceIntentTx(ctx, tx, sourceID)
+	if err != nil {
+		_ = tx.Rollback()
+		return Override{}, Intent{}, fmt.Errorf("sourcetransport.Update: advance source %d intent: %w", sourceID, err)
+	}
+	override, err := loadOverrideTx(ctx, tx, sourceID)
+	if err != nil {
+		_ = tx.Rollback()
+		return Override{}, Intent{}, fmt.Errorf("sourcetransport.Update: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return Override{}, Intent{}, fmt.Errorf("sourcetransport.Update: commit source %d: %w", sourceID, err)
+	}
+	return override, intent, nil
+}
+
+func (s *Service) unchangedUpdate(ctx context.Context, sourceID int64, stored Override) (UpdateResult, error) {
+	intent, err := s.loadIntent(ctx, sourceID)
+	if err != nil {
+		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: %w", err)
+	}
+	effective, err := s.resolveOverride(ctx, sourceID, stored)
+	if err != nil {
+		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
+	}
+	return UpdateResult{Override: stored, Effective: effective, Intent: intent}, nil
 }
 
 func (s *Service) applyUpdate(ctx context.Context, sourceID int64, result UpdateResult) (UpdateResult, error) {

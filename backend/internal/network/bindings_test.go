@@ -99,7 +99,7 @@ func TestClearBinding_AdvancesIntentOnlyForActualDeletion(t *testing.T) {
 
 // TestBindingMutation_SourceValidationFailsClosed catches either binding or
 // intent persistence occurring before the live installed-source check.
-func TestBindingMutation_SourceValidationFailsClosed(t *testing.T) {
+func TestBindingMutation_SourceValidationFailsClosed(t *testing.T) { //nolint:gocognit // Failure-closed matrix asserts every mutation path and side effect.
 	for _, tc := range []struct {
 		name string
 		err  error

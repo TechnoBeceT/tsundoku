@@ -108,7 +108,7 @@ func TestUpdateClearFinalPolicyReturnsToInheritanceAndKeepsIntent(t *testing.T) 
 	}
 }
 
-func TestConcurrentFirstWritesMergeAndAdvanceIntentAtomically(t *testing.T) {
+func TestConcurrentFirstWritesMergeAndAdvanceIntentAtomically(t *testing.T) { //nolint:cyclop // Concurrent-write scenario validates both writers and merged durable state.
 	ctx := context.Background()
 	arrived := make(chan *bool, 2)
 	release := make(chan struct{})
@@ -254,7 +254,7 @@ func TestAdvanceIntentTxReturnsNextRevisionInCallerTransaction(t *testing.T) {
 	}
 }
 
-func TestMarkAppliedDoesNotAcknowledgeStaleRevision(t *testing.T) {
+func TestMarkAppliedDoesNotAcknowledgeStaleRevision(t *testing.T) { //nolint:cyclop // Revision oracle checks each durable metadata field.
 	svc, _ := newService(t)
 	ctx := context.Background()
 

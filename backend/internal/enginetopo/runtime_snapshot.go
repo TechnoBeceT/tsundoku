@@ -42,25 +42,8 @@ func composeRuntimeSnapshot(
 	for _, binding := range bindings {
 		bySource[binding.SourceID] = runtimeBinding{ResolvedBinding: binding}
 	}
-	if transportSnapshot != nil {
-		policies, err := transportSnapshot.Snapshot(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("source transport policies: %w", err)
-		}
-		for sourceID, policy := range policies {
-			if policy.ReuseBypassSession == nil || *policy.ReuseBypassSession {
-				continue
-			}
-			binding, ok := bySource[sourceID]
-			if !ok {
-				binding = runtimeBinding{ResolvedBinding: network.ResolvedBinding{
-					SourceID:  sourceID,
-					FlareMode: network.FlareModeGlobal,
-				}}
-			}
-			binding.DisableBypassSession = true
-			bySource[sourceID] = binding
-		}
+	if err := addDisposableSessionBindings(ctx, transportSnapshot, bySource); err != nil {
+		return nil, err
 	}
 
 	sourceIDs := make([]int64, 0, len(bySource))
@@ -73,6 +56,28 @@ func composeRuntimeSnapshot(
 		out = append(out, bySource[sourceID])
 	}
 	return out, nil
+}
+
+func addDisposableSessionBindings(ctx context.Context, snapshot SourceTransportSnapshotter, bySource map[int64]runtimeBinding) error {
+	if snapshot == nil {
+		return nil
+	}
+	policies, err := snapshot.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("source transport policies: %w", err)
+	}
+	for sourceID, policy := range policies {
+		if policy.ReuseBypassSession == nil || *policy.ReuseBypassSession {
+			continue
+		}
+		binding, ok := bySource[sourceID]
+		if !ok {
+			binding.ResolvedBinding = network.ResolvedBinding{SourceID: sourceID, FlareMode: network.FlareModeGlobal}
+		}
+		binding.DisableBypassSession = true
+		bySource[sourceID] = binding
+	}
+	return nil
 }
 
 // SessionPolicyResolver resolves one source's selected global/endpoint session
@@ -104,18 +109,7 @@ func (r SessionPolicyResolver) ResolveBypassSession(
 			fmt.Errorf("enginetopo.ResolveBypassSession: snapshot: %w", err)
 	}
 
-	mode := network.FlareModeGlobal
-	session := r.base.FlareSolverrSessionName(ctx)
-	for _, binding := range bindings {
-		if binding.SourceID != sourceID {
-			continue
-		}
-		mode = binding.FlareMode
-		if mode == network.FlareModeEndpoint && binding.Flare != nil {
-			session = binding.Flare.Session
-		}
-		break
-	}
+	mode, session := selectedBypassSession(bindings, sourceID, r.base.FlareSolverrSessionName(ctx))
 	if mode == network.FlareModeNone {
 		return false, sourcetransport.BypassSessionDisabled, nil
 	}
@@ -130,4 +124,17 @@ func (r SessionPolicyResolver) ResolveBypassSession(
 		return false, sourcetransport.BypassSessionDisposable, nil
 	}
 	return true, sourcetransport.BypassSessionReusable, nil
+}
+
+func selectedBypassSession(bindings []network.ResolvedBinding, sourceID int64, global string) (string, string) {
+	for _, binding := range bindings {
+		if binding.SourceID != sourceID {
+			continue
+		}
+		if binding.FlareMode == network.FlareModeEndpoint && binding.Flare != nil {
+			return binding.FlareMode, binding.Flare.Session
+		}
+		return binding.FlareMode, global
+	}
+	return network.FlareModeGlobal, global
 }

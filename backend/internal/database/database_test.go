@@ -89,7 +89,7 @@ func TestOpenMigratesAndConnects(t *testing.T) {
 	}
 }
 
-func TestOpenBackfillsRuntimeIntentForUpgradedSettingsIdempotently(t *testing.T) {
+func TestOpenBackfillsRuntimeIntentForUpgradedSettingsIdempotently(t *testing.T) { //nolint:cyclop // Migration test deliberately asserts every persisted field and idempotency branch.
 	cfg := containerDSN(t)
 	ctx := context.Background()
 

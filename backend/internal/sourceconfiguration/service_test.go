@@ -194,7 +194,7 @@ func assertStoredEndpoint(t *testing.T, label string, got ResolvedEndpoint, want
 	}
 }
 
-func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *testing.T) {
+func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *testing.T) { //nolint:gocognit,cyclop // Effective-config oracle compares every composed subsystem field.
 	const (
 		inheritedID     int64 = 101
 		exceptionID     int64 = 202
@@ -214,6 +214,7 @@ func TestEffectiveConfigurationResolvesPoliciesRoutingProxyProfileAndRuntime(t *
 			{ID: blankEndpointID, Name: "Blank", Lang: "tr"},
 			{ID: explicitOnID, Name: "Explicit on", Lang: "en"},
 		}},
+		// #nosec G101 -- BypassSession is a non-secret session-name fixture, not a credential.
 		globals: &globalsStub{value: globalSnapshot{
 			DownloadConcurrency:   3,
 			ImageRequestDelay:     500 * time.Millisecond,
@@ -396,6 +397,7 @@ func TestExceptionsUsesExactFieldLevelCount(t *testing.T) {
 	flareID := "flare"
 	deps := dependencies{
 		catalog: &catalogStub{sources: []sourceengine.Source{{ID: 4, Name: "global only"}, {ID: 3, Name: "none"}, {ID: 1, Name: "one"}, {ID: 2, Name: "two"}}},
+		// #nosec G101 -- This fixture contains no credential; the detector keys on bypass configuration field names.
 		globals: &globalsStub{value: globalSnapshot{BypassEnabled: true, BypassURL: "http://bypass", ProxyEnabled: true, ProxyURL: "http://proxy", ProxySourceIDs: []int64{2}}},
 		throughput: &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{
 			1: {DownloadConcurrency: intPtr(0)},
@@ -486,6 +488,7 @@ func TestProductionSettingsAdapterUsesOneCoherentSnapshotAndReturnsFailure(t *te
 	if err != nil {
 		t.Fatalf("adapter success: %v", err)
 	}
+	// #nosec G101 -- BypassSession is a non-secret session-name fixture, not a credential.
 	want := globalSnapshot{
 		DownloadConcurrency: 8, ImageRequestDelay: 250 * time.Millisecond,
 		WarmupInterval: time.Hour, WarmupSlowThresholdMs: 900,

@@ -259,7 +259,7 @@ func TestGracefulShutdownAfterHTTPDrainTimeoutStillJoinsConvergenceBeforeClose(t
 	}
 }
 
-func TestTrackedDetachedRuntimeCallbacksJoinStartupAndNetworkTails(t *testing.T) {
+func TestTrackedDetachedRuntimeCallbacksJoinStartupAndNetworkTails(t *testing.T) { //nolint:gocognit,cyclop // Join-order test keeps both detached timelines and timeout diagnostics together.
 	for _, name := range []string{"startup", "network"} {
 		t.Run(name, func(t *testing.T) {
 			coordinator := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})
@@ -308,7 +308,7 @@ func TestTrackedDetachedRuntimeCallbacksJoinStartupAndNetworkTails(t *testing.T)
 	}
 }
 
-func TestEngineTopoBootSequenceJoinsEveryOuterPhaseBeforeDependencyClose(t *testing.T) {
+func TestEngineTopoBootSequenceJoinsEveryOuterPhaseBeforeDependencyClose(t *testing.T) { //nolint:gocognit,cyclop // Boot ordering oracle validates every phase before dependency closure.
 	for _, blockedPhase := range []string{"default reconcile", "seed"} {
 		t.Run(blockedPhase, func(t *testing.T) {
 			coordinator := enginetopo.NewSourceRuntimeApplier(sourceenginefake.New(), enginetopo.NetworkReconcileDeps{})

@@ -10,7 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/network"
 )
 
-func TestConfigurationSnapshotReadsEachBackingSetOnce(t *testing.T) {
+func TestConfigurationSnapshotReadsEachBackingSetOnce(t *testing.T) { //nolint:cyclop // Snapshot oracle checks each backing store independently.
 	ctx := context.Background()
 	client := testdb.New(t)
 	endpoint := client.NetworkEndpoint.Create().
@@ -44,7 +44,7 @@ func TestConfigurationSnapshotReadsEachBackingSetOnce(t *testing.T) {
 	}
 }
 
-func TestConfigurationSnapshotDoesNotMixCommitBetweenBackingReads(t *testing.T) {
+func TestConfigurationSnapshotDoesNotMixCommitBetweenBackingReads(t *testing.T) { //nolint:cyclop // Atomicity timeline requires explicit synchronization and timeout branches.
 	ctx := context.Background()
 	client := testdb.New(t)
 	endpoint := client.NetworkEndpoint.Create().

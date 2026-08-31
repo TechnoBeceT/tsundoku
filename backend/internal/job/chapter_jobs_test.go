@@ -795,7 +795,7 @@ type runtimeSourceCatalog struct{}
 
 func (runtimeSourceCatalog) RequireSource(context.Context, int64) error { return nil }
 
-func TestRunnerTriggerRetriesPostStartupGlobalAndSourceRuntimeIntents(t *testing.T) {
+func TestRunnerTriggerRetriesPostStartupGlobalAndSourceRuntimeIntents(t *testing.T) { //nolint:cyclop // Retry integration test asserts both intent domains across one trigger.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	client := testdb.New(t)
@@ -902,7 +902,7 @@ func TestRunnerOldScheduledCadenceRequestsCurrentRuntimeEpoch(t *testing.T) {
 	testRunnerOldLoopRequestsCurrentRuntimeEpoch(t, time.Second, false)
 }
 
-func testRunnerOldLoopRequestsCurrentRuntimeEpoch(t *testing.T, oldInterval time.Duration, trigger bool) {
+func testRunnerOldLoopRequestsCurrentRuntimeEpoch(t *testing.T, oldInterval time.Duration, trigger bool) { //nolint:cyclop // Shared timing oracle includes explicit timeout diagnostics.
 	t.Helper()
 	client := testdb.New(t)
 	hub := sse.NewHub()
@@ -1055,7 +1055,7 @@ func TestRunnerStartTwiceKeepsRuntimeRetrySingleFlight(t *testing.T) {
 	}
 }
 
-func TestRunnerCancelingFirstStartKeepsSecondStartRuntimeRetryLive(t *testing.T) {
+func TestRunnerCancelingFirstStartKeepsSecondStartRuntimeRetryLive(t *testing.T) { //nolint:gocognit,cyclop // Generation-lifecycle test must observe both concurrent starts.
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
 	defer cancelSecond()
@@ -1293,7 +1293,7 @@ func (r *generationRuntimeReconciler) ReconcilePending(ctx context.Context) erro
 	return ctx.Err()
 }
 
-func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) {
+func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) { //nolint:cyclop // Generation restart timeline requires explicit channel and timeout checks.
 	client := testdb.New(t)
 	hub := sse.NewHub()
 	storage := t.TempDir()
@@ -1356,7 +1356,7 @@ func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) {
 	}
 }
 
-func TestRunnerShutdownRuntimeRetryJoinsMetadataTailAndIsIdempotent(t *testing.T) {
+func TestRunnerShutdownRuntimeRetryJoinsMetadataTailAndIsIdempotent(t *testing.T) { //nolint:cyclop // Shutdown timeline jointly verifies tail joining and idempotency.
 	parentCtx, cancelParent := context.WithCancel(context.Background())
 	defer cancelParent()
 	client := testdb.New(t)
@@ -1417,7 +1417,7 @@ func TestRunnerShutdownRuntimeRetryJoinsMetadataTailAndIsIdempotent(t *testing.T
 	}
 }
 
-func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) {
+func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) { //nolint:cyclop // Concurrent generation timeline deliberately retains all synchronization assertions.
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	client := testdb.New(t)
 	hub := sse.NewHub()

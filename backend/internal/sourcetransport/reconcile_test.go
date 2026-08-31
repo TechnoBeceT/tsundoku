@@ -399,7 +399,7 @@ func assertIntentRevision(t *testing.T, got sourcetransport.Intent, sourceID, de
 	}
 }
 
-func TestCanceledSourceApplyPersistsBoundedAttemptMetadata(t *testing.T) {
+func TestCanceledSourceApplyPersistsBoundedAttemptMetadata(t *testing.T) { //nolint:cyclop // Cancellation test asserts every bounded metadata field.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
@@ -440,7 +440,7 @@ func TestCanceledSourceApplyPersistsBoundedAttemptMetadata(t *testing.T) {
 	}
 }
 
-func TestCanceledSourceApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
+func TestCanceledSourceApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) { //nolint:gocognit,cyclop // Concurrency timeline needs explicit cancellation and timeout diagnostics.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})
@@ -492,7 +492,7 @@ func TestCanceledSourceApplyCannotHoldShutdownOnMetadataWrite(t *testing.T) {
 	}
 }
 
-func TestRuntimeConvergenceShutdownJoinsSourceMetadataTail(t *testing.T) {
+func TestRuntimeConvergenceShutdownJoinsSourceMetadataTail(t *testing.T) { //nolint:gocognit,cyclop // Shutdown test observes both convergence and metadata tails.
 	ctx := context.Background()
 	client := testdb.New(t)
 	plain := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{})

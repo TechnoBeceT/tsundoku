@@ -91,13 +91,16 @@ func newTestEnvWithCatalog(t *testing.T, catalog sourcetransport.SourceCatalog, 
 			Source:  sourceconfiguration.SourceIdentity{SourceID: sourceID, Name: "Source", Language: "en"},
 			Routing: sourceconfiguration.RoutingConfiguration{SocksMode: sourceconfiguration.SocksModeGlobal, BypassMode: networksvc.FlareModeGlobal},
 		}
-		if binding, err := networkService.GetBinding(ctx, sourceID); err == nil {
+		binding, bindingErr := networkService.GetBinding(ctx, sourceID)
+		switch {
+		case bindingErr == nil:
 			configuration.Routing.BypassMode = binding.FlareMode
-		} else if !errors.Is(err, networksvc.ErrBindingNotFound) {
-			return sourceconfiguration.Configuration{}, err
+		case !errors.Is(bindingErr, networksvc.ErrBindingNotFound):
+			return sourceconfiguration.Configuration{}, bindingErr
 		}
 		intent, err := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(sourceID)).Only(ctx)
-		if err == nil {
+		switch {
+		case err == nil:
 			configuration.Runtime = sourceconfiguration.RuntimeStatus{
 				DesiredRevision: intent.DesiredRevision, AppliedRevision: intent.AppliedRevision,
 				LastApplyAttempt: intent.LastApplyAttempt, LastApplyError: intent.LastApplyError,
@@ -106,9 +109,9 @@ func newTestEnvWithCatalog(t *testing.T, catalog sourcetransport.SourceCatalog, 
 			if intent.DesiredRevision <= intent.AppliedRevision {
 				configuration.Runtime.Status = sourceconfiguration.RuntimeApplied
 			}
-		} else if !ent.IsNotFound(err) {
+		case !ent.IsNotFound(err):
 			return sourceconfiguration.Configuration{}, err
-		} else {
+		default:
 			configuration.Runtime.Status = sourceconfiguration.RuntimeApplied
 		}
 		return configuration, nil
