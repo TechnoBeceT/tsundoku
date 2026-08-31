@@ -52,6 +52,28 @@ type fakeLauncher struct {
 	lastKeep    map[string]bool
 }
 
+type preferenceReadClient struct {
+	*sourceenginefake.Client
+	errs map[int64]error
+	seen []int64
+}
+
+func (c *preferenceReadClient) Preferences(ctx context.Context, sourceID int64) ([]sourceengine.Preference, error) {
+	c.seen = append(c.seen, sourceID)
+	if err := c.errs[sourceID]; err != nil {
+		return nil, err
+	}
+	return c.Client.Preferences(ctx, sourceID)
+}
+
+type preferenceLauncher struct{ instance sourceengine.Client }
+
+func (l preferenceLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
+	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
+}
+
+func (preferenceLauncher) Retire(context.Context, map[string]bool) {}
+
 type runtimeConfigClient struct {
 	*sourceenginefake.Client
 	mu              sync.Mutex
@@ -444,6 +466,55 @@ func TestReconcileNetwork_ProvisionsAndRoutes(t *testing.T) {
 	}
 	if len(launcher.lastKeep) != 1 {
 		t.Fatalf("Retire keep set = %v, want exactly the one live profile", launcher.lastKeep)
+	}
+}
+
+// TestReconcileNetwork_ProfilePreferencesIgnoreUnroutedHistory proves a
+// profile instance is provisioned only with preferences for sources routed to
+// that profile. Durable SourcePreference rows intentionally outlive removed
+// providers; asking a fresh profile instance for those absent source IDs must
+// not degrade the profile, while a real read failure for a routed source must
+// still remain a provisioning gap.
+func TestReconcileNetwork_ProfilePreferencesIgnoreUnroutedHistory(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	seedStoredPref(ctx, t, db, 42, "nsfw", "true", sourceengine.PreferenceCheckBox)
+	seedStoredPref(ctx, t, db, 99, "nsfw", "true", sourceengine.PreferenceCheckBox)
+
+	instance := &preferenceReadClient{
+		Client: sourceenginefake.New(),
+		errs: map[int64]error{
+			99: &sourceengine.BadRequestError{Msg: "unknown sourceId 99"},
+		},
+	}
+	deps := enginetopo.NetworkReconcileDeps{
+		Snapshot:   fakeSnapshotter{bindings: []network.ResolvedBinding{socksBinding(42)}},
+		Router:     engineroute.NewRouter(sourceenginefake.New()),
+		Launcher:   preferenceLauncher{instance: instance},
+		DB:         db,
+		Cache:      cache,
+		BaseConfig: baseConfig(),
+	}
+	res := mustReconcileNetwork(t, deps)
+	if res.InstancesRouted != 1 || len(res.Gaps) != 0 {
+		t.Fatalf("result = %+v, want stale preference history not to degrade profile", res)
+	}
+	if !slices.Equal(instance.seen, []int64{42}) {
+		t.Fatalf("preference reads = %v, want only routed source [42] (stale source 99 ignored)", instance.seen)
+	}
+
+	instance.seen = nil
+	instance.errs[42] = errors.New("routed source preference read failed")
+	res = mustReconcileNetwork(t, deps)
+	if res.InstancesRouted != 0 || len(res.Gaps) != 1 {
+		t.Fatalf("result = %+v, want routed-source failure to degrade the profile with one gap", res)
+	}
+	if !strings.Contains(res.Gaps[0].Error(), "routed source preference read failed") {
+		t.Fatalf("gap = %v, want routed source preference failure", res.Gaps[0])
+	}
+	if !slices.Equal(instance.seen, []int64{42}) {
+		t.Fatalf("preference reads after routed failure = %v, want only routed source [42]", instance.seen)
 	}
 }
 

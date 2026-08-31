@@ -182,6 +182,9 @@ type reconcileOptions struct {
 	// skipExtensions omits BOTH the repo and the extension steps (repos exist
 	// only to feed the extension install/refresh). See WithoutExtensions.
 	skipExtensions bool
+	// preferenceSources limits durable source-preference replay to this source
+	// set. Nil preserves the default instance's full replay semantics.
+	preferenceSources map[int64]bool
 }
 
 // ReconcileOption customizes a Reconcile pass. It exists so the per-profile
@@ -201,6 +204,21 @@ type ReconcileOption func(*reconcileOptions)
 // legitimately pushes its own SOCKS/FlareSolverr endpoint).
 func WithoutExtensions() ReconcileOption {
 	return func(o *reconcileOptions) { o.skipExtensions = true }
+}
+
+// WithPreferenceSources limits preference reconciliation to sourceIDs. Profile
+// instances use this because they can receive traffic only for the sources
+// routed to that profile; durable preferences for removed or differently
+// routed sources must not make provisioning query source IDs unavailable in
+// that instance. The default Reconcile call omits this option and continues to
+// replay every stored preference.
+func WithPreferenceSources(sourceIDs []int64) ReconcileOption {
+	return func(o *reconcileOptions) {
+		o.preferenceSources = make(map[int64]bool, len(sourceIDs))
+		for _, sourceID := range sourceIDs {
+			o.preferenceSources[sourceID] = true
+		}
+	}
 }
 
 // ReconcileResult reports what a Reconcile pass did — the observable outcome of
@@ -350,7 +368,7 @@ func Reconcile(
 		res.Gaps = append(res.Gaps, extGaps...)
 	}
 
-	prefsApplied, prefGaps, err := reconcilePrefs(ctx, client, db)
+	prefsApplied, prefGaps, err := reconcilePrefs(ctx, client, db, options.preferenceSources)
 	if err != nil {
 		return res, err
 	}
@@ -560,13 +578,21 @@ func reconcileExtensions(
 // its underlying issue is fixed — nothing vanishes across passes, it is at
 // worst deferred one boot. See
 // TestReconcile_MixedBatchKeyRejectionIsolatedWithoutLosingSiblingIntent.
-func reconcilePrefs(ctx context.Context, client sourceengine.Client, db *ent.Client) (int, []error, error) {
+func reconcilePrefs(
+	ctx context.Context,
+	client sourceengine.Client,
+	db *ent.Client,
+	preferenceSources map[int64]bool,
+) (int, []error, error) {
 	rows, err := db.SourcePreference.Query().All(ctx)
 	if err != nil {
 		return 0, nil, fmt.Errorf("enginetopo.Reconcile: query source preferences: %w", err)
 	}
 	bySource := make(map[int64][]*ent.SourcePreference)
 	for _, r := range rows {
+		if preferenceSources != nil && !preferenceSources[r.SourceID] {
+			continue
+		}
 		bySource[r.SourceID] = append(bySource[r.SourceID], r)
 	}
 

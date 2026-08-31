@@ -161,7 +161,8 @@ func ensureProvisionedInstance(ctx context.Context, deps NetworkReconcileDeps, p
 	}
 
 	cfg := profileConfigProvider{profile: p, base: deps.BaseConfig}
-	res, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg, WithoutExtensions())
+	res, err := Reconcile(ctx, inst.Client, deps.DB, deps.Cache, cfg,
+		WithoutExtensions(), WithPreferenceSources(p.SourceIDs))
 	if err != nil {
 		return engineroute.Instance{}, fmt.Errorf("provision profile %q instance: %w", p.Key, err)
 	}
