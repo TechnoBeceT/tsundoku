@@ -81,6 +81,9 @@ private class FakePagesSource(
     var mangaUpdateCalls = 0
         private set
 
+    /** Chapters passed to getPageList, in call order. */
+    val pageListCalls = mutableListOf<SChapter>()
+
     override suspend fun getMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
@@ -91,7 +94,10 @@ private class FakePagesSource(
         return SMangaUpdate(manga, onMangaUpdate())
     }
 
-    override suspend fun getPageList(chapter: SChapter): List<Page> = onPageList(chapter)
+    override suspend fun getPageList(chapter: SChapter): List<Page> {
+        pageListCalls += chapter
+        return onPageList(chapter)
+    }
 
     override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
 
@@ -179,31 +185,103 @@ class SourceCallsTest {
     }
 
     /**
-     * GAP-109 error preservation: the warm fetch ITSELF throwing must not mask the bare failure — the
-     * ORIGINAL bare-seed exception is rethrown so failure classification is unchanged.
+     * The refresh sentinel may be wrapped by an extension boundary. Replacing the cause-chain scan
+     * with a direct outer-message comparison must make this fail by rethrowing the wrapper instead
+     * of retrying with the memo-bearing chapter.
      */
     @Test
-    fun `pages rethrows the original bare error when the warm fetch throws`() {
-        val bareError = IllegalStateException("Refresh Chapter List")
+    fun `pages recognizes refresh chapter list signal through the bare error cause chain`() {
+        val warmChapter = chapterAt("/ch/1")
         val source =
             FakePagesSource(
-                onPageList = { throw bareError },
-                onMangaUpdate = { throw RuntimeException("cloudflare on the series page") },
+                onPageList = { chapter ->
+                    if (chapter === warmChapter) listOf(Page(index = 0, url = "https://x/warm"))
+                    else throw IllegalStateException("source call failed", IllegalStateException("Refresh Chapter List"))
+                },
+                onMangaUpdate = { listOf(warmChapter) },
             )
 
-        val thrown =
-            assertFailsWith<IllegalStateException> { SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1") }
+        val response = SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
 
-        assertSame(bareError, thrown)
+        assertEquals(listOf("https://x/warm"), response.pages.map { it.url })
         assertEquals(1, source.mangaUpdateCalls)
+        assertSame(warmChapter, source.pageListCalls[1])
     }
 
     /**
-     * GAP-109 error preservation: a successful warm fetch that contains NO chapter matching the url is
-     * treated as no help — the original bare-seed exception is rethrown, not swallowed.
+     * A genuine bare timeout is source-wide, not evidence that this one chapter offer is stale.
+     * Replacing the refresh-signal gate with an unconditional warm fetch must make this fail by
+     * consulting the missing refreshed list instead of preserving the timeout instance.
      */
     @Test
-    fun `pages rethrows the original bare error when no warm chapter url matches`() {
+    fun `pages preserves unrelated bare timeout when refreshed list omits chapter`() {
+        val timeout = IllegalStateException("request timed out: deadline exceeded")
+        val source =
+            FakePagesSource(
+                onPageList = { throw timeout },
+                onMangaUpdate = { listOf(chapterAt("/ch/OTHER")) },
+            )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
+        }
+
+        assertSame(timeout, thrown)
+        assertEquals(0, source.mangaUpdateCalls)
+        assertEquals(1, source.pageListCalls.size)
+    }
+
+    /**
+     * A bare rate-limit response is source-wide too. The missing refreshed list must never turn it
+     * into a chapter-specific not-found error or consume a warm request.
+     */
+    @Test
+    fun `pages preserves unrelated bare rate limit when refreshed list omits chapter`() {
+        val rateLimit = IllegalStateException("429 too many requests")
+        val source =
+            FakePagesSource(
+                onPageList = { throw rateLimit },
+                onMangaUpdate = { listOf(chapterAt("/ch/OTHER")) },
+            )
+
+        val thrown = assertFailsWith<IllegalStateException> {
+            SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
+        }
+
+        assertSame(rateLimit, thrown)
+        assertEquals(0, source.mangaUpdateCalls)
+        assertEquals(1, source.pageListCalls.size)
+    }
+
+    /**
+     * Once a warm fetch is attempted, its own failure is the current source boundary and must
+     * propagate by identity rather than being replaced by the earlier bare-seed memo error.
+     */
+    @Test
+    fun `pages propagates the warm fetch error when the warm fetch throws`() {
+        val bareError = IllegalStateException("Refresh Chapter List")
+        val warmError = RuntimeException("cloudflare on the series page")
+        val source =
+            FakePagesSource(
+                onPageList = { throw bareError },
+                onMangaUpdate = { throw warmError },
+            )
+
+        val thrown = assertFailsWith<RuntimeException> {
+            SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
+        }
+
+        assertSame(warmError, thrown)
+        assertEquals(1, source.mangaUpdateCalls)
+        assertEquals(1, source.pageListCalls.size)
+    }
+
+    /**
+     * A successful authoritative refresh with no exact url match identifies a stale provider offer.
+     * It must report a chapter-specific not-found error and never make a second getPageList call.
+     */
+    @Test
+    fun `pages reports the stale chapter url when no warm chapter url matches`() {
         val bareError = IllegalStateException("Refresh Chapter List")
         val source =
             FakePagesSource(
@@ -211,11 +289,36 @@ class SourceCallsTest {
                 onMangaUpdate = { listOf(chapterAt("/ch/OTHER")) },
             )
 
-        val thrown =
-            assertFailsWith<IllegalStateException> { SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1") }
+        val thrown = assertFailsWith<NoSuchElementException> {
+            SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
+        }
 
-        assertSame(bareError, thrown)
+        assertEquals("chapter not found in refreshed chapter list: /ch/1", thrown.message)
         assertEquals(1, source.mangaUpdateCalls)
+        assertEquals(1, source.pageListCalls.size)
+    }
+
+    /**
+     * A matching refreshed chapter must be passed to getPageList exactly once after the failed bare
+     * call. This catches retrying with a reconstructed seed, whose missing memo recreates the bug.
+     */
+    @Test
+    fun `pages retries once with the exact refreshed chapter instance`() {
+        val warmChapter = chapterAt("/ch/1")
+        val source =
+            FakePagesSource(
+                onPageList = { chapter ->
+                    if (chapter === warmChapter) listOf(Page(index = 0, url = "https://x/refreshed"))
+                    else throw IllegalStateException("Refresh Chapter List")
+                },
+                onMangaUpdate = { listOf(warmChapter) },
+            )
+
+        val response = SourceCalls.pages(source, "/ch/1", mangaUrl = "/series/1")
+
+        assertEquals(listOf("https://x/refreshed"), response.pages.map { it.url })
+        assertEquals(2, source.pageListCalls.size)
+        assertSame(warmChapter, source.pageListCalls[1])
     }
 
     /**

@@ -42,6 +42,11 @@ private val jsonMediaType = "application/json".toMediaType()
 /** JSON mapper for the impersonate-gateway request body (its own, so it never shares config). */
 private val impersonateMapper = jacksonObjectMapper()
 
+/** The narrowly-scoped pre-network memo-refresh signal emitted by keiyoushi sources. */
+private fun isRefreshChapterListSignal(error: Throwable): Boolean =
+    generateSequence(error) { it.cause }
+        .any { it.message?.trim() == "Refresh Chapter List" }
+
 /**
  * Headers stripped before an upstream request is forwarded to the impersonate gateway (GAP-111).
  * Two reasons a header is on this list:
@@ -219,10 +224,10 @@ object SourceCalls {
      * GAP-109 — bare-seed FIRST, warm-and-match ONLY on failure. The page fetch first calls
      * [Source.getPageList] with a bare [SChapter] reconstructed from [chapterUrl] alone. For the vast
      * majority of sources this succeeds with ZERO extra requests — a url-only seed is everything their
-     * getPageList needs. Only when the bare attempt THROWS is [mangaUrl] (the source-relative SERIES
-     * url; "" when unknown) consulted: a non-blank one triggers a series-scoped chapter fetch (the
-     * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs) and, when it yields a
-     * chapter whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
+     * getPageList needs. Only the bare attempt's `Refresh Chapter List` signal permits [mangaUrl]
+     * (the source-relative SERIES url; "" when unknown) to trigger a series-scoped chapter fetch (the
+     * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs). When it yields a chapter
+     * whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
      *
      * The warm path exists for the keiyoushi API-extension family (AsuraScans / HiveScans /
      * VortexScans — all extend `KeiSource`): their getPageList calls `getChapterUrl`, which reads a
@@ -232,13 +237,12 @@ object SourceCalls {
      * for keiyoushi. Because the series fetch reuses the same getMangaUpdate path [chapters] runs, the
      * matched chapter's url is byte-identical to the [chapterUrl] Tsundoku stored.
      *
-     * The warm fetch is GUARDED and NEVER masks the bare error: a blank [mangaUrl], a throwing warm
-     * fetch, or no url match all rethrow the ORIGINAL bare-seed exception. A non-keiyoushi transient
-     * failure (a Cloudflare / network blip in getPageList) therefore surfaces as its real error, so
-     * the existing retry and source-wide failure classification behave exactly as before — the warm
-     * fetch can only ever ADD a success, never hide a failure. (The earlier always-warm-FIRST version
-     * regressed this: an unguarded series fetch on EVERY download could trip the source breaker for a
-     * source that would have succeeded from the bare seed, and cost an HTTP request no source needed.)
+     * The warm fetch is authoritative once attempted. Every other bare-seed exception is rethrown
+     * unchanged, including source-wide timeout, rate-limit, and challenge errors. A blank [mangaUrl]
+     * also rethrows the refresh signal because there is no refresh boundary to consult. With a non-blank
+     * manga url, a throwing refresh propagates its own exception unchanged, while a successful refresh
+     * with no exact chapter-url match reports that stale offer explicitly. An exact match retries
+     * getPageList with the refreshed SChapter INSTANCE so extension-only memo state survives.
      */
     fun pages(
         source: Source,
@@ -252,23 +256,20 @@ object SourceCalls {
                 try {
                     source.getPageList(bareSeed)
                 } catch (bareError: Exception) {
-                    // Bare seed failed (keiyoushi's pre-network memo check, or a genuine fetch error).
-                    // Warm ONLY when we have a series url; guard the warm fetch so its own failure can
-                    // never replace `bareError`, and rethrow the original when no memo-bearing chapter
-                    // is found — the failure must classify exactly as the bare attempt would have.
+                    // Only keiyoushi's pre-network memo signal may enter stale-offer recovery. A
+                    // genuine source failure must preserve its original source-wide classification.
+                    if (!isRefreshChapterListSignal(bareError) || mangaUrl.isBlank()) throw bareError
+
+                    val mangaSeed = SManga.create().apply { this.url = mangaUrl }
                     val warmChapter =
-                        if (mangaUrl.isBlank()) {
-                            null
-                        } else {
-                            runCatching {
-                                val mangaSeed = SManga.create().apply { this.url = mangaUrl }
-                                source
-                                    .getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
-                                    .chapters
-                                    .firstOrNull { it.url == chapterUrl }
-                            }.getOrNull()
-                        }
-                    warmChapter?.let { source.getPageList(it) } ?: throw bareError
+                        source
+                            .getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
+                            .chapters
+                            .firstOrNull { it.url == chapterUrl }
+                            ?: throw NoSuchElementException(
+                                "chapter not found in refreshed chapter list: $chapterUrl",
+                            )
+                    source.getPageList(warmChapter)
                 }
             PagesResponse(
                 pageList.map { page -> PageDto(index = page.index, url = page.url, imageUrl = page.imageUrl) },
