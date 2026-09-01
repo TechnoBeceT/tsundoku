@@ -25078,6 +25078,7 @@ type SourceTransportPolicyMutation struct {
 	addsource_id          *int64
 	reuse_bypass_session  *bool
 	image_connection_mode *sourcetransportpolicy.ImageConnectionMode
+	kcef_policy           *sourcetransportpolicy.KcefPolicy
 	created_at            *time.Time
 	updated_at            *time.Time
 	clearedFields         map[string]struct{}
@@ -25344,6 +25345,55 @@ func (m *SourceTransportPolicyMutation) ResetImageConnectionMode() {
 	delete(m.clearedFields, sourcetransportpolicy.FieldImageConnectionMode)
 }
 
+// SetKcefPolicy sets the "kcef_policy" field.
+func (m *SourceTransportPolicyMutation) SetKcefPolicy(sp sourcetransportpolicy.KcefPolicy) {
+	m.kcef_policy = &sp
+}
+
+// KcefPolicy returns the value of the "kcef_policy" field in the mutation.
+func (m *SourceTransportPolicyMutation) KcefPolicy() (r sourcetransportpolicy.KcefPolicy, exists bool) {
+	v := m.kcef_policy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKcefPolicy returns the old "kcef_policy" field's value of the SourceTransportPolicy entity.
+// If the SourceTransportPolicy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SourceTransportPolicyMutation) OldKcefPolicy(ctx context.Context) (v *sourcetransportpolicy.KcefPolicy, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKcefPolicy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKcefPolicy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKcefPolicy: %w", err)
+	}
+	return oldValue.KcefPolicy, nil
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (m *SourceTransportPolicyMutation) ClearKcefPolicy() {
+	m.kcef_policy = nil
+	m.clearedFields[sourcetransportpolicy.FieldKcefPolicy] = struct{}{}
+}
+
+// KcefPolicyCleared returns if the "kcef_policy" field was cleared in this mutation.
+func (m *SourceTransportPolicyMutation) KcefPolicyCleared() bool {
+	_, ok := m.clearedFields[sourcetransportpolicy.FieldKcefPolicy]
+	return ok
+}
+
+// ResetKcefPolicy resets all changes to the "kcef_policy" field.
+func (m *SourceTransportPolicyMutation) ResetKcefPolicy() {
+	m.kcef_policy = nil
+	delete(m.clearedFields, sourcetransportpolicy.FieldKcefPolicy)
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (m *SourceTransportPolicyMutation) SetCreatedAt(t time.Time) {
 	m.created_at = &t
@@ -25450,7 +25500,7 @@ func (m *SourceTransportPolicyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SourceTransportPolicyMutation) Fields() []string {
-	fields := make([]string, 0, 5)
+	fields := make([]string, 0, 6)
 	if m.source_id != nil {
 		fields = append(fields, sourcetransportpolicy.FieldSourceID)
 	}
@@ -25459,6 +25509,9 @@ func (m *SourceTransportPolicyMutation) Fields() []string {
 	}
 	if m.image_connection_mode != nil {
 		fields = append(fields, sourcetransportpolicy.FieldImageConnectionMode)
+	}
+	if m.kcef_policy != nil {
+		fields = append(fields, sourcetransportpolicy.FieldKcefPolicy)
 	}
 	if m.created_at != nil {
 		fields = append(fields, sourcetransportpolicy.FieldCreatedAt)
@@ -25480,6 +25533,8 @@ func (m *SourceTransportPolicyMutation) Field(name string) (ent.Value, bool) {
 		return m.ReuseBypassSession()
 	case sourcetransportpolicy.FieldImageConnectionMode:
 		return m.ImageConnectionMode()
+	case sourcetransportpolicy.FieldKcefPolicy:
+		return m.KcefPolicy()
 	case sourcetransportpolicy.FieldCreatedAt:
 		return m.CreatedAt()
 	case sourcetransportpolicy.FieldUpdatedAt:
@@ -25499,6 +25554,8 @@ func (m *SourceTransportPolicyMutation) OldField(ctx context.Context, name strin
 		return m.OldReuseBypassSession(ctx)
 	case sourcetransportpolicy.FieldImageConnectionMode:
 		return m.OldImageConnectionMode(ctx)
+	case sourcetransportpolicy.FieldKcefPolicy:
+		return m.OldKcefPolicy(ctx)
 	case sourcetransportpolicy.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
 	case sourcetransportpolicy.FieldUpdatedAt:
@@ -25532,6 +25589,13 @@ func (m *SourceTransportPolicyMutation) SetField(name string, value ent.Value) e
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetImageConnectionMode(v)
+		return nil
+	case sourcetransportpolicy.FieldKcefPolicy:
+		v, ok := value.(sourcetransportpolicy.KcefPolicy)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKcefPolicy(v)
 		return nil
 	case sourcetransportpolicy.FieldCreatedAt:
 		v, ok := value.(time.Time)
@@ -25598,6 +25662,9 @@ func (m *SourceTransportPolicyMutation) ClearedFields() []string {
 	if m.FieldCleared(sourcetransportpolicy.FieldImageConnectionMode) {
 		fields = append(fields, sourcetransportpolicy.FieldImageConnectionMode)
 	}
+	if m.FieldCleared(sourcetransportpolicy.FieldKcefPolicy) {
+		fields = append(fields, sourcetransportpolicy.FieldKcefPolicy)
+	}
 	return fields
 }
 
@@ -25618,6 +25685,9 @@ func (m *SourceTransportPolicyMutation) ClearField(name string) error {
 	case sourcetransportpolicy.FieldImageConnectionMode:
 		m.ClearImageConnectionMode()
 		return nil
+	case sourcetransportpolicy.FieldKcefPolicy:
+		m.ClearKcefPolicy()
+		return nil
 	}
 	return fmt.Errorf("unknown SourceTransportPolicy nullable field %s", name)
 }
@@ -25634,6 +25704,9 @@ func (m *SourceTransportPolicyMutation) ResetField(name string) error {
 		return nil
 	case sourcetransportpolicy.FieldImageConnectionMode:
 		m.ResetImageConnectionMode()
+		return nil
+	case sourcetransportpolicy.FieldKcefPolicy:
+		m.ResetKcefPolicy()
 		return nil
 	case sourcetransportpolicy.FieldCreatedAt:
 		m.ResetCreatedAt()

@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	entpolicy "github.com/technobecet/tsundoku/internal/ent/sourcetransportpolicy"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
@@ -105,6 +106,84 @@ func TestUpdateClearFinalPolicyReturnsToInheritanceAndKeepsIntent(t *testing.T) 
 	intent := client.SourceRuntimeIntent.Query().Where(entintent.SourceID(101)).OnlyX(ctx)
 	if intent.DesiredRevision != 2 {
 		t.Fatalf("retained intent desired revision = %d, want 2", intent.DesiredRevision)
+	}
+}
+
+// TestUpdatePersistsEmbeddedBrowserPolicy proves the policy round-trips through
+// the revisioned transport boundary and that clearing its final override removes
+// the otherwise-empty durable row.
+func TestUpdatePersistsEmbeddedBrowserPolicy(t *testing.T) {
+	svc, client := newService(t)
+	ctx := context.Background()
+
+	updated, err := svc.Update(ctx, 101, sourcetransport.Patch{
+		KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired),
+	})
+	if err != nil {
+		t.Fatalf("set embedded-browser policy: %v", err)
+	}
+	if updated.Override.KCEFPolicy == nil || *updated.Override.KCEFPolicy != runtimepolicy.KCEFPolicyRequired {
+		t.Fatalf("stored override = %+v, want required", updated.Override)
+	}
+	if updated.Effective.KCEFPolicy != runtimepolicy.KCEFPolicyRequired {
+		t.Fatalf("effective policy = %+v, want required", updated.Effective)
+	}
+
+	cleared, err := svc.Update(ctx, 101, sourcetransport.Patch{
+		KCEFPolicy: sourcetransport.Clear[runtimepolicy.KCEFPolicy](),
+	})
+	if err != nil {
+		t.Fatalf("clear embedded-browser policy: %v", err)
+	}
+	if cleared.Override.KCEFPolicy != nil || cleared.Effective.KCEFPolicy != runtimepolicy.KCEFPolicyAuto {
+		t.Fatalf("cleared policy = %+v / %+v, want inherited auto", cleared.Override, cleared.Effective)
+	}
+	if got := client.SourceTransportPolicy.Query().CountX(ctx); got != 0 {
+		t.Fatalf("policy rows after clearing final override = %d, want 0", got)
+	}
+}
+
+// TestUpdateRejectsInvalidEmbeddedBrowserPolicyWithoutPersisting proves an
+// invalid policy cannot create durable policy or runtime-intent state.
+func TestUpdateRejectsInvalidEmbeddedBrowserPolicyWithoutPersisting(t *testing.T) {
+	svc, client := newService(t)
+	ctx := context.Background()
+
+	_, err := svc.Update(ctx, 101, sourcetransport.Patch{
+		KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicy("always")),
+	})
+	if !errors.Is(err, sourcetransport.ErrInvalidPolicy) {
+		t.Fatalf("Update error = %v, want invalid policy", err)
+	}
+	if got := client.SourceTransportPolicy.Query().CountX(ctx); got != 0 {
+		t.Fatalf("policy rows after invalid update = %d, want 0", got)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intents after invalid update = %d, want 0", got)
+	}
+}
+
+// TestUpdateRejectsRequiredEmbeddedBrowserOverSocksWithoutAdvancingIntent
+// proves the coordinated prospective invariant rejects an impossible route
+// before either durable policy or runtime revision is written.
+func TestUpdateRejectsRequiredEmbeddedBrowserOverSocksWithoutAdvancingIntent(t *testing.T) {
+	svc, client := newService(t)
+	ctx := context.Background()
+	svc.WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	socks := client.NetworkEndpoint.Create().SetName("Test SOCKS").SetKind("socks").SetHost("127.0.0.1").SetPort(1080).SaveX(ctx)
+	if _, err := client.SourceNetworkBinding.Create().SetSourceID(101).SetSocksEndpointID(socks.ID).Save(ctx); err != nil {
+		t.Fatalf("create SOCKS binding: %v", err)
+	}
+
+	_, err := svc.Update(ctx, 101, sourcetransport.Patch{KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired)})
+	if !errors.Is(err, sourcetransport.ErrInvalidPolicy) {
+		t.Fatalf("Update error = %v, want invalid policy", err)
+	}
+	if got := client.SourceTransportPolicy.Query().CountX(ctx); got != 0 {
+		t.Fatalf("policy rows after rejected route = %d, want 0", got)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intents after rejected route = %d, want 0", got)
 	}
 }
 

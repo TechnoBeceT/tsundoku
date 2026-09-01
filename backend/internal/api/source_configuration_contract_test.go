@@ -32,6 +32,13 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertType(t, propertyAt(t, schemas, "ImageConnectionPolicyValue", "effective"), "string")
 		assertEnum(t, propertyAt(t, schemas, "ImageConnectionPolicyValue", "effective"), []any{"fresh", "reuse"})
 		assertType(t, propertyAt(t, schemas, "ImageConnectionPolicyValue", "inherited"), "boolean")
+		assertObjectSchema(t, schemas, "KCEFPolicyValue", []string{"override", "global", "effective", "inherited", "enabled"}, []string{"override", "global", "effective", "inherited", "enabled"})
+		assertTypes(t, propertyAt(t, schemas, "KCEFPolicyValue", "override"), []any{"string", "null"})
+		assertEnum(t, propertyAt(t, schemas, "KCEFPolicyValue", "override"), []any{"auto", "required", "disabled", nil})
+		assertEnum(t, propertyAt(t, schemas, "KCEFPolicyValue", "global"), []any{"auto"})
+		assertEnum(t, propertyAt(t, schemas, "KCEFPolicyValue", "effective"), []any{"auto", "required", "disabled"})
+		assertType(t, propertyAt(t, schemas, "KCEFPolicyValue", "inherited"), "boolean")
+		assertType(t, propertyAt(t, schemas, "KCEFPolicyValue", "enabled"), "boolean")
 
 		assertObjectSchema(t, schemas, "BypassSessionPolicyValue", []string{"override", "global", "effective", "inherited", "mode"}, []string{"override", "global", "effective", "inherited", "mode"})
 		assertTypes(t, propertyAt(t, schemas, "BypassSessionPolicyValue", "override"), []any{"boolean", "null"})
@@ -88,7 +95,7 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertValue(t, propertyAt(t, schemas, "SourceExceptionSummary", "exceptionCount"), "minimum", 0)
 		assertRef(t, propertyAt(t, schemas, "SourceExceptionSummary", "runtime"), "#/components/schemas/SourceRuntimeStatus")
 
-		configurationFields := []string{"source", "downloadConcurrency", "imageRequestDelay", "protection", "bypassEnabled", "reuseBypassSession", "imageConnectionMode", "imageProxy", "routing", "profileKey", "runtime"}
+		configurationFields := []string{"source", "downloadConcurrency", "imageRequestDelay", "protection", "bypassEnabled", "reuseBypassSession", "imageConnectionMode", "kcef", "imageProxy", "routing", "profileKey", "runtime"}
 		assertObjectSchema(t, schemas, "SourceEffectiveConfiguration", configurationFields, configurationFields)
 		configurationRefs := map[string]string{
 			"source":              "SourceIdentity",
@@ -97,6 +104,7 @@ func TestSourceConfigurationContract(t *testing.T) {
 			"protection":          "SourceProtectionConfiguration",
 			"reuseBypassSession":  "BypassSessionPolicyValue",
 			"imageConnectionMode": "ImageConnectionPolicyValue",
+			"kcef":                "KCEFPolicyValue",
 			"imageProxy":          "SourceImageProxyState",
 			"routing":             "SourceRoutingConfiguration",
 			"runtime":             "SourceRuntimeStatus",
@@ -116,11 +124,16 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertValue(t, objectAt(t, schemas, "ImageConnectionPolicyPatch"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
 		assertEnum(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "value"), []any{"fresh", "reuse"})
+		assertObjectSchema(t, schemas, "KCEFPolicyPatch", []string{"mode", "value"}, []string{"mode"})
+		assertValue(t, objectAt(t, schemas, "KCEFPolicyPatch"), "additionalProperties", false)
+		assertRef(t, propertyAt(t, schemas, "KCEFPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
+		assertEnum(t, propertyAt(t, schemas, "KCEFPolicyPatch", "value"), []any{"auto", "required", "disabled"})
 
-		assertObjectSchema(t, schemas, "SourceTransportPolicyUpdate", []string{"reuseBypassSession", "imageConnectionMode"}, nil)
+		assertObjectSchema(t, schemas, "SourceTransportPolicyUpdate", []string{"reuseBypassSession", "imageConnectionMode", "kcefPolicy"}, nil)
 		assertValue(t, objectAt(t, schemas, "SourceTransportPolicyUpdate"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "SourceTransportPolicyUpdate", "reuseBypassSession"), "#/components/schemas/BooleanPolicyPatch")
 		assertRef(t, propertyAt(t, schemas, "SourceTransportPolicyUpdate", "imageConnectionMode"), "#/components/schemas/ImageConnectionPolicyPatch")
+		assertRef(t, propertyAt(t, schemas, "SourceTransportPolicyUpdate", "kcefPolicy"), "#/components/schemas/KCEFPolicyPatch")
 		assertObjectSchema(t, schemas, "SourceImageProxyMembershipUpdate", []string{"enabled"}, []string{"enabled"})
 		assertValue(t, objectAt(t, schemas, "SourceImageProxyMembershipUpdate"), "additionalProperties", false)
 		assertType(t, propertyAt(t, schemas, "SourceImageProxyMembershipUpdate", "enabled"), "boolean")

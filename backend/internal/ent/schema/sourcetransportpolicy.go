@@ -22,6 +22,7 @@ func (SourceTransportPolicy) Fields() []ent.Field {
 		field.Int64("source_id").Unique(),
 		field.Bool("reuse_bypass_session").Optional().Nillable(),
 		field.Enum("image_connection_mode").Values("fresh", "reuse").Optional().Nillable(),
+		field.Enum("kcef_policy").Values("auto", "required", "disabled").Optional().Nillable(),
 		field.Time("created_at").Default(time.Now).Immutable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 	}

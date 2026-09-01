@@ -137,6 +137,8 @@ func TestTransportPatchPreservesOmittedOverrideAndInheritStates(t *testing.T) {
 		{name: "reuse inherit", body: `{"reuseBypassSession":{"mode":"inherit"}}`, want: sourcetransport.Patch{ReuseBypassSession: sourcetransport.Clear[bool]()}},
 		{name: "image override", body: `{"imageConnectionMode":{"mode":"override","value":"reuse"}}`, want: sourcetransport.Patch{ImageConnectionMode: sourcetransport.Set(sourcetransport.ImageConnectionReuse)}},
 		{name: "image inherit", body: `{"imageConnectionMode":{"mode":"inherit"}}`, want: sourcetransport.Patch{ImageConnectionMode: sourcetransport.Clear[sourcetransport.ImageConnectionMode]()}},
+		{name: "embedded browser override", body: `{"kcefPolicy":{"mode":"override","value":"required"}}`, want: sourcetransport.Patch{KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired)}},
+		{name: "embedded browser inherit", body: `{"kcefPolicy":{"mode":"inherit"}}`, want: sourcetransport.Patch{KCEFPolicy: sourcetransport.Clear[runtimepolicy.KCEFPolicy]()}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -174,6 +176,8 @@ func TestTransportPatchRejectsMalformedBoundaryInput(t *testing.T) {
 		{target: "/api/sources/42/transport", body: `{"imageConnectionMode":{"mode":"override"}}`},
 		{target: "/api/sources/42/transport", body: `{"imageConnectionMode":{"mode":"inherit","value":"fresh"}}`},
 		{target: "/api/sources/42/transport", body: `{"imageConnectionMode":{"mode":"inherit","unknown":1}}`},
+		{target: "/api/sources/42/transport", body: `{"kcefPolicy":{"mode":"override","value":"always"}}`},
+		{target: "/api/sources/42/transport", body: `{"kcefPolicy":{"mode":"inherit","value":"auto"}}`},
 		{target: "/api/sources/42/transport", body: `{} {}`},
 	}
 	for _, tc := range cases {

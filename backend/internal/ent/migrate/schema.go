@@ -691,6 +691,7 @@ var (
 		{Name: "source_id", Type: field.TypeInt64, Unique: true},
 		{Name: "reuse_bypass_session", Type: field.TypeBool, Nullable: true},
 		{Name: "image_connection_mode", Type: field.TypeEnum, Nullable: true, Enums: []string{"fresh", "reuse"}},
+		{Name: "kcef_policy", Type: field.TypeEnum, Nullable: true, Enums: []string{"auto", "required", "disabled"}},
 		{Name: "created_at", Type: field.TypeTime},
 		{Name: "updated_at", Type: field.TypeTime},
 	}

@@ -175,6 +175,9 @@ func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, b
 		if row.ReuseBypassSession != nil {
 			state.policies[row.SourceID] = *row.ReuseBypassSession
 		}
+		if row.KcefPolicy != nil {
+			state.kcefPolicies[row.SourceID] = KCEFPolicy(*row.KcefPolicy)
+		}
 	}
 	for _, row := range bindings {
 		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID, HasSocks: row.SocksEndpointID != nil}

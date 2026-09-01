@@ -165,6 +165,36 @@ func ImageConnectionModeNotNil() predicate.SourceTransportPolicy {
 	return predicate.SourceTransportPolicy(sql.FieldNotNull(FieldImageConnectionMode))
 }
 
+// KcefPolicyEQ applies the EQ predicate on the "kcef_policy" field.
+func KcefPolicyEQ(v KcefPolicy) predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldEQ(FieldKcefPolicy, v))
+}
+
+// KcefPolicyNEQ applies the NEQ predicate on the "kcef_policy" field.
+func KcefPolicyNEQ(v KcefPolicy) predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldNEQ(FieldKcefPolicy, v))
+}
+
+// KcefPolicyIn applies the In predicate on the "kcef_policy" field.
+func KcefPolicyIn(vs ...KcefPolicy) predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldIn(FieldKcefPolicy, vs...))
+}
+
+// KcefPolicyNotIn applies the NotIn predicate on the "kcef_policy" field.
+func KcefPolicyNotIn(vs ...KcefPolicy) predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldNotIn(FieldKcefPolicy, vs...))
+}
+
+// KcefPolicyIsNil applies the IsNil predicate on the "kcef_policy" field.
+func KcefPolicyIsNil() predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldIsNull(FieldKcefPolicy))
+}
+
+// KcefPolicyNotNil applies the NotNil predicate on the "kcef_policy" field.
+func KcefPolicyNotNil() predicate.SourceTransportPolicy {
+	return predicate.SourceTransportPolicy(sql.FieldNotNull(FieldKcefPolicy))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.SourceTransportPolicy {
 	return predicate.SourceTransportPolicy(sql.FieldEQ(FieldCreatedAt, v))

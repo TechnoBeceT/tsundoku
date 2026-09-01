@@ -3,6 +3,8 @@ package sourcetransport
 import (
 	"errors"
 	"fmt"
+
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 // ErrInvalidPolicy identifies an unsupported patch operation or transport mode.
@@ -15,10 +17,20 @@ func validatePatch(patch Patch) error {
 	if err := validateOperation("image connection mode", patch.ImageConnectionMode.Operation); err != nil {
 		return err
 	}
+	if err := validateOperation("embedded browser", patch.KCEFPolicy.Operation); err != nil {
+		return err
+	}
 	if patch.ImageConnectionMode.Operation == PatchSet && !validImageConnectionMode(patch.ImageConnectionMode.Value) {
 		return fmt.Errorf("%w: image connection mode must be fresh or reuse", ErrInvalidPolicy)
 	}
+	if patch.KCEFPolicy.Operation == PatchSet && !validKCEFPolicy(patch.KCEFPolicy.Value) {
+		return fmt.Errorf("%w: embedded browser policy must be auto, required, or disabled", ErrInvalidPolicy)
+	}
 	return nil
+}
+
+func validKCEFPolicy(policy runtimepolicy.KCEFPolicy) bool {
+	return policy == runtimepolicy.KCEFPolicyAuto || policy == runtimepolicy.KCEFPolicyRequired || policy == runtimepolicy.KCEFPolicyDisabled
 }
 
 // Validate checks a patch without mutating storage.

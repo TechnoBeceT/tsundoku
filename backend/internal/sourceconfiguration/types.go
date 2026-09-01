@@ -3,6 +3,7 @@ package sourceconfiguration
 import (
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
@@ -47,6 +48,16 @@ type ImageConnectionPolicyValue struct {
 	Global    sourcetransport.ImageConnectionMode
 	Effective sourcetransport.ImageConnectionMode
 	Inherited bool
+}
+
+// KCEFPolicyValue resolves the source embedded-browser policy and its
+// route-derived effective capability.
+type KCEFPolicyValue struct {
+	Override  *runtimepolicy.KCEFPolicy
+	Global    runtimepolicy.KCEFPolicy
+	Effective runtimepolicy.KCEFPolicy
+	Inherited bool
+	Enabled   bool
 }
 
 // BypassSessionPolicyValue resolves bypass-session reuse and its runtime mode.
@@ -122,6 +133,7 @@ type Configuration struct {
 	BypassEnabled       bool
 	ReuseBypassSession  BypassSessionPolicyValue
 	ImageConnectionMode ImageConnectionPolicyValue
+	KCEF                KCEFPolicyValue
 	ImageProxy          ImageProxyState
 	Routing             RoutingConfiguration
 	ProfileKey          string

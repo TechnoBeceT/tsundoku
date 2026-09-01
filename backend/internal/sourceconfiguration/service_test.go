@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
@@ -113,6 +114,8 @@ func imageModePtr(v sourcetransport.ImageConnectionMode) *sourcetransport.ImageC
 	return &v
 }
 
+func kcefPolicyPtr(v runtimepolicy.KCEFPolicy) *runtimepolicy.KCEFPolicy { return &v }
+
 func TestStoredRoutingSurvivesUnavailableEffectiveEndpoints(t *testing.T) {
 	const (
 		disabledID int64 = 601
@@ -179,6 +182,44 @@ func TestGet_DerivesProfileKeyAgainstDefaultKCEF(t *testing.T) {
 				t.Fatalf("ProfileKey = %q, want %q", got.ProfileKey, tt.wantKey)
 			}
 		})
+	}
+}
+
+// TestGetComposesEmbeddedBrowserPolicy proves an explicit required policy makes
+// an endpoint-routed source a KCEF-enabled exception and contributes one field
+// to the exception summary.
+func TestGetComposesEmbeddedBrowserPolicy(t *testing.T) {
+	const sourceID = int64(7)
+	svc := newService(dependencies{
+		catalog:    &catalogStub{sources: []sourceengine.Source{{ID: sourceID}}},
+		globals:    &globalsStub{},
+		throughput: &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{}}},
+		transport: &transportStub{value: transportSnapshot{Overrides: map[int64]sourcetransport.Override{
+			sourceID: {KCEFPolicy: kcefPolicyPtr(runtimepolicy.KCEFPolicyRequired)},
+		}}},
+		routing: &routingStub{value: routingSnapshot{Resolved: map[int64]network.ResolvedBinding{
+			sourceID: {SourceID: sourceID, FlareMode: network.FlareModeEndpoint},
+		}, Stored: map[int64]network.ConfigurationBinding{}}},
+		runtime: &runtimeStub{value: map[int64]sourcetransport.Intent{}},
+	})
+
+	got, err := svc.Get(context.Background(), sourceID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.KCEF.Override == nil || *got.KCEF.Override != runtimepolicy.KCEFPolicyRequired || got.KCEF.Global != runtimepolicy.KCEFPolicyAuto || got.KCEF.Effective != runtimepolicy.KCEFPolicyRequired || got.KCEF.Inherited || !got.KCEF.Enabled {
+		t.Fatalf("embedded-browser configuration = %+v", got.KCEF)
+	}
+	if got.ProfileKey != "|endpoint||kcef=on" {
+		t.Fatalf("profile key = %q, want |endpoint||kcef=on", got.ProfileKey)
+	}
+
+	summaries, err := svc.Exceptions(context.Background())
+	if err != nil {
+		t.Fatalf("Exceptions: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].ExceptionCount != 1 {
+		t.Fatalf("summaries = %+v, want one embedded-browser exception", summaries)
 	}
 }
 

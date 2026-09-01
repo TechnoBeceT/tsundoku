@@ -24,6 +24,8 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		imageMode = *transportOverride.ImageConnectionMode
 	}
 	binding := effectiveBinding(sourceID, snapshot.routing)
+	kcefPolicy := kcefPolicy(transportOverride)
+	kcefEnabled := effectiveKCEFEnabled(kcefPolicy, binding)
 	storedBinding, configured := snapshot.routing.Stored[sourceID]
 	reuseGlobal, _ := resolveBypassSession(snapshot.globals.BypassSession, binding, nil)
 	reuse, sessionMode := resolveBypassSession(snapshot.globals.BypassSession, binding, transportOverride.ReuseBypassSession)
@@ -53,6 +55,10 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		ImageConnectionMode: ImageConnectionPolicyValue{
 			Override: transportOverride.ImageConnectionMode, Global: snapshot.transport.DefaultImageConnectionMode, Effective: imageMode,
 			Inherited: transportOverride.ImageConnectionMode == nil,
+		},
+		KCEF: KCEFPolicyValue{
+			Override: transportOverride.KCEFPolicy, Global: runtimepolicy.KCEFPolicyAuto, Effective: kcefPolicy,
+			Inherited: transportOverride.KCEFPolicy == nil, Enabled: kcefEnabled,
 		},
 		ImageProxy: ImageProxyState{
 			OptedIn: optedIn, GatewayEnabled: snapshot.globals.ProxyEnabled, GatewayConfigured: proxyConfigured,
@@ -187,6 +193,9 @@ func exceptionCount(sourceID int64, snapshot storesSnapshot) int {
 	if transport.ImageConnectionMode != nil {
 		count++
 	}
+	if transport.KCEFPolicy != nil {
+		count++
+	}
 	if containsSourceID(snapshot.globals.ProxySourceIDs, sourceID) {
 		count++
 	}
@@ -211,7 +220,7 @@ func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, o
 		inputs = append(inputs, engineroute.BindingInput{
 			SourceID: source.ID, Socks: toSocks(binding.Socks), FlareMode: binding.FlareMode,
 			Flare: toFlare(binding.Flare), DisableBypassSession: disableSession,
-			KCEFEnabled: autoKCEFEnabled(binding),
+			KCEFEnabled: effectiveKCEFEnabled(kcefPolicy(overrides[source.ID]), binding),
 		})
 	}
 	out := make(map[int64]string)
@@ -223,12 +232,19 @@ func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, o
 	return out
 }
 
-func autoKCEFEnabled(binding network.ResolvedBinding) bool {
-	enabled, err := runtimepolicy.ResolveKCEF(runtimepolicy.KCEFPolicyAuto, binding.Socks != nil, binding.FlareMode)
+func effectiveKCEFEnabled(policy runtimepolicy.KCEFPolicy, binding network.ResolvedBinding) bool {
+	enabled, err := runtimepolicy.ResolveKCEF(policy, binding.Socks != nil, binding.FlareMode)
 	if err != nil {
 		return false
 	}
 	return enabled
+}
+
+func kcefPolicy(override sourcetransport.Override) runtimepolicy.KCEFPolicy {
+	if override.KCEFPolicy == nil {
+		return runtimepolicy.KCEFPolicyAuto
+	}
+	return *override.KCEFPolicy
 }
 
 func toSocks(value *network.ResolvedSocks) *engineroute.SocksEndpoint {

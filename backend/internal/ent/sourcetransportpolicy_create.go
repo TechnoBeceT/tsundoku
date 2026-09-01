@@ -58,6 +58,20 @@ func (_c *SourceTransportPolicyCreate) SetNillableImageConnectionMode(v *sourcet
 	return _c
 }
 
+// SetKcefPolicy sets the "kcef_policy" field.
+func (_c *SourceTransportPolicyCreate) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyCreate {
+	_c.mutation.SetKcefPolicy(v)
+	return _c
+}
+
+// SetNillableKcefPolicy sets the "kcef_policy" field if the given value is not nil.
+func (_c *SourceTransportPolicyCreate) SetNillableKcefPolicy(v *sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyCreate {
+	if v != nil {
+		_c.SetKcefPolicy(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *SourceTransportPolicyCreate) SetCreatedAt(v time.Time) *SourceTransportPolicyCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -159,6 +173,11 @@ func (_c *SourceTransportPolicyCreate) check() error {
 			return &ValidationError{Name: "image_connection_mode", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.image_connection_mode": %w`, err)}
 		}
 	}
+	if v, ok := _c.mutation.KcefPolicy(); ok {
+		if err := sourcetransportpolicy.KcefPolicyValidator(v); err != nil {
+			return &ValidationError{Name: "kcef_policy", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.kcef_policy": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "SourceTransportPolicy.created_at"`)}
 	}
@@ -212,6 +231,10 @@ func (_c *SourceTransportPolicyCreate) createSpec() (*SourceTransportPolicy, *sq
 	if value, ok := _c.mutation.ImageConnectionMode(); ok {
 		_spec.SetField(sourcetransportpolicy.FieldImageConnectionMode, field.TypeEnum, value)
 		_node.ImageConnectionMode = &value
+	}
+	if value, ok := _c.mutation.KcefPolicy(); ok {
+		_spec.SetField(sourcetransportpolicy.FieldKcefPolicy, field.TypeEnum, value)
+		_node.KcefPolicy = &value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(sourcetransportpolicy.FieldCreatedAt, field.TypeTime, value)
@@ -324,6 +347,24 @@ func (u *SourceTransportPolicyUpsert) UpdateImageConnectionMode() *SourceTranspo
 // ClearImageConnectionMode clears the value of the "image_connection_mode" field.
 func (u *SourceTransportPolicyUpsert) ClearImageConnectionMode() *SourceTransportPolicyUpsert {
 	u.SetNull(sourcetransportpolicy.FieldImageConnectionMode)
+	return u
+}
+
+// SetKcefPolicy sets the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsert) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpsert {
+	u.Set(sourcetransportpolicy.FieldKcefPolicy, v)
+	return u
+}
+
+// UpdateKcefPolicy sets the "kcef_policy" field to the value that was provided on create.
+func (u *SourceTransportPolicyUpsert) UpdateKcefPolicy() *SourceTransportPolicyUpsert {
+	u.SetExcluded(sourcetransportpolicy.FieldKcefPolicy)
+	return u
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsert) ClearKcefPolicy() *SourceTransportPolicyUpsert {
+	u.SetNull(sourcetransportpolicy.FieldKcefPolicy)
 	return u
 }
 
@@ -450,6 +491,27 @@ func (u *SourceTransportPolicyUpsertOne) UpdateImageConnectionMode() *SourceTran
 func (u *SourceTransportPolicyUpsertOne) ClearImageConnectionMode() *SourceTransportPolicyUpsertOne {
 	return u.Update(func(s *SourceTransportPolicyUpsert) {
 		s.ClearImageConnectionMode()
+	})
+}
+
+// SetKcefPolicy sets the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsertOne) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpsertOne {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.SetKcefPolicy(v)
+	})
+}
+
+// UpdateKcefPolicy sets the "kcef_policy" field to the value that was provided on create.
+func (u *SourceTransportPolicyUpsertOne) UpdateKcefPolicy() *SourceTransportPolicyUpsertOne {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.UpdateKcefPolicy()
+	})
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsertOne) ClearKcefPolicy() *SourceTransportPolicyUpsertOne {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.ClearKcefPolicy()
 	})
 }
 
@@ -745,6 +807,27 @@ func (u *SourceTransportPolicyUpsertBulk) UpdateImageConnectionMode() *SourceTra
 func (u *SourceTransportPolicyUpsertBulk) ClearImageConnectionMode() *SourceTransportPolicyUpsertBulk {
 	return u.Update(func(s *SourceTransportPolicyUpsert) {
 		s.ClearImageConnectionMode()
+	})
+}
+
+// SetKcefPolicy sets the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsertBulk) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpsertBulk {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.SetKcefPolicy(v)
+	})
+}
+
+// UpdateKcefPolicy sets the "kcef_policy" field to the value that was provided on create.
+func (u *SourceTransportPolicyUpsertBulk) UpdateKcefPolicy() *SourceTransportPolicyUpsertBulk {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.UpdateKcefPolicy()
+	})
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (u *SourceTransportPolicyUpsertBulk) ClearKcefPolicy() *SourceTransportPolicyUpsertBulk {
+	return u.Update(func(s *SourceTransportPolicyUpsert) {
+		s.ClearKcefPolicy()
 	})
 }
 

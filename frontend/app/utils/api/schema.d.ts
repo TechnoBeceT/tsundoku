@@ -4227,6 +4227,16 @@ export interface components {
             effective: "fresh" | "reuse";
             inherited: boolean;
         };
+        KCEFPolicyValue: {
+            /** @enum {string|null} */
+            override: "auto" | "required" | "disabled" | null;
+            /** @enum {string} */
+            global: "auto";
+            /** @enum {string} */
+            effective: "auto" | "required" | "disabled";
+            inherited: boolean;
+            enabled: boolean;
+        };
         BypassSessionPolicyValue: {
             override: boolean | null;
             /** @description Current inherited baseline composed by the server for this source and route. */
@@ -4299,6 +4309,7 @@ export interface components {
             bypassEnabled: boolean;
             reuseBypassSession: components["schemas"]["BypassSessionPolicyValue"];
             imageConnectionMode: components["schemas"]["ImageConnectionPolicyValue"];
+            kcef: components["schemas"]["KCEFPolicyValue"];
             imageProxy: components["schemas"]["SourceImageProxyState"];
             routing: components["schemas"]["SourceRoutingConfiguration"];
             profileKey: string;
@@ -4315,9 +4326,15 @@ export interface components {
             /** @enum {string} */
             value?: "fresh" | "reuse";
         };
+        KCEFPolicyPatch: {
+            mode: components["schemas"]["PolicyPatchMode"];
+            /** @enum {string} */
+            value?: "auto" | "required" | "disabled";
+        };
         SourceTransportPolicyUpdate: {
             reuseBypassSession?: components["schemas"]["BooleanPolicyPatch"];
             imageConnectionMode?: components["schemas"]["ImageConnectionPolicyPatch"];
+            kcefPolicy?: components["schemas"]["KCEFPolicyPatch"];
         };
         SourceImageProxyMembershipUpdate: {
             enabled: boolean;

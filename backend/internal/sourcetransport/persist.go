@@ -10,12 +10,13 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entintent "github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	entpolicy "github.com/technobecet/tsundoku/internal/ent/sourcetransportpolicy"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 const maxApplyErrorLen = 512
 
 func (s *Service) persistPatchTx(ctx context.Context, tx *ent.Tx, sourceID int64, patch Patch) error {
-	if patch.ReuseBypassSession.Operation == PatchSet || patch.ImageConnectionMode.Operation == PatchSet {
+	if patch.ReuseBypassSession.Operation == PatchSet || patch.ImageConnectionMode.Operation == PatchSet || patch.KCEFPolicy.Operation == PatchSet {
 		if err := s.upsertPatchTx(ctx, tx, sourceID, patch); err != nil {
 			return err
 		}
@@ -30,6 +31,7 @@ func (s *Service) persistPatchTx(ctx context.Context, tx *ent.Tx, sourceID int64
 		entpolicy.SourceID(sourceID),
 		entpolicy.ReuseBypassSessionIsNil(),
 		entpolicy.ImageConnectionModeIsNil(),
+		entpolicy.KcefPolicyIsNil(),
 	).Exec(ctx); err != nil {
 		return fmt.Errorf("delete empty source %d transport policy: %w", sourceID, err)
 	}
@@ -44,6 +46,9 @@ func (s *Service) upsertPatchTx(ctx context.Context, tx *ent.Tx, sourceID int64,
 	}
 	if patch.ImageConnectionMode.Operation == PatchSet {
 		create.SetImageConnectionMode(entpolicy.ImageConnectionMode(patch.ImageConnectionMode.Value))
+	}
+	if patch.KCEFPolicy.Operation == PatchSet {
+		create.SetKcefPolicy(entpolicy.KcefPolicy(patch.KCEFPolicy.Value))
 	}
 	if err := create.OnConflictColumns(entpolicy.FieldSourceID).Update(func(update *ent.SourceTransportPolicyUpsert) {
 		applyUpsertPatch(update, patch)
@@ -67,6 +72,12 @@ func applyUpsertPatch(update *ent.SourceTransportPolicyUpsert, patch Patch) {
 	case PatchClear:
 		update.ClearImageConnectionMode()
 	}
+	switch patch.KCEFPolicy.Operation {
+	case PatchSet:
+		update.SetKcefPolicy(entpolicy.KcefPolicy(patch.KCEFPolicy.Value))
+	case PatchClear:
+		update.ClearKcefPolicy()
+	}
 }
 
 func applyClearPatch(update *ent.SourceTransportPolicyUpdate, patch Patch) {
@@ -75,6 +86,9 @@ func applyClearPatch(update *ent.SourceTransportPolicyUpdate, patch Patch) {
 	}
 	if patch.ImageConnectionMode.Operation == PatchClear {
 		update.ClearImageConnectionMode()
+	}
+	if patch.KCEFPolicy.Operation == PatchClear {
+		update.ClearKcefPolicy()
 	}
 }
 
@@ -105,6 +119,10 @@ func overrideFromRow(row *ent.SourceTransportPolicy) Override {
 	if row.ImageConnectionMode != nil {
 		mode := ImageConnectionMode(*row.ImageConnectionMode)
 		override.ImageConnectionMode = &mode
+	}
+	if row.KcefPolicy != nil {
+		policy := runtimepolicy.KCEFPolicy(*row.KcefPolicy)
+		override.KCEFPolicy = &policy
 	}
 	return override
 }
@@ -145,6 +163,13 @@ func applyPatch(stored Override, patch Patch) Override {
 		result.ImageConnectionMode = &value
 	case PatchClear:
 		result.ImageConnectionMode = nil
+	}
+	switch patch.KCEFPolicy.Operation {
+	case PatchSet:
+		value := patch.KCEFPolicy.Value
+		result.KCEFPolicy = &value
+	case PatchClear:
+		result.KCEFPolicy = nil
 	}
 	return result
 }
