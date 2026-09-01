@@ -164,6 +164,20 @@ func (_u *SeriesProviderUpdate) SetNillableWebURL(v *string) *SeriesProviderUpda
 	return _u
 }
 
+// SetAddressMode sets the "address_mode" field.
+func (_u *SeriesProviderUpdate) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderUpdate {
+	_u.mutation.SetAddressMode(v)
+	return _u
+}
+
+// SetNillableAddressMode sets the "address_mode" field if the given value is not nil.
+func (_u *SeriesProviderUpdate) SetNillableAddressMode(v *seriesprovider.AddressMode) *SeriesProviderUpdate {
+	if v != nil {
+		_u.SetAddressMode(*v)
+	}
+	return _u
+}
+
 // SetTitle sets the "title" field.
 func (_u *SeriesProviderUpdate) SetTitle(v string) *SeriesProviderUpdate {
 	_u.mutation.SetTitle(v)
@@ -433,6 +447,11 @@ func (_u *SeriesProviderUpdate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *SeriesProviderUpdate) check() error {
+	if v, ok := _u.mutation.AddressMode(); ok {
+		if err := seriesprovider.AddressModeValidator(v); err != nil {
+			return &ValidationError{Name: "address_mode", err: fmt.Errorf(`ent: validator failed for field "SeriesProvider.address_mode": %w`, err)}
+		}
+	}
 	if _u.mutation.SeriesCleared() && len(_u.mutation.SeriesIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "SeriesProvider.series"`)
 	}
@@ -480,6 +499,9 @@ func (_u *SeriesProviderUpdate) sqlSave(ctx context.Context) (_node int, err err
 	}
 	if value, ok := _u.mutation.WebURL(); ok {
 		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AddressMode(); ok {
+		_spec.SetField(seriesprovider.FieldAddressMode, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)
@@ -810,6 +832,20 @@ func (_u *SeriesProviderUpdateOne) SetNillableWebURL(v *string) *SeriesProviderU
 	return _u
 }
 
+// SetAddressMode sets the "address_mode" field.
+func (_u *SeriesProviderUpdateOne) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderUpdateOne {
+	_u.mutation.SetAddressMode(v)
+	return _u
+}
+
+// SetNillableAddressMode sets the "address_mode" field if the given value is not nil.
+func (_u *SeriesProviderUpdateOne) SetNillableAddressMode(v *seriesprovider.AddressMode) *SeriesProviderUpdateOne {
+	if v != nil {
+		_u.SetAddressMode(*v)
+	}
+	return _u
+}
+
 // SetTitle sets the "title" field.
 func (_u *SeriesProviderUpdateOne) SetTitle(v string) *SeriesProviderUpdateOne {
 	_u.mutation.SetTitle(v)
@@ -1092,6 +1128,11 @@ func (_u *SeriesProviderUpdateOne) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *SeriesProviderUpdateOne) check() error {
+	if v, ok := _u.mutation.AddressMode(); ok {
+		if err := seriesprovider.AddressModeValidator(v); err != nil {
+			return &ValidationError{Name: "address_mode", err: fmt.Errorf(`ent: validator failed for field "SeriesProvider.address_mode": %w`, err)}
+		}
+	}
 	if _u.mutation.SeriesCleared() && len(_u.mutation.SeriesIDs()) > 0 {
 		return errors.New(`ent: clearing a required unique edge "SeriesProvider.series"`)
 	}
@@ -1156,6 +1197,9 @@ func (_u *SeriesProviderUpdateOne) sqlSave(ctx context.Context) (_node *SeriesPr
 	}
 	if value, ok := _u.mutation.WebURL(); ok {
 		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AddressMode(); ok {
+		_spec.SetField(seriesprovider.FieldAddressMode, field.TypeEnum, value)
 	}
 	if value, ok := _u.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)

@@ -462,6 +462,13 @@ func (c *countingChapterClient) Chapters(ctx context.Context, sourceID int64, ur
 	return c.Client.Chapters(ctx, sourceID, url, mangaTitle)
 }
 
+func (c *countingChapterClient) ChaptersRef(ctx context.Context, ref sourceengine.ProviderRef, mangaTitle string) (sourceengine.ChaptersResult, error) {
+	c.mu.Lock()
+	c.calls[ref.URL]++
+	c.mu.Unlock()
+	return c.Client.ChaptersRef(ctx, ref, mangaTitle)
+}
+
 func (c *countingChapterClient) count(url string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -820,8 +827,8 @@ func TestIngest_AddSeries_SeriesProviderURL(t *testing.T) {
 // TestIngest_AddSeries_WebURL is the realUrl round-trip proof: the manga's
 // realUrl (sourceengine.MangaDetails.RealURL) lands on SeriesProvider.WebURL,
 // and each chapter's realUrl (sourceengine.Chapter.RealURL) lands on the
-// corresponding ProviderChapter.WebURL — both distinct from their sibling URL
-// (addressing) fields, which keep storing the source-relative key.
+// corresponding ProviderChapter.WebURL — both distinct in purpose from their
+// sibling URL fields, which keep storing the exact source-owned address.
 func TestIngest_AddSeries_WebURL(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -1289,5 +1296,73 @@ func TestMapToFetchedChapters_ProviderIndexReversed(t *testing.T) {
 	// The NEWEST chapter (first in the raw list) must carry the HIGHEST index.
 	if got[0].ProviderIndex != len(got)-1 {
 		t.Errorf("newest chapter ProviderIndex: got %d, want %d", got[0].ProviderIndex, len(got)-1)
+	}
+}
+
+func TestAddSeriesRefRetainsAndResolvesAddressContext(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	const sourceID int64 = 4242
+	const mangaURL = "/manga/addressed"
+	const webURL = "https://example.test/manga/addressed"
+	engine := enginefake.New(
+		enginefake.WithChaptersResult(sourceID, mangaURL, sourceengine.ChaptersResult{
+			Chapters:    makeChapters(1),
+			AddressMode: sourceengine.AddressModeURLSearch,
+		}),
+		enginefake.WithMangaDetails(sourceID, mangaURL, sourceengine.MangaDetails{
+			Title:       "Addressed",
+			AddressMode: sourceengine.AddressModeURLSearch,
+		}),
+	)
+
+	ing := ingest.NewIngest(engine, client)
+	_, err := ing.AddSeriesUngatedRef(ctx, sourceengine.ProviderRef{
+		SourceID: sourceID,
+		URL:      mangaURL,
+		WebURL:   webURL,
+	}, "Addressed", "")
+	if err != nil {
+		t.Fatalf("AddSeriesUngatedRef: %v", err)
+	}
+
+	provider := client.SeriesProvider.Query().OnlyX(ctx)
+	if got := provider.AddressMode.String(); got != "url_search" {
+		t.Fatalf("address mode = %q, want url_search", got)
+	}
+	if provider.URL != mangaURL {
+		t.Fatalf("stored address URL = %q, want unchanged %q", provider.URL, mangaURL)
+	}
+	if provider.WebURL != webURL {
+		t.Fatalf("stored web URL = %q, want %q", provider.WebURL, webURL)
+	}
+}
+
+func TestAddSeriesRefPersistsChapterResolutionBeforeLaterDetailsFailure(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	const sourceID int64 = 4243
+	const mangaURL = "/manga/existing-address"
+	series := client.Series.Create().SetTitle("Existing Address").SetSlug("existing-address").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("4243").SetURL(mangaURL).SaveX(ctx)
+	engine := enginefake.New(
+		enginefake.WithChaptersResult(sourceID, mangaURL, sourceengine.ChaptersResult{
+			Chapters:    makeChapters(1),
+			AddressMode: sourceengine.AddressModeDirect,
+		}),
+		enginefake.WithError("MangaDetails", errors.New("details unavailable")),
+	)
+
+	_, err := ingest.NewIngest(engine, client).AddSeriesUngatedRef(ctx, sourceengine.ProviderRef{
+		SourceID: sourceID,
+		URL:      mangaURL,
+	}, "Existing Address", "")
+	if err == nil {
+		t.Fatal("AddSeriesUngatedRef error = nil, want later details failure")
+	}
+
+	got := client.SeriesProvider.GetX(ctx, provider.ID)
+	if got.AddressMode.String() != "direct" {
+		t.Fatalf("address mode after successful chapters + failed details = %q, want direct", got.AddressMode)
 	}
 }

@@ -20,18 +20,19 @@ enum class AddressMode(@get:JsonValue val wire: String) {
  * Every request/response is addressed by STABLE (sourceId, url) — never an
  * engine-assigned opaque id. This is the whole point of the Suwayomi-removal
  * milestone: a DB rebuild + extension reinstall yields the same source ids and
- * the same source-relative URLs, so a stored key always resolves to the same
- * series (killing the "wrong-series download" bug).
+ * the same extension-owned serialized addresses, so a stored key always resolves
+ * to the same series (killing the "wrong-series download" bug).
  */
 
 /**
- * A manga entry in a search/browse result — addressed by its source-relative [url].
+ * A manga entry in a search/browse result — addressed by its source-owned serialized [url].
  *
  * [url] is the ADDRESSING url: what every subsequent request sends back to identify this manga.
- * It is source-relative and not necessarily a browser-openable link. [realUrl] is the fully-
- * qualified, browser-clickable url (Mihon's `HttpSource.getMangaUrl`) — powers the owner-facing
- * "View on source" external link. The two are NEVER the same thing; never fall back from one to
- * the other.
+ * Depending on [addressMode], it may be a relative or opaque extension key, or an absolute
+ * cross-origin URL retained for URL-search hydration. [realUrl] is the browser-clickable URL
+ * (Mihon's `HttpSource.getMangaUrl`) that powers the owner-facing "View on source" link and acts
+ * only as the optional legacy-resolution witness. It may equal [url] when the source's addressing
+ * value is already the absolute browser URL.
  */
 data class MangaEntryDto(
     val url: String,
@@ -56,8 +57,8 @@ data class MangaDetailsDto(
 )
 
 /**
- * A chapter of a manga — addressed by its source-relative [url]. See [MangaEntryDto] for the
- * [url] (addressing) vs [realUrl] (browser-clickable) distinction — the same rule applies here.
+ * A chapter of a manga — addressed by its source-owned [url], whose shape may be relative, opaque,
+ * or absolute. See [MangaEntryDto] for the addressing vs browser-link distinction.
  */
 data class ChapterDto(
     val url: String,
@@ -117,7 +118,8 @@ data class MangaRequest(val sourceId: Long, val url: String, val addressMode: Ad
 data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /**
- * [mangaUrl] is the OPTIONAL source-relative SERIES url the chapter belongs to. Supplying it lets
+ * [mangaUrl] is the OPTIONAL source-owned serialized SERIES address the chapter belongs to.
+ * Supplying it lets
  * [SourceCalls.pages] run a series-scoped chapter fetch and hand the real memo-bearing SChapter to
  * `getPageList` — required by the keiyoushi `KeiSource` family (AsuraScans / HiveScans / VortexScans),
  * whose `getChapterUrl` reads a per-chapter `memo["mangaSlug"]` a bare url-only seed lacks (GAP-109).

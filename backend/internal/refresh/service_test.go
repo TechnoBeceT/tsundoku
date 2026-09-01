@@ -106,6 +106,26 @@ func TestRefreshAll_DiscoversNewChapters(t *testing.T) {
 	}
 }
 
+func TestRefreshAll_PersistsResolvedAddressMode(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	const sourceID, mangaURL = 78, "/manga/address-mode"
+	fc := enginefake.New(enginefake.WithChaptersResult(sourceID, mangaURL, sourceengine.ChaptersResult{
+		Chapters:    []sourceengine.Chapter{{Number: num(1), URL: "u1"}},
+		AddressMode: sourceengine.AddressModeURLSearch,
+	}))
+	_, sp := seedMonitoredSeries(t, ctx, db, "address-mode", sourceID, mangaURL)
+
+	if _, err := newSvc(t, db, fc).RefreshAll(ctx); err != nil {
+		t.Fatalf("RefreshAll: %v", err)
+	}
+
+	got := db.SeriesProvider.GetX(ctx, sp.ID)
+	if got.AddressMode.String() != "url_search" {
+		t.Fatalf("address mode = %q, want url_search", got.AddressMode)
+	}
+}
+
 // TestRefreshAll_BypassesInteractiveChapterCache proves the sweep decoupling: even
 // when refresh's ingest SHARES the interactive chapter cache (as it does in
 // production wiring), the sweep fetches FRESH via FetchChaptersUncached and never

@@ -243,6 +243,35 @@ func TestAddProvider_LinkedThroughRealIngest(t *testing.T) {
 	}
 }
 
+func TestAddProviderRef_RetainsAddressContext(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	ser := client.Series.Create().SetTitle("Addressed Series").SetSlug("addressed-series").SaveX(ctx)
+
+	ingestSvc := ingest.NewIngest(newFakeClientWithFeed(t), client)
+	seriesSvc := series.NewService(client, storage, 14)
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	const webURL = "https://source.test/manga/99"
+	_, err := svc.AddProviderRef(ctx, ser.ID, library.ProviderRef{
+		Source:      "1",
+		URL:         "/manga/99",
+		AddressMode: sourceengine.AddressModeURLSearch,
+		WebURL:      webURL,
+	}, 5)
+	if err != nil {
+		t.Fatalf("AddProviderRef: %v", err)
+	}
+
+	provider := client.SeriesProvider.Query().Where(entseriesprovider.ProviderEQ("1")).OnlyX(ctx)
+	if provider.AddressMode != entseriesprovider.AddressModeURLSearch {
+		t.Errorf("address mode = %q, want url_search", provider.AddressMode)
+	}
+	if provider.WebURL != webURL {
+		t.Errorf("web URL = %q, want %q", provider.WebURL, webURL)
+	}
+}
+
 // TestAddProvider_ScanlatorAware verifies that AddProvider treats the same
 // source under two DIFFERENT scanlators as two independent SeriesProvider
 // rows — each keeping its OWN importance — rather than colliding on

@@ -336,17 +336,17 @@ function openMatchProvider(providerId: string): void {
   matchProviderOpen.value = true
 }
 
-function onPickCandidate(payload: { source: string, mangaId: number, url: string }): void {
-  void linkLoadBreakdown(payload.source, payload.mangaId, payload.url)
+function onPickCandidate(payload: { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }): void {
+  void linkLoadBreakdown(payload.source, payload.mangaId, payload.url, payload.addressMode, payload.webUrl)
 }
 
-async function onMatchProviderConfirm(payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }): Promise<void> {
+async function onMatchProviderConfirm(payload: { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string, scanlator: string, importance: number }): Promise<void> {
   // The Match dialog is reused for BOTH the single disk-provider match AND the
   // consolidation "Match to a new source" arm. In consolidate mode the picked
   // source becomes the survivor the selected providers fold into.
   if (consolidateMode.value) {
     const ok = await consolidateProviders(consolidateSelectedIds.value, {
-      source: { source: payload.source, url: payload.url, scanlator: payload.scanlator, importance: payload.importance },
+      source: { source: payload.source, url: payload.url, addressMode: payload.addressMode, webUrl: payload.webUrl, scanlator: payload.scanlator, importance: payload.importance },
     })
     if (ok) matchProviderOpen.value = false
     return

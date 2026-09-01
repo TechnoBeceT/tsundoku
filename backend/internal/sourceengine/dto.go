@@ -1,11 +1,103 @@
 package sourceengine
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // This file holds the Go mirrors of engine-host's Dto.kt response shapes —
 // the values callers actually work with. Per-endpoint REQUEST wire shapes
 // (searchRequest, mangaRequest, ...) and thin response WRAPPERS
 // (chaptersResponse, pagesResponse, ...) live beside the method that uses
 // them (search.go, chapters.go, ...), not here — this file is only the
 // public, reusable DTOs.
+
+// AddressMode records how the engine reconstructs a source manga from its
+// serialized URL. Its zero value is the compatibility state (unknown), so an
+// omitted field from an older engine or API client remains valid without
+// inventing provenance.
+type AddressMode string
+
+const (
+	// AddressModeUnknown is the legacy/unresolved mode. It is represented by the
+	// Go zero value while its JSON/database spelling remains "unknown".
+	AddressModeUnknown AddressMode = ""
+	// AddressModeDirect means URL is an extension-owned key that must be passed
+	// straight back to the source.
+	AddressModeDirect AddressMode = "direct"
+	// AddressModeURLSearch means URL is rehydrated through the source's URL-search
+	// path, optionally using WebURL as the browser-address witness.
+	AddressModeURLSearch AddressMode = "url_search"
+)
+
+// Wire returns the engine/database spelling of m. The zero value deliberately
+// serializes as "unknown" for additive compatibility.
+func (m AddressMode) Wire() string {
+	if m == AddressModeUnknown {
+		return "unknown"
+	}
+	return string(m)
+}
+
+// IsKnown reports whether m carries resolved provenance.
+func (m AddressMode) IsKnown() bool {
+	return m == AddressModeDirect || m == AddressModeURLSearch
+}
+
+// IsValid reports whether m is one of the three supported modes. The zero value
+// is the valid unknown mode.
+func (m AddressMode) IsValid() bool {
+	return m == AddressModeUnknown || m.IsKnown()
+}
+
+// ParseAddressMode converts a wire/database spelling to AddressMode.
+func ParseAddressMode(wire string) (AddressMode, error) {
+	switch wire {
+	case "", "unknown":
+		return AddressModeUnknown, nil
+	case "direct":
+		return AddressModeDirect, nil
+	case "url_search":
+		return AddressModeURLSearch, nil
+	default:
+		return AddressModeUnknown, fmt.Errorf("sourceengine: invalid address mode %q", wire)
+	}
+}
+
+// MarshalJSON preserves the engine's exact enum spellings while mapping the Go
+// zero value onto the compatibility spelling "unknown".
+func (m AddressMode) MarshalJSON() ([]byte, error) {
+	if !m.IsValid() {
+		return nil, fmt.Errorf("sourceengine: invalid address mode %q", string(m))
+	}
+	return json.Marshal(m.Wire())
+}
+
+// UnmarshalJSON accepts exactly the engine's tri-state enum. Missing fields do
+// not invoke this method and therefore retain the zero-value unknown mode.
+func (m *AddressMode) UnmarshalJSON(data []byte) error {
+	var wire string
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	parsed, err := ParseAddressMode(wire)
+	if err != nil {
+		return err
+	}
+	*m = parsed
+	return nil
+}
+
+// ProviderRef is the complete manga address context required by details,
+// chapters, and page warm-up calls. URL is never rewritten; AddressMode tells
+// the engine how to interpret it and WebURL is only the optional browser URL
+// witness used while resolving legacy unknown rows.
+type ProviderRef struct {
+	SourceID    int64
+	URL         string
+	AddressMode AddressMode
+	WebURL      string
+}
 
 // Health is the engine host's liveness probe response.
 type Health struct {
@@ -55,12 +147,12 @@ type Source struct {
 	Lang string `json:"lang"`
 }
 
-// MangaEntry is one search/browse result — addressed by its source-relative
-// URL, never an opaque id.
+// MangaEntry is one search/browse result, identified by a source-owned
+// serialized address rather than an engine-assigned id.
 type MangaEntry struct {
-	// URL is the source-relative manga URL — the stable key for this manga.
-	// This is the ADDRESSING url (what every request sends back to identify
-	// the manga), NOT a clickable browser link — see RealURL.
+	// URL is the stable ADDRESSING value every request sends back to identify
+	// the manga. Depending on AddressMode, it may be a relative or opaque
+	// extension key, or an absolute cross-origin URL retained for hydration.
 	URL string `json:"url"`
 	// Title is the manga's display title.
 	Title string `json:"title"`
@@ -68,11 +160,15 @@ type MangaEntry struct {
 	ThumbnailURL string `json:"thumbnailUrl"`
 	// RealURL is the fully-qualified, browser-clickable URL for this manga
 	// (Mihon's HttpSource.getMangaUrl) — powers the "View on source" external
-	// link. Distinct from URL: URL is source-relative addressing that may not
-	// even be an absolute URL for every source; RealURL is always meant to
-	// open in a browser. "" when the engine host could not resolve one (a
+	// link. URL remains the source-owned addressing value; RealURL opens in a
+	// browser and may be carried back only as the optional WebURL resolver
+	// witness. The two may be equal for absolute URL-search addresses. "" when
+	// the engine host could not resolve one (a
 	// non-HttpSource source, or a source whose request-building throws).
 	RealURL string `json:"realUrl"`
+	// AddressMode is the engine-resolved provenance for URL. Search and browse
+	// establish it before the candidate crosses the browser adopt flow.
+	AddressMode AddressMode `json:"addressMode"`
 }
 
 // SearchResult is one page of a search or catalogue-browse listing.
@@ -85,8 +181,8 @@ type SearchResult struct {
 
 // MangaDetails is the full metadata for one manga, keyed by URL.
 type MangaDetails struct {
-	// URL is the source-relative manga URL. This is the ADDRESSING url, NOT a
-	// clickable browser link — see RealURL.
+	// URL is the source-owned serialized manga address. It may be relative,
+	// opaque, or absolute; see AddressMode and RealURL.
 	URL string `json:"url"`
 	// Title is the manga's display title.
 	Title string `json:"title"`
@@ -107,13 +203,16 @@ type MangaDetails struct {
 	// (Mihon's HttpSource.getMangaUrl) — see MangaEntry.RealURL's doc comment
 	// for the distinction from URL. "" when unresolved.
 	RealURL string `json:"realUrl"`
+	// AddressMode is the mode the engine successfully used for this details
+	// fetch. Unknown is the compatibility default for older hosts.
+	AddressMode AddressMode `json:"addressMode"`
 }
 
-// Chapter is one chapter of a manga, keyed by its source-relative URL.
+// Chapter is one chapter of a manga, keyed by its source-owned address.
 type Chapter struct {
-	// URL is the source-relative chapter URL — the stable key for this
-	// chapter (NEVER an engine-assigned id). This is the ADDRESSING url, NOT
-	// a clickable browser link — see RealURL.
+	// URL is the source-owned chapter address — the stable key for this chapter
+	// (NEVER an engine-assigned id). Its shape may be relative, opaque, or
+	// absolute; see RealURL for the browser link.
 	URL string `json:"url"`
 	// Name is the chapter's display name (e.g. "Chapter 1").
 	Name string `json:"name"`

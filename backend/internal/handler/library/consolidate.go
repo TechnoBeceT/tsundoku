@@ -7,6 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/library"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // consolidateBody is the wire shape for POST
@@ -34,10 +35,12 @@ type consolidateTarget struct {
 // consolidateSource is the match-to-real-source arm of a consolidation target —
 // the same {source,url,scanlator,importance} shape the single Match uses.
 type consolidateSource struct {
-	Source     string `json:"source"`
-	URL        string `json:"url"`
-	Scanlator  string `json:"scanlator"`
-	Importance int    `json:"importance"`
+	Source      string                   `json:"source"`
+	URL         string                   `json:"url"`
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
+	Scanlator   string                   `json:"scanlator"`
+	Importance  int                      `json:"importance"`
 }
 
 // consolidateStartedResponse is the wire shape returned by POST
@@ -117,17 +120,19 @@ func validateConsolidateBody(body consolidateBody) ([]uuid.UUID, library.Consoli
 	}
 
 	src := body.Target.Source
-	if err := validateProviderRef(providerRefBody{Source: src.Source, URL: src.URL}); err != nil {
+	if err := validateProviderRef(providerRefBody{Source: src.Source, URL: src.URL, AddressMode: src.AddressMode, WebURL: src.WebURL}); err != nil {
 		return nil, library.ConsolidateTarget{}, err
 	}
 	if src.Importance < 1 {
 		return nil, library.ConsolidateTarget{}, echo.NewHTTPError(http.StatusBadRequest, "importance must be >= 1")
 	}
 	return mergeIDs, library.ConsolidateTarget{
-		Source:     src.Source,
-		URL:        src.URL,
-		Scanlator:  src.Scanlator,
-		Importance: src.Importance,
+		Source:      src.Source,
+		URL:         src.URL,
+		AddressMode: src.AddressMode,
+		WebURL:      src.WebURL,
+		Scanlator:   src.Scanlator,
+		Importance:  src.Importance,
 	}, nil
 }
 

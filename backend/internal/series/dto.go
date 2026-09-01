@@ -244,7 +244,7 @@ func mapLinks(links []metadata.Link) []LinkDTO {
 // browser-clickable page (the source's realUrl) — and FALLS BACK to the
 // addressing URL, which for many sources is ITSELF an absolute browser URL
 // (e.g. Asura's "https://asura.example/manga/.."). Only a genuinely
-// source-relative addressing URL (e.g. "/605z7-teach-me-first") is not a
+// non-absolute addressing value (relative or opaque) is not a
 // working link, and the FE LinkChip scheme-guards THAT case into an
 // inert/greyed pill rather than a broken link. (WebURL-only was wrong: a source
 // whose addressing URL is already absolute would render a greyed dead pill even
@@ -272,8 +272,8 @@ func sourceLinks(providers []*ent.SeriesProvider, existing []LinkDTO) []LinkDTO 
 		}
 		// Prefer the fully-qualified browser WebURL (realUrl); fall back to the
 		// addressing URL ONLY when it is itself an absolute http(s) URL (many
-		// sources store a full browser URL there, e.g. Asura). A source-relative
-		// addressing URL (e.g. "/delta") is NOT a working link, so it stays an
+		// sources store a full browser URL there, e.g. Asura). A non-absolute
+		// addressing value (e.g. "/delta") is NOT a working link, so it stays an
 		// empty (greyed) pill — never emitted as an href.
 		linkURL := p.WebURL
 		if linkURL == "" && urlx.IsAbsoluteHTTP(p.URL) {

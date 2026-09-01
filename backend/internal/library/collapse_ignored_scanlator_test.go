@@ -130,6 +130,29 @@ func createUploaderProvider(t *testing.T, client *ent.Client, storage, title, sc
 	return sp
 }
 
+// setProviderAddress replaces one provider's complete source-address tuple.
+// Collapse tests use literal, deliberately different tuples so a mode copied
+// without its exact URL witnesses cannot satisfy the assertions accidentally.
+func setProviderAddress(t *testing.T, client *ent.Client, providerID uuid.UUID, url, webURL string, mode entseriesprovider.AddressMode) {
+	t.Helper()
+	client.SeriesProvider.UpdateOneID(providerID).
+		SetURL(url).
+		SetWebURL(webURL).
+		SetAddressMode(mode).
+		ExecX(context.Background())
+}
+
+// assertProviderAddress checks the complete source-address tuple stored on a
+// survivor. A mode-only assertion would miss the cross-provider mix this family
+// protects against.
+func assertProviderAddress(t *testing.T, got *ent.SeriesProvider, url, webURL string, mode entseriesprovider.AddressMode) {
+	t.Helper()
+	if got.URL != url || got.WebURL != webURL || got.AddressMode != mode {
+		t.Fatalf("survivor address tuple = (%q, %q, %q), want (%q, %q, %q)",
+			got.URL, got.WebURL, got.AddressMode, url, webURL, mode)
+	}
+}
+
 // chapterKeyOf is the canonical chapter_key for a numbered chapter — exactly what
 // chapter.NormalizeChapterKey derives, reused so the fixture keys match ingest.
 func chapterKeyOf(n float64) string {
@@ -202,6 +225,225 @@ func TestCollapseIgnoredScanlator_MergesUploadersAndRelabels(t *testing.T) {
 	}
 
 	assertNoUpgradesFlagged(t, ctx, client)
+}
+
+// TestCollapseIgnoredScanlator_FreshSurvivorInheritsKnownAddressMode catches a
+// collapse replacing a resolved uploader with a newly-created unknown survivor.
+// The uploader row is deleted by the fold, so its known provenance must move to
+// the survivor before that happens.
+func TestCollapseIgnoredScanlator_FreshSurvivorInheritsKnownAddressMode(t *testing.T) {
+	for _, mode := range []entseriesprovider.AddressMode{
+		entseriesprovider.AddressModeDirect,
+		entseriesprovider.AddressModeURLSearch,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			storage := t.TempDir()
+			client := testdb.New(t)
+			ctx := context.Background()
+			title := "Fresh Address " + mode.String()
+			url := "opaque:" + mode.String()
+			webURL := "https://source.example/manga/" + mode.String()
+
+			newIgnoreFlaggedSeries(t, client, title)
+			uploader := createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1}, 1)
+			setProviderAddress(t, client, uploader.ID, url, webURL, mode)
+
+			svc := newCollapseService(client, storage)
+			_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+			if err != nil || merged != 1 || skipped != 0 {
+				t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 1, 0, nil", merged, skipped, err)
+			}
+
+			survivor := client.SeriesProvider.Query().Where(entseriesprovider.Provider("1")).OnlyX(ctx)
+			assertProviderAddress(t, survivor, url, webURL, mode)
+		})
+	}
+}
+
+// TestCollapseIgnoredScanlator_FreshSurvivorDoesNotMixDifferentAddressTuple
+// reproduces the destructive mixed-generation case: the highest-ranked legacy
+// uploader owns the survivor's old opaque address while a lower-ranked current
+// uploader owns a resolved URL-search address. The fresh survivor must keep the
+// highest-ranked tuple unknown instead of attaching the lower row's provenance.
+func TestCollapseIgnoredScanlator_FreshSurvivorDoesNotMixDifferentAddressTuple(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	const title = "Fresh Legacy Address"
+	const legacyURL = "legacy-opaque-key"
+	const legacyWebURL = "https://legacy.example/title"
+
+	newIgnoreFlaggedSeries(t, client, title)
+	legacy := createUploaderProvider(t, client, storage, title, "Admin", 30, []float64{1}, 2)
+	current := createUploaderProvider(t, client, storage, title, "Aero", 20, []float64{2}, 2)
+	setProviderAddress(t, client, legacy.ID, legacyURL, legacyWebURL, entseriesprovider.AddressModeUnknown)
+	setProviderAddress(t, client, current.ID, "https://current.example/title", "https://current.example/title", entseriesprovider.AddressModeURLSearch)
+
+	svc := newCollapseService(client, storage)
+	_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	if err != nil || merged != 2 || skipped != 0 {
+		t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 2, 0, nil", merged, skipped, err)
+	}
+
+	survivor := client.SeriesProvider.Query().Where(entseriesprovider.Provider("1")).OnlyX(ctx)
+	assertProviderAddress(t, survivor, legacyURL, legacyWebURL, entseriesprovider.AddressModeUnknown)
+}
+
+// TestCollapseIgnoredScanlator_ReusedUnknownSurvivorPromotesKnownAddressMode
+// catches the existing-survivor variant: an unknown blank-scanlator row must be
+// promoted from a resolved uploader before the fold deletes that uploader.
+func TestCollapseIgnoredScanlator_ReusedUnknownSurvivorPromotesKnownAddressMode(t *testing.T) {
+	for _, mode := range []entseriesprovider.AddressMode{
+		entseriesprovider.AddressModeDirect,
+		entseriesprovider.AddressModeURLSearch,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			storage := t.TempDir()
+			client := testdb.New(t)
+			ctx := context.Background()
+			title := "Reused Address " + mode.String()
+			url := "opaque:" + mode.String()
+			webURL := "https://source.example/manga/" + mode.String()
+
+			ser := newIgnoreFlaggedSeries(t, client, title)
+			survivor := client.SeriesProvider.Create().
+				SetSeriesID(ser.ID).
+				SetProvider("1").
+				SetProviderName("Hive Scans").
+				SetScanlator("").
+				SetURL(url).
+				SetWebURL(webURL).
+				SetImportance(10).
+				SaveX(ctx)
+			uploader := createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1}, 1)
+			setProviderAddress(t, client, uploader.ID, url, webURL, mode)
+
+			svc := newCollapseService(client, storage)
+			_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+			if err != nil || merged != 1 || skipped != 0 {
+				t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 1, 0, nil", merged, skipped, err)
+			}
+
+			got := client.SeriesProvider.GetX(ctx, survivor.ID)
+			assertProviderAddress(t, got, url, webURL, mode)
+		})
+	}
+}
+
+// TestCollapseIgnoredScanlator_ReusedUnknownSurvivorRequiresExactAddressPair
+// proves both members of the legacy survivor's address pair are provenance:
+// matching only url OR only web_url cannot authorize a known-mode promotion.
+func TestCollapseIgnoredScanlator_ReusedUnknownSurvivorRequiresExactAddressPair(t *testing.T) {
+	tests := []struct {
+		name        string
+		uploaderURL string
+		uploaderWeb string
+	}{
+		{name: "different url", uploaderURL: "current-opaque-key", uploaderWeb: "https://legacy.example/title"},
+		{name: "different web url", uploaderURL: "legacy-opaque-key", uploaderWeb: "https://current.example/title"},
+		{name: "different pair", uploaderURL: "https://current.example/title", uploaderWeb: "https://current.example/title"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := t.TempDir()
+			client := testdb.New(t)
+			ctx := context.Background()
+			title := "Reused Legacy Address " + tt.name
+			const legacyURL = "legacy-opaque-key"
+			const legacyWebURL = "https://legacy.example/title"
+
+			ser := newIgnoreFlaggedSeries(t, client, title)
+			survivor := client.SeriesProvider.Create().
+				SetSeriesID(ser.ID).
+				SetProvider("1").
+				SetProviderName("Hive Scans").
+				SetScanlator("").
+				SetURL(legacyURL).
+				SetWebURL(legacyWebURL).
+				SetImportance(10).
+				SaveX(ctx)
+			uploader := createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1}, 1)
+			setProviderAddress(t, client, uploader.ID, tt.uploaderURL, tt.uploaderWeb, entseriesprovider.AddressModeURLSearch)
+
+			svc := newCollapseService(client, storage)
+			_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+			if err != nil || merged != 1 || skipped != 0 {
+				t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 1, 0, nil", merged, skipped, err)
+			}
+
+			got := client.SeriesProvider.GetX(ctx, survivor.ID)
+			assertProviderAddress(t, got, legacyURL, legacyWebURL, entseriesprovider.AddressModeUnknown)
+		})
+	}
+}
+
+// TestCollapseIgnoredScanlator_ReusedUnknownSurvivorUsesHighestMatchingKnownMode
+// defines a conflict between two known observations of the SAME exact address
+// pair: the higher-importance uploader wins while the survivor is still unknown.
+func TestCollapseIgnoredScanlator_ReusedUnknownSurvivorUsesHighestMatchingKnownMode(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	const title = "Matching Address Conflict"
+	const url = "shared-opaque-key"
+	const webURL = "https://source.example/shared"
+
+	ser := newIgnoreFlaggedSeries(t, client, title)
+	survivor := client.SeriesProvider.Create().
+		SetSeriesID(ser.ID).
+		SetProvider("1").
+		SetProviderName("Hive Scans").
+		SetScanlator("").
+		SetURL(url).
+		SetWebURL(webURL).
+		SetImportance(10).
+		SaveX(ctx)
+	lower := createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1}, 2)
+	higher := createUploaderProvider(t, client, storage, title, "Aero", 30, []float64{2}, 2)
+	setProviderAddress(t, client, lower.ID, url, webURL, entseriesprovider.AddressModeDirect)
+	setProviderAddress(t, client, higher.ID, url, webURL, entseriesprovider.AddressModeURLSearch)
+
+	svc := newCollapseService(client, storage)
+	_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	if err != nil || merged != 2 || skipped != 0 {
+		t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 2, 0, nil", merged, skipped, err)
+	}
+
+	got := client.SeriesProvider.GetX(ctx, survivor.ID)
+	assertProviderAddress(t, got, url, webURL, entseriesprovider.AddressModeURLSearch)
+}
+
+// TestCollapseIgnoredScanlator_KnownSurvivorWinsAddressModeConflict locks the
+// monotonic merge rule: once the survivor is known, a conflicting uploader
+// observation cannot replace it while that uploader is folded away.
+func TestCollapseIgnoredScanlator_KnownSurvivorWinsAddressModeConflict(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	const title = "Conflicting Address"
+
+	ser := newIgnoreFlaggedSeries(t, client, title)
+	survivor := client.SeriesProvider.Create().
+		SetSeriesID(ser.ID).
+		SetProvider("1").
+		SetProviderName("Hive Scans").
+		SetScanlator("").
+		SetURL("known-opaque-key").
+		SetWebURL("https://known.example/title").
+		SetAddressMode(entseriesprovider.AddressModeDirect).
+		SetImportance(10).
+		SaveX(ctx)
+	uploader := createUploaderProvider(t, client, storage, title, "Admin", 20, []float64{1}, 1)
+	setProviderAddress(t, client, uploader.ID, "https://conflict.example/title", "https://conflict.example/title", entseriesprovider.AddressModeURLSearch)
+
+	svc := newCollapseService(client, storage)
+	_, merged, skipped, err := svc.CollapseIgnoredScanlatorSource(ctx, collapseTestSource)
+	if err != nil || merged != 1 || skipped != 0 {
+		t.Fatalf("collapse: merged=%d skipped=%d err=%v, want 1, 0, nil", merged, skipped, err)
+	}
+
+	got := client.SeriesProvider.GetX(ctx, survivor.ID)
+	assertProviderAddress(t, got, "known-opaque-key", "https://known.example/title", entseriesprovider.AddressModeDirect)
 }
 
 // assertCollapsedChapters checks that every numbered chapter is downloaded,

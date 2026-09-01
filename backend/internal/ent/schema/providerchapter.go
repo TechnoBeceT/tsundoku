@@ -37,10 +37,11 @@ func (ProviderChapter) Fields() []ent.Field {
 		field.String("url").Default(""),
 		// web_url is the fully-qualified, browser-clickable URL for this chapter
 		// (Mihon's HttpSource.getChapterUrl, surfaced end-to-end as
-		// sourceengine.Chapter.RealURL). Distinct from url (the source-relative
-		// ADDRESSING key) — web_url feeds Komga's ComicInfo <Web> field (see
+		// sourceengine.Chapter.RealURL). Distinct in purpose from url (the
+		// source-owned serialized address) — web_url feeds Komga's ComicInfo <Web> field (see
 		// disk.newComicInfo / RenderMeta.WebURL) and is never used for
-		// addressing. "" when the engine host could not resolve one. Additive +
+		// addressing. The values may be equal when the address is already the
+		// browser URL. "" when the engine host could not resolve one. Additive +
 		// defaulted ⇒ zero-data migration.
 		field.String("web_url").Default(""),
 		field.Time("provider_upload_date").Optional().Nillable(),

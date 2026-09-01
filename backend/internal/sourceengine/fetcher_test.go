@@ -121,12 +121,15 @@ func TestFetcher_Fetch_PagesError(t *testing.T) {
 // TestFetcher_Fetch_NoPages proves a chapter with zero pages fails the whole
 // attempt (never renders an empty "downloaded" CBZ).
 func TestFetcher_Fetch_NoPages(t *testing.T) {
-	client := fake.New(fake.WithPages(7, "/ch/1", nil))
+	client := fake.New(fake.WithPagesResult(7, "/ch/1", sourceengine.PagesResult{AddressMode: sourceengine.AddressModeURLSearch}))
 	f := sourceengine.NewFetcher(client, t.TempDir())
 
-	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
+	got, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
 	if !errors.Is(err, sourceengine.ErrNoPages) {
 		t.Fatalf("Fetch error = %v, want wrapping ErrNoPages", err)
+	}
+	if got.ResolvedAddressMode != "url_search" {
+		t.Fatalf("resolved address mode = %q, want url_search even when the resolved chapter has no pages", got.ResolvedAddressMode)
 	}
 }
 

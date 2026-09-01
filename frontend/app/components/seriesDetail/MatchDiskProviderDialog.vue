@@ -105,9 +105,9 @@ const emit = defineEmits<{
   /** Run a search for the trimmed query, optionally restricted to the given source IDs. */
   'search': [payload: { q: string, sources: string[] }]
   /** A candidate source was picked — load its scanlator breakdown. */
-  'pickCandidate': [payload: { source: string, mangaId: number, url: string }]
+  'pickCandidate': [payload: { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }]
   /** Link the chosen source/scanlator at the given priority. */
-  'confirm': [payload: { source: string, mangaId: number, url: string, scanlator: string, importance: number }]
+  'confirm': [payload: { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string, scanlator: string, importance: number }]
 }>()
 
 const query = ref(props.seriesTitle)
@@ -198,7 +198,7 @@ function toggleCandidate(key: string): void {
   const candidate = pickedGroup.value?.candidates.find(c => candKey(c) === key)
   if (candidate) {
     breakdownRequestedFor.value = key
-    emit('pickCandidate', { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
+    emit('pickCandidate', { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl })
   }
 }
 
@@ -250,6 +250,8 @@ function confirm(): void {
     source: candidate.source,
     mangaId: candidate.mangaId,
     url: candidate.url,
+    addressMode: candidate.addressMode ?? 'unknown',
+    webUrl: candidate.realUrl,
     // Collapse the untagged bucket (the breakdown labels it with the source
     // name) to "" so it links ALL chapters, not a zero-match phantom provider —
     // the same shared collapse the Adopt wizard applies (see useSourceConfigure).

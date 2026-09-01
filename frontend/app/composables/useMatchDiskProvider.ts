@@ -117,14 +117,14 @@ export function useMatchDiskProvider() {
    * "all chapters" fallback) and does NOT touch `error` (this is informational
    * coverage, not a hard failure of the match flow itself).
    */
-  async function loadBreakdown(source: string, mangaId: number, url: string): Promise<void> {
+  async function loadBreakdown(source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string): Promise<void> {
     breakdownLoading.value = true
     breakdown.value = null
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
         params: {
           path: { sourceId: source, mangaId },
-          query: { url },
+          query: { url, addressMode, webUrl },
         },
       })
       breakdown.value = res.error || !res.data ? null : res.data.scanlators.map(mapScanlatorCoverage)

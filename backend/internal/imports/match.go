@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // titleMatchThreshold is the maximum normalised Levenshtein distance at which two
@@ -31,9 +33,12 @@ type Candidate struct {
 	URL string
 	// RealURL is the fully-qualified, browser-clickable URL for this manga
 	// (Mihon's HttpSource.getMangaUrl); powers the "View on source" external
-	// link. Distinct from URL — never used for addressing. Empty when the
-	// engine host could not resolve one.
+	// link. Distinct from URL — never substitutes for the addressing key, but is
+	// retained as the optional resolver witness. Empty when unresolved.
 	RealURL string
+	// AddressMode tells engine-host how URL must be interpreted on subsequent
+	// details, chapters, and pages calls.
+	AddressMode sourceengine.AddressMode
 	// ThumbnailURL is the Tsundoku-relative cover proxy path
 	// ("/api/sources/{source}/manga/{mangaId}/cover"), or "" when the source
 	// provided no thumbnail at all (see thumbnailProxyPath in service.go).

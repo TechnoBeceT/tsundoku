@@ -69,9 +69,9 @@ type RenderMeta struct {
 	// UploadDate is when the provider published this chapter.
 	UploadDate *time.Time
 
-	// URL is the provider-supplied canonical URL for this chapter. This is the
-	// source-relative ADDRESSING url — NEVER render it into ComicInfo.Web; see
-	// WebURL for the browser-clickable one.
+	// URL is the provider-supplied serialized address for this chapter. Its
+	// shape is source-owned and it is not necessarily browser-clickable — NEVER
+	// render it into ComicInfo.Web; see WebURL for the browser witness.
 	URL string
 
 	// WebURL is the fully-qualified, browser-clickable chapter URL (Mihon's

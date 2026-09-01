@@ -16,8 +16,8 @@
 // dependency is exactly what this migration removes; cover/warmup/enginetopo
 // and the other not-yet-repointed handlers keep their own suwayomi.Client).
 // Every source is now identified by its STABLE numeric id (stringified onto
-// the wire, e.g. SourceDTO.ID == "2") and every manga/chapter by a
-// source-relative URL rather than a Suwayomi-internal manga id.
+// the wire, e.g. SourceDTO.ID == "2") and every manga/chapter by its exact
+// source-owned serialized address rather than a Suwayomi-internal manga id.
 package imports
 
 import (
@@ -42,6 +42,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/metrics"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
+	"github.com/technobecet/tsundoku/internal/provideraddress"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
@@ -368,6 +369,7 @@ func newCandidateFromEntry(src sourceengine.Source, m sourceengine.MangaEntry) C
 		Title:        m.Title,
 		URL:          m.URL,
 		RealURL:      m.RealURL,
+		AddressMode:  m.AddressMode,
 		ThumbnailURL: m.ThumbnailURL,
 		Genres:       []string{},
 	}
@@ -386,6 +388,7 @@ func newCandidateFromDetails(src sourceengine.Source, m sourceengine.MangaDetail
 		Title:        m.Title,
 		URL:          m.URL,
 		RealURL:      m.RealURL,
+		AddressMode:  m.AddressMode,
 		ThumbnailURL: m.ThumbnailURL,
 		Author:       m.Author,
 		Artist:       m.Artist,
@@ -416,6 +419,7 @@ func newSearchCandidateDTO(c Candidate) SearchCandidateDTO {
 		Title:        c.Title,
 		URL:          c.URL,
 		RealURL:      c.RealURL,
+		AddressMode:  c.AddressMode,
 		ThumbnailURL: c.ThumbnailURL,
 		Author:       c.Author,
 		Artist:       c.Artist,
@@ -780,8 +784,8 @@ func (s *Service) EnsureSourceEnabled(ctx context.Context, sourceID int64) error
 	return nil
 }
 
-// fetchChapters returns the raw, unfiltered chapter list for (sourceID, url,
-// mangaTitle) through the shared chapter cache (Task C2) when one is wired,
+// fetchChaptersRef returns the raw, unfiltered chapter list for the complete
+// source address through the shared chapter cache (Task C2) when one is wired,
 // else straight from the client. It is the single point the read-only
 // discovery paths (SourceBreakdown, InspectChapters) fetch chapters, so they
 // share their result with each other AND with the adopt-side ingest.Ingest
@@ -796,18 +800,19 @@ func (s *Service) EnsureSourceEnabled(ctx context.Context, sourceID int64) error
 // preview calls passing the SAME real title legitimately should).
 // sourceID is parsed to the engine host's numeric id; an unparseable value
 // yields a wrapped error (the route only loosely validates :sourceId).
-func (s *Service) fetchChapters(ctx context.Context, sourceID string, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+func (s *Service) fetchChaptersRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL, mangaTitle string) (sourceengine.ChaptersResult, error) {
 	id, err := strconv.ParseInt(sourceID, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("imports: invalid source id %q: %w", sourceID, err)
+		return sourceengine.ChaptersResult{}, fmt.Errorf("imports: invalid source id %q: %w", sourceID, err)
 	}
-	fetch := func() ([]sourceengine.Chapter, error) {
-		return s.client.Chapters(ctx, id, url, mangaTitle)
+	ref := sourceengine.ProviderRef{SourceID: id, URL: url, AddressMode: mode, WebURL: webURL}
+	fetch := func() (sourceengine.ChaptersResult, error) {
+		return sourceengine.ChaptersFor(ctx, s.client, ref, mangaTitle)
 	}
 	if s.chapterCache == nil {
 		return fetch()
 	}
-	return s.chapterCache.Get(ctx, id, url, mangaTitle, fetch)
+	return s.chapterCache.GetRef(ctx, ref, mangaTitle, fetch)
 }
 
 // chapterNumber returns a pointer to ch.Number, or nil when the engine host's
@@ -845,13 +850,19 @@ func chapterNumber(ch sourceengine.Chapter) *float64 {
 // paused source is never contacted — the same universal-pause rejection its
 // sibling per-source paths apply.
 func (s *Service) InspectChapters(ctx context.Context, sourceID string, url string, mangaTitle string) ([]ChapterInspectDTO, error) {
+	return s.InspectChaptersRef(ctx, sourceID, url, sourceengine.AddressModeUnknown, "", mangaTitle)
+}
+
+// InspectChaptersRef retains the candidate's complete engine address context.
+func (s *Service) InspectChaptersRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL, mangaTitle string) ([]ChapterInspectDTO, error) {
 	if _, err := s.resolveSource(ctx, sourceID); err != nil {
 		return nil, err
 	}
-	chapters, err := s.fetchChapters(ctx, sourceID, url, mangaTitle)
+	result, err := s.fetchChaptersRef(ctx, sourceID, url, mode, webURL, mangaTitle)
 	if err != nil {
 		return nil, err
 	}
+	chapters := result.Chapters
 
 	out := make([]ChapterInspectDTO, len(chapters))
 	for i, ch := range chapters {
@@ -895,12 +906,17 @@ func (s *Service) InspectChapters(ctx context.Context, sourceID string, url stri
 // ErrSourceNotFound and upstream failures to 404/502 directly at the
 // handler.
 func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url string, mangaTitle string) (SourceBreakdownDTO, error) {
+	return s.SourceBreakdownRef(ctx, sourceID, url, sourceengine.AddressModeUnknown, "", mangaTitle)
+}
+
+// SourceBreakdownRef retains the candidate's complete engine address context.
+func (s *Service) SourceBreakdownRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL, mangaTitle string) (SourceBreakdownDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}
 
-	chapters, err := s.fetchChapters(ctx, sourceID, url, mangaTitle)
+	result, err := s.fetchChaptersRef(ctx, sourceID, url, mode, webURL, mangaTitle)
 	if err != nil {
 		return SourceBreakdownDTO{}, err
 	}
@@ -911,6 +927,7 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url stri
 	// then shows a single [Source] row and adopts it with scanlator="" (matching
 	// what ingest forces). Resolved through the ingest authority (the single home
 	// of the collapse rule); best-effort (a read failure leaves the split intact).
+	chapters := result.Chapters
 	ignoreScanlator := s.ingest.IgnoreScanlator(ctx, src.ID)
 
 	type group struct {
@@ -968,15 +985,27 @@ func (s *Service) SourceBreakdown(ctx context.Context, sourceID string, url stri
 // This is deliberately on-demand, single-manga only: calling it once per
 // Search/Browse result would multiply upstream requests by the page size.
 func (s *Service) MangaDetails(ctx context.Context, sourceID string, url string) (SearchCandidateDTO, error) {
+	return s.MangaDetailsRef(ctx, sourceID, url, sourceengine.AddressModeUnknown, "")
+}
+
+// MangaDetailsRef retains the candidate's complete engine address context.
+func (s *Service) MangaDetailsRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL string) (SearchCandidateDTO, error) {
 	src, err := s.resolveSource(ctx, sourceID)
 	if err != nil {
 		return SearchCandidateDTO{}, err
 	}
 
-	m, err := s.client.MangaDetails(ctx, src.ID, url)
+	m, err := sourceengine.MangaDetailsFor(ctx, s.client, sourceengine.ProviderRef{SourceID: src.ID, URL: url, AddressMode: mode, WebURL: webURL})
 	if err != nil {
 		return SearchCandidateDTO{}, err
 	}
+	if m.URL == "" {
+		m.URL = url
+	}
+	if m.RealURL == "" {
+		m.RealURL = webURL
+	}
+	m.AddressMode = provideraddress.PreserveKnown(mode, m.AddressMode)
 
 	return newSearchCandidateDTO(newCandidateFromDetails(src, m)), nil
 }
@@ -991,7 +1020,7 @@ func (s *Service) MangaDetails(ctx context.Context, sourceID string, url string)
 // Algorithm:
 //  1. Validate req.Category early (before any DB writes) so an invalid category
 //     surfaces cleanly rather than leaving orphaned rows.
-//  2. For each provider p: call ingest.AddSeriesUngated with the canonical
+//  2. For each provider p: call ingest.AddSeriesUngatedRef with the canonical
 //     req.Title so that all providers attach to the SAME Series slug (ungated:
 //     Adopt is an owner click, never blocked by a background-tripped breaker). On
 //     error, wrap with the list of sources already attached in this call and
@@ -1102,7 +1131,7 @@ func validateCategory(cat string) error {
 	return nil
 }
 
-// ingestProviders calls ingest.AddSeriesUngated for every provider in req, all
+// ingestProviders calls ingest.AddSeriesUngatedRef for every provider in req, all
 // under req.Title so they attach to the same slug-derived Series. On the first
 // error it returns a wrapped message that names every source successfully attached
 // before the failure (§16 no-silent-partial). No rollback is performed.
@@ -1122,8 +1151,9 @@ func (s *Service) ingestProviders(ctx context.Context, req AdoptRequest) error {
 		}
 		// p.Scanlator selects which scanlation group's chapters this provider
 		// tracks; "" means "all chapters from this source" (see
-		// ingest.Ingest.AddSeriesUngated).
-		if _, err := s.ingest.AddSeriesUngated(ctx, sourceID, p.URL, req.Title, p.Scanlator); err != nil {
+		// ingest.Ingest.AddSeriesUngatedRef).
+		ref := sourceengine.ProviderRef{SourceID: sourceID, URL: p.URL, AddressMode: p.AddressMode, WebURL: p.WebURL}
+		if _, err := s.ingest.AddSeriesUngatedRef(ctx, ref, req.Title, p.Scanlator); err != nil {
 			if len(attached) > 0 {
 				return fmt.Errorf(
 					"imports.Adopt: provider %q failed (providers already attached: %s): %w",

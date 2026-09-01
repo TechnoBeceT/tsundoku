@@ -20,7 +20,7 @@ export function isHttpUrl(raw: string | null | undefined): boolean {
  * "clickable-or-nothing external href" rule shared by every source-link surface
  * (DiscoverCard's "View on source", the Adopt Configure rows), so a
  * non-http(s)/empty value is never turned into a live link and never falls back
- * to a source-relative addressing url. LinkChip renders its own inert pill, so
+ * to a source-owned addressing value. LinkChip renders its own inert pill, so
  * it keeps using isHttpUrl directly.
  */
 export function safeHttpUrl(raw: string | null | undefined): string | undefined {

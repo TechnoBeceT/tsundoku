@@ -530,8 +530,8 @@ type duplicatePair struct {
 // one loaded series, purely in memory over the eager-loaded edges (no query).
 //
 // 🔴 THE IDENTITY JOIN — matched by the SOURCE CHAPTER URL, never by number or name.
-// A physical chapter's source-relative URL (ProviderChapter.url) is stable across
-// both the Suwayomi and Rensaio ingests, so it is the ONE authoritative identity
+// A physical chapter's source-owned serialized address (ProviderChapter.url) is
+// stable across both the Suwayomi and Rensaio ingests, so it is the ONE authoritative identity
 // that ties the negative-numeric row to its name-keyed twin. Matching by number is
 // impossible (the whole bug is that the two rows carry DIFFERENT numbers/keys) and
 // matching by fuzzy name would risk deleting a genuinely distinct chapter.

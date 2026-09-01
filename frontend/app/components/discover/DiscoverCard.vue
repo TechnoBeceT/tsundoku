@@ -56,7 +56,7 @@ const initial = (title: string): string => (title.trim()[0] ?? '?').toUpperCase(
 // The "View on source" href — the browser-clickable realUrl, scheme-guarded via
 // the shared safeHttpUrl since it comes from untrusted upstream source data.
 // undefined (never rendered) for a missing or non-http(s) value — deliberately
-// never falls back to the source-relative addressing `url`.
+// never falls back to the source-owned addressing `url`.
 const safeSourceUrl = computed(() => safeHttpUrl(props.candidate.realUrl))
 
 // "View on source" notifies the parent but does NOT preventDefault — the real

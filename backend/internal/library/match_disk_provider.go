@@ -86,6 +86,12 @@ type relabeledChapter struct {
 //  5. Trigger an immediate download-cycle convergence (parity with
 //     Adopt/AddProvider) and return the refreshed SeriesDetailDTO (§16).
 func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source string, url string, scanlator string, importance int) (series.SeriesDetailDTO, error) {
+	return s.MatchDiskProviderRef(ctx, seriesID, diskProviderID, ProviderRef{Source: source, URL: url, Scanlator: scanlator}, importance)
+}
+
+// MatchDiskProviderRef is MatchDiskProvider with complete address context.
+func (s *Service) MatchDiskProviderRef(ctx context.Context, seriesID, diskProviderID uuid.UUID, ref ProviderRef, importance int) (series.SeriesDetailDTO, error) {
+	source, scanlator := ref.Source, ref.Scanlator
 	row, err := s.db.Series.Query().
 		Where(entseries.IDEQ(seriesID)).
 		WithCategory().
@@ -122,7 +128,8 @@ func (s *Service) MatchDiskProvider(ctx context.Context, seriesID, diskProviderI
 		scanlator = s.ingest.EffectiveScanlator(ctx, sourceID, scanlator)
 	}
 
-	newSP, err := s.attachRealSource(ctx, seriesID, row.Title, source, url, scanlator)
+	ref.Scanlator = scanlator
+	newSP, err := s.attachRealSourceRef(ctx, seriesID, row.Title, ref)
 	if err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
@@ -276,11 +283,12 @@ func (s *Service) restoreImportance(ctx context.Context, providerID uuid.UUID, o
 // default); the explicit SetImportance(0) additionally covers the rare case
 // where the chosen source was ALREADY attached at a higher importance, so the
 // disk window is safe there too.
-func (s *Service) attachRealSource(ctx context.Context, seriesID uuid.UUID, seriesTitle, source string, url string, scanlator string) (*ent.SeriesProvider, error) {
+func (s *Service) attachRealSourceRef(ctx context.Context, seriesID uuid.UUID, seriesTitle string, ref ProviderRef) (*ent.SeriesProvider, error) {
+	source, scanlator := ref.Source, ref.Scanlator
 	// Membership check + UNGATED owner-attach ingest with honest error taxonomy
 	// (true 404 only on a real miss; 503 cooled-down / 502 upstream on a fetch
-	// failure) — see resolveAndIngestSource. Shared with AddProvider (§2 DRY).
-	if _, err := s.resolveAndIngestSource(ctx, source, url, seriesTitle, scanlator); err != nil {
+	// failure) — see resolveAndIngestSourceRef. Shared with AddProvider (§2 DRY).
+	if _, err := s.resolveAndIngestSourceRef(ctx, ref, seriesTitle); err != nil {
 		return nil, err
 	}
 

@@ -1377,6 +1377,12 @@ components:
             Short human explanation for the degraded state, "" when not degraded.
           example: ""
 
+    AddressMode:
+      type: string
+      enum: [unknown, direct, url_search]
+      default: unknown
+      description: How engine-host must interpret the stored source-owned manga address.
+
     SearchCandidate:
       type: object
       required:
@@ -1387,6 +1393,7 @@ components:
         - title
         - url
         - realUrl
+        - addressMode
         - thumbnailUrl
         - author
         - artist
@@ -1411,18 +1418,22 @@ components:
         url:
           type: string
           description: |
-            Provider-canonical ADDRESSING url for this manga — what every adopt/
-            add-source/match request must send back to identify it. NOT a
-            clickable browser link; see realUrl for that. Empty string when not
-            provided.
+            Provider-canonical ADDRESSING value for this manga — what every
+            adopt/add-source/match request sends back to identify it. It may be
+            a relative or opaque extension key, or an absolute cross-origin URL
+            retained for URL-search hydration. See addressMode for interpretation
+            and realUrl for the browser link. Empty string when not provided.
         realUrl:
           type: string
           description: |
             Fully-qualified, browser-clickable URL for this manga (Mihon's
             HttpSource.getMangaUrl); powers the "View on source" external link.
-            Distinct from url (the addressing key) — never send this back to
-            the backend. Empty string when the engine host could not resolve
-            one.
+            Distinct in purpose from url (the addressing key), though the values
+            may be equal for an absolute URL-search address. Clients carry it
+            back only as the optional webUrl resolver witness. Empty string
+            when the engine host could not resolve one.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
         thumbnailUrl:
           type: string
           description: |
@@ -1513,10 +1524,15 @@ components:
         url:
           type: string
           description: >-
-            Source-relative manga URL the engine host addresses this manga
-            by (P2 Suwayomi-removal). Optional on the wire for backward
+            Source-owned serialized manga address; may be relative, opaque,
+            or absolute. Optional on the wire for backward
             compatibility, but the backend requires a non-empty value and
             responds 400 when it is missing.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
+        webUrl:
+          type: string
+          description: Optional browser URL witness retained from the candidate.
         importance:
           type: integer
           minimum: 1
@@ -3966,7 +3982,12 @@ components:
           description: Engine-host source id (stringified) to attach as the survivor.
         url:
           type: string
-          description: Source-relative manga URL the backend addresses this manga by.
+          description: Source-owned serialized manga address; may be relative, opaque, or absolute.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
+        webUrl:
+          type: string
+          description: Optional browser URL witness retained from the candidate.
         scanlator:
           type: string
           description: Scanlation group to track; "" (or omitted) = all chapters from the source.
@@ -4095,10 +4116,15 @@ components:
         url:
           type: string
           description: >-
-            Source-relative manga URL the engine host addresses this manga
-            by (P2 Suwayomi-removal). Optional on the wire for backward
+            Source-owned serialized manga address; may be relative, opaque,
+            or absolute. Optional on the wire for backward
             compatibility, but the backend requires a non-empty value and
             responds 400 when it is missing.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
+        webUrl:
+          type: string
+          description: Optional browser URL witness retained from the candidate.
         scanlator:
           type: string
           description: |
@@ -4220,10 +4246,15 @@ components:
         url:
           type: string
           description: >-
-            Source-relative manga URL the engine host addresses this manga
-            by (P2 Suwayomi-removal). Optional on the wire for backward
+            Source-owned serialized manga address; may be relative, opaque,
+            or absolute. Optional on the wire for backward
             compatibility, but the backend requires a non-empty value and
             responds 400 when it is missing.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
+        webUrl:
+          type: string
+          description: Optional browser URL witness retained from the candidate.
         importance:
           type: integer
           description: Provider importance to assign (higher number = higher priority).
@@ -7006,7 +7037,7 @@ paths:
         before adopting to confirm the chapter count.
 
         P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-        `url` query parameter (the source-relative manga URL); mangaId in the
+        `url` query parameter (the source-owned serialized manga address); mangaId in the
         path is kept for route-shape compatibility but is IGNORED. A request
         with no `url` gets 400.
       tags:
@@ -7032,9 +7063,9 @@ paths:
           in: query
           required: false
           description: >-
-            Source-relative manga URL (P2 Suwayomi-removal). Optional on the
-            wire for backward compatibility, but the backend requires a
-            non-empty value and responds 400 when it is missing.
+            Source-owned serialized manga address; may be relative, opaque, or
+            absolute. Optional on the wire for backward compatibility, but the
+            backend requires a non-empty value and responds 400 when it is missing.
           schema:
             type: string
         - name: title
@@ -7047,6 +7078,16 @@ paths:
             the same manga+title (see the mangaTitle-keyed discovery chapter
             cache). Omitting it is safe; recognition still runs, just without
             the title-strip step.
+          schema:
+            type: string
+        - name: addressMode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AddressMode"
+        - name: webUrl
+          in: query
+          required: false
           schema:
             type: string
       responses:
@@ -7085,7 +7126,7 @@ paths:
         request to the source).
 
         P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-        `url` query parameter (the source-relative manga URL); mangaId in the
+        `url` query parameter (the source-owned serialized manga address); mangaId in the
         path is kept for route-shape compatibility but is IGNORED. A request
         with no `url` gets 400.
       tags:
@@ -7111,9 +7152,19 @@ paths:
           in: query
           required: false
           description: >-
-            Source-relative manga URL (P2 Suwayomi-removal). Optional on the
-            wire for backward compatibility, but the backend requires a
-            non-empty value and responds 400 when it is missing.
+            Source-owned serialized manga address; may be relative, opaque, or
+            absolute. Optional on the wire for backward compatibility, but the
+            backend requires a non-empty value and responds 400 when it is missing.
+          schema:
+            type: string
+        - name: addressMode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AddressMode"
+        - name: webUrl
+          in: query
+          required: false
           schema:
             type: string
       responses:
@@ -7177,7 +7228,7 @@ paths:
         flight).
 
         P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-        `url` query parameter (the source-relative manga URL); mangaId in the
+        `url` query parameter (the source-owned serialized manga address); mangaId in the
         path is kept for route-shape compatibility but is IGNORED. A request
         with no `url` gets 400.
       tags:
@@ -7203,9 +7254,9 @@ paths:
           in: query
           required: false
           description: >-
-            Source-relative manga URL (P2 Suwayomi-removal). Optional on the
-            wire for backward compatibility, but the backend requires a
-            non-empty value and responds 400 when it is missing.
+            Source-owned serialized manga address; may be relative, opaque, or
+            absolute. Optional on the wire for backward compatibility, but the
+            backend requires a non-empty value and responds 400 when it is missing.
           schema:
             type: string
         - name: title
@@ -7238,6 +7289,16 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: addressMode
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AddressMode"
+        - name: webUrl
+          in: query
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: >-

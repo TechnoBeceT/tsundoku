@@ -29,10 +29,10 @@ import (
 )
 
 // weebSourceID / weebMangaURL identify the single engine-host source
-// ("weeb", stable numeric id 1) newMatchClient exposes, addressed by its
-// source-relative manga URL — P2 Suwayomi-removal repointed the ingest chain
-// onto internal/sourceengine, which has no manga-id lookup, only (sourceID,
-// url) pairs.
+// ("weeb", stable numeric id 1) newMatchClient exposes, addressed by its exact
+// source-owned manga address — P2 Suwayomi-removal repointed the ingest chain
+// onto internal/sourceengine, which has no manga-id lookup, only
+// (sourceID, url) pairs.
 const (
 	weebSourceID int64 = 1
 	weebMangaURL       = "/manga/99"

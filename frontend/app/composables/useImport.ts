@@ -115,6 +115,8 @@ export function useImport() {
   const rawSource = route.query.source
   const rawMangaId = route.query.mangaId
   const rawUrl = route.query.url
+  const rawAddressMode = route.query.addressMode
+  const rawWebUrl = route.query.webUrl
 
   // Guard: values can be string | string[] | undefined — only accept plain strings.
   const seedSource: string | null = typeof rawSource === 'string' ? rawSource : null
@@ -123,6 +125,8 @@ export function useImport() {
   // Required for the seeded inspect() call — no fallback resolution by mangaId
   // alone (P2 Suwayomi-removal), so a hand-off without it simply skips the seed.
   const seedUrl: string | null = typeof rawUrl === 'string' && rawUrl !== '' ? rawUrl : null
+  const seedAddressMode = rawAddressMode === 'direct' || rawAddressMode === 'url_search' ? rawAddressMode : 'unknown'
+  const seedWebUrl = typeof rawWebUrl === 'string' ? rawWebUrl : undefined
 
   // ---- Wizard state ----------------------------------------------------------
   const sources = ref<Source[]>([])
@@ -153,7 +157,8 @@ export function useImport() {
   // imports.coverage.done identifies its subject by (sourceId, mangaUrl), not
   // the mangaId-keyed cache key, so the SSE handler needs this to resolve
   // which cached entry to refetch (mirrors useScanLibrary.ts).
-  const breakdownRefs = new Map<string, { source: string, mangaId: number, url: string }>()
+  interface AddressRef { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }
+  const breakdownRefs = new Map<string, AddressRef>()
 
   // ---- Init: load sources + categories in parallel ---------------------------
   async function loadInitial(): Promise<void> {
@@ -211,7 +216,7 @@ export function useImport() {
   }
 
   // ---- inspect ---------------------------------------------------------------
-  async function inspect(payload: { source: string; mangaId: number; url: string }): Promise<void> {
+  async function inspect(payload: AddressRef): Promise<void> {
     error.value = ''
     // Reset so the Import component shows its "loading" state until data arrives.
     inspectChapters.value = null
@@ -219,7 +224,7 @@ export function useImport() {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/chapters', {
         params: {
           path: { sourceId: payload.source, mangaId: payload.mangaId },
-          query: { url: payload.url },
+          query: { url: payload.url, addressMode: payload.addressMode, webUrl: payload.webUrl },
         },
       })
       if (res.error || !res.data) {
@@ -241,13 +246,13 @@ export function useImport() {
    * backend to bypass its `ready`/`failed`-cooldown admission guards, without
    * ever duplicating a walk already in flight (the backend's own guarantee).
    */
-  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }, opts?: { refresh?: boolean }): Promise<void> {
+  async function fetchBreakdown(ref: AddressRef, opts?: { refresh?: boolean }): Promise<void> {
     const key = breakdownKey(ref.source, ref.mangaId)
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
         params: {
           path: { sourceId: ref.source, mangaId: ref.mangaId },
-          query: { url: ref.url, refresh: opts?.refresh ? true : undefined },
+          query: { url: ref.url, addressMode: ref.addressMode, webUrl: ref.webUrl, refresh: opts?.refresh ? true : undefined },
         },
       })
       if (res.error || !res.data) {
@@ -283,12 +288,12 @@ export function useImport() {
     for (const c of toFetch) {
       const key = breakdownKey(c.source, c.mangaId)
       breakdownsInFlight.add(key)
-      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url })
+      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
     }
     await Promise.all(toFetch.map(async (c) => {
       const key = breakdownKey(c.source, c.mangaId)
       try {
-        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url })
+        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
       }
       finally {
         breakdownsInFlight.delete(key)
@@ -310,9 +315,9 @@ export function useImport() {
     const key = breakdownKey(candidate.source, candidate.mangaId)
     if (breakdownsInFlight.has(key)) return
     breakdownsInFlight.add(key)
-    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
+    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl })
     try {
-      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url }, { refresh: true })
+      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl }, { refresh: true })
     }
     finally {
       breakdownsInFlight.delete(key)
@@ -366,7 +371,7 @@ export function useImport() {
 
   // Optionally seed an inspect from the Discover hand-off.
   if (seedSource !== null && seedMangaId !== null && seedUrl !== null) {
-    void inspect({ source: seedSource, mangaId: seedMangaId, url: seedUrl })
+    void inspect({ source: seedSource, mangaId: seedMangaId, url: seedUrl, addressMode: seedAddressMode, webUrl: seedWebUrl })
   }
 
   return {

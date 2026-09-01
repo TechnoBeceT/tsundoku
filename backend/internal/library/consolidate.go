@@ -11,6 +11,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // ConsolidateTarget describes the ONE provider every selected provider is folded
@@ -30,10 +31,12 @@ type ConsolidateTarget struct {
 	ExistingProviderID *uuid.UUID
 	// Source/URL/Scanlator identify the engine-host source to attach as the new
 	// survivor (match-to-source arm). Importance is the rank to give it.
-	Source     string
-	URL        string
-	Scanlator  string
-	Importance int
+	Source      string
+	URL         string
+	AddressMode sourceengine.AddressMode
+	WebURL      string
+	Scanlator   string
+	Importance  int
 }
 
 // SkippedProvider records one selected provider that ConsolidateProviders could
@@ -180,7 +183,7 @@ func (s *Service) resolveConsolidateTarget(ctx context.Context, row *ent.Series,
 	if sourceID, perr := parseSourceID(target.Source); perr == nil {
 		scanlator = s.ingest.EffectiveScanlator(ctx, sourceID, scanlator)
 	}
-	newSP, aErr := s.attachRealSource(ctx, row.ID, row.Title, target.Source, target.URL, scanlator)
+	newSP, aErr := s.attachRealSourceRef(ctx, row.ID, row.Title, ProviderRef{Source: target.Source, URL: target.URL, AddressMode: target.AddressMode, WebURL: target.WebURL, Scanlator: scanlator})
 	if aErr != nil {
 		return uuid.Nil, 0, aErr
 	}

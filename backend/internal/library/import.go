@@ -74,7 +74,7 @@ func (s *Service) Import(ctx context.Context, path string, matches []ProviderRef
 		if err := s.markImported(ctx, entry); err != nil {
 			return series.SeriesDetailDTO{}, err
 		}
-		// AddProviders (via AddProvider) already re-fetched the series after
+		// AddProviders (via AddProviderRef) already re-fetched the series after
 		// attaching every ref, so its DTO is authoritative — no second
 		// round-trip needed.
 		return dto, nil

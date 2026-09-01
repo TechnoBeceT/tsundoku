@@ -90,7 +90,7 @@ func (s *Service) requireSeriesExists(ctx context.Context, seriesID uuid.UUID) e
 	return nil
 }
 
-// attachRefs loops the AddProvider primitive over refs at the planned
+// attachRefs loops the address-aware AddProviderRef primitive over refs at the planned
 // importances, mirroring imports.Adopt's partial-failure contract: on the first
 // failure it returns an error naming the providers attached so far (never rolled
 // back). Returns the refreshed SeriesDetailDTO on full success (§16).
@@ -98,7 +98,7 @@ func (s *Service) attachRefs(ctx context.Context, seriesID uuid.UUID, refs []Pro
 	var attached []string
 	var last series.SeriesDetailDTO
 	for i, ref := range refs {
-		dto, err := s.AddProvider(ctx, seriesID, ref.Source, ref.URL, importances[i], ref.Scanlator)
+		dto, err := s.AddProviderRef(ctx, seriesID, ref, importances[i])
 		if err != nil {
 			return series.SeriesDetailDTO{}, fmt.Errorf("attach %s (scanlator %q) failed after attaching %v: %w",
 				ref.Source, ref.Scanlator, attached, err)

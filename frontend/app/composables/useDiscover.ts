@@ -77,9 +77,10 @@ function mapCandidate(dto: SearchCandidateDTO): DiscoverCandidate {
     // sourceCoverProxyUrl's doc comment.
     thumbnailUrl: sourceCoverProxyUrl(dto.source, dto.thumbnailUrl),
     url: dto.url,
-    // Browser-clickable "View on source" link — distinct from `url`, which
-    // is the addressing key the backend requires back.
+    // Browser-clickable "View on source" link — distinct in purpose from
+    // `url`, the addressing value, even when their absolute values match.
     realUrl: dto.realUrl,
+    addressMode: dto.addressMode,
     description: dto.description,
     genres: dto.genres,
     author: dto.author,
@@ -180,7 +181,7 @@ export function useDiscover() {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/details', {
         params: {
           path: { sourceId: candidate.source, mangaId: candidate.mangaId },
-          query: { url: candidate.url },
+          query: { url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl },
         },
       })
       if (res.error || !res.data) return // non-fatal: leave the fallback text

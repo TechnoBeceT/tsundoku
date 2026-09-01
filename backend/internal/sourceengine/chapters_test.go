@@ -45,6 +45,53 @@ func TestChapters_Success(t *testing.T) {
 	if gotBody["mangaTitle"] != "My Series" {
 		t.Errorf("request mangaTitle = %v, want %q", gotBody["mangaTitle"], "My Series")
 	}
+	if gotBody["addressMode"] != "unknown" {
+		t.Errorf("request addressMode = %v, want unknown compatibility default", gotBody["addressMode"])
+	}
+}
+
+// TestChaptersRef_PropagatesAndReturnsAddressMode protects the complete
+// request/response provenance round trip, including the browser witness.
+func TestChaptersRef_PropagatesAndReturnsAddressMode(t *testing.T) {
+	var request map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decodeBody(t, r, &request)
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"chapters":    []map[string]any{{"url": "/c/1", "name": "1", "number": 1, "uploadDate": 0}},
+			"addressMode": "url_search",
+		})
+	}))
+	defer srv.Close()
+
+	got, err := sourceengine.ChaptersFor(context.Background(), newTestClient(t, srv), sourceengine.ProviderRef{
+		SourceID: 645, URL: "serialized-browser-address", AddressMode: sourceengine.AddressModeURLSearch, WebURL: "https://source.test/title",
+	}, "Title")
+	if err != nil {
+		t.Fatalf("ChaptersRef: %v", err)
+	}
+	if request["addressMode"] != "url_search" || request["webUrl"] != "https://source.test/title" {
+		t.Fatalf("request address context = %+v, want url_search + webUrl witness", request)
+	}
+	if got.AddressMode != sourceengine.AddressModeURLSearch || len(got.Chapters) != 1 {
+		t.Fatalf("result = %+v, want one chapter resolved as url_search", got)
+	}
+}
+
+// TestChaptersRef_LegacyResponseDefaultsUnknown proves an older engine that
+// omits the additive response field remains readable.
+func TestChaptersRef_LegacyResponseDefaultsUnknown(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{"chapters": []map[string]any{}})
+	}))
+	defer srv.Close()
+
+	got, err := sourceengine.ChaptersFor(context.Background(), newTestClient(t, srv), sourceengine.ProviderRef{SourceID: 1, URL: "/legacy"}, "")
+	if err != nil {
+		t.Fatalf("ChaptersRef: %v", err)
+	}
+	if got.AddressMode != sourceengine.AddressModeUnknown {
+		t.Fatalf("legacy response mode = %q, want unknown", got.AddressMode.Wire())
+	}
 }
 
 // TestChapters_BadRequest proves a 400 from /chapters maps to *BadRequestError.

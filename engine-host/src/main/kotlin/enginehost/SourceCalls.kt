@@ -2,9 +2,9 @@ package enginehost
 
 /*
  * SourceCalls bridges the RPC layer to a Mihon source's suspend API. Content is always
- * addressed by a source-relative URL. Most SManga/SChapter objects are reconstructed from that
- * url directly; sources that retain request state only on search results are rehydrated through
- * their own URL-search path. No opaque engine id ever enters the flow.
+ * addressed by a source-owned serialized value: a relative or opaque extension key, or an
+ * absolute cross-origin URL when URL-search hydration owns the request state. Explicit provenance
+ * determines reconstruction; no opaque engine id ever enters the flow.
  *
  * Uses a caller-cancellable runBlocking job to cross the Kotlin suspend boundary — the source
  * workers are plain blocking threads, while coroutine and OkHttp cancellation still propagate.
@@ -166,7 +166,7 @@ object SourceCalls {
             SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
         }
 
-    /** Fetch full manga details for a source-relative url. */
+    /** Fetch full manga details for a source-owned serialized address. */
     fun mangaDetails(
         source: Source,
         url: String,
@@ -185,7 +185,7 @@ object SourceCalls {
         }
 
     /**
-     * Fetch the chapter list for a source-relative manga url, running Suwayomi's own
+     * Fetch the chapter list for a source-owned serialized manga address, running Suwayomi's own
      * service-layer chapter post-processing (Chapter.kt's `updateChapterListDatabase`) on the raw
      * extension output before returning it — see [SChapter.toChapterDto] for the per-chapter steps.
      * [mangaTitle] (optional; "" when unknown) improves number recognition and is passed to the
@@ -221,7 +221,7 @@ object SourceCalls {
         }
 
     /**
-     * Fetch the page list for a source-relative chapter url. Each page is returned as the source's
+     * Fetch the page list for a source-owned chapter address. Each page is returned as the source's
      * OWN address PAIR ([Page.url], [Page.imageUrl]) verbatim — NO image-URL resolution happens here.
      * Resolution (calling getImageUrl when imageUrl is null) is deferred to [image], which
      * reconstructs the exact Page and fetches the bytes, so the page list stays a cheap metadata call.
@@ -230,7 +230,8 @@ object SourceCalls {
      * [Source.getPageList] with a bare [SChapter] reconstructed from [chapterUrl] alone. For the vast
      * majority of sources this succeeds with ZERO extra requests — a url-only seed is everything their
      * getPageList needs. Only the bare attempt's `Refresh Chapter List` signal permits [mangaUrl]
-     * (the source-relative SERIES url; "" when unknown) to trigger a series-scoped chapter fetch (the
+     * (the source-owned serialized SERIES address; "" when unknown) to trigger a series-scoped
+     * chapter fetch (the
      * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs). When it yields a chapter
      * whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
      *
@@ -538,7 +539,7 @@ object SourceCalls {
 
     /**
      * Resolves the fully-qualified, browser-clickable url for [manga] via
-     * [HttpSource.getMangaUrl] — the "realUrl" the DTOs carry alongside the source-relative
+     * [HttpSource.getMangaUrl] — the "realUrl" the DTOs carry alongside the source-owned serialized
      * addressing [SManga.url]. Only an [HttpSource] exposes this call; any other [Source]
      * (or a source whose request-building throws, e.g. a malformed seed url) yields null,
      * never a thrown exception into the RPC handler.

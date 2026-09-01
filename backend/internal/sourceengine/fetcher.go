@@ -132,19 +132,23 @@ func (f *Fetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.Chap
 		return fetcher.ChapterPages{}, fmt.Errorf("sourceengine fetcher: provider %q is not a live source id: %w", ref.Provider, ErrNotLiveSource)
 	}
 
-	links, err := f.resolveLinks(ctx, sourceID, ref)
+	links, resolvedMode, err := f.resolveLinks(ctx, sourceID, ref)
 	if err != nil {
 		return fetcher.ChapterPages{}, err
 	}
+	resolvedWire := ""
+	if resolvedMode.IsKnown() {
+		resolvedWire = resolvedMode.Wire()
+	}
 	if len(links) == 0 {
-		return fetcher.ChapterPages{}, fmt.Errorf("sourceengine fetcher: chapter %q: %w", ref.URL, ErrNoPages)
+		return fetcher.ChapterPages{ResolvedAddressMode: resolvedWire}, fmt.Errorf("sourceengine fetcher: chapter %q: %w", ref.URL, ErrNoPages)
 	}
 
 	// From here on the page list is resolved, so carry links + stagingDir on every
 	// return path (success OR failure): the caller persists the links (skip
 	// re-resolution next attempt) and keeps/cleans the staging dir accordingly.
 	stagingDir := f.stagingDirFor(ref)
-	result := fetcher.ChapterPages{PageLinks: links, StagingDir: stagingDir}
+	result := fetcher.ChapterPages{PageLinks: links, StagingDir: stagingDir, ResolvedAddressMode: resolvedWire}
 
 	// Download every missing page to the staging dir (re-using pages a prior
 	// attempt already staged), holding at most one page in memory at a time.
@@ -168,19 +172,24 @@ func (f *Fetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.Chap
 // when present (SKIPPING the Client.Pages call — a retry never re-hits the
 // source's page-resolution step) and otherwise calls Pages once, mapping the
 // result to the persistable fetcher.PageLink shape.
-func (f *Fetcher) resolveLinks(ctx context.Context, sourceID int64, ref fetcher.FetchRef) ([]fetcher.PageLink, error) {
+func (f *Fetcher) resolveLinks(ctx context.Context, sourceID int64, ref fetcher.FetchRef) ([]fetcher.PageLink, AddressMode, error) {
 	if len(ref.PageLinks) > 0 {
-		return ref.PageLinks, nil
+		return ref.PageLinks, AddressModeUnknown, nil
 	}
-	pages, err := f.client.Pages(ctx, sourceID, ref.URL, ref.MangaURL)
+	mode, err := ParseAddressMode(ref.AddressMode)
 	if err != nil {
-		return nil, fmt.Errorf("sourceengine fetcher: pages: %w", err)
+		return nil, AddressModeUnknown, fmt.Errorf("sourceengine fetcher: %w", err)
 	}
+	result, err := PagesFor(ctx, f.client, ProviderRef{SourceID: sourceID, URL: ref.MangaURL, AddressMode: mode, WebURL: ref.WebURL}, ref.URL)
+	if err != nil {
+		return nil, AddressModeUnknown, fmt.Errorf("sourceengine fetcher: pages: %w", err)
+	}
+	pages := result.Pages
 	links := make([]fetcher.PageLink, len(pages))
 	for i, p := range pages {
 		links[i] = fetcher.PageLink{URL: p.URL, ImageURL: p.ImageURL}
 	}
-	return links, nil
+	return links, result.AddressMode, nil
 }
 
 // stagePages downloads every page NOT already present in the staging dir, writing

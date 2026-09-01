@@ -63,8 +63,10 @@ export interface ProviderRef {
   source: string
   /** DEPRECATED, unused by the backend — see SearchCandidate.mangaId. */
   mangaId: number
-  /** Source-relative manga URL the backend addresses this manga by (P2 Suwayomi-removal). */
+  /** Source-owned serialized manga address; may be relative, opaque, or absolute. */
   url: string
+  addressMode?: 'unknown' | 'direct' | 'url_search'
+  webUrl?: string
   scanlator: string
 }
 
@@ -371,6 +373,8 @@ export function useSourceConfigure(opts: {
         source: row.candidate.source,
         mangaId: row.candidate.mangaId,
         url: row.candidate.url,
+        addressMode: row.candidate.addressMode ?? 'unknown',
+        webUrl: row.candidate.realUrl,
         scanlator: row.scanlatorParam,
       }
     }),

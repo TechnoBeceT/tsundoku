@@ -23,8 +23,9 @@ type FetchedChapter struct {
 	// WebURL is the fully-qualified, browser-clickable chapter URL (Mihon's
 	// HttpSource.getChapterUrl, surfaced end-to-end as
 	// sourceengine.Chapter.RealURL) — feeds Komga's ComicInfo <Web> field
-	// (disk.RenderMeta.WebURL). Distinct from URL (the source-relative
-	// addressing key) — never used for identity/dedup. "" when the source
+	// (disk.RenderMeta.WebURL). Distinct in purpose from URL (the source-owned
+	// serialized address) — never used for identity/dedup. The values may be
+	// equal when that address is already the browser URL. "" when the source
 	// could not resolve one.
 	WebURL        string
 	ProviderIndex int

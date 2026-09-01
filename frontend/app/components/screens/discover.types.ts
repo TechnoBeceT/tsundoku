@@ -45,9 +45,9 @@ export interface DiscoverCandidate {
   /** Cover image URL, or "" → the initial-letter placeholder. */
   thumbnailUrl: string
   /**
-   * Provider-canonical ADDRESSING url the engine host identifies this manga
-   * by. NOT a clickable browser link — see `realUrl` for the "View on
-   * source ↗" external link target.
+   * Provider-canonical ADDRESSING value the engine host identifies this manga
+   * by. Its shape may be relative, opaque, or absolute; UI links use `realUrl`
+   * regardless of whether the two values happen to match.
    */
   url: string
   /**
@@ -56,6 +56,8 @@ export interface DiscoverCandidate {
    * the source could not resolve one (the link is hidden in that case).
    */
   realUrl?: string
+  /** Engine-resolved interpretation of url. */
+  addressMode?: 'unknown' | 'direct' | 'url_search'
   /** Subtle "In library" marker when this manga is already adopted. */
   inLibrary?: boolean
   /** Synopsis shown in the hover preview popup, when the source provides one. */

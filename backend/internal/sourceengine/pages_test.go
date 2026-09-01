@@ -47,6 +47,36 @@ func TestPages_Success(t *testing.T) {
 	if captured["mangaUrl"] != "/manga/1" {
 		t.Errorf("request body mangaUrl = %v, want /manga/1", captured["mangaUrl"])
 	}
+	if captured["addressMode"] != "unknown" {
+		t.Errorf("request addressMode = %v, want unknown compatibility default", captured["addressMode"])
+	}
+}
+
+// TestPagesRef_PropagatesAndReturnsAddressMode protects the page warm-up
+// resolver input and its successful resolved mode.
+func TestPagesRef_PropagatesAndReturnsAddressMode(t *testing.T) {
+	var request map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		decodeBody(t, r, &request)
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"pages":       []map[string]any{{"index": 0, "url": "/p/0", "imageUrl": "https://img.test/0.jpg"}},
+			"addressMode": "direct",
+		})
+	}))
+	defer srv.Close()
+
+	got, err := sourceengine.PagesFor(context.Background(), newTestClient(t, srv), sourceengine.ProviderRef{
+		SourceID: 354, URL: "/opaque/354", AddressMode: sourceengine.AddressModeDirect, WebURL: "https://source.test/manga/354",
+	}, "/opaque/354/ch/1")
+	if err != nil {
+		t.Fatalf("PagesRef: %v", err)
+	}
+	if request["mangaUrl"] != "/opaque/354" || request["addressMode"] != "direct" || request["webUrl"] != "https://source.test/manga/354" {
+		t.Fatalf("request address context = %+v, want manga URL + direct + webUrl witness", request)
+	}
+	if got.AddressMode != sourceengine.AddressModeDirect || len(got.Pages) != 1 {
+		t.Fatalf("result = %+v, want one page resolved as direct", got)
+	}
 }
 
 // TestPages_BadRequest proves a 400 from /pages maps to *BadRequestError.

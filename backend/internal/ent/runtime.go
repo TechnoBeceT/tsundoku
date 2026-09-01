@@ -491,39 +491,39 @@ func init() {
 	// seriesprovider.DefaultWebURL holds the default value on creation for the web_url field.
 	seriesprovider.DefaultWebURL = seriesproviderDescWebURL.Default.(string)
 	// seriesproviderDescTitle is the schema descriptor for title field.
-	seriesproviderDescTitle := seriesproviderFields[9].Descriptor()
+	seriesproviderDescTitle := seriesproviderFields[10].Descriptor()
 	// seriesprovider.DefaultTitle holds the default value on creation for the title field.
 	seriesprovider.DefaultTitle = seriesproviderDescTitle.Default.(string)
 	// seriesproviderDescMetadata is the schema descriptor for metadata field.
-	seriesproviderDescMetadata := seriesproviderFields[10].Descriptor()
+	seriesproviderDescMetadata := seriesproviderFields[11].Descriptor()
 	// seriesprovider.DefaultMetadata holds the default value on creation for the metadata field.
 	seriesprovider.DefaultMetadata = seriesproviderDescMetadata.Default.(bool)
 	// seriesproviderDescStatus is the schema descriptor for status field.
-	seriesproviderDescStatus := seriesproviderFields[11].Descriptor()
+	seriesproviderDescStatus := seriesproviderFields[12].Descriptor()
 	// seriesprovider.DefaultStatus holds the default value on creation for the status field.
 	seriesprovider.DefaultStatus = seriesproviderDescStatus.Default.(string)
 	// seriesproviderDescFlags is the schema descriptor for flags field.
-	seriesproviderDescFlags := seriesproviderFields[12].Descriptor()
+	seriesproviderDescFlags := seriesproviderFields[13].Descriptor()
 	// seriesprovider.DefaultFlags holds the default value on creation for the flags field.
 	seriesprovider.DefaultFlags = seriesproviderDescFlags.Default.(uint32)
 	// seriesproviderDescImportance is the schema descriptor for importance field.
-	seriesproviderDescImportance := seriesproviderFields[13].Descriptor()
+	seriesproviderDescImportance := seriesproviderFields[14].Descriptor()
 	// seriesprovider.DefaultImportance holds the default value on creation for the importance field.
 	seriesprovider.DefaultImportance = seriesproviderDescImportance.Default.(int)
 	// seriesproviderDescIgnoreFractional is the schema descriptor for ignore_fractional field.
-	seriesproviderDescIgnoreFractional := seriesproviderFields[14].Descriptor()
+	seriesproviderDescIgnoreFractional := seriesproviderFields[15].Descriptor()
 	// seriesprovider.DefaultIgnoreFractional holds the default value on creation for the ignore_fractional field.
 	seriesprovider.DefaultIgnoreFractional = seriesproviderDescIgnoreFractional.Default.(bool)
 	// seriesproviderDescCoverURL is the schema descriptor for cover_url field.
-	seriesproviderDescCoverURL := seriesproviderFields[15].Descriptor()
+	seriesproviderDescCoverURL := seriesproviderFields[16].Descriptor()
 	// seriesprovider.DefaultCoverURL holds the default value on creation for the cover_url field.
 	seriesprovider.DefaultCoverURL = seriesproviderDescCoverURL.Default.(string)
 	// seriesproviderDescCreatedAt is the schema descriptor for created_at field.
-	seriesproviderDescCreatedAt := seriesproviderFields[16].Descriptor()
+	seriesproviderDescCreatedAt := seriesproviderFields[17].Descriptor()
 	// seriesprovider.DefaultCreatedAt holds the default value on creation for the created_at field.
 	seriesprovider.DefaultCreatedAt = seriesproviderDescCreatedAt.Default.(func() time.Time)
 	// seriesproviderDescUpdatedAt is the schema descriptor for updated_at field.
-	seriesproviderDescUpdatedAt := seriesproviderFields[17].Descriptor()
+	seriesproviderDescUpdatedAt := seriesproviderFields[18].Descriptor()
 	// seriesprovider.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	seriesprovider.DefaultUpdatedAt = seriesproviderDescUpdatedAt.Default.(func() time.Time)
 	// seriesprovider.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

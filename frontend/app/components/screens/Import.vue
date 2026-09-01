@@ -114,7 +114,7 @@ const emit = defineEmits<{
   /** Run a search for `q`, optionally restricted to the given source IDs. */
   search: [payload: { q: string, sources: string[] }]
   /** Fetch the chapter list for one candidate (Stage 2 inspect). */
-  inspect: [payload: { source: string, mangaId: number, url: string }]
+  inspect: [payload: { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }]
   /** Fetch the per-scanlator breakdown for every candidate in the picked group (Stage 2 entry). */
   loadBreakdowns: [candidates: SearchCandidate[]]
   /** Force a recomputation of one candidate's breakdown snapshot (GAP-140). */
@@ -231,7 +231,7 @@ const onConfigureTray = (): void => {
 const onInspect = (c: SearchCandidate): void => {
   inspectKey.value = candKey(c)
   inspecting.value = true
-  emit('inspect', { source: c.source, mangaId: c.mangaId, url: c.url })
+  emit('inspect', { source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
 }
 
 // ---- Stage 3: review + adopt -----------------------------------------------
@@ -270,6 +270,8 @@ const submit = (): void => {
       source: s.row.candidate.source,
       mangaId: s.row.candidate.mangaId,
       url: s.row.candidate.url,
+      addressMode: s.row.candidate.addressMode ?? 'unknown',
+      webUrl: s.row.candidate.realUrl,
       importance: s.importance,
       scanlator: s.row.scanlatorParam,
     })),

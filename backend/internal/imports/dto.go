@@ -5,6 +5,8 @@
 // generated TypeScript client matches the OpenAPI spec without renaming.
 package imports
 
+import "github.com/technobecet/tsundoku/internal/sourceengine"
+
 // SourceDTO is the read-only representation of a Suwayomi source (extension).
 type SourceDTO struct {
 	// ID is the Suwayomi source identifier (a 64-bit integer serialised as string).
@@ -46,9 +48,11 @@ type SearchCandidateDTO struct {
 	// RealURL is the fully-qualified, browser-clickable URL for this manga
 	// (Mihon's HttpSource.getMangaUrl) — powers the "View on source" external
 	// link. Distinct from URL: URL is the addressing key sent back to the
-	// backend, RealURL is only ever meant to be opened in a browser. Empty
-	// string when the engine host could not resolve one.
+	// backend. RealURL opens in a browser and is carried back separately as the
+	// optional webUrl resolver witness. Empty when unresolved.
 	RealURL string `json:"realUrl"`
+	// AddressMode is the engine-resolved interpretation of URL.
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
 	// ThumbnailURL is Tsundoku's OWN cover-proxy path
 	// ("/api/sources/{source}/manga/{mangaId}/cover"), never Suwayomi's raw
 	// (Suwayomi-relative) thumbnail URL — rendering that directly against
@@ -129,9 +133,13 @@ type AdoptProvider struct {
 	// MangaID is UNUSED by the backend (prefer URL) — retained only for FE
 	// wire compatibility until slice 3b-FE switches to URL.
 	MangaID int
-	// URL is the source-relative manga URL the engine host addresses this
-	// manga by (internal/sourceengine.Client.Chapters/MangaDetails).
+	// URL is the exact source-owned serialized manga address. AddressMode tells
+	// the engine whether to use it directly or hydrate through URL search.
 	URL string `json:"url"`
+	// AddressMode and WebURL preserve the search candidate's engine address
+	// context. Their zero values retain compatibility with older clients.
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
 	// Importance is the provider rank for this series (higher = better).
 	Importance int
 	// Scanlator selects which scanlation group's chapters this provider

@@ -54,8 +54,8 @@ type CoverProvenance struct {
 	// File is the on-disk cover filename (basename only, e.g. "cover.jpg").
 	File string `json:"file"`
 
-	// SourceURL is the absolute (or source-relative) URL the bytes were fetched
-	// from — the origin's cover URL, whether that origin is Suwayomi's
+	// SourceURL is the source-owned URL the bytes were fetched from, retained
+	// exactly as received — whether that origin is Suwayomi's
 	// id-derived thumbnail path or a Phase-1 metadata provider's own cover URL
 	// (AniList/MangaDex/…, which flow through this same cache; see
 	// SeriesMetadataSidecar.CoverSource for which provider it came from).

@@ -570,6 +570,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		d.broadcast("upgrade.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateUpgrading)})
 		return true, nil
 	})
+	d.persistUpgradeResolvedAddressMode(ctx, sp.ID, admission)
 	if err != nil {
 		d.recordUpgradeFetchFailure(ctx, sourceKey, admission, err)
 		// Carry pc so handleUpgradeFailure CHARGES this source's per-source retry state
@@ -611,6 +612,16 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		pageCount:   pages.PageCount,
 		stagingDir:  pages.StagingDir,
 	}, nil
+}
+
+// persistUpgradeResolvedAddressMode records an observation only after the
+// upgrade attempt reached the engine. Local admission failures and lost claims
+// have no source observation to persist.
+func (d *Dispatcher) persistUpgradeResolvedAddressMode(ctx context.Context, providerID uuid.UUID, admission fetchAdmissionResult) {
+	if !admission.fetched {
+		return
+	}
+	d.persistResolvedAddressMode(ctx, providerID, admission.pages.ResolvedAddressMode)
 }
 
 // upgradeFrozenPredicates returns the provenance values an upgrade decision read
