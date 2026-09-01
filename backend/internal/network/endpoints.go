@@ -180,13 +180,20 @@ func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 // the referencing source ids. ErrEndpointNotFound (→404) on a missing id.
 func (s *Service) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
 	if s.policyCoordinator != nil {
-		return s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
+		err := s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
 			_, err := s.endpointByID(ctx, id)
 			if err != nil {
 				return runtimepolicy.Proposal{}, err
 			}
 			return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: nil}}, nil
 		}, func(ctx context.Context) error { return s.deleteEndpoint(ctx, id) })
+		if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+			return fmt.Errorf("%w: %w", ErrInvalidEndpoint, err)
+		}
+		if sanitized := sanitizeKCEFInvariantError(err, ErrInvalidEndpoint); sanitized != nil {
+			return sanitized
+		}
+		return err
 	}
 	return s.deleteEndpoint(ctx, id)
 }

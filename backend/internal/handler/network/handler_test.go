@@ -25,6 +25,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/middleware"
 	networksvc "github.com/technobecet/tsundoku/internal/network"
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
@@ -76,15 +77,27 @@ func newTestEnv(t *testing.T) *testEnv {
 	return newTestEnvWithApplier(t, runtimeApplierFunc(func(context.Context, int64) error { return nil }))
 }
 
+func newTestEnvWithPolicyCoordinator(t *testing.T) *testEnv {
+	t.Helper()
+	return newTestEnvWithCatalogAndCoordinator(t, acceptingCatalog{}, runtimeApplierFunc(func(context.Context, int64) error { return nil }), true)
+}
+
 func newTestEnvWithApplier(t *testing.T, applier runtimeApplierFunc) *testEnv {
 	return newTestEnvWithCatalog(t, acceptingCatalog{}, applier)
 }
 
 func newTestEnvWithCatalog(t *testing.T, catalog sourcetransport.SourceCatalog, applier runtimeApplierFunc) *testEnv {
+	return newTestEnvWithCatalogAndCoordinator(t, catalog, applier, false)
+}
+
+func newTestEnvWithCatalogAndCoordinator(t *testing.T, catalog sourcetransport.SourceCatalog, applier runtimeApplierFunc, withCoordinator bool) *testEnv {
 	t.Helper()
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
 	networkService := networksvc.NewService(client, catalog)
+	if withCoordinator {
+		networkService.WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	}
 	runtimeService := sourcetransport.NewService(client, nil, catalog).WithRuntimeApplier(applier)
 	reader := configurationhandler.NewDTOReader(configurationGetterFunc(func(ctx context.Context, sourceID int64) (sourceconfiguration.Configuration, error) {
 		configuration := sourceconfiguration.Configuration{
@@ -377,7 +390,7 @@ func assertSourceIntentRevisions(t *testing.T, env *testEnv, desired, applied in
 // TestDeleteEndpoint_InUseConflict proves deleting a referenced endpoint is a
 // 409 (owner-safety guard).
 func TestDeleteEndpoint_InUseConflict(t *testing.T) {
-	env := newTestEnv(t)
+	env := newTestEnvWithPolicyCoordinator(t)
 	create := env.do(http.MethodPost, "/api/network/endpoints", `{"name":"VPN","kind":"socks","host":"vpn.local","port":1080}`)
 	if create.Code != http.StatusCreated {
 		t.Fatalf("create: %d (%s)", create.Code, create.Body.String())
@@ -398,6 +411,43 @@ func TestDeleteEndpoint_InUseConflict(t *testing.T) {
 	del := env.do(http.MethodDelete, "/api/network/endpoints/"+created.ID, "")
 	if del.Code != http.StatusConflict {
 		t.Fatalf("delete referenced: want 409, got %d (%s)", del.Code, del.Body.String())
+	}
+}
+
+// TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithSanitizedBadRequest
+// proves the real HTTP delete path maps an incompatible prospective route to a
+// public 400 rather than exposing the coordinator or falling through to 500.
+func TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithSanitizedBadRequest(t *testing.T) {
+	env := newTestEnvWithPolicyCoordinator(t)
+	ctx := context.Background()
+	socks := env.client.NetworkEndpoint.Create().SetName("VPN").SetKind(networksvc.KindSocks).SetEnabled(true).SetHost("vpn.local").SetPort(1080).SaveX(ctx)
+	flare := env.client.NetworkEndpoint.Create().SetName("FS").SetKind(networksvc.KindFlareSolverr).SetEnabled(true).SetURL("http://flaresolverr:8191").SaveX(ctx)
+	env.client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(socks.ID).SetFlareMode(networksvc.FlareModeEndpoint).SetFlareEndpointID(flare.ID).ExecX(ctx)
+	env.client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	rec := env.do(http.MethodDelete, "/api/network/endpoints/"+flare.ID.String(), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("DELETE status = %d (%s), want 400", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Body.String(), "{\"message\":\"invalid network endpoint: incompatible embedded browser and SOCKS route\"}\n"; got != want {
+		t.Fatalf("DELETE body = %q, want %q", got, want)
+	}
+	if strings.Contains(rec.Body.String(), "source 42") || strings.Contains(rec.Body.String(), "required embedded browser") {
+		t.Fatalf("DELETE leaked coordinator detail: %s", rec.Body.String())
+	}
+	policy := env.client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after rejected DELETE = %+v, want required unchanged", policy)
+	}
+	binding := env.client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != socks.ID || binding.FlareEndpointID == nil || *binding.FlareEndpointID != flare.ID {
+		t.Fatalf("binding after rejected DELETE = %+v, want both references unchanged", binding)
+	}
+	if !env.client.NetworkEndpoint.GetX(ctx, socks.ID).Enabled || !env.client.NetworkEndpoint.GetX(ctx, flare.ID).Enabled {
+		t.Fatal("endpoint changed after rejected DELETE")
+	}
+	if got := env.client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intent count after rejected DELETE = %d, want 0", got)
 	}
 }
 

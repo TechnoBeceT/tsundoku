@@ -81,6 +81,14 @@ func TestUpdateEndpointRejectsEnablingSocksForRequiredBrowserWithoutIntentChurn(
 	if intent.DesiredRevision != 1 {
 		t.Fatalf("desired revision after rejected endpoint update = %d, want 1", intent.DesiredRevision)
 	}
+	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after rejected endpoint update = %+v, want required unchanged", policy)
+	}
+	binding := client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != id {
+		t.Fatalf("binding after rejected endpoint update = %+v, want SOCKS endpoint %s unchanged", binding, id)
+	}
 }
 
 // TestUpdateEndpointRejectsChangingBoundEndpointToSocks proves endpoint type
@@ -115,6 +123,129 @@ func TestUpdateEndpointRejectsChangingBoundEndpointToSocks(t *testing.T) {
 	}
 	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
 		t.Fatalf("runtime intent count after rejected endpoint type update = %d, want 0", got)
+	}
+	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after rejected endpoint type update = %+v, want required unchanged", policy)
+	}
+	binding := client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != id {
+		t.Fatalf("binding after rejected endpoint type update = %+v, want SOCKS endpoint %s unchanged", binding, id)
+	}
+}
+
+// TestUpdateEndpointDisablesSocksToResolveLegacyRequiredBrowserRoute proves an
+// endpoint disable is admitted when it removes the effective SOCKS capability
+// from legacy invalid state.
+func TestUpdateEndpointDisablesSocksToResolveLegacyRequiredBrowserRoute(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	endpoint, err := svc.CreateEndpoint(ctx, socksInput("VPN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.MustParse(endpoint.ID)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(id).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	disabled := false
+	updated, err := svc.UpdateEndpoint(ctx, id, network.EndpointPatch{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("UpdateEndpoint: %v", err)
+	}
+	if updated.Enabled {
+		t.Fatal("endpoint remained enabled after resolving update")
+	}
+	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after disable = %+v, want required unchanged", policy)
+	}
+	binding := client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != id {
+		t.Fatalf("binding after disable = %+v, want SOCKS endpoint %s unchanged", binding, id)
+	}
+	intent := client.SourceRuntimeIntent.Query().Where(entintent.SourceID(42)).OnlyX(ctx)
+	if intent.DesiredRevision != 1 {
+		t.Fatalf("desired revision after resolving endpoint disable = %d, want 1", intent.DesiredRevision)
+	}
+}
+
+// TestUpdateEndpointRejectsOrdinaryEditThatRetainsLegacyRequiredBrowserRoute
+// proves a name-only endpoint edit cannot commit while the effective route
+// would remain incompatible.
+func TestUpdateEndpointRejectsOrdinaryEditThatRetainsLegacyRequiredBrowserRoute(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	endpoint, err := svc.CreateEndpoint(ctx, socksInput("VPN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.MustParse(endpoint.ID)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(id).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	name := "VPN renamed"
+	_, err = svc.UpdateEndpoint(ctx, id, network.EndpointPatch{Name: &name})
+	if !errors.Is(err, network.ErrInvalidEndpoint) {
+		t.Fatalf("UpdateEndpoint ordinary edit error = %v, want ErrInvalidEndpoint", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	if got := client.NetworkEndpoint.GetX(ctx, id).Name; got != "VPN" {
+		t.Fatalf("endpoint name after rejected ordinary edit = %q, want VPN", got)
+	}
+	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after rejected ordinary edit = %+v, want required unchanged", policy)
+	}
+	binding := client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != id {
+		t.Fatalf("binding after rejected ordinary edit = %+v, want SOCKS endpoint %s unchanged", binding, id)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intent count after rejected ordinary edit = %d, want 0", got)
+	}
+}
+
+// TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithoutWrites proves a
+// referenced FlareSolverr endpoint deletion reports a public endpoint error
+// before the owner-safety conflict when the retained SOCKS route is invalid.
+func TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithoutWrites(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	socks, err := svc.CreateEndpoint(ctx, socksInput("VPN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flare, err := svc.CreateEndpoint(ctx, flareInput("FS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	socksID := uuid.MustParse(socks.ID)
+	flareID := uuid.MustParse(flare.ID)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(socksID).SetFlareMode(network.FlareModeEndpoint).SetFlareEndpointID(flareID).ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	err = svc.DeleteEndpoint(ctx, flareID)
+	if !errors.Is(err, network.ErrInvalidEndpoint) {
+		t.Fatalf("DeleteEndpoint error = %v, want ErrInvalidEndpoint", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
+	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
+		t.Fatalf("browser policy after rejected delete = %+v, want required unchanged", policy)
+	}
+	binding := client.SourceNetworkBinding.Query().OnlyX(ctx)
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != socksID || binding.FlareEndpointID == nil || *binding.FlareEndpointID != flareID {
+		t.Fatalf("binding after rejected delete = %+v, want both references unchanged", binding)
+	}
+	if !client.NetworkEndpoint.GetX(ctx, socksID).Enabled || !client.NetworkEndpoint.GetX(ctx, flareID).Enabled {
+		t.Fatal("endpoint changed after rejected delete")
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intent count after rejected delete = %d, want 0", got)
 	}
 }
 
