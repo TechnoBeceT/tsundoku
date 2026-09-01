@@ -124,10 +124,7 @@ func TestSourceConfigurationContract(t *testing.T) {
 		assertValue(t, objectAt(t, schemas, "ImageConnectionPolicyPatch"), "additionalProperties", false)
 		assertRef(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
 		assertEnum(t, propertyAt(t, schemas, "ImageConnectionPolicyPatch", "value"), []any{"fresh", "reuse"})
-		assertObjectSchema(t, schemas, "KCEFPolicyPatch", []string{"mode", "value"}, []string{"mode"})
-		assertValue(t, objectAt(t, schemas, "KCEFPolicyPatch"), "additionalProperties", false)
-		assertRef(t, propertyAt(t, schemas, "KCEFPolicyPatch", "mode"), "#/components/schemas/PolicyPatchMode")
-		assertEnum(t, propertyAt(t, schemas, "KCEFPolicyPatch", "value"), []any{"auto", "required", "disabled"})
+		assertKCEFPolicyPatchSchema(t, schemas)
 
 		assertObjectSchema(t, schemas, "SourceTransportPolicyUpdate", []string{"reuseBypassSession", "imageConnectionMode", "kcefPolicy"}, nil)
 		assertValue(t, objectAt(t, schemas, "SourceTransportPolicyUpdate"), "additionalProperties", false)
@@ -268,6 +265,34 @@ func assertPolicyValue(t *testing.T, schemas map[string]any, name string, overri
 	assertTypes(t, propertyAt(t, schemas, name, "override"), overrideType)
 	assertType(t, propertyAt(t, schemas, name, "effective"), effectiveType)
 	assertType(t, propertyAt(t, schemas, name, "inherited"), "boolean")
+}
+
+func assertKCEFPolicyPatchSchema(t *testing.T, schemas map[string]any) {
+	t.Helper()
+	variants := arrayAt(t, objectAt(t, schemas, "KCEFPolicyPatch"), "oneOf")
+	if len(variants) != 2 {
+		t.Fatalf("KCEFPolicyPatch variants = %d, want 2", len(variants))
+	}
+	inherit, ok := variants[0].(map[string]any)
+	if !ok {
+		t.Fatalf("inherit variant = %T, want object", variants[0])
+	}
+	assertType(t, inherit, "object")
+	assertValue(t, inherit, "additionalProperties", false)
+	assertStringSet(t, keys(objectAt(t, inherit, "properties")), []string{"mode"}, "inherit properties")
+	assertStringSet(t, stringsFromAny(t, inherit["required"]), []string{"mode"}, "inherit required")
+	assertValue(t, objectAt(t, objectAt(t, inherit, "properties"), "mode"), "const", "inherit")
+
+	override, ok := variants[1].(map[string]any)
+	if !ok {
+		t.Fatalf("override variant = %T, want object", variants[1])
+	}
+	assertType(t, override, "object")
+	assertValue(t, override, "additionalProperties", false)
+	assertStringSet(t, keys(objectAt(t, override, "properties")), []string{"mode", "value"}, "override properties")
+	assertStringSet(t, stringsFromAny(t, override["required"]), []string{"mode", "value"}, "override required")
+	assertValue(t, objectAt(t, objectAt(t, override, "properties"), "mode"), "const", "override")
+	assertEnum(t, objectAt(t, objectAt(t, override, "properties"), "value"), []any{"auto", "required", "disabled"})
 }
 
 func assertEnumSchema(t *testing.T, schemas map[string]any, name string, values []any) {

@@ -187,6 +187,24 @@ func TestUpdateRejectsRequiredEmbeddedBrowserOverSocksWithoutAdvancingIntent(t *
 	}
 }
 
+// TestUpdateRequiredEmbeddedBrowserStaysPendingUntilTopologyConverges proves a
+// source-policy revision cannot be acknowledged when its topology application
+// fails before routing the requested embedded-browser profile.
+func TestUpdateRequiredEmbeddedBrowserStaysPendingUntilTopologyConverges(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	svc := sourcetransport.NewService(client, fakeDefaults{image: sourcetransport.ImageConnectionFresh}, fakeCatalog{}).
+		WithRuntimeApplier(runtimeApplierFunc(func(context.Context, int64) error { return errors.New("KCEF profile unavailable") }))
+
+	updated, err := svc.Update(ctx, 101, sourcetransport.Patch{KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired)})
+	if err == nil {
+		t.Fatal("Update error = nil, want topology convergence failure")
+	}
+	if updated.Intent.DesiredRevision != 1 || updated.Intent.AppliedRevision != 0 || updated.Intent.LastApplyAttempt == nil {
+		t.Fatalf("intent after topology failure = %+v, want desired 1/applied 0 with attempt", updated.Intent)
+	}
+}
+
 func TestConcurrentFirstWritesMergeAndAdvanceIntentAtomically(t *testing.T) { //nolint:cyclop // Concurrent-write scenario validates both writers and merged durable state.
 	ctx := context.Background()
 	arrived := make(chan *bool, 2)

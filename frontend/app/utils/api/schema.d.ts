@@ -4327,9 +4327,13 @@ export interface components {
             value?: "fresh" | "reuse";
         };
         KCEFPolicyPatch: {
-            mode: components["schemas"]["PolicyPatchMode"];
+            /** @constant */
+            mode: "inherit";
+        } | {
+            /** @constant */
+            mode: "override";
             /** @enum {string} */
-            value?: "auto" | "required" | "disabled";
+            value: "auto" | "required" | "disabled";
         };
         SourceTransportPolicyUpdate: {
             reuseBypassSession?: components["schemas"]["BooleanPolicyPatch"];

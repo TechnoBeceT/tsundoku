@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
@@ -37,6 +38,20 @@ func (f fakeTransportSnapshotter) Snapshot(context.Context) (map[int64]sourcetra
 	return f.policies, f.err
 }
 
+type acceptingTransportCatalog struct{}
+
+func (acceptingTransportCatalog) RequireSource(context.Context, int64) error { return nil }
+
+type topologyTransportDefaults struct{}
+
+func (topologyTransportDefaults) ImageConnectionMode(context.Context) sourcetransport.ImageConnectionMode {
+	return sourcetransport.ImageConnectionFresh
+}
+
+func (topologyTransportDefaults) ResolveBypassSession(context.Context, int64, *bool) (bool, sourcetransport.BypassSessionMode, error) {
+	return false, sourcetransport.BypassSessionDisabled, nil
+}
+
 func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBinding, error) {
 	return f.bindings, f.err
 }
@@ -51,6 +66,8 @@ type fakeLauncher struct {
 	retireCalls int
 	lastKeep    map[string]bool
 }
+
+func kcefPolicyPtr(value runtimepolicy.KCEFPolicy) *runtimepolicy.KCEFPolicy { return &value }
 
 type preferenceReadClient struct {
 	*sourceenginefake.Client
@@ -321,6 +338,7 @@ func TestReconcileNetwork_DerivesKCEFAgainstDefaultHost(t *testing.T) {
 		wantProfiles int
 		wantKey      string
 		wantKCEF     bool
+		policies     map[int64]sourcetransport.Override
 	}{
 		{
 			name: "default on global auto stays default", defaultKCEF: true,
@@ -336,14 +354,27 @@ func TestReconcileNetwork_DerivesKCEFAgainstDefaultHost(t *testing.T) {
 			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}},
 			wantProfiles: 1, wantKey: "|endpoint|flare",
 		},
+		{
+			name: "required endpoint creates KCEF on profile", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}},
+			wantProfiles: 1, wantKey: "|endpoint|flare|kcef=on", wantKCEF: true,
+			policies: map[int64]sourcetransport.Override{7: {KCEFPolicy: kcefPolicyPtr(runtimepolicy.KCEFPolicyRequired)}},
+		},
+		{
+			name: "disabled global creates KCEF off profile", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+			wantProfiles: 1, wantKey: "kcef=off", wantKCEF: false,
+			policies: map[int64]sourcetransport.Override{7: {KCEFPolicy: kcefPolicyPtr(runtimepolicy.KCEFPolicyDisabled)}},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			launcher := &fakeLauncher{fail: true}
 			result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
-				Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{tt.binding}},
-				Router:   engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
+				Snapshot:          fakeSnapshotter{bindings: []network.ResolvedBinding{tt.binding}},
+				TransportSnapshot: fakeTransportSnapshotter{policies: tt.policies},
+				Router:            engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
 				BaseConfig: baseConfig(), DefaultKCEFEnabled: tt.defaultKCEF,
 			})
 			if result.Profiles != tt.wantProfiles || len(launcher.profiles) != tt.wantProfiles {
@@ -575,6 +606,38 @@ func TestReconcileNetwork_ProfilePreferencesIgnoreUnroutedHistory(t *testing.T) 
 // partial runtime apply: missing image/proxy sets on any active instance,
 // activating a newly-created route before its config lands, retaining an
 // obsolete profile, or treating a fallback as success.
+// TestSourcePolicyRevisionWaitsForItsKCEFProfile proves an applied source-policy
+// revision means the requested KCEF topology was actually converged.
+func TestSourcePolicyRevisionWaitsForItsKCEFProfile(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	defaultClient := &runtimeConfigClient{Client: sourceenginefake.New()}
+	launcher := &fakeLauncher{fail: true}
+	service := sourcetransport.NewService(db, topologyTransportDefaults{}, acceptingTransportCatalog{})
+	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
+		Snapshot:           fakeSnapshotter{bindings: []network.ResolvedBinding{{SourceID: 42, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}}}},
+		TransportSnapshot:  service,
+		Router:             engineroute.NewRouter(defaultClient),
+		Launcher:           launcher,
+		DB:                 db,
+		Cache:              apkcache.New(t.TempDir()),
+		BaseConfig:         baseConfig(),
+		DefaultKCEFEnabled: true,
+	})
+	service.WithRuntimeApplier(applier)
+
+	updated, err := service.Update(ctx, 42, sourcetransport.Patch{KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired)})
+	if err == nil {
+		t.Fatal("Update error = nil, want KCEF profile convergence failure")
+	}
+	if updated.Intent.DesiredRevision != 1 || updated.Intent.AppliedRevision != 0 || updated.Intent.LastApplyAttempt == nil {
+		t.Fatalf("intent = %+v, want desired 1/applied 0 with failed convergence attempt", updated.Intent)
+	}
+	if len(launcher.profiles) != 1 || launcher.profiles[0].Key != "|endpoint|flare|kcef=on" || !launcher.profiles[0].KCEFEnabled {
+		t.Fatalf("requested profiles = %+v, want one KCEF-on endpoint profile", launcher.profiles)
+	}
+}
+
 func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testing.T) { //nolint:cyclop // Ordering test intentionally checks every phase and instance.
 	ctx := context.Background()
 	db := testdb.New(t)

@@ -179,13 +179,24 @@ func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, b
 			state.kcefPolicies[row.SourceID] = KCEFPolicy(*row.KcefPolicy)
 		}
 	}
-	for _, row := range bindings {
-		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID, HasSocks: row.SocksEndpointID != nil}
-	}
 	for _, row := range endpoints {
 		state.endpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}
 	}
+	for _, row := range bindings {
+		state.bindings[row.SourceID] = Binding{
+			FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID,
+			HasSocks: effectiveSocksEndpoint(row.SocksEndpointID, state.endpoints),
+		}
+	}
 	return state
+}
+
+func effectiveSocksEndpoint(id *uuid.UUID, endpoints map[uuid.UUID]Endpoint) bool {
+	if id == nil {
+		return false
+	}
+	endpoint, ok := endpoints[*id]
+	return ok && endpoint.Enabled && endpoint.Kind == "socks"
 }
 
 func (c *Coordinator) prospectiveGlobalSession(ctx context.Context, proposed *string) (string, error) {

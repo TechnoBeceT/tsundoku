@@ -218,14 +218,18 @@ func toBindingInputs(snapshot []runtimeBinding) []engineroute.BindingInput {
 			Socks:                toSocksEndpoint(b.Socks),
 			Flare:                toFlareEndpoint(b.Flare),
 			DisableBypassSession: b.DisableBypassSession,
-			KCEFEnabled:          resolveAutoKCEF(b),
+			KCEFEnabled:          resolveKCEF(b),
 		}
 	}
 	return out
 }
 
-func resolveAutoKCEF(binding runtimeBinding) bool {
-	enabled, err := runtimepolicy.ResolveKCEF(runtimepolicy.KCEFPolicyAuto, binding.Socks != nil, binding.FlareMode)
+func resolveKCEF(binding runtimeBinding) bool {
+	policy := runtimepolicy.KCEFPolicyAuto
+	if binding.KCEFPolicy != nil {
+		policy = *binding.KCEFPolicy
+	}
+	enabled, err := runtimepolicy.ResolveKCEF(policy, binding.Socks != nil, binding.FlareMode)
 	if err != nil {
 		return false
 	}

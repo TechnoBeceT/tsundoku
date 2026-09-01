@@ -2607,15 +2607,24 @@ components:
           enum: [fresh, reuse]
 
     KCEFPolicyPatch:
-      type: object
-      additionalProperties: false
-      required: [mode]
-      properties:
-        mode:
-          $ref: "#/components/schemas/PolicyPatchMode"
-        value:
-          type: string
-          enum: [auto, required, disabled]
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode:
+              type: string
+              const: inherit
+        - type: object
+          additionalProperties: false
+          required: [mode, value]
+          properties:
+            mode:
+              type: string
+              const: override
+            value:
+              type: string
+              enum: [auto, required, disabled]
 
     SourceTransportPolicyUpdate:
       type: object
