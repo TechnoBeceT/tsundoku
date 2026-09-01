@@ -83,7 +83,7 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if err := l.awaitReady(ctx, proc, baseURL); err != nil {
+	if err := l.awaitReady(ctx, proc, baseURL, p.KCEFEnabled); err != nil {
 		// The instance never came up: kill it so it does not linger, then report.
 		_ = proc.Kill()
 		<-proc.Done() // reap
@@ -123,19 +123,76 @@ func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error
 	return nil
 }
 
-// awaitReady gates a spawn on the instance being not just healthy but STABLE: it
-// first polls /health until it answers, then re-probes once after a short settle
-// window. The settle recheck exists because an engine-host JVM can pass /health
-// (its HTTP server is up) and then die moments later — the GAP-094 failure mode,
-// where the extra Chromium init crashed the process right after it reported
-// healthy, so the FIRST reconcile RPC hit an EOF instead of a clean degrade.
-// Catching "healthy-then-dead" here lets the caller degrade the profile to the
-// default instance instead of routing sources at a corpse.
-func (l *Launcher) awaitReady(ctx context.Context, proc RunningProcess, baseURL string) error {
+// awaitReady gates a spawn on the instance being healthy, capability-compatible,
+// and stable: it polls /health, requires the profile's KCEF state from /status,
+// then re-probes health after a short settle window. The settle recheck exists
+// because an engine-host JVM can pass /health (its HTTP server is up) and then
+// die moments later — the GAP-094 failure mode, where the extra Chromium init
+// crashed the process right after it reported healthy, so the FIRST reconcile
+// RPC hit an EOF instead of a clean degrade. Catching "healthy-then-dead" here
+// lets the caller degrade the profile to the default instance instead of routing
+// sources at a corpse.
+func (l *Launcher) awaitReady(ctx context.Context, proc RunningProcess, baseURL string, kcefEnabled bool) error {
 	if err := l.pollHealthy(ctx, proc, baseURL); err != nil {
 		return err
 	}
+	if err := l.pollKCEF(ctx, proc, baseURL, kcefEnabled); err != nil {
+		return err
+	}
 	return l.settle(ctx, proc, baseURL)
+}
+
+// pollKCEF waits for the capability that the profile was explicitly launched
+// with. /health only proves that RPC liveness is up; publishing an enabled
+// profile before its browser producer settles would route WebView calls into an
+// unbounded wait. A failed KCEF generation is terminal and rejects immediately;
+// an initializing one consumes only the normal launcher startup budget.
+func (l *Launcher) pollKCEF(ctx context.Context, proc RunningProcess, baseURL string, enabled bool) error {
+	deadline := time.NewTimer(l.startTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(l.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		status, err := l.statusProber(ctx, baseURL)
+		if err == nil {
+			if ready, terminalErr := kcefStatusReady(status.KCEF, enabled); terminalErr != nil {
+				return terminalErr
+			} else if ready {
+				return nil
+			}
+		}
+		select {
+		case <-proc.Done():
+			return fmt.Errorf("process exited before KCEF became ready")
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out after %s waiting for KCEF capability", l.startTimeout)
+		case <-ticker.C:
+		}
+	}
+}
+
+func kcefStatusReady(status KCEFStatus, enabled bool) (bool, error) {
+	if enabled {
+		switch status.State {
+		case KCEFStateReady:
+			return true, nil
+		case KCEFStateFailed:
+			return false, fmt.Errorf("KCEF failed before readiness")
+		case KCEFStateInitializing:
+			return false, nil
+		case KCEFStateDisabled:
+			return false, fmt.Errorf("KCEF is disabled for an enabled profile")
+		default:
+			return false, fmt.Errorf("invalid KCEF status")
+		}
+	}
+	if status.State == KCEFStateDisabled {
+		return true, nil
+	}
+	return false, fmt.Errorf("KCEF is enabled for a disabled profile")
 }
 
 // pollHealthy polls the instance's /health until it answers (ready → nil), the

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/enginehost"
+	"github.com/technobecet/tsundoku/internal/engineroute"
 )
 
 // fixedInterval is a supervise-interval accessor returning a constant (the
@@ -27,6 +28,49 @@ func exhaustedStatus(sequence int64, queued int, sources ...enginehost.EngineSou
 		CompletionSequence:  sequence,
 		OldestRunningMillis: 180001,
 		BusiestSources:      append([]enginehost.EngineSourceStatus(nil), sources...),
+		KCEF:                enginehost.KCEFStatus{State: enginehost.KCEFStateReady},
+	}
+}
+
+func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	var lossAvailable atomic.Bool
+	status := func(_ context.Context, baseURL string) (enginehost.EngineStatus, error) {
+		if baseURL == "http://127.0.0.1:41001" && lossAvailable.CompareAndSwap(true, false) {
+			return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{
+				State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+			}}, nil
+		}
+		return readyKCEFStatus(), nil
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(status),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	s := enginehost.NewSupervisor(l, fixedInterval(time.Second))
+	p1 := engineroute.Profile{Key: "failed-kcef", SourceIDs: []int64{11}, KCEFEnabled: true}
+	p2 := engineroute.Profile{Key: "ready-kcef", SourceIDs: []int64{22}, KCEFEnabled: true}
+	if _, err := l.EnsureProfile(context.Background(), p1); err != nil {
+		t.Fatalf("EnsureProfile p1: %v", err)
+	}
+	if _, err := l.EnsureProfile(context.Background(), p2); err != nil {
+		t.Fatalf("EnsureProfile p2: %v", err)
+	}
+	lossAvailable.Store(true)
+
+	enginehost.SuperviseOnce(s, context.Background(), time.Now())
+
+	if got := starter.callCount(); got != 3 {
+		t.Fatalf("starts = %d, want only failed profile restarted", got)
+	}
+	if !starter.proc(0).wasSignalled() {
+		t.Fatal("failed profile process was not stopped before restart")
+	}
+	if starter.proc(1).wasSignalled() {
+		t.Fatal("ready profile process was disturbed by another profile's KCEF failure")
+	}
+	if rerouter.isDegraded(11) || rerouter.isDegraded(22) {
+		t.Fatal("successful restart must restore only the affected profile without degrading peers")
 	}
 }
 

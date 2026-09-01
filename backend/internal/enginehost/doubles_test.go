@@ -140,6 +140,19 @@ func (s *fakeStarter) proc(i int) *fakeProcess {
 // okProber is a HealthProber that always reports ready.
 func okProber(string) error { return nil }
 
+// readyKCEFStatus is the normal operational snapshot for tests that do not
+// exercise the status contract itself. It keeps launch tests focused on their
+// declared health/process behavior while still mirroring the required RPC shape.
+func readyKCEFStatus() enginehost.EngineStatus {
+	return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{State: enginehost.KCEFStateReady}}
+}
+
+func disabledKCEFStatus() enginehost.EngineStatus {
+	return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{State: enginehost.KCEFStateDisabled}}
+}
+
+func kcefError(code enginehost.KCEFErrorCode) *enginehost.KCEFErrorCode { return &code }
+
 // sequenceProber returns the i-th error for the i-th call (clamped to the last),
 // so a test can script the exact ready/unready outcomes across a spawn +
 // liveness-check + respawn sequence.
@@ -196,7 +209,7 @@ func profile(key string) engineroute.Profile { return engineroute.Profile{Key: k
 // so a supervisor test can assert the degrade/restore overlay moves exactly those
 // sources.
 func profileWithSources(key string, ids ...int64) engineroute.Profile {
-	return engineroute.Profile{Key: key, SourceIDs: ids}
+	return engineroute.Profile{Key: key, SourceIDs: ids, KCEFEnabled: true}
 }
 
 // fakeRerouter is an in-memory enginehost.Rerouter recording the degrade/restore

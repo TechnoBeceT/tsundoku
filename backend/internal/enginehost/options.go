@@ -17,8 +17,9 @@ func WithStarter(s ProcessStarter) Option { return func(l *Launcher) { l.starter
 // /health). Tests pass a deterministic function.
 func WithHealthProber(p HealthProber) Option { return func(l *Launcher) { l.prober = p } }
 
-// WithStatusProber replaces the bounded GET /status seam used by managed-profile
-// exhaustion recovery. Tests pass deterministic operational snapshots.
+// WithStatusProber replaces the bounded GET /status seam used by launch
+// capability readiness and managed-profile recovery. Tests pass deterministic
+// operational snapshots.
 func WithStatusProber(p StatusProber) Option { return func(l *Launcher) { l.statusProber = p } }
 
 // WithExhaustionDiagnosticSink replaces the bounded diagnostic sink invoked
@@ -37,9 +38,9 @@ func WithPortAllocator(a PortAllocator) Option { return func(l *Launcher) { l.al
 // are no-ops. Tests pass a fake Rerouter to assert the route transitions.
 func WithRerouter(r Rerouter) Option { return func(l *Launcher) { l.rerouter = r } }
 
-// WithStartTimeout sets how long a spawn waits for the first healthy /health
-// before killing the process and failing (default 60s). Tests shrink it to keep
-// the timeout path fast.
+// WithStartTimeout sets how long a spawn waits for its first healthy /health
+// response or an initializing KCEF capability before killing the process and
+// failing (default 60s). Tests shrink it to keep timeout paths fast.
 func WithStartTimeout(d time.Duration) Option { return func(l *Launcher) { l.startTimeout = d } }
 
 // WithPollInterval sets the gap between health polls during a spawn (default

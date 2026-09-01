@@ -124,7 +124,7 @@ type Launcher struct {
 	rerouter Rerouter
 
 	// Tunables (production defaults set by New; overridden in tests).
-	startTimeout time.Duration // how long a spawn waits for the first healthy /health
+	startTimeout time.Duration // max wait for /health and an initializing KCEF capability
 	pollInterval time.Duration // gap between health polls during a spawn
 	settleDelay  time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
 	stopGrace    time.Duration // SIGTERM→SIGKILL grace on stop

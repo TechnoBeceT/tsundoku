@@ -201,6 +201,13 @@ func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
 			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
+		if statusErr == nil && t.kcefEnabled && status.KCEF.State != KCEFStateReady {
+			// A process can keep answering /health after its browser capability has
+			// failed. Treat that as down only for this profile; the existing bounded
+			// restart path owns its sources and leaves every other route untouched.
+			s.launcher.superviseInstance(ctx, s, t, false, now)
+			continue
+		}
 		diagnostic := s.launcher.observeHealthyStatus(ctx, t, status, statusErr, now)
 		if diagnostic == nil {
 			continue
@@ -396,10 +403,11 @@ func (s *Supervisor) backoffFor(failures int) time.Duration {
 // supervisor probes: enough to health-check it (baseURL + proc) and to re-find
 // the exact same instance under mu afterwards (key + pointer identity).
 type superviseTarget struct {
-	key     string
-	mi      *managedInstance
-	baseURL string
-	proc    RunningProcess
+	key         string
+	mi          *managedInstance
+	baseURL     string
+	proc        RunningProcess
+	kcefEnabled bool
 }
 
 // supervisedSnapshot returns a mu-guarded snapshot of the current managed
@@ -413,7 +421,9 @@ func (l *Launcher) supervisedSnapshot() []superviseTarget {
 	}
 	out := make([]superviseTarget, 0, len(l.instances))
 	for key, mi := range l.instances {
-		out = append(out, superviseTarget{key: key, mi: mi, baseURL: mi.baseURL, proc: mi.proc})
+		out = append(out, superviseTarget{
+			key: key, mi: mi, baseURL: mi.baseURL, proc: mi.proc, kcefEnabled: mi.profile.KCEFEnabled,
+		})
 	}
 	return out
 }

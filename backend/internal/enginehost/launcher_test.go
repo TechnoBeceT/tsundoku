@@ -27,6 +27,9 @@ func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, star
 	base := []enginehost.Option{
 		enginehost.WithStarter(starter),
 		enginehost.WithHealthProber(prober),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return readyKCEFStatus(), nil
+		}),
 		enginehost.WithPortAllocator(fixedPortAllocator(41001)),
 		enginehost.WithStartTimeout(50 * time.Millisecond),
 		enginehost.WithPollInterval(2 * time.Millisecond),
@@ -413,7 +416,10 @@ func TestStopInstance_KillEscalation(t *testing.T) {
 // shared Xvfb (3+ concurrent Chromiums crash each other in a container).
 func TestSpawn_EndpointProfileDisablesKCEF(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return disabledKCEFStatus(), nil
+		}))
 
 	p := engineroute.Profile{Key: "socks-1|endpoint|flare-1", FlareMode: engineroute.FlareModeEndpoint}
 	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
@@ -495,5 +501,74 @@ func TestAwaitReady_SettlePassesWhenStable(t *testing.T) {
 	}
 	if starter.callCount() != 1 {
 		t.Errorf("starter called %d times, want 1", starter.callCount())
+	}
+}
+
+func TestEnsureProfile_KCEFReadinessGatesHealthyHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		profile     engineroute.Profile
+		status      enginehost.EngineStatus
+		wantSuccess bool
+	}{
+		{name: "enabled requires ready", profile: profile("enabled"), status: disabledKCEFStatus()},
+		{name: "enabled accepts ready", profile: profile("enabled-ready"), status: readyKCEFStatus(), wantSuccess: true},
+		{name: "disabled accepts disabled", profile: engineroute.Profile{Key: "disabled", KCEFEnabled: false}, status: disabledKCEFStatus(), wantSuccess: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+				enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+					return tt.status, nil
+				}))
+
+			_, err := l.EnsureProfile(context.Background(), tt.profile)
+			if tt.wantSuccess {
+				if err != nil {
+					t.Fatalf("EnsureProfile: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("EnsureProfile succeeded from health alone, want capability-gated failure")
+			}
+			if !starter.proc(0).wasKilled() {
+				t.Fatal("health-only profile was not killed after capability gate failure")
+			}
+		})
+	}
+}
+
+func TestEnsureProfile_KCEFFailedRejectsImmediately(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed)}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStartTimeout(time.Second),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return failed, nil }))
+
+	started := time.Now()
+	if _, err := l.EnsureProfile(context.Background(), profile("failed")); err == nil {
+		t.Fatal("EnsureProfile succeeded with failed KCEF")
+	} else if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("failed KCEF took %s, want immediate rejection", elapsed)
+	}
+}
+
+func TestEnsureProfile_KCEFInitializingUsesStartTimeout(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStartTimeout(30*time.Millisecond),
+		enginehost.WithPollInterval(time.Millisecond),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return initializing, nil }))
+
+	if _, err := l.EnsureProfile(context.Background(), profile("initializing")); err == nil {
+		t.Fatal("EnsureProfile succeeded while KCEF remained initializing")
+	}
+	if !starter.proc(0).wasKilled() {
+		t.Fatal("initializing KCEF process was not killed after launch timeout")
 	}
 }

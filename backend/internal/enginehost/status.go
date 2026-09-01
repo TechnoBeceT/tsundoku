@@ -16,6 +16,31 @@ import (
 
 const maxStatusBodyBytes = 32 * 1024
 
+// KCEFState is the finite embedded-browser capability state reported by an
+// engine-host process generation.
+type KCEFState string
+
+const (
+	KCEFStateDisabled     KCEFState = "disabled"
+	KCEFStateInitializing KCEFState = "initializing"
+	KCEFStateReady        KCEFState = "ready"
+	KCEFStateFailed       KCEFState = "failed"
+
+	KCEFErrorInitTimeout KCEFErrorCode = "init_timeout"
+	KCEFErrorInitFailed  KCEFErrorCode = "init_failed"
+)
+
+// KCEFErrorCode is the sanitized terminal reason reported for a failed KCEF
+// generation. It deliberately cannot carry process or source details.
+type KCEFErrorCode string
+
+// KCEFStatus is the strict, payload-free embedded-browser status object from
+// GET /status. Its state/error pairing is validated before routing uses it.
+type KCEFStatus struct {
+	State     KCEFState      `json:"state"`
+	ErrorCode *KCEFErrorCode `json:"errorCode"`
+}
+
 // EngineSourceStatus is one bounded, payload-free source occupancy row from
 // engine-host's GET /status response.
 type EngineSourceStatus struct {
@@ -41,6 +66,7 @@ type EngineStatus struct {
 	BusiestSources      []EngineSourceStatus `json:"busiest_sources"`
 	ExtensionRunning    bool                 `json:"extension_running"`
 	ExtensionQueued     int                  `json:"extension_queued"`
+	KCEF                KCEFStatus           `json:"kcef"`
 }
 
 // ExhaustionDiagnostic is the bounded evidence emitted immediately before a
@@ -122,7 +148,7 @@ func validateStatusShape(body []byte) error {
 	if err := requireJSONDelim(decoder, '}', "unterminated status object"); err != nil {
 		return err
 	}
-	if len(seen) != 14 {
+	if len(seen) != 15 {
 		return fmt.Errorf("status is missing required fields")
 	}
 	return requireJSONEOF(decoder)
@@ -150,6 +176,9 @@ func validateStatusField(decoder *json.Decoder, seen map[string]struct{}) error 
 	if key == "busiest_sources" {
 		return validateSourceRows(decoder)
 	}
+	if key == "kcef" {
+		return validateKCEFStatus(decoder)
+	}
 	return discardJSONValue(decoder)
 }
 
@@ -157,12 +186,41 @@ func approvedStatusField(key string) bool {
 	switch key {
 	case "ready", "source_workers", "per_source_limit", "queued", "running",
 		"completion_sequence", "oldest_running_millis", "completed", "cancelled",
-		"timed_out", "rejected", "busiest_sources", "extension_running", "extension_queued":
+		"timed_out", "rejected", "busiest_sources", "extension_running", "extension_queued", "kcef":
 		return true
 	default:
 		return false
 	}
 }
+
+func validateKCEFStatus(decoder *json.Decoder) error {
+	if err := requireJSONDelim(decoder, '{', "kcef must be an object"); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, 2)
+	for decoder.More() {
+		key, err := readApprovedField(decoder, approvedKCEFField, "unapproved kcef field")
+		if err != nil {
+			return err
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return fmt.Errorf("duplicate kcef field %q", key)
+		}
+		seen[key] = struct{}{}
+		if err := discardJSONValue(decoder); err != nil {
+			return err
+		}
+	}
+	if err := requireJSONDelim(decoder, '}', "unterminated kcef object"); err != nil {
+		return err
+	}
+	if len(seen) != 2 {
+		return fmt.Errorf("kcef is missing required fields")
+	}
+	return nil
+}
+
+func approvedKCEFField(key string) bool { return key == "state" || key == "errorCode" }
 
 func validateSourceRows(decoder *json.Decoder) error {
 	if err := requireJSONDelim(decoder, '[', "busiest_sources must be an array"); err != nil {
@@ -249,6 +307,9 @@ func requireJSONEOF(decoder *json.Decoder) error {
 }
 
 func (s EngineStatus) validate() error {
+	if err := s.KCEF.validate(); err != nil {
+		return err
+	}
 	if err := s.validateCounters(); err != nil {
 		return err
 	}
@@ -266,6 +327,28 @@ func (s EngineStatus) validate() error {
 		return fmt.Errorf("source running sum %d does not match running %d", running, s.Running)
 	}
 	return nil
+}
+
+func (s KCEFStatus) validate() error {
+	switch s.State {
+	case KCEFStateDisabled, KCEFStateInitializing, KCEFStateReady:
+		if s.ErrorCode != nil {
+			return fmt.Errorf("non-failed kcef state has an error code")
+		}
+		return nil
+	case KCEFStateFailed:
+		if s.ErrorCode == nil {
+			return fmt.Errorf("failed kcef state is missing error code")
+		}
+		switch *s.ErrorCode {
+		case KCEFErrorInitTimeout, KCEFErrorInitFailed:
+			return nil
+		default:
+			return fmt.Errorf("unapproved kcef error code")
+		}
+	default:
+		return fmt.Errorf("unapproved kcef state")
+	}
 }
 
 func (s EngineStatus) validateCounters() error {
