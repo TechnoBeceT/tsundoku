@@ -9,10 +9,9 @@ import (
 // execStarter is the production ProcessStarter: it launches the engine-host
 // binary with a context-FREE exec.Command (the process is owned by the launcher,
 // not by any request context) and the two env vars the JVM reads for its port +
-// data root. Every other var the JVM needs (DISPLAY, dbus address,
-// TSUNDOKU_ENGINE_KCEF, ENGINE_KCEF_BUNDLE) is INHERITED from this process's
-// environment — the same environment the container entrypoint set up for the
-// default instance — so a launched profile behaves identically to it.
+// data root. Display and KCEF bundle settings are inherited from the process
+// environment, while TSUNDOKU_ENGINE_KCEF is appended explicitly from the
+// profile's resolved capability.
 type execStarter struct {
 	hostBin string
 }
@@ -20,9 +19,9 @@ type execStarter struct {
 // Start spawns the engine-host binary and returns a handle to it. The single
 // reaper goroutine calls Wait exactly once and closes the done channel, so the
 // process never zombies.
-func (s execStarter) Start(port int, dataDir string, disableKCEF bool) (RunningProcess, error) {
+func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
-	cmd.Env = buildHostEnv(os.Environ(), port, dataDir, disableKCEF)
+	cmd.Env = buildHostEnv(os.Environ(), port, dataDir, kcefEnabled)
 	// Inherit stdio so the JVM's logs are visible alongside the Go server's (the
 	// entrypoint does the same for the default instance).
 	cmd.Stdout = os.Stdout
@@ -41,24 +40,18 @@ func (s execStarter) Start(port int, dataDir string, disableKCEF bool) (RunningP
 }
 
 // buildHostEnv appends the per-instance TSUNDOKU_ENGINE_PORT + TSUNDOKU_ENGINE_DATA
-// overrides onto a copy of base — and, when disableKCEF is set, an explicit
-// TSUNDOKU_ENGINE_KCEF=false. Later entries win in exec's env, so these override
-// any inherited value — a launched profile MUST NOT share the default instance's
-// port (7777) or data dir, and a FlareSolverr-backed profile must NOT inherit the
-// default's TSUNDOKU_ENGINE_KCEF=true (see the ProcessStarter contract + GAP-094).
-// The engine-host only enables KCEF when the value equals "true" (Main.kt), so
-// "false" reliably disables it. Extracted as a pure helper so the env shape is
-// unit-testable without spawning a process.
-func buildHostEnv(base []string, port int, dataDir string, disableKCEF bool) []string {
+// overrides plus an explicit TSUNDOKU_ENGINE_KCEF value onto a copy of base.
+// Later entries win in exec's environment, so each managed profile receives its
+// derived capability instead of inheriting the default host's value. Extracted
+// as a pure helper so the env shape is unit-testable without spawning a process.
+func buildHostEnv(base []string, port int, dataDir string, kcefEnabled bool) []string {
 	env := make([]string, 0, len(base)+3)
 	env = append(env, base...)
 	env = append(env,
 		fmt.Sprintf("TSUNDOKU_ENGINE_PORT=%d", port),
 		"TSUNDOKU_ENGINE_DATA="+dataDir,
+		fmt.Sprintf("TSUNDOKU_ENGINE_KCEF=%t", kcefEnabled),
 	)
-	if disableKCEF {
-		env = append(env, "TSUNDOKU_ENGINE_KCEF=false")
-	}
 	return env
 }
 

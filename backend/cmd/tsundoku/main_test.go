@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/config"
+	"github.com/technobecet/tsundoku/internal/enginehost"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
@@ -37,6 +39,21 @@ func TestEngineSourceCatalogClassifiesUnknownSourceAndCatalogOutage(t *testing.T
 
 	if err := (engineSourceCatalog{client: unknownClient}).RequireSource(context.Background(), 7); err != nil {
 		t.Fatalf("installed source rejected: %v", err)
+	}
+}
+
+// TestEngineHostLauncherConfigCarriesDefaultKCEFIntent pins main's typed
+// config-to-launcher boundary for both entrypoint default-host intents.
+func TestEngineHostLauncherConfigCarriesDefaultKCEFIntent(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		cfg := engineHostLauncherConfig(config.EngineConfig{
+			HostBin: "host", DataDir: "data", KCEFBundle: "bundle", KCEFEnabled: want,
+		})
+		if cfg != (enginehost.EngineHostLauncherConfig{
+			HostBin: "host", DataDir: "data", KCEFBundle: "bundle", DefaultKCEFEnabled: want,
+		}) {
+			t.Fatalf("engineHostLauncherConfig(%v) = %+v", want, cfg)
+		}
 	}
 }
 

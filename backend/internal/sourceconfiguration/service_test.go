@@ -149,6 +149,39 @@ func TestStoredRoutingSurvivesUnavailableEffectiveEndpoints(t *testing.T) {
 	})
 }
 
+// TestGet_DerivesProfileKeyAgainstDefaultKCEF proves the read-model caller uses
+// the same typed default-host intent as topology reconciliation.
+func TestGet_DerivesProfileKeyAgainstDefaultKCEF(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		defaultKCEF bool
+		wantKey     string
+	}{
+		{name: "default on", defaultKCEF: true},
+		{name: "default off", defaultKCEF: false, wantKey: "kcef=on"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defaultKCEF := tt.defaultKCEF
+			svc := newService(dependencies{
+				catalog:            &catalogStub{sources: []sourceengine.Source{{ID: 7}}},
+				globals:            &globalsStub{},
+				throughput:         &throughputStub{value: throughputSnapshot{Overrides: map[int64]sourcethroughput.Override{}}},
+				transport:          &transportStub{value: transportSnapshot{Overrides: map[int64]sourcetransport.Override{}}},
+				routing:            &routingStub{value: routingSnapshot{Resolved: map[int64]network.ResolvedBinding{}, Stored: map[int64]network.ConfigurationBinding{}}},
+				runtime:            &runtimeStub{value: map[int64]sourcetransport.Intent{}},
+				defaultKCEFEnabled: &defaultKCEF,
+			})
+			got, err := svc.Get(context.Background(), 7)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.ProfileKey != tt.wantKey {
+				t.Fatalf("ProfileKey = %q, want %q", got.ProfileKey, tt.wantKey)
+			}
+		})
+	}
+}
+
 func assertUnavailableStoredRouting(t *testing.T, svc *Service, sourceID int64, wantSocksID, wantFlareID, wantSocksName, wantFlareName string) {
 	t.Helper()
 	got, err := svc.Get(context.Background(), sourceID)

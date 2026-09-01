@@ -74,7 +74,7 @@ func (p *fakeProcess) wasSignalled() bool {
 type startCall struct {
 	port        int
 	dataDir     string
-	disableKCEF bool
+	kcefEnabled bool
 }
 
 // fakeStarter is an in-memory ProcessStarter recording every Start and handing
@@ -90,14 +90,14 @@ type fakeStarter struct {
 	procs    []*fakeProcess
 }
 
-func (s *fakeStarter) Start(port int, dataDir string, disableKCEF bool) (enginehost.RunningProcess, error) {
+func (s *fakeStarter) Start(port int, dataDir string, kcefEnabled bool) (enginehost.RunningProcess, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.attempts++
 	if s.err != nil {
 		return nil, s.err
 	}
-	s.calls = append(s.calls, startCall{port: port, dataDir: dataDir, disableKCEF: disableKCEF})
+	s.calls = append(s.calls, startCall{port: port, dataDir: dataDir, kcefEnabled: kcefEnabled})
 	p := newFakeProcess(len(s.procs)+1, s.closeOnSignal)
 	s.procs = append(s.procs, p)
 	return p, nil
@@ -190,7 +190,7 @@ func (f *recordingFactory) build(baseURL string) sourceengine.Client {
 func (f *recordingFactory) factory() engineroute.ClientFactory { return f.build }
 
 // profile is a tiny helper to build a non-default engineroute.Profile with a key.
-func profile(key string) engineroute.Profile { return engineroute.Profile{Key: key} }
+func profile(key string) engineroute.Profile { return engineroute.Profile{Key: key, KCEFEnabled: true} }
 
 // profileWithSources builds a non-default profile carrying the given source ids,
 // so a supervisor test can assert the degrade/restore overlay moves exactly those

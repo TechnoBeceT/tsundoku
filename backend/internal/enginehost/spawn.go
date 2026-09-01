@@ -56,22 +56,16 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 // port + data dir), so the KCEF/extensions/health-gate logic lives in one place
 // (§2 DRY). Called with mu held.
 func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, error) {
-	// A profile that solves Cloudflare through its OWN FlareSolverr endpoint does
-	// not need the embedded Chromium (KCEF) WebView, so it is spawned with KCEF
-	// off. This is the GAP-094 fix: on prod, 2 bound profiles meant 3 engine-host
-	// JVMs (default + 2 profiles) each initializing Chromium against the one shared
-	// Xvfb, which crashed the extra instances right after they reported healthy.
-	// Dropping KCEF for endpoint-mode profiles removes that contention. Profiles
-	// WITHOUT their own FlareSolverr (global/none mode) keep KCEF, because they may
-	// still need the WebView to solve a challenge themselves.
-	disableKCEF := p.FlareMode == engineroute.FlareModeEndpoint
+	// Profile derivation owns this decision. Route mode is insufficient: Required
+	// can keep an endpoint profile on, and Disabled can turn a global profile off.
+	kcefEnabled := p.KCEFEnabled
 
 	// KCEF seeding is best-effort — a failure only degrades WebView sources on
 	// this instance, never the spawn (see seedKCEF). Skip it entirely when KCEF is
 	// disabled: there is no Chromium to seed, so touching the shared bundle symlink
 	// + singleton locks would be pointless work. On a RESTART this also clears the
 	// dead instance's stale Chromium singleton locks, so the new Chromium can start.
-	if !disableKCEF {
+	if kcefEnabled {
 		l.seedKCEF(dataDir)
 	}
 
@@ -83,7 +77,7 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 		return nil, nil, "", fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
 	}
 
-	proc, err := l.starter.Start(port, dataDir, disableKCEF)
+	proc, err := l.starter.Start(port, dataDir, kcefEnabled)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
 	}

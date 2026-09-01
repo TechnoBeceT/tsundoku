@@ -61,11 +61,33 @@ func TestDerive_KCEFDefaultEquivalence(t *testing.T) {
 		t.Fatalf("Derive(default-off enabled) = %+v, want KCEF-on profile", got)
 	}
 
-	legacy := engineroute.Derive(true, []engineroute.BindingInput{{
-		SourceID: 5, Socks: &engineroute.SocksEndpoint{ID: "vpn"}, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true,
+	requiredEndpoint := engineroute.Derive(true, []engineroute.BindingInput{{
+		SourceID: 5, FlareMode: engineroute.FlareModeEndpoint,
+		Flare: &engineroute.FlareEndpoint{ID: "flare"}, KCEFEnabled: true,
 	}})
-	if len(legacy) != 1 || legacy[0].Key != "vpn|global|" {
-		t.Fatalf("Derive(legacy network profile) = %+v, want unchanged key", legacy)
+	if len(requiredEndpoint) != 1 || requiredEndpoint[0].Key != "|endpoint|flare|kcef=on" {
+		t.Fatalf("Derive(required endpoint) = %+v, want KCEF-on divergence key", requiredEndpoint)
+	}
+}
+
+// TestDerive_AutoEndpointKeepsLegacyProfileKey proves an endpoint-routed source
+// whose Auto policy resolves KCEF off keeps the key established before KCEF
+// policy existed. It is already a managed network profile, so default-host
+// equivalence must not rewrite its identity.
+func TestDerive_AutoEndpointKeepsLegacyProfileKey(t *testing.T) {
+	t.Parallel()
+
+	got := engineroute.Derive(true, []engineroute.BindingInput{{
+		SourceID:    9,
+		FlareMode:   engineroute.FlareModeEndpoint,
+		Flare:       &engineroute.FlareEndpoint{ID: "flare"},
+		KCEFEnabled: false,
+	}})
+	if len(got) != 1 {
+		t.Fatalf("Derive() yielded %d profiles, want 1", len(got))
+	}
+	if got[0].Key != "|endpoint|flare" || got[0].KCEFEnabled {
+		t.Fatalf("Derive(Auto endpoint) = %+v, want legacy endpoint key with KCEF off", got[0])
 	}
 }
 

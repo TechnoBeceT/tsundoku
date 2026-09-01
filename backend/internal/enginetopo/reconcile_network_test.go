@@ -307,6 +307,59 @@ func TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources(t *testing.T) {
 	}
 }
 
+// TestReconcileNetwork_DerivesKCEFAgainstDefaultHost exercises the live
+// reconcile caller rather than profile derivation in isolation. Auto global
+// capability follows the default host, while Auto endpoint capability remains
+// a managed KCEF-off profile with its historical key.
+func TestReconcileNetwork_DerivesKCEFAgainstDefaultHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		defaultKCEF  bool
+		binding      network.ResolvedBinding
+		wantProfiles int
+		wantKey      string
+		wantKCEF     bool
+	}{
+		{
+			name: "default on global auto stays default", defaultKCEF: true,
+			binding: network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+		},
+		{
+			name: "default off global auto creates on profile", defaultKCEF: false,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+			wantProfiles: 1, wantKey: "kcef=on", wantKCEF: true,
+		},
+		{
+			name: "default on endpoint auto keeps legacy off key", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}},
+			wantProfiles: 1, wantKey: "|endpoint|flare",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &fakeLauncher{fail: true}
+			result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+				Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{tt.binding}},
+				Router:   engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
+				BaseConfig: baseConfig(), DefaultKCEFEnabled: tt.defaultKCEF,
+			})
+			if result.Profiles != tt.wantProfiles || len(launcher.profiles) != tt.wantProfiles {
+				t.Fatalf("result/launches = %d/%d, want %d profiles", result.Profiles, len(launcher.profiles), tt.wantProfiles)
+			}
+			if tt.wantProfiles == 0 {
+				return
+			}
+			profile := launcher.profiles[0]
+			if profile.Key != tt.wantKey || profile.KCEFEnabled != tt.wantKCEF {
+				t.Fatalf("derived profile = %+v, want key %q and KCEF %v", profile, tt.wantKey, tt.wantKCEF)
+			}
+		})
+	}
+}
+
 func (f *fakeLauncher) Retire(_ context.Context, keep map[string]bool) {
 	f.retireCalls++
 	f.lastKeep = keep

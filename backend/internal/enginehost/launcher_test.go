@@ -82,6 +82,36 @@ func TestEnsureProfile_SpawnsWithAllocatedPortAndDataDir(t *testing.T) {
 	}
 }
 
+// TestEnsureProfile_UsesProfileKCEFIntent proves route mode does not override
+// the capability resolved by policy before launch.
+func TestEnsureProfile_UsesProfileKCEFIntent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		flareMode   string
+		kcefEnabled bool
+		wantEnabled bool
+	}{
+		{name: "required endpoint remains on", flareMode: engineroute.FlareModeEndpoint, kcefEnabled: true, wantEnabled: true},
+		{name: "disabled global turns off", flareMode: engineroute.FlareModeGlobal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+			if _, err := launcher.EnsureProfile(context.Background(), engineroute.Profile{
+				Key: "profile-" + tt.name, FlareMode: tt.flareMode, KCEFEnabled: tt.kcefEnabled,
+			}); err != nil {
+				t.Fatalf("EnsureProfile: %v", err)
+			}
+			if got := starter.lastCall().kcefEnabled; got != tt.wantEnabled {
+				t.Fatalf("kcefEnabled = %v, want %v", got, tt.wantEnabled)
+			}
+		})
+	}
+}
+
 // TestEnsureProfile_IdempotentReuse proves a second EnsureProfile for a running,
 // healthy profile returns the cached instance WITHOUT a second spawn.
 func TestEnsureProfile_IdempotentReuse(t *testing.T) {
@@ -389,7 +419,7 @@ func TestSpawn_EndpointProfileDisablesKCEF(t *testing.T) {
 	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
 		t.Fatalf("EnsureProfile: %v", err)
 	}
-	if got := starter.lastCall(); !got.disableKCEF {
+	if got := starter.lastCall(); got.kcefEnabled {
 		t.Error("endpoint-mode profile was spawned with KCEF enabled, want disabled")
 	}
 }
@@ -403,11 +433,11 @@ func TestSpawn_NonEndpointProfileKeepsKCEF(t *testing.T) {
 			starter := &fakeStarter{closeOnSignal: true}
 			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
 
-			p := engineroute.Profile{Key: "socks-1|" + mode + "|", FlareMode: mode}
+			p := engineroute.Profile{Key: "socks-1|" + mode + "|", FlareMode: mode, KCEFEnabled: true}
 			if _, err := l.EnsureProfile(context.Background(), p); err != nil {
 				t.Fatalf("EnsureProfile: %v", err)
 			}
-			if got := starter.lastCall(); got.disableKCEF {
+			if got := starter.lastCall(); !got.kcefEnabled {
 				t.Errorf("%s-mode profile was spawned with KCEF disabled, want enabled", mode)
 			}
 		})

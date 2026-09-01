@@ -325,12 +325,7 @@ func main() {
 	// ClientFactory reuses the shared httpc so an instance's client is built
 	// exactly like the default one. Close() is wired into the shutdown path below.
 	engineHostLauncher := enginehost.New(
-		enginehost.EngineHostLauncherConfig{
-			HostBin:            cfg.Engine.HostBin,
-			DataDir:            cfg.Engine.DataDir,
-			KCEFBundle:         cfg.Engine.KCEFBundle,
-			DefaultKCEFEnabled: cfg.Engine.KCEFEnabled,
-		},
+		engineHostLauncherConfig(cfg.Engine),
 		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
 		// The routing seam the launcher + supervisor use to degrade a down
 		// profile's sources to the default engine and restore them on recovery
@@ -1059,6 +1054,18 @@ func runEngineTopoReconcile(
 // nothing.
 type networkReconciler interface {
 	ReconcileNetwork(context.Context) (enginetopo.NetworkReconcileResult, error)
+}
+
+// engineHostLauncherConfig copies the sole env-bound EngineConfig into the
+// launcher-owned shape, keeping the default host's KCEF intent typed across the
+// process boundary.
+func engineHostLauncherConfig(cfg config.EngineConfig) enginehost.EngineHostLauncherConfig {
+	return enginehost.EngineHostLauncherConfig{
+		HostBin:            cfg.HostBin,
+		DataDir:            cfg.DataDir,
+		KCEFBundle:         cfg.KCEFBundle,
+		DefaultKCEFEnabled: cfg.KCEFEnabled,
+	}
 }
 
 func runNetworkReconcile(ctx context.Context, reconciler networkReconciler) {
