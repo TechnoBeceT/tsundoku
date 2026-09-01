@@ -198,6 +198,9 @@ function onSetSourceOverride(sourceId: string, key: SourceConfigurationRowKey, v
   else if (key === 'imageConnectionMode' && (value === 'fresh' || value === 'reuse')) {
     void setSourceTransport(sourceId, key, { mode: 'override', value })
   }
+  else if (key === 'kcefPolicy' && (value === 'auto' || value === 'required' || value === 'disabled')) {
+    void setSourceTransport(sourceId, key, { mode: 'override', value })
+  }
   else if (key === 'imageProxy' && typeof value === 'boolean') {
     void setSourceProxy(sourceId, value)
   }
@@ -214,6 +217,9 @@ function onUseGlobalSourceSetting(sourceId: string, key: SourceConfigurationRowK
     void setSourceTransport(sourceId, key, { mode: 'inherit' })
   }
   else if (key === 'imageConnectionMode') {
+    void setSourceTransport(sourceId, key, { mode: 'inherit' })
+  }
+  else if (key === 'kcefPolicy') {
     void setSourceTransport(sourceId, key, { mode: 'inherit' })
   }
 }

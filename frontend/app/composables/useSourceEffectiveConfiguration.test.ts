@@ -109,6 +109,12 @@ describe('useSourceEffectiveConfiguration', () => {
       body: { reuseBypassSession: { mode: 'override', value: false } },
     })
 
+    await state.setTransport(SOURCE_ID, 'kcefPolicy', { mode: 'override', value: 'required' })
+    expect(apiClient.PATCH).toHaveBeenCalledWith('/api/sources/{sourceId}/transport', {
+      params: { path: { sourceId: SOURCE_ID } },
+      body: { kcefPolicy: { mode: 'override', value: 'required' } },
+    })
+
     await state.setThroughput(SOURCE_ID, 'downloadConcurrency', { mode: 'override', value: 2 })
     expect(apiClient.PATCH).toHaveBeenCalledWith('/api/sources/{sourceId}/throughput', {
       params: { path: { sourceId: SOURCE_ID } },

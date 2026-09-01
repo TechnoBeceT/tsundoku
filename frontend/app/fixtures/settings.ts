@@ -186,6 +186,13 @@ export const fullyInheritedSourceConfiguration = {
     effective: 'fresh',
     inherited: true,
   },
+  kcef: {
+    override: null,
+    global: 'auto',
+    effective: 'auto',
+    inherited: true,
+    enabled: true,
+  },
   imageProxy: {
     optedIn: false,
     gatewayEnabled: true,
@@ -244,6 +251,13 @@ export const comicAsuraSourceConfiguration = {
     global: 'fresh',
     effective: 'reuse',
     inherited: false,
+  },
+  kcef: {
+    override: 'disabled',
+    global: 'auto',
+    effective: 'disabled',
+    inherited: false,
+    enabled: false,
   },
   imageProxy: {
     optedIn: false,
@@ -304,6 +318,13 @@ export const hiveProxySourceConfiguration = {
     effective: 'fresh',
     inherited: true,
   },
+  kcef: {
+    override: null,
+    global: 'auto',
+    effective: 'auto',
+    inherited: true,
+    enabled: true,
+  },
   imageProxy: {
     optedIn: true,
     gatewayEnabled: true,
@@ -336,7 +357,7 @@ export const hiveProxySourceConfiguration = {
 /** A source whose latest configuration revision is still converging. */
 export const pendingSourceException = {
   source: comicAsuraSourceConfiguration.source,
-  exceptionCount: 6,
+  exceptionCount: 7,
   runtime: {
     status: 'pending',
     desiredRevision: 19,

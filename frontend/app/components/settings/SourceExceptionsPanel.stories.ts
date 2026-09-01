@@ -17,7 +17,7 @@ type SourceExceptionSummary = components['schemas']['SourceExceptionSummary']
 
 const comicAsuraSummary = {
   source: comicAsuraSourceConfiguration.source,
-  exceptionCount: 6,
+  exceptionCount: 7,
   runtime: comicAsuraSourceConfiguration.runtime,
 } satisfies SourceExceptionSummary
 

@@ -10,7 +10,7 @@ import type { components } from '../../utils/api/schema.d.ts'
 
 type SourceEffectiveConfiguration = components['schemas']['SourceEffectiveConfiguration']
 type RowActionKey = SourceConfigurationRowKey | 'routing'
-type FocusTargetKey = 'downloadConcurrency' | 'imageRequestDelay' | 'byparr' | 'reuseBypassSession' | 'imageConnectionMode' | 'imageProxy' | 'routing'
+type FocusTargetKey = 'downloadConcurrency' | 'imageRequestDelay' | 'byparr' | 'reuseBypassSession' | 'imageConnectionMode' | 'kcefPolicy' | 'imageProxy' | 'routing'
 
 /**
  * The app's one complete source-configuration editor. It composes the existing
@@ -214,6 +214,28 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         ]"
         :saving="rowSaving('imageConnectionMode')"
         :error="rowError('imageConnectionMode')"
+        @set-override="setOverride"
+        @use-global="useGlobal"
+      />
+      <SourceOverrideRow
+        data-source-setting-target="kcefPolicy"
+        tabindex="-1"
+        :data-highlighted-setting="focusTarget === 'kcefPolicy' ? 'true' : undefined"
+        :class="{ 'source-setting-target--highlighted': focusTarget === 'kcefPolicy' }"
+        setting-key="kcefPolicy"
+        name="Embedded browser"
+        :hint="`Effective embedded browser: ${configuration.kcef.enabled ? 'Enabled' : 'Disabled'}. Required is incompatible with SOCKS routing.`"
+        control="select"
+        :model-value="configuration.kcef.effective"
+        :global-value="configuration.kcef.global"
+        :inherited="configuration.kcef.inherited"
+        :options="[
+          { value: 'auto', label: 'Auto' },
+          { value: 'required', label: 'Required' },
+          { value: 'disabled', label: 'Disabled' },
+        ]"
+        :saving="rowSaving('kcefPolicy')"
+        :error="rowError('kcefPolicy')"
         @set-override="setOverride"
         @use-global="useGlobal"
       />

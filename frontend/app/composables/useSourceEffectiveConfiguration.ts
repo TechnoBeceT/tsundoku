@@ -9,6 +9,7 @@ type SourceMutationResponse = components['schemas']['SourceMutationResponse']
 type SourceTransportPolicyUpdate = components['schemas']['SourceTransportPolicyUpdate']
 type BooleanPolicyPatch = components['schemas']['BooleanPolicyPatch']
 type ImageConnectionPolicyPatch = components['schemas']['ImageConnectionPolicyPatch']
+type KCEFPolicyPatch = components['schemas']['KCEFPolicyPatch']
 type SourceThroughputUpdateRequest = components['schemas']['SourceThroughputUpdateRequest']
 type SourceThroughputConcurrencyPatch = components['schemas']['SourceThroughputConcurrencyPatch']
 type SourceThroughputDelayPatch = components['schemas']['SourceThroughputDelayPatch']
@@ -240,12 +241,19 @@ export function useSourceEffectiveConfiguration() {
   ): Promise<void>
   function setTransport(
     sourceId: string,
+    key: 'kcefPolicy',
+    patch: KCEFPolicyPatch,
+  ): Promise<void>
+  function setTransport(
+    sourceId: string,
     key: keyof SourceTransportPolicyUpdate,
-    patch: BooleanPolicyPatch | ImageConnectionPolicyPatch,
+    patch: BooleanPolicyPatch | ImageConnectionPolicyPatch | KCEFPolicyPatch,
   ): Promise<void> {
     const body: SourceTransportPolicyUpdate = key === 'reuseBypassSession'
       ? { reuseBypassSession: patch as BooleanPolicyPatch }
-      : { imageConnectionMode: patch as ImageConnectionPolicyPatch }
+      : key === 'imageConnectionMode'
+        ? { imageConnectionMode: patch as ImageConnectionPolicyPatch }
+        : { kcefPolicy: patch as KCEFPolicyPatch }
     return runMutation<SourceMutationResponse>(sourceId, key, async () => {
       return apiClient.PATCH('/api/sources/{sourceId}/transport', {
         params: { path: { sourceId } },
