@@ -172,7 +172,6 @@ class KcefLifecycleTest {
                 lifecycle.close()
             }
             assertTrue(cleanupExited.await(1, TimeUnit.SECONDS))
-            assertEquals(1, cleanupCalls.get())
         }
 
     @Test
@@ -274,11 +273,64 @@ class KcefLifecycleTest {
         }
 
     @Test
+    fun `late initializer cancellation triggers cleanup after its resource appears`() =
+        runBlocking {
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val exited = CountDownLatch(1)
+            val resourcePresent = AtomicBoolean()
+            val cleanupSawResource = AtomicBoolean()
+            val cleanupCalls = AtomicInteger()
+            val lifecycle =
+                testLifecycle(
+                    initialize = {
+                        entered.countDown()
+                        try {
+                            while (true) {
+                                try {
+                                    release.await()
+                                    break
+                                } catch (_: InterruptedException) {
+                                    // Models native work that creates state after ignoring cancellation.
+                                }
+                            }
+                            resourcePresent.set(true)
+                            throw CancellationException("late initializer cancellation")
+                        } finally {
+                            exited.countDown()
+                        }
+                    },
+                    cleanup = {
+                        cleanupCalls.incrementAndGet()
+                        if (resourcePresent.get()) cleanupSawResource.set(true)
+                    },
+                    initializationTimeout = 40.milliseconds,
+                )
+            try {
+                lifecycle.start(enabled = true)
+                assertTrue(entered.await(1, TimeUnit.SECONDS))
+                awaitState(lifecycle, KcefState.FAILED)
+                awaitCleanupCalls(cleanupCalls, 1)
+                assertFalse(cleanupSawResource.get())
+
+                release.countDown()
+                assertTrue(exited.await(1, TimeUnit.SECONDS))
+                awaitCleanupCalls(cleanupCalls, 2)
+
+                assertTrue(cleanupSawResource.get())
+                assertEquals(KcefStatus(KcefState.FAILED, "init_timeout"), lifecycle.snapshot())
+            } finally {
+                release.countDown()
+                lifecycle.close()
+            }
+        }
+
+    @Test
     fun `close cancels outstanding initializer and runs process cleanup`() =
         runBlocking {
             val entered = CompletableDeferred<Unit>()
             val exited = CompletableDeferred<Unit>()
-            val cleanupCalls = AtomicInteger()
+            val cleanupFinished = CountDownLatch(1)
             val lifecycle =
                 testLifecycle(
                     initialize = {
@@ -289,7 +341,7 @@ class KcefLifecycleTest {
                             exited.complete(Unit)
                         }
                     },
-                    cleanup = { cleanupCalls.incrementAndGet() },
+                    cleanup = cleanupFinished::countDown,
                 )
             lifecycle.start(enabled = true)
             entered.await()
@@ -297,9 +349,8 @@ class KcefLifecycleTest {
             lifecycle.close()
 
             withTimeout(1.seconds) { exited.await() }
-            awaitCleanupCalls(cleanupCalls, 1)
+            assertTrue(cleanupFinished.await(1, TimeUnit.SECONDS))
             assertEquals(KcefStatus(KcefState.DISABLED, null), lifecycle.snapshot())
-            assertEquals(1, cleanupCalls.get())
         }
 
     @Test
@@ -343,6 +394,79 @@ class KcefLifecycleTest {
             assertTrue(cleanupFinished.await(0, TimeUnit.MILLISECONDS))
             assertEquals(KcefStatus(KcefState.DISABLED, null), lifecycle.snapshot())
             assertEquals(1, cleanupCalls.get())
+        }
+
+    @Test
+    fun `shutdown waits for late initializer exit and every serialized cleanup generation`() =
+        runBlocking {
+            val initializerEntered = CountDownLatch(1)
+            val releaseInitializer = CountDownLatch(1)
+            val initializerExited = CountDownLatch(1)
+            val firstCleanupCompleted = CountDownLatch(1)
+            val secondCleanupEntered = CountDownLatch(1)
+            val releaseSecondCleanup = CountDownLatch(1)
+            val secondCleanupExited = CountDownLatch(1)
+            val cleanupCalls = AtomicInteger()
+            val lifecycle =
+                testLifecycle(
+                    initialize = {
+                        initializerEntered.countDown()
+                        try {
+                            while (true) {
+                                try {
+                                    releaseInitializer.await()
+                                    break
+                                } catch (_: InterruptedException) {
+                                    // Models native work that does not cooperate with cancellation.
+                                }
+                            }
+                        } finally {
+                            initializerExited.countDown()
+                        }
+                    },
+                    cleanup = {
+                        when (cleanupCalls.incrementAndGet()) {
+                            1 -> firstCleanupCompleted.countDown()
+                            2 -> {
+                                secondCleanupEntered.countDown()
+                                try {
+                                    releaseSecondCleanup.await()
+                                } finally {
+                                    secondCleanupExited.countDown()
+                                }
+                            }
+                        }
+                    },
+                )
+            try {
+                lifecycle.start(enabled = true)
+                assertTrue(initializerEntered.await(1, TimeUnit.SECONDS))
+                val shutdown =
+                    async(Dispatchers.Default) {
+                        lifecycle.shutdownAndAwaitCleanup(1.seconds)
+                    }
+                assertTrue(firstCleanupCompleted.await(1, TimeUnit.SECONDS))
+                delay(25.milliseconds)
+
+                assertFalse(shutdown.isCompleted)
+                assertFalse(initializerExited.await(0, TimeUnit.MILLISECONDS))
+
+                releaseInitializer.countDown()
+                assertTrue(initializerExited.await(1, TimeUnit.SECONDS))
+                assertTrue(secondCleanupEntered.await(1, TimeUnit.SECONDS))
+                assertFalse(shutdown.isCompleted)
+
+                releaseSecondCleanup.countDown()
+                assertTrue(secondCleanupExited.await(1, TimeUnit.SECONDS))
+
+                assertTrue(withTimeout(1.seconds) { shutdown.await() })
+                assertEquals(2, cleanupCalls.get())
+                assertEquals(KcefStatus(KcefState.DISABLED, null), lifecycle.snapshot())
+            } finally {
+                releaseInitializer.countDown()
+                releaseSecondCleanup.countDown()
+                lifecycle.close()
+            }
         }
 
     @Test

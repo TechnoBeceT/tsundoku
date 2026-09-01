@@ -19,10 +19,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
 import kotlin.coroutines.CoroutineContext
+import kotlin.concurrent.withLock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
@@ -59,6 +60,14 @@ data class KcefStatus(
 /** [WebViewUnavailableException] reports bounded readiness failure without initialization details. */
 class WebViewUnavailableException : IllegalStateException("embedded browser unavailable")
 
+/** [KcefShutdownCleanup] awaits one shutdown's evolving cleanup chain within its original deadline. */
+internal class KcefShutdownCleanup(
+    private val awaiter: () -> Boolean,
+) {
+    /** [awaitCompletion] returns when cleanup is quiescent or the deadline begun at shutdown expires. */
+    fun awaitCompletion(): Boolean = awaiter()
+}
+
 /**
  * [KcefLifecycle] owns one embedded-browser producer and its terminal process-generation state.
  * Caller timeouts only stop that caller's wait; they never cancel the shared producer or settlement.
@@ -80,11 +89,11 @@ class KcefLifecycle(
     private val scope = CoroutineScope(SupervisorJob() + coroutineContext)
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val cleanupLock = Mutex()
+    private val cleanupTracker = CleanupTracker()
     private val initialSettlement = CompletableDeferred<KcefStatus>()
     private var started = false
     private var status = KcefStatus(KcefState.DISABLED, null)
     private var initializationJob: OwnedInitializer? = null
-    private var latestCleanup = CleanupRequest(alreadyCompleted = true)
 
     init {
         require(initializationTimeout.isPositive()) { "initializationTimeout must be positive" }
@@ -135,19 +144,31 @@ class KcefLifecycle(
         requestClose()
     }
 
-    /** [shutdownAndAwaitCleanup] settles disabled and waits within [timeout] for owned cleanup. */
-    fun shutdownAndAwaitCleanup(timeout: Duration = KCEFShutdownCleanupTimeout): Boolean {
+    /** [beginShutdownCleanup] settles disabled and starts cleanup under one bound beginning now. */
+    internal fun beginShutdownCleanup(timeout: Duration = KCEFShutdownCleanupTimeout): KcefShutdownCleanup {
         require(timeout.isPositive()) { "timeout must be positive" }
-        val cleanupRequest = requestClose()
-        return try {
-            cleanupRequest.completed.await(timeout.inWholeMilliseconds.coerceAtLeast(1), TimeUnit.MILLISECONDS)
+        val startedAtNanos = System.nanoTime()
+        val timeoutNanos = timeout.inWholeNanoseconds.coerceAtLeast(1)
+        requestClose()
+        return KcefShutdownCleanup {
+            val remainingNanos = timeoutNanos - (System.nanoTime() - startedAtNanos)
+            awaitCleanupQuiescence(remainingNanos)
+        }
+    }
+
+    /** [shutdownAndAwaitCleanup] settles disabled and waits within [timeout] for owned cleanup. */
+    fun shutdownAndAwaitCleanup(timeout: Duration = KCEFShutdownCleanupTimeout): Boolean =
+        beginShutdownCleanup(timeout).awaitCompletion()
+
+    private fun awaitCleanupQuiescence(remainingNanos: Long): Boolean =
+        try {
+            cleanupTracker.awaitQuiescence(remainingNanos)
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
             false
         }
-    }
 
-    private fun requestClose(): CleanupRequest {
+    private fun requestClose() {
         val plan =
             synchronized(lock) {
                 val active = status.state == KcefState.INITIALIZING || status.state == KcefState.READY
@@ -163,7 +184,6 @@ class KcefLifecycle(
                 ClosePlan(
                     initializer = if (active) initializer else null,
                     cleanupRequest = cleanupRequest,
-                    awaitRequest = cleanupRequest ?: latestCleanup,
                 )
             }
         if (plan.cleanupRequest != null) {
@@ -174,33 +194,33 @@ class KcefLifecycle(
             }
         }
         scope.cancel()
-        return plan.awaitRequest
     }
 
     private suspend fun runProducer() {
         // Register the owned child before it can enter native code, so close cannot miss cleanup.
         val cleanupAfterExit = AtomicReference<CleanupRequest?>()
-        val initializerJob =
-            scope.async(start = CoroutineStart.LAZY) {
-                var reconcileAfterExit = true
-                try {
-                    initialize()
-                } catch (e: CancellationException) {
-                    reconcileAfterExit = false
-                    throw e
-                } finally {
-                    if (reconcileAfterExit) {
-                        cleanupAfterExit.get()?.let { terminalCleanup ->
-                            if (terminalCleanup.initializerExitedAfterCleanupStarted()) scheduleCleanup()
-                        }
+        val initializer =
+            OwnedInitializer(
+                job = scope.async(start = CoroutineStart.LAZY) { initialize() },
+                cleanupAfterExit = cleanupAfterExit,
+            )
+        initializer.job.invokeOnCompletion {
+            if (initializer.tracked.get()) {
+                val followUp =
+                    initializer.cleanupAfterExit.get()?.let { terminalCleanup ->
+                        if (terminalCleanup.initializerExitedAfterCleanupStarted()) reserveCleanup() else null
                     }
-                }
+                cleanupTracker.completeInitializer()
+                if (followUp != null) launchCleanup(followUp)
             }
-        val initializer = OwnedInitializer(initializerJob, cleanupAfterExit)
+        }
         val accepted =
             synchronized(lock) {
                 if (status.state == KcefState.INITIALIZING) {
                     initializationJob = initializer
+                    cleanupTracker.registerInitializer()
+                    initializer.tracked.set(true)
+                    initializer.job.start()
                     true
                 } else {
                     false
@@ -210,7 +230,6 @@ class KcefLifecycle(
             initializer.job.cancel()
             return
         }
-        initializer.job.start()
         val failure =
             try {
                 withTimeout(initializationTimeout) { initializer.job.await() }
@@ -304,14 +323,11 @@ class KcefLifecycle(
         initialSettlement.complete(next)
     }
 
-    private fun scheduleCleanup(): CleanupRequest {
-        val request = synchronized(lock) { reserveCleanupLocked() }
-        launchCleanup(request)
-        return request
-    }
-
     private fun reserveCleanupLocked(): CleanupRequest =
-        CleanupRequest().also { request -> latestCleanup = request }
+        reserveCleanup()
+
+    private fun reserveCleanup(): CleanupRequest =
+        CleanupRequest().also { cleanupTracker.registerCleanup() }
 
     private fun launchCleanup(request: CleanupRequest) {
         cleanupScope.launch {
@@ -321,7 +337,7 @@ class KcefLifecycle(
                     runCatching(cleanup).onFailure { logger.error(it) { "Embedded browser cleanup failed" } }
                 }
             } finally {
-                request.completed.countDown()
+                cleanupTracker.completeCleanup()
             }
         }
     }
@@ -338,16 +354,15 @@ class KcefLifecycle(
     private data class OwnedInitializer(
         val job: Deferred<Unit>,
         val cleanupAfterExit: AtomicReference<CleanupRequest?>,
+        val tracked: AtomicBoolean = AtomicBoolean(),
     )
 
     private data class ClosePlan(
         val initializer: OwnedInitializer?,
         val cleanupRequest: CleanupRequest?,
-        val awaitRequest: CleanupRequest,
     )
 
-    private class CleanupRequest(alreadyCompleted: Boolean = false) {
-        val completed = CountDownLatch(if (alreadyCompleted) 0 else 1)
+    private class CleanupRequest {
         private val initializerOrder = AtomicReference(InitializerOrder.PENDING)
 
         fun markCleanupStarted() {
@@ -372,6 +387,42 @@ class KcefLifecycle(
                 }
             }
         }
+    }
+
+    private class CleanupTracker {
+        private val lock = ReentrantLock()
+        private val changed = lock.newCondition()
+        private var initializers = 0
+        private var cleanups = 0
+
+        fun registerInitializer() = lock.withLock { initializers += 1 }
+
+        fun completeInitializer() =
+            lock.withLock {
+                check(initializers > 0) { "initializer completion was not registered" }
+                initializers -= 1
+                changed.signalAll()
+            }
+
+        fun registerCleanup() = lock.withLock { cleanups += 1 }
+
+        fun completeCleanup() =
+            lock.withLock {
+                check(cleanups > 0) { "cleanup completion was not registered" }
+                cleanups -= 1
+                changed.signalAll()
+            }
+
+        @Throws(InterruptedException::class)
+        fun awaitQuiescence(timeoutNanos: Long): Boolean =
+            lock.withLock {
+                var remainingNanos = timeoutNanos
+                while (initializers > 0 || cleanups > 0) {
+                    if (remainingNanos <= 0) return false
+                    remainingNanos = changed.awaitNanos(remainingNanos)
+                }
+                true
+            }
     }
 
     private enum class InitializerOrder {

@@ -55,6 +55,7 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.security.Security
 import java.util.Locale
+import kotlin.time.Duration
 
 private val logger = KotlinLogging.logger {}
 
@@ -249,6 +250,20 @@ internal fun createKcefLifecycle(process: KcefProcess = PinnedKcefProcess()): Kc
         capabilityProbe = process::isReady,
     )
 
+/** [shutdownEngineHost] overlaps KCEF cleanup with server stop under the cleanup's original bound. */
+internal fun shutdownEngineHost(
+    kcefLifecycle: KcefLifecycle,
+    stopServer: () -> Unit,
+    closeExtensions: () -> Unit,
+    kcefCleanupTimeout: Duration = KCEFShutdownCleanupTimeout,
+): Boolean {
+    val kcefCleanup = kcefLifecycle.beginShutdownCleanup(kcefCleanupTimeout)
+    stopServer()
+    val cleanupCompleted = kcefCleanup.awaitCompletion()
+    closeExtensions()
+    return cleanupCompleted
+}
+
 fun main(args: Array<String>) {
     val apk = (args.getOrNull(0) ?: System.getenv("TSUNDOKU_ENGINE_APK"))?.takeUnless { it.isBlank() }
     val port = (args.getOrNull(1) ?: System.getenv("TSUNDOKU_ENGINE_PORT") ?: "7777").toInt()
@@ -281,11 +296,15 @@ fun main(args: Array<String>) {
     server.start()
     Runtime.getRuntime().addShutdownHook(
         Thread {
-            server.stop()
-            if (!kcefLifecycle.shutdownAndAwaitCleanup()) {
+            if (
+                !shutdownEngineHost(
+                    kcefLifecycle = kcefLifecycle,
+                    stopServer = server::stop,
+                    closeExtensions = extensions::close,
+                )
+            ) {
                 logger.warn { "KCEF cleanup exceeded the $KCEFShutdownCleanupTimeout JVM shutdown bound" }
             }
-            extensions.close()
         },
     )
 
