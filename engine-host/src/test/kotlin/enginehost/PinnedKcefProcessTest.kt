@@ -1,7 +1,9 @@
 package enginehost
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.lang.reflect.Modifier
 import kotlin.coroutines.Continuation
 import kotlin.test.Test
@@ -87,6 +89,9 @@ class PinnedKcefProcessTest {
             } finally {
                 lifecycle.close()
             }
-            assertTrue(cleanupCalls >= 1)
+            withTimeout(1.seconds) {
+                while (cleanupCalls < 1) delay(5)
+            }
+            assertEquals(1, cleanupCalls)
         }
 }

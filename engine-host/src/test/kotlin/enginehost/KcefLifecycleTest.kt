@@ -132,6 +132,50 @@ class KcefLifecycleTest {
         }
 
     @Test
+    fun `producer timeout settles waiter and status while cleanup remains blocked`() =
+        runBlocking {
+            val initializerEntered = CompletableDeferred<Unit>()
+            val cleanupEntered = CountDownLatch(1)
+            val releaseCleanup = CountDownLatch(1)
+            val cleanupExited = CountDownLatch(1)
+            val cleanupCalls = AtomicInteger()
+            val lifecycle =
+                testLifecycle(
+                    initialize = {
+                        initializerEntered.complete(Unit)
+                        awaitCancellation()
+                    },
+                    cleanup = {
+                        cleanupCalls.incrementAndGet()
+                        cleanupEntered.countDown()
+                        try {
+                            releaseCleanup.await()
+                        } finally {
+                            cleanupExited.countDown()
+                        }
+                    },
+                    initializationTimeout = 40.milliseconds,
+                )
+            try {
+                lifecycle.start(enabled = true)
+                initializerEntered.await()
+                val waiter = async { runCatching { lifecycle.awaitReady(1.seconds) }.exceptionOrNull() }
+                assertTrue(cleanupEntered.await(1, TimeUnit.SECONDS))
+
+                val error = withTimeout(250.milliseconds) { waiter.await() }
+
+                assertIs<WebViewUnavailableException>(error)
+                assertEquals(KcefStatus(KcefState.FAILED, "init_timeout"), lifecycle.snapshot())
+                assertEquals(1, cleanupCalls.get())
+            } finally {
+                releaseCleanup.countDown()
+                lifecycle.close()
+            }
+            assertTrue(cleanupExited.await(1, TimeUnit.SECONDS))
+            assertEquals(1, cleanupCalls.get())
+        }
+
+    @Test
     fun `producer timeout remains bounded when physical initializer ignores interruption`() =
         runBlocking {
             val entered = CountDownLatch(1)
@@ -165,12 +209,10 @@ class KcefLifecycleTest {
                 awaitState(lifecycle, KcefState.FAILED)
 
                 assertEquals(KcefStatus(KcefState.FAILED, "init_timeout"), lifecycle.snapshot())
-                assertTrue(cleanupCalls.get() >= 1, "timeout must attempt process cleanup immediately")
+                awaitCleanupCalls(cleanupCalls, 1)
                 release.countDown()
                 assertTrue(exited.await(1, TimeUnit.SECONDS))
-                withTimeout(1.seconds) {
-                    while (cleanupCalls.get() < 2) delay(5.milliseconds)
-                }
+                awaitCleanupCalls(cleanupCalls, 2)
                 assertEquals(KcefState.FAILED, lifecycle.snapshot().state)
             } finally {
                 release.countDown()
@@ -202,12 +244,13 @@ class KcefLifecycleTest {
             lifecycle.close()
 
             withTimeout(1.seconds) { exited.await() }
-            assertEquals(KcefStatus(KcefState.FAILED, "init_failed"), lifecycle.snapshot())
-            assertTrue(cleanupCalls.get() >= 1)
+            awaitCleanupCalls(cleanupCalls, 1)
+            assertEquals(KcefStatus(KcefState.DISABLED, null), lifecycle.snapshot())
+            assertEquals(1, cleanupCalls.get())
         }
 
     @Test
-    fun `close after readiness makes the process generation terminal and cleans exactly once`() =
+    fun `close after readiness makes the process generation disabled and cleans exactly once`() =
         runBlocking {
             val cleanupCalls = AtomicInteger()
             val lifecycle = testLifecycle(initialize = {}, cleanup = { cleanupCalls.incrementAndGet() })
@@ -217,7 +260,8 @@ class KcefLifecycleTest {
             lifecycle.close()
             lifecycle.close()
 
-            assertEquals(KcefStatus(KcefState.FAILED, "init_failed"), lifecycle.snapshot())
+            awaitCleanupCalls(cleanupCalls, 1)
+            assertEquals(KcefStatus(KcefState.DISABLED, null), lifecycle.snapshot())
             assertFailsWith<WebViewUnavailableException> { lifecycle.awaitReady(1.seconds) }
             assertEquals(1, cleanupCalls.get())
         }
@@ -420,8 +464,9 @@ class KcefLifecycleTest {
 
                 awaitState(lifecycle, KcefState.FAILED)
 
+                awaitCleanupCalls(cleanupCalls, 1)
                 assertEquals(KcefStatus(KcefState.FAILED, "init_failed"), lifecycle.snapshot())
-                assertTrue(cleanupCalls.get() >= 1)
+                assertEquals(1, cleanupCalls.get())
             } finally {
                 lifecycle.close()
             }
@@ -453,6 +498,16 @@ class KcefLifecycleTest {
             while (lifecycle.snapshot().state != state) delay(5.milliseconds)
         }
         assertTrue(lifecycle.snapshot().state == state)
+    }
+
+    private suspend fun awaitCleanupCalls(
+        calls: AtomicInteger,
+        expected: Int,
+    ) {
+        withTimeout(1.seconds) {
+            while (calls.get() < expected) delay(5.milliseconds)
+        }
+        assertEquals(expected, calls.get())
     }
 
     private class PausingDispatcher : CoroutineDispatcher() {

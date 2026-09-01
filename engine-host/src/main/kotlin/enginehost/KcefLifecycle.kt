@@ -16,7 +16,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -54,8 +57,8 @@ class WebViewUnavailableException : IllegalStateException("embedded browser unav
 /**
  * [KcefLifecycle] owns one embedded-browser producer and its terminal process-generation state.
  * Caller timeouts only stop that caller's wait; they never cancel the shared producer or settlement.
- * [cleanup] must be idempotent: terminal abandonment runs it immediately and again after any
- * non-cooperative physical initializer eventually exits.
+ * [cleanup] must be idempotent: terminal settlement schedules it independently, and a
+ * non-cooperative physical initializer that exits late schedules it again.
  */
 class KcefLifecycle(
     private val initialize: suspend () -> Unit,
@@ -70,10 +73,12 @@ class KcefLifecycle(
     private val logger = KotlinLogging.logger {}
     private val lock = Any()
     private val scope = CoroutineScope(SupervisorJob() + coroutineContext)
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val cleanupLock = Mutex()
     private val initialSettlement = CompletableDeferred<KcefStatus>()
     private var started = false
     private var status = KcefStatus(KcefState.DISABLED, null)
-    private var initializationJob: Deferred<Unit>? = null
+    private var initializationJob: OwnedInitializer? = null
 
     init {
         require(initializationTimeout.isPositive()) { "initializationTimeout must be positive" }
@@ -82,7 +87,7 @@ class KcefLifecycle(
         require(monitorProbeTimeout.isPositive()) { "monitorProbeTimeout must be positive" }
     }
 
-    /** Starts at most one producer, or settles disabled synchronously when capability is off. */
+    /** [start] starts at most one producer, or settles disabled synchronously when capability is off. */
     fun start(enabled: Boolean) {
         val launchProducer =
             synchronized(lock) {
@@ -99,7 +104,7 @@ class KcefLifecycle(
         if (launchProducer) scope.launch { runProducer() }
     }
 
-    /** Waits within one caller's independent bound, failing with a sanitized exception. */
+    /** [awaitReady] waits within one caller's independent bound and fails with a sanitized exception. */
     suspend fun awaitReady(timeout: Duration = callerTimeout) {
         require(timeout.isPositive()) { "timeout must be positive" }
         val current = snapshot()
@@ -117,7 +122,7 @@ class KcefLifecycle(
         }
     }
 
-    /** Returns the current payload-safe capability state without waiting or probing. */
+    /** [snapshot] returns the current payload-safe capability state without waiting or probing. */
     fun snapshot(): KcefStatus = synchronized(lock) { status }
 
     override fun close() {
@@ -128,23 +133,29 @@ class KcefLifecycle(
                 initializationJob = null
                 started = true
                 if (status.state == KcefState.INITIALIZING) {
-                    settleInitialLocked(KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE))
+                    settleInitialLocked(KcefStatus(KcefState.DISABLED, null))
                 } else if (status.state == KcefState.READY) {
-                    status = KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE)
+                    status = KcefStatus(KcefState.DISABLED, null)
                 }
                 Pair(if (active) initializer else null, active)
             }
         if (cleanupTarget != null) {
             abandonInitializer(cleanupTarget)
         } else if (shouldCleanup) {
-            cleanupSafely()
+            scheduleCleanup()
         }
         scope.cancel()
     }
 
     private suspend fun runProducer() {
         // Register the owned child before it can enter native code, so close cannot miss cleanup.
-        val initializer = scope.async(start = CoroutineStart.LAZY) { initialize() }
+        val cleanupAfterLateSuccess = AtomicBoolean()
+        val initializerJob =
+            scope.async(start = CoroutineStart.LAZY) {
+                initialize()
+                if (cleanupAfterLateSuccess.get()) scheduleCleanup()
+            }
+        val initializer = OwnedInitializer(initializerJob, cleanupAfterLateSuccess)
         val accepted =
             synchronized(lock) {
                 if (status.state == KcefState.INITIALIZING) {
@@ -155,16 +166,15 @@ class KcefLifecycle(
                 }
             }
         if (!accepted) {
-            initializer.cancel()
+            initializer.job.cancel()
             return
         }
-        initializer.start()
+        initializer.job.start()
         val failure =
             try {
-                withTimeout(initializationTimeout) { initializer.await() }
+                withTimeout(initializationTimeout) { initializer.job.await() }
                 null
             } catch (_: TimeoutCancellationException) {
-                abandonInitializer(initializer)
                 KCEF_INIT_TIMEOUT_ERROR_CODE
             } catch (e: CancellationException) {
                 if (!currentCoroutineContext().isActive) throw e
@@ -175,19 +185,17 @@ class KcefLifecycle(
                 KCEF_INIT_FAILED_ERROR_CODE
             }
 
-        synchronized(lock) {
-            if (initializationJob === initializer) initializationJob = null
-        }
-
         if (failure != null) {
-            settleInitial(KcefStatus(KcefState.FAILED, failure))
-            if (failure != KCEF_INIT_TIMEOUT_ERROR_CODE) cleanupSafely()
+            if (settleInitial(initializer, KcefStatus(KcefState.FAILED, failure))) {
+                if (failure == KCEF_INIT_TIMEOUT_ERROR_CODE) {
+                    abandonInitializer(initializer)
+                } else {
+                    scheduleCleanup()
+                }
+            }
             return
         }
-        if (!settleInitial(KcefStatus(KcefState.READY, null))) {
-            cleanupSafely()
-            return
-        }
+        if (!settleInitial(initializer, KcefStatus(KcefState.READY, null))) return
         monitorCapability()
     }
 
@@ -218,15 +226,21 @@ class KcefLifecycle(
                             false
                         }
                     }
-                if (transitioned) cleanupSafely()
+                if (transitioned) scheduleCleanup()
                 return
             }
         }
     }
 
-    private fun settleInitial(next: KcefStatus): Boolean =
+    private fun settleInitial(
+        initializer: OwnedInitializer,
+        next: KcefStatus,
+    ): Boolean =
         synchronized(lock) {
-            if (status.state != KcefState.INITIALIZING) return@synchronized false
+            if (status.state != KcefState.INITIALIZING || initializationJob !== initializer) {
+                return@synchronized false
+            }
+            initializationJob = null
             settleInitialLocked(next)
             true
         }
@@ -236,13 +250,22 @@ class KcefLifecycle(
         initialSettlement.complete(next)
     }
 
-    private fun cleanupSafely() {
-        runCatching(cleanup).onFailure { logger.error(it) { "Embedded browser cleanup failed" } }
+    private fun scheduleCleanup() {
+        cleanupScope.launch {
+            cleanupLock.withLock {
+                runCatching(cleanup).onFailure { logger.error(it) { "Embedded browser cleanup failed" } }
+            }
+        }
     }
 
-    private fun abandonInitializer(initializer: Deferred<Unit>) {
-        initializer.invokeOnCompletion { cleanupSafely() }
-        initializer.cancel()
-        cleanupSafely()
+    private fun abandonInitializer(initializer: OwnedInitializer) {
+        initializer.cleanupAfterLateSuccess.set(true)
+        initializer.job.cancel()
+        scheduleCleanup()
     }
+
+    private data class OwnedInitializer(
+        val job: Deferred<Unit>,
+        val cleanupAfterLateSuccess: AtomicBoolean,
+    )
 }
