@@ -67,6 +67,25 @@ describe('SourceConfigurationGroup', () => {
     expect(row.get('[data-testid="use-global"]').attributes('disabled')).toBeDefined()
   })
 
+  it('restores inherited embedded-browser policy from an override', async () => {
+    const wrapper = mount(SourceConfigurationGroup, {
+      props: {
+        configuration: configuration({ override: 'required', global: 'auto', effective: 'required', inherited: false, enabled: true }),
+      },
+    })
+
+    const row = wrapper.get('[data-source-setting-target="kcefPolicy"]')
+    const useGlobal = row.get('[data-testid="use-global"]')
+    expect(useGlobal.attributes('disabled')).toBeUndefined()
+
+    await useGlobal.trigger('click')
+
+    expect(wrapper.emitted('use-global')).toEqual([[
+      fullyInheritedSourceConfiguration.source.sourceId,
+      'kcefPolicy',
+    ]])
+  })
+
   it('keeps pending apply status and sanitized apply errors distinct from the policy intent', async () => {
     const wrapper = mount(SourceConfigurationGroup, {
       props: {

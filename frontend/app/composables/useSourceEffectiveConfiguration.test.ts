@@ -140,6 +140,18 @@ describe('useSourceEffectiveConfiguration', () => {
     })
   })
 
+  it('sends KCEF inherit intent in the generated transport patch', async () => {
+    const state = useSourceEffectiveConfiguration()
+    await state.selectSource(SOURCE_ID)
+
+    await state.setTransport(SOURCE_ID, 'kcefPolicy', { mode: 'inherit' })
+
+    expect(apiClient.PATCH).toHaveBeenCalledWith('/api/sources/{sourceId}/transport', {
+      params: { path: { sourceId: SOURCE_ID } },
+      body: { kcefPolicy: { mode: 'inherit' } },
+    })
+  })
+
   it('adopts server-confirmed mutation data and refetches detail plus summaries after success', async () => {
     const state = useSourceEffectiveConfiguration()
     await state.selectSource(SOURCE_ID)
