@@ -85,8 +85,8 @@ type RunningProcess interface {
 // return means "ready" (its GET /health answered 200). The launcher polls it
 // after a spawn (readiness gate) and once on a cache hit (liveness check). The
 // production implementation (health.go) issues a short-timeout HTTP GET; tests
-// inject a deterministic function.
-type HealthProber func(baseURL string) error
+// inject a deterministic function. The context bounds each in-flight request.
+type HealthProber func(context.Context, string) error
 
 // StatusProber returns the bounded, typed operational snapshot served by
 // GET /status. The context must cancel an in-flight read promptly. Production

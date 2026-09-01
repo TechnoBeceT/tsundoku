@@ -152,7 +152,7 @@ func (s *fakeStarter) proc(i int) *fakeProcess {
 }
 
 // okProber is a HealthProber that always reports ready.
-func okProber(string) error { return nil }
+func okProber(context.Context, string) error { return nil }
 
 // readyKCEFStatus is the normal operational snapshot for tests that do not
 // exercise the status contract itself. It keeps launch tests focused on their
@@ -280,6 +280,23 @@ func (c *fakeReadinessClock) waitForTicker(t *testing.T) {
 	}
 }
 
+func (c *fakeReadinessClock) waitForTimers(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		c.mu.Lock()
+		count := len(c.timers)
+		c.mu.Unlock()
+		if count >= want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("readiness timers = %d, want at least %d", count, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func sequenceStatus(statuses ...enginehost.EngineStatus) enginehost.StatusProber {
 	var mu sync.Mutex
 	i := 0
@@ -300,7 +317,7 @@ func sequenceStatus(statuses ...enginehost.EngineStatus) enginehost.StatusProber
 func sequenceProber(errs ...error) enginehost.HealthProber {
 	var mu sync.Mutex
 	i := 0
-	return func(string) error {
+	return func(context.Context, string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		e := errs[i]

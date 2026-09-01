@@ -199,7 +199,11 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 	}
 
 	if mi, ok := l.instances[p.Key]; ok {
-		if l.reusable(ctx, mi) {
+		reusable, err := l.reusable(ctx, mi)
+		if err != nil {
+			return engineroute.Instance{}, err
+		}
+		if reusable {
 			// A confirmed-healthy instance: clear any stale degrade overlay left by
 			// the supervisor from a prior down episode, so its sources resume using
 			// their base route.
@@ -225,16 +229,31 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 // must still match the profile's explicit KCEF intent. An alive-but-wedged or
 // health-only JVM is treated as NOT reusable so EnsureProfile keeps its sources
 // degraded while replacing it rather than routing WebView calls at a dead browser.
-func (l *Launcher) reusable(ctx context.Context, mi *managedInstance) bool {
-	if !alive(mi.proc) || l.prober(mi.baseURL) != nil {
-		return false
+func (l *Launcher) reusable(ctx context.Context, mi *managedInstance) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !alive(mi.proc) {
+		return false, nil
+	}
+	if err := l.prober(ctx, mi.baseURL); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, nil
 	}
 	status, err := l.statusProber(ctx, mi.baseURL)
 	if err != nil {
-		return false
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	ready, err := kcefStatusReady(status.KCEF, mi.profile.KCEFEnabled)
-	return err == nil && ready
+	return err == nil && ready, nil
 }
 
 // Retire stops every running instance whose key is NOT in keep and removes it

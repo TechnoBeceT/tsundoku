@@ -378,8 +378,12 @@ func TestSupervise_InstanceReplacementCannotRestartStaleTarget(t *testing.T) {
 func TestSupervise_CancelledContextCannotRestartExhaustedInstance(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	ctx, cancel := context.WithCancel(context.Background())
+	var statusCalls atomic.Int32
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithStatusProber(func(probeCtx context.Context, _ string) (enginehost.EngineStatus, error) {
+			if statusCalls.Add(1) == 1 {
+				return readyKCEFStatus(), nil
+			}
 			cancel()
 			<-probeCtx.Done()
 			return enginehost.EngineStatus{}, probeCtx.Err()
@@ -397,11 +401,18 @@ func TestSupervise_CancelledContextCannotRestartExhaustedInstance(t *testing.T) 
 func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	var statusCalls atomic.Int32
+	var setupStatus atomic.Bool
 	prober := sequenceProber(nil, errors.New("health down"), nil)
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
 		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			if !setupStatus.Swap(true) {
+				return readyKCEFStatus(), nil
+			}
 			statusCalls.Add(1)
-			return enginehost.EngineStatus{}, errors.New("must not be called")
+			if got := starter.callCount(); got != 2 {
+				t.Errorf("status was consulted before replacement start: starts=%d, want 2", got)
+			}
+			return readyKCEFStatus(), nil
 		}))
 	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -411,13 +422,13 @@ func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	if got := starter.callCount(); got != 2 {
 		t.Fatalf("health-down starts = %d, want existing immediate restart", got)
 	}
-	if got := statusCalls.Load(); got != 0 {
-		t.Errorf("status calls while health down = %d, want 0", got)
+	if got := statusCalls.Load(); got != 1 {
+		t.Errorf("status calls = %d, want only the replacement readiness check", got)
 	}
 }
 
-func toggledHealthProber(healthDown *atomic.Bool) func(string) error {
-	return func(string) error {
+func toggledHealthProber(healthDown *atomic.Bool) func(context.Context, string) error {
+	return func(context.Context, string) error {
 		if healthDown.Load() {
 			return errors.New("health down")
 		}
@@ -528,7 +539,7 @@ func TestSupervise_CancellationDuringHealthPreventsProcessMutation(t *testing.T)
 	rr := newFakeRerouter()
 	var cancelOnHealth atomic.Bool
 	var cancel context.CancelFunc
-	prober := func(string) error {
+	prober := func(context.Context, string) error {
 		if cancelOnHealth.Swap(false) {
 			cancel()
 			return errors.New("cancelled health probe")
@@ -891,7 +902,7 @@ func TestSupervise_PassPanicRecovers(t *testing.T) {
 	var supCalls atomic.Int32
 	// Healthy during setup; once armed, panic on the FIRST supervise probe then
 	// report healthy — so the panic lands inside a pass, not during the spawn.
-	prober := func(string) error {
+	prober := func(context.Context, string) error {
 		if !armed.Load() {
 			return nil
 		}

@@ -85,13 +85,45 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	readinessDeadline := spawnedAt.Add(l.readinessTimeout)
-	if err := l.awaitReady(ctx, proc, baseURL, p.KCEFEnabled, readinessDeadline); err != nil {
+	readinessCtx, cancelReadiness := l.readinessContext(ctx, readinessDeadline)
+	defer cancelReadiness()
+	if err := l.awaitReady(readinessCtx, proc, baseURL, p.KCEFEnabled, readinessDeadline); err != nil {
 		// The instance never came up: kill it so it does not linger, then report.
 		_ = proc.Kill()
 		<-proc.Done() // reap
 		return nil, nil, "", fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
 	}
 	return proc, l.factory(baseURL), baseURL, nil
+}
+
+// readinessContext preserves the caller's cancellation while applying the one
+// spawn-relative readiness deadline to every in-flight probe. Context deadlines
+// use wall time in production; the clock timer also makes the same absolute
+// budget deterministic in tests and prevents a blocking probe from extending it.
+func (l *Launcher) readinessContext(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	effectiveDeadline := deadline
+	if parentDeadline, ok := parent.Deadline(); ok && parentDeadline.Before(effectiveDeadline) {
+		effectiveDeadline = parentDeadline
+	}
+	ctx, cancel := context.WithDeadline(parent, effectiveDeadline)
+	remaining := effectiveDeadline.Sub(l.readinessClock.Now())
+	if remaining <= 0 {
+		cancel()
+		return ctx, cancel
+	}
+	timer := l.readinessClock.NewTimer(remaining)
+	go func() {
+		select {
+		case <-timer.C():
+			cancel()
+		case <-ctx.Done():
+			_ = timer.Stop()
+		}
+	}()
+	return ctx, func() {
+		_ = timer.Stop()
+		cancel()
+	}
 }
 
 // restartLocked respawns a dead-or-wedged managed instance on its EXISTING port +
@@ -217,7 +249,7 @@ func (l *Launcher) pollHealthy(ctx context.Context, proc RunningProcess, baseURL
 	defer ticker.Stop()
 
 	for {
-		if err := l.prober(baseURL); err == nil {
+		if err := l.prober(ctx, baseURL); err == nil {
 			if err := l.readinessElapsed(deadline); err != nil {
 				return err
 			}
@@ -263,7 +295,7 @@ func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL stri
 			return l.readinessTimeoutError()
 		}
 	}
-	if err := l.prober(baseURL); err != nil {
+	if err := l.prober(ctx, baseURL); err != nil {
 		return fmt.Errorf("instance unhealthy after settle: %w", err)
 	}
 	return l.readinessElapsed(deadline)

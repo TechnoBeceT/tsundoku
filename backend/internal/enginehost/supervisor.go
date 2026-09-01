@@ -186,7 +186,7 @@ func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
 			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
-		healthy := alive(t.proc) && s.launcher.prober(t.baseURL) == nil
+		healthy := alive(t.proc) && s.launcher.prober(ctx, t.baseURL) == nil
 		if ctx.Err() != nil {
 			s.launcher.invalidateExhaustionEvidence(targets)
 			return
