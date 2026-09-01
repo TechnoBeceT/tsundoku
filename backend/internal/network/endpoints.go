@@ -114,6 +114,9 @@ func (s *Service) UpdateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
 		return EndpointMutationResult{}, fmt.Errorf("%w: %w", ErrInvalidEndpoint, err)
 	}
+	if sanitized := sanitizeKCEFInvariantError(err, ErrInvalidEndpoint); sanitized != nil {
+		return EndpointMutationResult{}, sanitized
+	}
 	return result, err
 }
 
@@ -178,13 +181,11 @@ func (s *Service) updateEndpoint(ctx context.Context, id uuid.UUID, patch Endpoi
 func (s *Service) DeleteEndpoint(ctx context.Context, id uuid.UUID) error {
 	if s.policyCoordinator != nil {
 		return s.mutate(ctx, func(ctx context.Context) (runtimepolicy.Proposal, error) {
-			row, err := s.endpointByID(ctx, id)
+			_, err := s.endpointByID(ctx, id)
 			if err != nil {
 				return runtimepolicy.Proposal{}, err
 			}
-			return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: {
-				Kind: row.Kind, Session: row.Session, Enabled: row.Enabled,
-			}}}, nil
+			return runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{id: nil}}, nil
 		}, func(ctx context.Context) error { return s.deleteEndpoint(ctx, id) })
 	}
 	return s.deleteEndpoint(ctx, id)

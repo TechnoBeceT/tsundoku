@@ -46,6 +46,78 @@ func TestUpdateEndpointRejectsClearingSelectedExplicitSession(t *testing.T) {
 	}
 }
 
+// TestUpdateEndpointRejectsEnablingSocksForRequiredBrowserWithoutIntentChurn
+// proves a disabled SOCKS endpoint can be staged, but cannot become effective
+// when its bound source requires the embedded browser.
+func TestUpdateEndpointRejectsEnablingSocksForRequiredBrowserWithoutIntentChurn(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	in := socksInput("VPN")
+	in.Enabled = false
+	endpoint, err := svc.CreateEndpoint(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.MustParse(endpoint.ID)
+	if _, err := svc.SetBinding(ctx, 42, network.BindingInput{SocksEndpointID: &id, FlareMode: network.FlareModeGlobal}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	enabled := true
+	_, err = svc.UpdateEndpoint(ctx, id, network.EndpointPatch{Enabled: &enabled})
+	if !errors.Is(err, network.ErrInvalidEndpoint) {
+		t.Fatalf("UpdateEndpoint error = %v, want ErrInvalidEndpoint", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	stored := client.NetworkEndpoint.GetX(ctx, id)
+	if stored.Enabled {
+		t.Fatal("endpoint enabled after rejected update")
+	}
+	intent := client.SourceRuntimeIntent.Query().Where(entintent.SourceID(42)).OnlyX(ctx)
+	if intent.DesiredRevision != 1 {
+		t.Fatalf("desired revision after rejected endpoint update = %d, want 1", intent.DesiredRevision)
+	}
+}
+
+// TestUpdateEndpointRejectsChangingBoundEndpointToSocks proves endpoint type
+// edits are checked against retained SOCKS endpoint identities before either
+// the endpoint or source runtime intent is changed.
+func TestUpdateEndpointRejectsChangingBoundEndpointToSocks(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	endpoint, err := svc.CreateEndpoint(ctx, flareInput("Legacy route"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.MustParse(endpoint.ID)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(id).SetFlareMode(network.FlareModeGlobal).ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	kind := network.KindSocks
+	host := "vpn.local"
+	port := 1080
+	version := 5
+	_, err = svc.UpdateEndpoint(ctx, id, network.EndpointPatch{
+		Kind: &kind, Host: &host, Port: &port, SocksVersion: &version,
+	})
+	if !errors.Is(err, network.ErrInvalidEndpoint) {
+		t.Fatalf("UpdateEndpoint type error = %v, want ErrInvalidEndpoint", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	stored := client.NetworkEndpoint.GetX(ctx, id)
+	if stored.Kind != network.KindFlareSolverr {
+		t.Fatalf("endpoint kind after rejected update = %q, want %q", stored.Kind, network.KindFlareSolverr)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intent count after rejected endpoint type update = %d, want 0", got)
+	}
+}
+
 // socksInput returns a valid SOCKS endpoint input for the tests.
 func socksInput(name string) network.EndpointInput {
 	return network.EndpointInput{

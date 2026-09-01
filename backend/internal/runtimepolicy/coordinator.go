@@ -31,7 +31,7 @@ type Proposal struct {
 type Binding struct {
 	FlareMode       string
 	FlareEndpointID *uuid.UUID
-	HasSocks        bool
+	SocksEndpointID *uuid.UUID
 }
 
 type Endpoint struct {
@@ -77,7 +77,7 @@ func (c *Coordinator) MutateDynamic(ctx context.Context, proposal func(context.C
 }
 
 // ValidateCurrent fails closed when durable state contains an impossible
-// explicit reusable-session selection (including legacy/direct DB writes).
+// source transport combination, including legacy or direct database writes.
 func (c *Coordinator) ValidateCurrent(ctx context.Context) error {
 	if admitted, _ := ctx.Value(admissionKey{}).(*Coordinator); admitted == c {
 		return c.validate(ctx, Proposal{})
@@ -107,7 +107,7 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 			continue
 		}
 		binding := state.bindings[sourceID]
-		if _, err := ResolveKCEF(policy, binding.HasSocks, binding.FlareMode); err != nil {
+		if _, err := ResolveKCEF(policy, effectiveSocksEndpoint(binding.SocksEndpointID, state.endpoints), binding.FlareMode); err != nil {
 			return fmt.Errorf("source %d: %w", sourceID, err)
 		}
 	}
@@ -156,10 +156,8 @@ func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospec
 		state.impacted[id] = true
 	}
 	for sourceID, binding := range state.bindings {
-		if binding.FlareEndpointID != nil {
-			if _, changed := p.Endpoints[*binding.FlareEndpointID]; changed {
-				state.impacted[sourceID] = true
-			}
+		if endpointChanged(binding.SocksEndpointID, p.Endpoints) || endpointChanged(binding.FlareEndpointID, p.Endpoints) {
+			state.impacted[sourceID] = true
 		}
 	}
 	return state, nil
@@ -185,10 +183,18 @@ func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, b
 	for _, row := range bindings {
 		state.bindings[row.SourceID] = Binding{
 			FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID,
-			HasSocks: effectiveSocksEndpoint(row.SocksEndpointID, state.endpoints),
+			SocksEndpointID: row.SocksEndpointID,
 		}
 	}
 	return state
+}
+
+func endpointChanged(id *uuid.UUID, changes map[uuid.UUID]*Endpoint) bool {
+	if id == nil {
+		return false
+	}
+	_, changed := changes[*id]
+	return changed
 }
 
 func effectiveSocksEndpoint(id *uuid.UUID, endpoints map[uuid.UUID]Endpoint) bool {

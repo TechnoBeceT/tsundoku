@@ -68,7 +68,7 @@ func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInpu
 	var result BindingMutationResult
 	err := s.mutate(ctx, func(context.Context) (runtimepolicy.Proposal, error) {
 		return runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{sourceID: {
-			FlareMode: in.FlareMode, FlareEndpointID: in.FlareEndpointID,
+			FlareMode: in.FlareMode, FlareEndpointID: in.FlareEndpointID, SocksEndpointID: in.SocksEndpointID,
 		}}}, nil
 	}, func(ctx context.Context) error {
 		var err error
@@ -77,6 +77,9 @@ func (s *Service) SetBinding(ctx context.Context, sourceID int64, in BindingInpu
 	})
 	if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
 		return BindingMutationResult{}, fmt.Errorf("%w: %w", ErrInvalidBinding, err)
+	}
+	if sanitized := sanitizeKCEFInvariantError(err, ErrInvalidBinding); sanitized != nil {
+		return BindingMutationResult{}, sanitized
 	}
 	return result, err
 }

@@ -19,6 +19,7 @@ package network
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/runtimepolicy"
@@ -84,6 +85,15 @@ func (s *Service) mutate(ctx context.Context, proposal func(context.Context) (ru
 		return commit(ctx)
 	}
 	return s.policyCoordinator.MutateDynamic(ctx, proposal, commit)
+}
+
+// sanitizeKCEFInvariantError prevents coordinator details from crossing the
+// network API while preserving the caller's public validation category.
+func sanitizeKCEFInvariantError(err, invalid error) error {
+	if !errors.Is(err, runtimepolicy.ErrKCEFWithSocks) && !errors.Is(err, runtimepolicy.ErrInvalidKCEFPolicy) {
+		return nil
+	}
+	return fmt.Errorf("%w: incompatible embedded browser and SOCKS route", invalid)
 }
 
 // NewService constructs a Service over the given Ent client. When supplied,

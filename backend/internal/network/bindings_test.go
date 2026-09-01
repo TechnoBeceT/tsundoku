@@ -10,14 +10,97 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/ent"
+	entbinding "github.com/technobecet/tsundoku/internal/ent/sourcenetworkbinding"
 	"github.com/technobecet/tsundoku/internal/ent/sourceruntimeintent"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
 type bindingCatalog struct{ err error }
 
 func (c bindingCatalog) RequireSource(context.Context, int64) error { return c.err }
+
+// TestSetBindingRejectsSocksForRequiredBrowserWithoutAdvancingIntent proves a
+// route written after its required browser policy is rejected before either
+// durable binding or runtime intent changes.
+func TestSetBindingRejectsSocksForRequiredBrowserWithoutAdvancingIntent(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	socks, err := svc.CreateEndpoint(ctx, socksInput("VPN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	socksID := uuid.MustParse(socks.ID)
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.SetBinding(ctx, 42, network.BindingInput{
+		SocksEndpointID: &socksID,
+		FlareMode:       network.FlareModeGlobal,
+	})
+	if !errors.Is(err, network.ErrInvalidBinding) {
+		t.Fatalf("SetBinding error = %v, want ErrInvalidBinding", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	if _, err := svc.GetBinding(ctx, 42); !errors.Is(err, network.ErrBindingNotFound) {
+		t.Fatalf("binding after rejected write = %v, want ErrBindingNotFound", err)
+	}
+	if got := client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {
+		t.Fatalf("runtime intent count after rejected binding = %d, want 0", got)
+	}
+	if got := client.SourceTransportPolicy.Query().CountX(ctx); got != 1 {
+		t.Fatalf("browser policy count after rejected binding = %d, want 1", got)
+	}
+}
+
+// TestSetBindingUpdateRejectsSocksForRequiredBrowserWithoutIntentChurn proves
+// replacing a safe binding with an effective SOCKS route leaves the old
+// binding and its runtime revision untouched.
+func TestSetBindingUpdateRejectsSocksForRequiredBrowserWithoutIntentChurn(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	svc := network.NewService(client).WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	socks, err := svc.CreateEndpoint(ctx, socksInput("VPN"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	socksID := uuid.MustParse(socks.ID)
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetBinding(ctx, 42, network.BindingInput{FlareMode: network.FlareModeGlobal}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = svc.SetBinding(ctx, 42, network.BindingInput{
+		SocksEndpointID: &socksID,
+		FlareMode:       network.FlareModeGlobal,
+	})
+	if !errors.Is(err, network.ErrInvalidBinding) {
+		t.Fatalf("SetBinding update error = %v, want ErrInvalidBinding", err)
+	}
+	assertSanitizedKCEFMutation(t, err)
+	stored := client.SourceNetworkBinding.Query().Where(entbinding.SourceID(42)).OnlyX(ctx)
+	if stored.SocksEndpointID != nil || stored.FlareMode != network.FlareModeGlobal {
+		t.Fatalf("binding after rejected update = %+v, want direct global route", stored)
+	}
+	intent := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(42)).OnlyX(ctx)
+	if intent.DesiredRevision != 1 {
+		t.Fatalf("desired revision after rejected binding update = %d, want 1", intent.DesiredRevision)
+	}
+}
+
+func assertSanitizedKCEFMutation(t *testing.T, err error) {
+	t.Helper()
+	for _, detail := range []string{"source 42", "required embedded browser"} {
+		if strings.Contains(err.Error(), detail) {
+			t.Fatalf("network mutation leaked coordinator detail %q in %q", detail, err)
+		}
+	}
+}
 
 // TestSetBinding_AdvancesRuntimeIntent proves the binding row and desired
 // runtime revision are committed as one source-scoped mutation.
