@@ -158,9 +158,10 @@ func (l *Launcher) readinessContext(parent context.Context, deadline time.Time) 
 // killed here, both freeing the port + clearing the stale singleton lock the
 // startProcess KCEF-reseed step expects.
 func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error {
-	// Done proves only that the JVM was reaped; owned Chromium descendants may
-	// still keep its group alive. Always drive the old generation through group
-	// teardown before reserving the same key again.
+	// Done proves only that JVM exit was observed; the leader may remain unreaped
+	// as the identity pin and owned Chromium descendants may still keep its group
+	// alive. Always drive the old generation through group teardown before
+	// reserving the same key again.
 	if !l.stopInstanceLocked(ctx, mi) {
 		return lingeringProcessGroupError(mi)
 	}

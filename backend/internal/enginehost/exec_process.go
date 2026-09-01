@@ -15,7 +15,6 @@ import (
 type processGroupSystem interface {
 	LeaderStartTime(pid int) (uint64, error)
 	LeaderExited(pid int) (bool, error)
-	OtherGroupMembers(pgid int, leaderPID int) (bool, error)
 	SignalGroup(pgid int, signal syscall.Signal) error
 }
 
@@ -37,38 +36,13 @@ func (linuxProcessGroupSystem) LeaderExited(pid int) (bool, error) {
 	return stat.state == 'Z' || stat.state == 'X' || stat.state == 'x', nil
 }
 
-func (linuxProcessGroupSystem) OtherGroupMembers(pgid int, leaderPID int) (bool, error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range entries {
-		pid, parseErr := strconv.Atoi(entry.Name())
-		if parseErr != nil || pid == leaderPID {
-			continue
-		}
-		stat, statErr := readProcStat(pid)
-		if errors.Is(statErr, os.ErrNotExist) {
-			continue
-		}
-		if statErr != nil {
-			return false, statErr
-		}
-		if stat.processGroup == pgid {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (linuxProcessGroupSystem) SignalGroup(pgid int, signal syscall.Signal) error {
 	return syscall.Kill(-pgid, signal)
 }
 
 type procStat struct {
-	state        byte
-	processGroup int
-	startTime    uint64
+	state     byte
+	startTime uint64
 }
 
 func readProcStat(pid int) (procStat, error) {
@@ -101,15 +75,11 @@ func parseProcStat(stat []byte) (procStat, error) {
 	if len(fields[0]) != 1 {
 		return procStat{}, fmt.Errorf("enginehost: malformed proc stat state %q", fields[0])
 	}
-	processGroup, err := strconv.Atoi(fields[2])
-	if err != nil {
-		return procStat{}, fmt.Errorf("enginehost: parse proc process group: %w", err)
-	}
 	startTime, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
 		return procStat{}, fmt.Errorf("enginehost: parse proc starttime: %w", err)
 	}
-	return procStat{state: fields[0][0], processGroup: processGroup, startTime: startTime}, nil
+	return procStat{state: fields[0][0], startTime: startTime}, nil
 }
 
 // execStarter is the production ProcessStarter: it launches the engine-host
@@ -123,9 +93,10 @@ type execStarter struct {
 }
 
 // Start spawns the engine-host binary and captures its Linux /proc starttime.
-// The single reaper observes exit without reaping, retains the zombie as a PGID
-// pin while any descendants remain, then calls Wait exactly once. Failure to
-// establish identity fails the spawn rather than returning an unsafe handle.
+// The single reaper observes exit without reaping and retains the zombie as a
+// PGID pin until a terminal signal has been delivered to the complete group,
+// then calls Wait exactly once. Failure to establish identity fails the spawn
+// rather than returning an unsafe handle.
 func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	groups := processGroupSystem(linuxProcessGroupSystem{})
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
@@ -155,6 +126,7 @@ func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningP
 	proc := &execProcess{
 		cmd: cmd, pgid: cmd.Process.Pid, leaderStartTime: leaderStartTime,
 		groups: groups, done: make(chan struct{}), reaped: make(chan struct{}),
+		terminalSignal: make(chan struct{}),
 	}
 	go proc.reapAfterGroupQuiesces()
 	return proc, nil
@@ -184,6 +156,8 @@ type execProcess struct {
 	groups          processGroupSystem
 	done            chan struct{}
 	reaped          chan struct{}
+	terminalSignal  chan struct{}
+	terminalOnce    sync.Once
 	handleMu        sync.Mutex
 	waited          bool
 }
@@ -201,11 +175,19 @@ func (p *execProcess) Signal(sig os.Signal) error {
 	if !ok {
 		return os.ErrInvalid
 	}
-	return p.signalOwnedGroup(syscallSignal)
+	return p.signalGroup(syscallSignal)
 }
 
 // Kill force-terminates the original managed JVM group under the same pin.
-func (p *execProcess) Kill() error { return p.signalOwnedGroup(syscall.SIGKILL) }
+func (p *execProcess) Kill() error { return p.signalGroup(syscall.SIGKILL) }
+
+func (p *execProcess) signalGroup(signal syscall.Signal) error {
+	err := p.signalOwnedGroup(signal)
+	if signal == syscall.SIGKILL && (err == nil || errors.Is(err, syscall.ESRCH)) {
+		p.terminalOnce.Do(func() { close(p.terminalSignal) })
+	}
+	return err
+}
 
 // GroupExists probes the complete original process group. ESRCH or a different
 // leader starttime proves the original group absent; permission and unexpected
@@ -245,11 +227,20 @@ func (p *execProcess) groupOwnership() (owned bool, absent bool, err error) {
 		return false, false, identityErr
 	}
 
-	// The reaper retains the exited original leader as a zombie until no other
-	// group members remain. Therefore an absent leader means the original group
-	// was already proven quiescent and reaped; no numeric PGID probe is safe or
-	// necessary here.
-	return false, true, nil
+	// Missing leader identity alone cannot prove the group empty: descendants can
+	// outlive the leader. A signal-0 group probe is harmless and ESRCH is the
+	// kernel's authoritative complete-disappearance result. Other results retain
+	// ownership fail-closed. A different leader starttime is handled above and is
+	// never probed, so an unrelated recycled group is never touched.
+	probeErr := p.groups.SignalGroup(p.pgid, 0)
+	switch {
+	case probeErr == nil:
+		return true, false, nil
+	case errors.Is(probeErr, syscall.ESRCH):
+		return false, true, nil
+	default:
+		return true, false, probeErr
+	}
 }
 
 func (p *execProcess) reapAfterGroupQuiesces() {
@@ -265,16 +256,12 @@ func (p *execProcess) reapAfterGroupQuiesces() {
 	}
 	close(p.done)
 
-	// The unreaped leader pins the numeric PGID while descendants drain, so every
-	// pidfd process-group signal remains attached to this generation. Only the
-	// no-other-member observation permits the exact Wait and handle close.
-	for {
-		others, err := p.groups.OtherGroupMembers(p.pgid, p.pgid)
-		if err == nil && !others {
-			break
-		}
-		time.Sleep(groupExitPollInterval)
-	}
+	// /proc enumeration cannot prove group quiescence atomically: an observed
+	// member may fork after the snapshot and then disappear. Keep the exited
+	// leader as a non-recyclable PGID pin until SIGKILL has been delivered to the
+	// whole group. Members cannot fork after that terminal syscall, so exact Wait
+	// followed by the kernel's ESRCH group probe is the safe release boundary.
+	<-p.terminalSignal
 	p.finishReap(func() { _ = p.cmd.Wait() })
 	close(p.reaped)
 }

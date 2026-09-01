@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,11 +19,12 @@ type identityRead struct {
 }
 
 type fakeProcessGroupSystem struct {
-	mu       sync.Mutex
-	reads    []identityRead
-	current  identityRead
-	probeErr error
-	signals  []syscall.Signal
+	mu           sync.Mutex
+	reads        []identityRead
+	current      identityRead
+	leaderExited bool
+	probeErr     error
+	signals      []syscall.Signal
 }
 
 func (s *fakeProcessGroupSystem) LeaderStartTime(int) (uint64, error) {
@@ -36,20 +38,19 @@ func (s *fakeProcessGroupSystem) LeaderStartTime(int) (uint64, error) {
 	return s.current.startTime, s.current.err
 }
 
-func (s *fakeProcessGroupSystem) LeaderExited(int) (bool, error) { return false, nil }
-
-func (s *fakeProcessGroupSystem) OtherGroupMembers(int, int) (bool, error) { return false, nil }
+func (s *fakeProcessGroupSystem) LeaderExited(int) (bool, error) { return s.leaderExited, nil }
 
 func (s *fakeProcessGroupSystem) SignalGroup(_ int, signal syscall.Signal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if signal == 0 {
+		s.signals = append(s.signals, signal)
+		return s.probeErr
+	}
 	if s.current.err != nil || s.current.startTime != 100 {
 		return syscall.ESRCH
 	}
 	s.signals = append(s.signals, signal)
-	if signal == 0 {
-		return s.probeErr
-	}
 	return nil
 }
 
@@ -62,9 +63,6 @@ type blockingSignalGroupSystem struct {
 
 func (s *blockingSignalGroupSystem) LeaderStartTime(int) (uint64, error) { return 100, nil }
 func (s *blockingSignalGroupSystem) LeaderExited(int) (bool, error)      { return false, nil }
-func (s *blockingSignalGroupSystem) OtherGroupMembers(int, int) (bool, error) {
-	return false, nil
-}
 func (s *blockingSignalGroupSystem) SignalGroup(int, syscall.Signal) error {
 	close(s.entered)
 	<-s.release
@@ -74,9 +72,54 @@ func (s *blockingSignalGroupSystem) SignalGroup(int, syscall.Signal) error {
 	return nil
 }
 
+func TestExecProcessDoesNotReapFromNonAtomicDescendantSnapshot(t *testing.T) {
+	// This is the old enumeration race in its false-negative state: a member
+	// listed by ReadDir forked, then vanished before its stat was read, leaving a
+	// new same-group descendant that was absent from the snapshot. The replacement
+	// implementation has no snapshot authorization seam, so leader exit alone
+	// must not permit Wait.
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start helper: %v", err)
+	}
+	system := &fakeProcessGroupSystem{
+		current:      identityRead{startTime: 100},
+		leaderExited: true,
+	}
+	proc := &execProcess{
+		cmd: cmd, pgid: 42, leaderStartTime: 100, groups: system,
+		done: make(chan struct{}), reaped: make(chan struct{}),
+		terminalSignal: make(chan struct{}),
+	}
+	go proc.reapAfterGroupQuiesces()
+
+	select {
+	case <-proc.Done():
+	case <-time.After(time.Second):
+		t.Fatal("leader exit was not observed")
+	}
+	select {
+	case <-proc.Reaped():
+		t.Fatal("non-atomic descendant snapshot authorized Wait")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	if err := proc.Kill(); err != nil {
+		t.Fatalf("Kill generation: %v", err)
+	}
+	select {
+	case <-proc.Reaped():
+	case <-time.After(time.Second):
+		t.Fatal("terminal group kill did not permit exact Wait")
+	}
+}
+
 func TestExecProcessPinsPGIDThroughFinalSignalSyscall(t *testing.T) {
 	system := &blockingSignalGroupSystem{entered: make(chan struct{}), release: make(chan struct{})}
-	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system}
+	proc := &execProcess{
+		pgid: 42, leaderStartTime: 100, groups: system,
+		terminalSignal: make(chan struct{}),
+	}
 	signalDone := make(chan error, 1)
 	go func() { signalDone <- proc.Signal(syscall.SIGKILL) }()
 	<-system.entered
@@ -135,6 +178,20 @@ func TestExecProcessRecognizesCompleteGroupDisappearance(t *testing.T) {
 		current: identityRead{err: os.ErrNotExist}, probeErr: syscall.ESRCH,
 	}
 	assertUnknownGroupIsNeverSignalled(t, system)
+}
+
+func TestExecProcessMissingLeaderRetainsLiveDescendantGroup(t *testing.T) {
+	system := &fakeProcessGroupSystem{
+		current: identityRead{err: os.ErrNotExist}, probeErr: nil,
+	}
+	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system, waited: true}
+	exists, err := proc.GroupExists()
+	if err != nil || !exists {
+		t.Fatalf("GroupExists = %v, %v; want true, nil while descendant group exists", exists, err)
+	}
+	if got := system.nonProbeSignals(); len(got) != 0 {
+		t.Fatalf("non-probe signals after Wait = %v, want none", got)
+	}
 }
 
 func TestExecProcessRecognizesRecycledGroupLeader(t *testing.T) {
@@ -221,7 +278,16 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	select {
 	case <-proc.Done():
 	case <-time.After(2 * time.Second):
-		t.Fatal("group TERM did not terminate and reap the JVM")
+		t.Fatal("group TERM did not terminate the JVM")
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatalf("finalize terminated group: %v", err)
+	}
+	execProc := proc.(*execProcess)
+	select {
+	case <-execProc.Reaped():
+	case <-time.After(2 * time.Second):
+		t.Fatal("terminal group kill did not permit exact Wait")
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -271,7 +337,15 @@ func TestExecStarterPinsExitedLeaderUntilDescendantGroupIsKilledAndReaped(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("leader and killed descendant group were not exactly reaped")
 	}
-	if exists, probeErr := proc.GroupExists(); probeErr != nil || exists {
-		t.Fatalf("GroupExists after reap = %v, %v; want false, nil", exists, probeErr)
+	deadline := time.Now().Add(time.Second)
+	for {
+		exists, probeErr := proc.GroupExists()
+		if probeErr == nil && !exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GroupExists after reap = %v, %v; want false, nil", exists, probeErr)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
