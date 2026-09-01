@@ -13,6 +13,8 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
@@ -20,10 +22,43 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ExtensionManagerTest {
+    @Test
+    fun `repository update rejects an APK for a different requested package without mutation`() {
+        val fixture = UpdateFixture(candidatePackage = "malicious.extension", candidateVersionCode = 2)
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("does not match requested package"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `repository update rejects a non-exact non-increasing APK version without mutation`() {
+        val fixture = UpdateFixture(candidatePackage = TARGET_PACKAGE, candidateVersionCode = 1, repositoryVersionCode = 2)
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("does not match repository version"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `direct URL install rejects a source ID owned by another package without mutation`() {
+        val fixture = UpdateFixture(candidatePackage = TARGET_PACKAGE, candidateVersionCode = 2, candidateJarSource = CandidateSource::class.java)
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            fixture.manager.install(apkUrl = "https://cdn.example.test/replacement.apk")
+        }
+
+        assertTrue(failure.message.orEmpty().contains("is already owned by '$UNRELATED_PACKAGE'"))
+        fixture.assertUnchanged()
+    }
+
     @Test
     fun `blocked repository transfer does not hold the extension mutation lock`() {
         val root = Files.createTempDirectory("extension-manager-repo-lock")
@@ -168,21 +203,169 @@ class ExtensionManagerTest {
             sources = sourceIds.map { ExtensionSourceDto(it, "Example", "en") },
         )
 
-    private fun injectSource(
-        loader: ExtensionLoader,
-        source: Source,
+    private class UpdateFixture(
+        candidatePackage: String,
+        candidateVersionCode: Long,
+        repositoryVersionCode: Long = 2,
+        candidateJarSource: Class<out Source> = CandidateSource::class.java,
     ) {
-        val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        val registry = field.get(loader) as MutableMap<Long, Source>
-        registry[source.id] = source
+        private val root = Files.createTempDirectory("extension-manager-identity")
+        private val oldApk = root.resolve("target.apk")
+        private val oldJar = root.resolve("target.jar")
+        private val unrelatedApk = root.resolve("unrelated.apk")
+        private val unrelatedJar = root.resolve("unrelated.jar")
+        private val manifest = root.resolve("installed.json")
+        private val targetRecord = installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID))
+        private val unrelatedRecord = installedRecord(UNRELATED_PACKAGE, "unrelated.apk", listOf(UNRELATED_SOURCE_ID))
+        private val oldSource = TestSource(TARGET_SOURCE_ID)
+        private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
+        private val loader = ExtensionLoader(root.toFile())
+        private val directoryBefore: Map<String, ByteArray>
+        val manager: ExtensionManager
+
+        init {
+            oldApk.writeBytes("old target apk".toByteArray())
+            oldJar.writeBytes("old target jar".toByteArray())
+            unrelatedApk.writeBytes("unrelated apk".toByteArray())
+            unrelatedJar.writeBytes("unrelated jar".toByteArray())
+            manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(targetRecord, unrelatedRecord)))
+            injectSource(loader, oldSource)
+            injectSource(loader, unrelatedSource)
+
+            val downloader =
+                object : ExtensionDownloadClient {
+                    override fun downloadRepoIndex(url: String): ByteArray =
+                        """[{"name":"Target","pkg":"$TARGET_PACKAGE","apk":"replacement.apk","lang":"en","code":$repositoryVersionCode,"version":"1.2.$repositoryVersionCode","sources":[]}]"""
+                            .toByteArray()
+
+                    override fun downloadApk(
+                        url: String,
+                        targetDir: Path,
+                    ): Path =
+                        Files.createTempFile(targetDir, ".test-download-", ".apk.tmp").also {
+                            it.writeBytes("candidate apk".toByteArray())
+                        }
+                }
+            val preparer =
+                ExtensionPreparer { apk ->
+                    val jar = root.resolve(".prepared-candidate.jar")
+                    writeClassJar(jar, candidateJarSource)
+                    PreparedExtension(
+                        pkgName = candidatePackage,
+                        versionName = "1.2.$candidateVersionCode",
+                        versionCode = candidateVersionCode,
+                        mainClass = candidateJarSource.name,
+                        apkFile = apk,
+                        jarFile = jar,
+                    )
+                }
+            manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
+            manager.setRepos(listOf("https://repo.example.test"))
+            directoryBefore = snapshotDirectory(root)
+        }
+
+        fun assertUnchanged() {
+            assertDirectoryEquals(directoryBefore, snapshotDirectory(root))
+            assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
+            assertSame(unrelatedSource, loader.source(UNRELATED_SOURCE_ID))
+            assertEquals(targetRecord, manager.recordForSource(TARGET_SOURCE_ID))
+            assertEquals(unrelatedRecord, manager.recordForSource(UNRELATED_SOURCE_ID))
+        }
     }
+
+    companion object {
+        private const val TARGET_PACKAGE = "example.extension"
+        private const val UNRELATED_PACKAGE = "unrelated.extension"
+        private const val TARGET_SOURCE_ID = 7L
+        private const val UNRELATED_SOURCE_ID = 9L
+
+        private fun installedRecord(
+            pkgName: String,
+            apkFileName: String,
+            sourceIds: List<Long>,
+        ) =
+            InstalledExtension(
+                pkgName = pkgName,
+                name = pkgName,
+                versionName = "1.2.1",
+                versionCode = 1,
+                lang = "en",
+                apkFileName = apkFileName,
+                mainClass = "example.Extension",
+                isNsfw = false,
+                iconUrl = null,
+                repoUrl = null,
+                sourceIds = sourceIds,
+                sources = sourceIds.map { ExtensionSourceDto(it, pkgName, "en") },
+            )
+
+        private fun snapshotDirectory(root: Path): Map<String, ByteArray> =
+            root.listDirectoryEntries().associate { it.fileName.toString() to it.readBytes() }
+
+        private fun assertDirectoryEquals(
+            expected: Map<String, ByteArray>,
+            actual: Map<String, ByteArray>,
+        ) {
+            assertEquals(expected.keys, actual.keys, "extension-directory listing changed")
+            expected.forEach { (name, bytes) -> assertContentEquals(bytes, actual.getValue(name), "$name bytes changed") }
+        }
+
+        private fun injectSource(
+            loader: ExtensionLoader,
+            source: Source,
+        ) {
+            val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            val registry = field.get(loader) as MutableMap<Long, Source>
+            registry[source.id] = source
+        }
+
+        private fun writeClassJar(
+            target: Path,
+            sourceClass: Class<*>,
+        ) {
+            val entryName = sourceClass.name.replace('.', '/') + ".class"
+            val classBytes = requireNotNull(sourceClass.classLoader.getResourceAsStream(entryName)) { "missing $entryName" }.use { it.readBytes() }
+            ZipOutputStream(Files.newOutputStream(target)).use { jar ->
+                jar.putNextEntry(ZipEntry(entryName))
+                jar.write(classBytes)
+                jar.closeEntry()
+            }
+        }
+    }
+
 }
 
 private class TestSource(
     override val id: Long,
 ) : Source {
     override val name: String = "Test Source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = error("unused")
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal class CandidateSource : Source {
+    override val id: Long = 9L
+    override val name: String = "Candidate Source"
     override val lang: String = "en"
     override val supportsLatest: Boolean = false
 

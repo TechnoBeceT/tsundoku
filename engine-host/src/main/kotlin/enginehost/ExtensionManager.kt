@@ -47,6 +47,12 @@ data class InstalledExtension(
     val sources: List<ExtensionSourceDto>,
 )
 
+/** Repository identity that a prepared APK must match exactly before it can replace active state. */
+private data class ExpectedArtifact(
+    val pkgName: String,
+    val versionCode: Long,
+)
+
 /**
  * ExtensionManager owns the extension working-set on the mounted volume — the configured repo
  * URLs, the installed APKs, and a JSON install-manifest — and drives install/update/uninstall
@@ -227,6 +233,7 @@ class ExtensionManager internal constructor(
             url = url,
             repoUrl = repoUrl,
             repoEntry = repoEntry,
+            expectedArtifact = repoEntry?.let { ExpectedArtifact(it.pkg, it.code) },
             expectedRepos = if (apkUrl == null) stateSnapshot.repos else null,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -262,6 +269,7 @@ class ExtensionManager internal constructor(
             url = entry.apkUrl,
             repoUrl = repoUrl,
             repoEntry = entry,
+            expectedArtifact = ExpectedArtifact(entry.pkg, entry.code),
             expectedRepos = stateSnapshot.repos,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -285,6 +293,7 @@ class ExtensionManager internal constructor(
         url: String,
         repoUrl: String?,
         repoEntry: RepoIndexEntry?,
+        expectedArtifact: ExpectedArtifact?,
         expectedRepos: List<String>?,
         expectedMutationSequence: Long,
     ): List<ExtensionDto> {
@@ -299,7 +308,7 @@ class ExtensionManager internal constructor(
                 require(expectedRepos == null || repos == expectedRepos) {
                     "extension repositories changed while preparing the install"
                 }
-                applyPrepared(prepared, apkFileNameFor(url), repoUrl, repoEntry)
+                applyPrepared(prepared, apkFileNameFor(url), repoUrl, repoEntry, expectedArtifact)
                 mutationSequence++
             }
         } finally {
@@ -330,8 +339,36 @@ class ExtensionManager internal constructor(
         requestedApkFileName: String,
         repoUrl: String?,
         repoEntry: RepoIndexEntry?,
+        expectedArtifact: ExpectedArtifact?,
     ) {
-        val old = installed[prepared.pkgName]
+        expectedArtifact?.let { expected ->
+            require(prepared.pkgName == expected.pkgName) {
+                "prepared APK package '${prepared.pkgName}' does not match requested package '${expected.pkgName}'"
+            }
+            require(prepared.versionCode == expected.versionCode) {
+                "prepared APK version ${prepared.versionCode} does not match repository version ${expected.versionCode}"
+            }
+        }
+
+        val replacementPackage = expectedArtifact?.pkgName ?: prepared.pkgName
+        val old = installed[replacementPackage]
+        if (expectedArtifact != null && old != null) {
+            require(prepared.versionCode > old.versionCode) {
+                "prepared APK version ${prepared.versionCode} is not newer than installed version ${old.versionCode}"
+            }
+        }
+
+        val candidateSourceIds = loader.inspectPreparedSourceIds(prepared)
+        require(candidateSourceIds.size == candidateSourceIds.toSet().size) {
+            "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
+        }
+        candidateSourceIds.forEach { sourceId ->
+            val owner = installed.values.firstOrNull { sourceId in it.sourceIds }
+            require(owner == null || owner.pkgName == replacementPackage) {
+                "source ID $sourceId is already owned by '${owner?.pkgName}'"
+            }
+        }
+
         val apkTarget = unusedTarget(requestedApkFileName)
         val jarTarget = apkTarget.resolveSibling(apkTarget.fileName.toString().substringBeforeLast('.') + ".jar")
         var apkMoved = false
@@ -343,6 +380,9 @@ class ExtensionManager internal constructor(
             jarMoved = true
             val installedPrepared = prepared.copy(apkFile = apkTarget, jarFile = jarTarget)
             val ext = loader.instantiatePrepared(installedPrepared)
+            require(ext.sources.map { it.id }.toSet() == candidateSourceIds.toSet()) {
+                "prepared APK '${prepared.pkgName}' source IDs changed during activation"
+            }
             val record =
                 InstalledExtension(
                     pkgName = ext.pkgName,
@@ -351,7 +391,7 @@ class ExtensionManager internal constructor(
                     versionCode = ext.versionCode,
                     lang = repoEntry?.lang ?: (ext.sources.map { it.lang }.toSet().singleOrNull() ?: "all"),
                     apkFileName = apkTarget.fileName.toString(),
-                    mainClass = ext.mainClass,
+                    mainClass = installedPrepared.mainClass,
                     isNsfw = repoEntry?.nsfw == 1,
                     iconUrl = repoEntry?.iconUrl,
                     repoUrl = repoUrl,

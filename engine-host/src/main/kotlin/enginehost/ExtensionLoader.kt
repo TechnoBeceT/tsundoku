@@ -159,6 +159,17 @@ class ExtensionLoader(
         )
     }
 
+    /**
+     * Instantiate a staged candidate only long enough to inspect its declared source IDs, then
+     * close and evict the staging-path classloader. The active registry is never changed.
+     */
+    internal fun inspectPreparedSourceIds(prepared: PreparedExtension): List<Long> =
+        try {
+            instantiatePrepared(prepared).sources.map { it.id }
+        } finally {
+            PackageTools.jarLoaderMap.remove(prepared.jarFile.toString())?.close()
+        }
+
     /** Expose a complete replacement source set after every fallible preparation step has passed. */
     internal fun registerReplacement(
         previousSourceIds: Collection<Long>,
