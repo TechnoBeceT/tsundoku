@@ -22,6 +22,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/fetcher/fake"
 	"github.com/technobecet/tsundoku/internal/settings"
@@ -647,6 +648,7 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 		seriesMangaID   = 77                              // SeriesProvider.suwayomi_id (manga-level)
 		chapterSuwayomi = 999                             // ProviderChapter.suwayomi_chapter_id (chapter-level)
 		seriesURL       = "https://suwayomi.test/manga/1" // SeriesProvider.url (series-scoped)
+		webURL          = "https://source.test/manga/1"
 	)
 
 	s := client.Series.Create().SetTitle("FetchRef Series").SetSlug("fetchref-series").SaveX(ctx)
@@ -654,7 +656,9 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 		SetSeries(s).
 		SetProvider("suwayomi").
 		SetImportance(10).
-		SetURL(seriesURL).            // series-scoped URL — must appear in FetchRef.MangaURL
+		SetURL(seriesURL). // series-scoped URL — must appear in FetchRef.MangaURL
+		SetWebURL(webURL).
+		SetAddressMode(entseriesprovider.AddressModeDirect).
 		SetSuwayomiID(seriesMangaID). // manga-level ID — must NOT appear in FetchRef
 		SaveX(ctx)
 	client.ProviderChapter.Create().
@@ -679,6 +683,8 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	cf.mu.Lock()
 	gotSuwayomiID := cf.ref.SuwayomiID
 	gotMangaURL := cf.ref.MangaURL
+	gotAddressMode := cf.ref.AddressMode
+	gotWebURL := cf.ref.WebURL
 	cf.mu.Unlock()
 
 	if gotSuwayomiID != chapterSuwayomi {
@@ -689,6 +695,45 @@ func TestDispatcher_BuildFetchRef_SuwayomiID(t *testing.T) {
 	if gotMangaURL != seriesURL {
 		t.Errorf("FetchRef.MangaURL: got %q, want %q (SeriesProvider.url) — "+
 			"buildFetchRef is not threading the series URL for GAP-109", gotMangaURL, seriesURL)
+	}
+	if gotAddressMode != "direct" {
+		t.Errorf("FetchRef.AddressMode: got %q, want direct", gotAddressMode)
+	}
+	if gotWebURL != webURL {
+		t.Errorf("FetchRef.WebURL: got %q, want %q", gotWebURL, webURL)
+	}
+}
+
+func TestDispatcher_PersistsResolvedAddressMode(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	storageDir := mustTempDir(t)
+
+	s := client.Series.Create().SetTitle("Resolved Mode").SetSlug("resolved-mode").SaveX(ctx)
+	sp := client.SeriesProvider.Create().
+		SetSeries(s).
+		SetProvider("42").
+		SetImportance(10).
+		SetURL("/manga/resolved").
+		SaveX(ctx)
+	client.ProviderChapter.Create().
+		SetSeriesProviderID(sp.ID).
+		SetChapterKey("ch-1").
+		SetURL("/chapter/1").
+		SetProviderIndex(0).
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("ch-1").SaveX(ctx)
+
+	d := download.New(client, &fetchRefCapture{resolvedMode: "url_search"}, sse.NewHub(), download.Config{
+		Storage: storageDir,
+	}, settings.Static{Retries: 3, Backoff: time.Hour}, nil)
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	got := client.SeriesProvider.GetX(ctx, sp.ID)
+	if got.AddressMode != entseriesprovider.AddressModeURLSearch {
+		t.Fatalf("address mode = %q, want url_search", got.AddressMode)
 	}
 }
 
@@ -744,8 +789,9 @@ func TestDispatcher_RendersToSeriesCategory(t *testing.T) {
 // fetchRefCapture is a fetcher.ChapterFetcher that records the last FetchRef
 // it received and returns a single-page success so the dispatcher can complete.
 type fetchRefCapture struct {
-	mu  sync.Mutex
-	ref fetcher.FetchRef
+	mu           sync.Mutex
+	ref          fetcher.FetchRef
+	resolvedMode string
 }
 
 // Fetch records ref and returns a minimal valid ChapterPages.
@@ -754,8 +800,9 @@ func (c *fetchRefCapture) Fetch(_ context.Context, ref fetcher.FetchRef) (fetche
 	c.ref = ref
 	c.mu.Unlock()
 	return fetcher.ChapterPages{
-		Pages:     []fetcher.PageImage{{Data: []byte{0xFF}, Ext: "jpg"}},
-		PageCount: 1,
+		Pages:               []fetcher.PageImage{{Data: []byte{0xFF}, Ext: "jpg"}},
+		PageCount:           1,
+		ResolvedAddressMode: c.resolvedMode,
 	}, nil
 }
 

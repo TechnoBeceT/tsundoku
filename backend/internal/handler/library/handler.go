@@ -133,7 +133,7 @@ func (h *Handler) Import(c echo.Context) error {
 
 	refs := make([]library.ProviderRef, len(body.Matches))
 	for i, m := range body.Matches {
-		refs[i] = library.ProviderRef{Source: m.Source, MangaID: m.MangaID, URL: m.URL, Scanlator: m.Scanlator}
+		refs[i] = library.ProviderRef{Source: m.Source, MangaID: m.MangaID, URL: m.URL, AddressMode: m.AddressMode, WebURL: m.WebURL, Scanlator: m.Scanlator}
 	}
 
 	out, err := h.svc.Import(c.Request().Context(), body.Path, refs)
@@ -216,7 +216,7 @@ func (h *Handler) AddProvider(c echo.Context) error {
 		return err
 	}
 
-	out, err := h.svc.AddProvider(c.Request().Context(), id, body.Source, body.URL, body.Importance, body.Scanlator)
+	out, err := h.svc.AddProviderRef(c.Request().Context(), id, library.ProviderRef{Source: body.Source, MangaID: body.MangaID, URL: body.URL, AddressMode: body.AddressMode, WebURL: body.WebURL, Scanlator: body.Scanlator}, body.Importance)
 	if err != nil {
 		return mapServiceError(err)
 	}
@@ -246,7 +246,7 @@ func (h *Handler) AddProviders(c echo.Context) error {
 
 	refs := make([]library.ProviderRef, len(body.Providers))
 	for i, p := range body.Providers {
-		refs[i] = library.ProviderRef{Source: p.Source, MangaID: p.MangaID, URL: p.URL, Scanlator: p.Scanlator}
+		refs[i] = library.ProviderRef{Source: p.Source, MangaID: p.MangaID, URL: p.URL, AddressMode: p.AddressMode, WebURL: p.WebURL, Scanlator: p.Scanlator}
 	}
 
 	out, err := h.svc.AddProviders(c.Request().Context(), id, refs)
@@ -300,7 +300,7 @@ func (h *Handler) MatchDiskProvider(c echo.Context) error {
 		return err
 	}
 
-	started := h.svc.StartMatchDiskProvider(c.Request().Context(), id, providerID, body.Source, body.URL, body.Scanlator, body.Importance)
+	started := h.svc.StartMatchDiskProviderRef(c.Request().Context(), id, providerID, library.ProviderRef{Source: body.Source, MangaID: body.MangaID, URL: body.URL, AddressMode: body.AddressMode, WebURL: body.WebURL, Scanlator: body.Scanlator}, body.Importance)
 	if !started {
 		return c.JSON(http.StatusConflict, matchStartedResponse{Started: false})
 	}

@@ -124,6 +124,20 @@ func (_c *SeriesProviderCreate) SetNillableWebURL(v *string) *SeriesProviderCrea
 	return _c
 }
 
+// SetAddressMode sets the "address_mode" field.
+func (_c *SeriesProviderCreate) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderCreate {
+	_c.mutation.SetAddressMode(v)
+	return _c
+}
+
+// SetNillableAddressMode sets the "address_mode" field if the given value is not nil.
+func (_c *SeriesProviderCreate) SetNillableAddressMode(v *seriesprovider.AddressMode) *SeriesProviderCreate {
+	if v != nil {
+		_c.SetAddressMode(*v)
+	}
+	return _c
+}
+
 // SetTitle sets the "title" field.
 func (_c *SeriesProviderCreate) SetTitle(v string) *SeriesProviderCreate {
 	_c.mutation.SetTitle(v)
@@ -373,6 +387,10 @@ func (_c *SeriesProviderCreate) defaults() {
 		v := seriesprovider.DefaultWebURL
 		_c.mutation.SetWebURL(v)
 	}
+	if _, ok := _c.mutation.AddressMode(); !ok {
+		v := seriesprovider.DefaultAddressMode
+		_c.mutation.SetAddressMode(v)
+	}
 	if _, ok := _c.mutation.Title(); !ok {
 		v := seriesprovider.DefaultTitle
 		_c.mutation.SetTitle(v)
@@ -434,6 +452,14 @@ func (_c *SeriesProviderCreate) check() error {
 	}
 	if _, ok := _c.mutation.WebURL(); !ok {
 		return &ValidationError{Name: "web_url", err: errors.New(`ent: missing required field "SeriesProvider.web_url"`)}
+	}
+	if _, ok := _c.mutation.AddressMode(); !ok {
+		return &ValidationError{Name: "address_mode", err: errors.New(`ent: missing required field "SeriesProvider.address_mode"`)}
+	}
+	if v, ok := _c.mutation.AddressMode(); ok {
+		if err := seriesprovider.AddressModeValidator(v); err != nil {
+			return &ValidationError{Name: "address_mode", err: fmt.Errorf(`ent: validator failed for field "SeriesProvider.address_mode": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.Title(); !ok {
 		return &ValidationError{Name: "title", err: errors.New(`ent: missing required field "SeriesProvider.title"`)}
@@ -528,6 +554,10 @@ func (_c *SeriesProviderCreate) createSpec() (*SeriesProvider, *sqlgraph.CreateS
 	if value, ok := _c.mutation.WebURL(); ok {
 		_spec.SetField(seriesprovider.FieldWebURL, field.TypeString, value)
 		_node.WebURL = value
+	}
+	if value, ok := _c.mutation.AddressMode(); ok {
+		_spec.SetField(seriesprovider.FieldAddressMode, field.TypeEnum, value)
+		_node.AddressMode = value
 	}
 	if value, ok := _c.mutation.Title(); ok {
 		_spec.SetField(seriesprovider.FieldTitle, field.TypeString, value)
@@ -793,6 +823,18 @@ func (u *SeriesProviderUpsert) SetWebURL(v string) *SeriesProviderUpsert {
 // UpdateWebURL sets the "web_url" field to the value that was provided on create.
 func (u *SeriesProviderUpsert) UpdateWebURL() *SeriesProviderUpsert {
 	u.SetExcluded(seriesprovider.FieldWebURL)
+	return u
+}
+
+// SetAddressMode sets the "address_mode" field.
+func (u *SeriesProviderUpsert) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderUpsert {
+	u.Set(seriesprovider.FieldAddressMode, v)
+	return u
+}
+
+// UpdateAddressMode sets the "address_mode" field to the value that was provided on create.
+func (u *SeriesProviderUpsert) UpdateAddressMode() *SeriesProviderUpsert {
+	u.SetExcluded(seriesprovider.FieldAddressMode)
 	return u
 }
 
@@ -1085,6 +1127,20 @@ func (u *SeriesProviderUpsertOne) SetWebURL(v string) *SeriesProviderUpsertOne {
 func (u *SeriesProviderUpsertOne) UpdateWebURL() *SeriesProviderUpsertOne {
 	return u.Update(func(s *SeriesProviderUpsert) {
 		s.UpdateWebURL()
+	})
+}
+
+// SetAddressMode sets the "address_mode" field.
+func (u *SeriesProviderUpsertOne) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetAddressMode(v)
+	})
+}
+
+// UpdateAddressMode sets the "address_mode" field to the value that was provided on create.
+func (u *SeriesProviderUpsertOne) UpdateAddressMode() *SeriesProviderUpsertOne {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateAddressMode()
 	})
 }
 
@@ -1562,6 +1618,20 @@ func (u *SeriesProviderUpsertBulk) SetWebURL(v string) *SeriesProviderUpsertBulk
 func (u *SeriesProviderUpsertBulk) UpdateWebURL() *SeriesProviderUpsertBulk {
 	return u.Update(func(s *SeriesProviderUpsert) {
 		s.UpdateWebURL()
+	})
+}
+
+// SetAddressMode sets the "address_mode" field.
+func (u *SeriesProviderUpsertBulk) SetAddressMode(v seriesprovider.AddressMode) *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.SetAddressMode(v)
+	})
+}
+
+// UpdateAddressMode sets the "address_mode" field to the value that was provided on create.
+func (u *SeriesProviderUpsertBulk) UpdateAddressMode() *SeriesProviderUpsertBulk {
+	return u.Update(func(s *SeriesProviderUpsert) {
+		s.UpdateAddressMode()
 	})
 }
 

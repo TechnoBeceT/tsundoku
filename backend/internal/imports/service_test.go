@@ -1048,6 +1048,7 @@ func TestService_Search_CandidateFields(t *testing.T) {
 				Title:        "Attack on Titan",
 				ThumbnailURL: "http://thumb.test/img.jpg",
 				RealURL:      "https://source.test/manga/attack-on-titan",
+				AddressMode:  sourceengine.AddressModeDirect,
 			}}},
 		},
 	}
@@ -1080,14 +1081,16 @@ func TestService_Search_CandidateFields(t *testing.T) {
 	if c.ThumbnailURL != wantThumbnail {
 		t.Errorf("Candidate.ThumbnailURL: got %q, want %q (raw engine-host thumbnail URL, no proxy indirection)", c.ThumbnailURL, wantThumbnail)
 	}
+	assertCandidateAddressMode(t, "Search candidate", c.AddressMode, sourceengine.AddressModeDirect)
 }
 
 // TestService_Search_CandidateFields_RealURL is the realUrl round-trip proof
 // for Search (split out from TestService_Search_CandidateFields to keep that
 // function's cyclomatic complexity within the fleet lint budget): the
 // browser-clickable "View on source" link is carried straight off
-// sourceengine.MangaEntry.RealURL onto SearchCandidateDTO.RealURL, distinct
-// from the addressing URL.
+// sourceengine.MangaEntry.RealURL onto SearchCandidateDTO.RealURL. It is the
+// browser witness rather than the engine address, though their values may be
+// identical.
 func TestService_Search_CandidateFields_RealURL(t *testing.T) {
 	t.Parallel()
 
@@ -1115,7 +1118,7 @@ func TestService_Search_CandidateFields_RealURL(t *testing.T) {
 	c := got[0].Candidates[0]
 	const wantRealURL = "https://source.test/manga/attack-on-titan"
 	if c.RealURL != wantRealURL {
-		t.Errorf("Candidate.RealURL: got %q, want %q (the browser-clickable View-on-source link, distinct from the addressing url)", c.RealURL, wantRealURL)
+		t.Errorf("Candidate.RealURL: got %q, want %q (the browser-clickable View-on-source witness)", c.RealURL, wantRealURL)
 	}
 }
 
@@ -1200,7 +1203,7 @@ func TestService_Browse_Popular(t *testing.T) {
 		popularResults: map[int64]sourceengine.SearchResult{
 			1: {
 				Manga: []sourceengine.MangaEntry{
-					{Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: "http://t/1", RealURL: "https://source.test/manga/solo-leveling"},
+					{Title: "Solo Leveling", URL: "/manga/1", ThumbnailURL: "http://t/1", RealURL: "https://source.test/manga/solo-leveling", AddressMode: sourceengine.AddressModeURLSearch},
 					{Title: "Omniscient Reader", URL: "/manga/2"}, // ThumbnailURL + RealURL omitted
 				},
 				HasNextPage: true,
@@ -1232,12 +1235,13 @@ func TestService_Browse_Popular(t *testing.T) {
 	if c0.ThumbnailURL != wantThumbnail {
 		t.Errorf("Browse candidate[0].ThumbnailURL: got %q, want %q", c0.ThumbnailURL, wantThumbnail)
 	}
-	// realUrl is the browser-clickable "View on source" link, distinct from
-	// the addressing url.
+	// realUrl is the browser-clickable "View on source" witness. It has a
+	// different purpose from the addressing URL, though their values may match.
 	const wantRealURL = "https://source.test/manga/solo-leveling"
 	if c0.RealURL != wantRealURL {
 		t.Errorf("Browse candidate[0].RealURL: got %q, want %q", c0.RealURL, wantRealURL)
 	}
+	assertCandidateAddressMode(t, "Browse candidate[0]", c0.AddressMode, sourceengine.AddressModeURLSearch)
 	// Omitted thumbnail → empty string.
 	if got.Manga[1].ThumbnailURL != "" {
 		t.Errorf("Browse candidate[1].ThumbnailURL: got %q, want empty", got.Manga[1].ThumbnailURL)
@@ -1260,6 +1264,13 @@ func assertCandidateTags(t *testing.T, c imports.SearchCandidateDTO, wantSource,
 	}
 	if c.Lang != wantLang {
 		t.Errorf("candidate.Lang: got %q, want %q", c.Lang, wantLang)
+	}
+}
+
+func assertCandidateAddressMode(t *testing.T, label string, got, want sourceengine.AddressMode) {
+	t.Helper()
+	if got != want {
+		t.Errorf("%s.AddressMode: got %q, want %q", label, got, want)
 	}
 }
 
@@ -1408,6 +1419,34 @@ func TestService_MangaDetails_UnknownSource(t *testing.T) {
 	_, err := svc.MangaDetails(context.Background(), "ghost", "/manga/1")
 	if !errors.Is(err, imports.ErrSourceNotFound) {
 		t.Errorf("MangaDetails unknown source: err = %v, want ErrSourceNotFound", err)
+	}
+}
+
+func TestService_MangaDetailsRefPreservesKnownCandidateContextWhenLegacyResponseOmitsIt(t *testing.T) {
+	t.Parallel()
+
+	const webURL = "https://source.test/manga/legacy-details"
+	fc := &fakeClient{
+		sources: []sourceengine.Source{{ID: 1, Name: "Alpha Source", Lang: "en"}},
+		detailsByURL: map[string]sourceengine.MangaDetails{
+			"/manga/legacy-details": {Title: "Legacy Details"},
+		},
+	}
+
+	got, err := newService(fc).MangaDetailsRef(
+		context.Background(), "1", "/manga/legacy-details", sourceengine.AddressModeDirect, webURL,
+	)
+	if err != nil {
+		t.Fatalf("MangaDetailsRef: %v", err)
+	}
+	if got.AddressMode != sourceengine.AddressModeDirect {
+		t.Fatalf("address mode = %q, want retained direct", got.AddressMode)
+	}
+	if got.RealURL != webURL {
+		t.Fatalf("real URL = %q, want retained witness %q", got.RealURL, webURL)
+	}
+	if got.URL != "/manga/legacy-details" {
+		t.Fatalf("address URL = %q, want original URL retained", got.URL)
 	}
 }
 
@@ -1643,6 +1682,7 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 		canonicalTitle = "Solo Leveling"
 		srcA           = "1"
 		urlA           = "/manga/101"
+		webURLA        = "https://source.test/manga/101"
 		impA           = 10 // higher importance → ranked first
 		srcB           = "2"
 		urlB           = "/manga/202"
@@ -1661,7 +1701,7 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 	id, err := svc.Adopt(ctx, imports.AdoptRequest{
 		Title: canonicalTitle,
 		Providers: []imports.AdoptProvider{
-			{Source: srcA, URL: urlA, Importance: impA},
+			{Source: srcA, URL: urlA, AddressMode: sourceengine.AddressModeDirect, WebURL: webURLA, Importance: impA},
 			{Source: srcB, URL: urlB, Importance: impB},
 		},
 	})
@@ -1675,6 +1715,13 @@ func TestService_Adopt_TwoProviders(t *testing.T) {
 	assertAdoptSeries(t, ctx, db, canonicalTitle, id)
 	assertAdoptProviders(t, ctx, db, 2, map[string]int{srcA: impA, srcB: impB})
 	assertAdoptChapters(t, ctx, db, 3)
+	providerA := db.SeriesProvider.Query().Where(entseriesprovider.ProviderEQ(srcA)).OnlyX(ctx)
+	if providerA.AddressMode != entseriesprovider.AddressModeDirect {
+		t.Errorf("provider A address mode = %q, want direct", providerA.AddressMode)
+	}
+	if providerA.WebURL != webURLA {
+		t.Errorf("provider A web URL = %q, want %q", providerA.WebURL, webURLA)
+	}
 }
 
 // TestService_Adopt_UngatedBypassesTrippedBreaker proves Adopt uses the UNGATED

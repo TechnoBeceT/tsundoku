@@ -1,29 +1,45 @@
 package enginehost
 
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonValue
+
+enum class AddressMode(@get:JsonValue val wire: String) {
+    UNKNOWN("unknown"),
+    DIRECT("direct"),
+    URL_SEARCH("url_search"),
+    ;
+
+    companion object {
+        @JvmStatic @JsonCreator fun fromWire(value: String?) = entries.firstOrNull { it.wire == value } ?: UNKNOWN
+    }
+}
+
 /*
  * Tsundoku engine-host — RPC data-transfer objects.
  *
  * Every request/response is addressed by STABLE (sourceId, url) — never an
  * engine-assigned opaque id. This is the whole point of the Suwayomi-removal
  * milestone: a DB rebuild + extension reinstall yields the same source ids and
- * the same source-relative URLs, so a stored key always resolves to the same
- * series (killing the "wrong-series download" bug).
+ * the same extension-owned serialized addresses, so a stored key always resolves
+ * to the same series (killing the "wrong-series download" bug).
  */
 
 /**
- * A manga entry in a search/browse result — addressed by its source-relative [url].
+ * A manga entry in a search/browse result — addressed by its source-owned serialized [url].
  *
  * [url] is the ADDRESSING url: what every subsequent request sends back to identify this manga.
- * It is source-relative and not necessarily a browser-openable link. [realUrl] is the fully-
- * qualified, browser-clickable url (Mihon's `HttpSource.getMangaUrl`) — powers the owner-facing
- * "View on source" external link. The two are NEVER the same thing; never fall back from one to
- * the other.
+ * Depending on [addressMode], it may be a relative or opaque extension key, or an absolute
+ * cross-origin URL retained for URL-search hydration. [realUrl] is the browser-clickable URL
+ * (Mihon's `HttpSource.getMangaUrl`) that powers the owner-facing "View on source" link and acts
+ * only as the optional legacy-resolution witness. It may equal [url] when the source's addressing
+ * value is already the absolute browser URL.
  */
 data class MangaEntryDto(
     val url: String,
     val title: String,
     val thumbnailUrl: String?,
     val realUrl: String?,
+    val addressMode: AddressMode = AddressMode.UNKNOWN,
 )
 
 /** Full manga details, keyed by [url]. See [MangaEntryDto] for the [url] vs [realUrl] distinction. */
@@ -37,11 +53,12 @@ data class MangaDetailsDto(
     val status: String,
     val thumbnailUrl: String?,
     val realUrl: String?,
+    val addressMode: AddressMode = AddressMode.UNKNOWN,
 )
 
 /**
- * A chapter of a manga — addressed by its source-relative [url]. See [MangaEntryDto] for the
- * [url] (addressing) vs [realUrl] (browser-clickable) distinction — the same rule applies here.
+ * A chapter of a manga — addressed by its source-owned [url], whose shape may be relative, opaque,
+ * or absolute. See [MangaEntryDto] for the addressing vs browser-link distinction.
  */
 data class ChapterDto(
     val url: String,
@@ -89,7 +106,7 @@ data class SearchRequest(
 /** Popular / latest browse of a source's catalogue (no query). */
 data class BrowseRequest(val sourceId: Long, val page: Int = 1)
 
-data class MangaRequest(val sourceId: Long, val url: String)
+data class MangaRequest(val sourceId: Long, val url: String, val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /**
  * [mangaTitle] feeds [enginehost.vendor.ChapterRecognition] (the vendored Suwayomi
@@ -98,17 +115,18 @@ data class MangaRequest(val sourceId: Long, val url: String)
  * than without. Optional/defaulted to "" for backward compatibility; recognition still works on ""
  * (it just skips the title-strip step).
  */
-data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "")
+data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /**
- * [mangaUrl] is the OPTIONAL source-relative SERIES url the chapter belongs to. Supplying it lets
+ * [mangaUrl] is the OPTIONAL source-owned serialized SERIES address the chapter belongs to.
+ * Supplying it lets
  * [SourceCalls.pages] run a series-scoped chapter fetch and hand the real memo-bearing SChapter to
  * `getPageList` — required by the keiyoushi `KeiSource` family (AsuraScans / HiveScans / VortexScans),
  * whose `getChapterUrl` reads a per-chapter `memo["mangaSlug"]` a bare url-only seed lacks (GAP-109).
  * Defaulted to "" for backward compatibility: a blank value keeps the original bare-seed page fetch,
  * which is correct for every source whose `getPageList` needs only the chapter url.
  */
-data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "")
+data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /** [pageUrl] = the page's [PageDto.url]; [imageUrl] = the page's [PageDto.imageUrl] (may be null). */
 data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: String? = null)
@@ -117,9 +135,9 @@ data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: S
 
 data class SearchResponse(val manga: List<MangaEntryDto>, val hasNextPage: Boolean)
 
-data class ChaptersResponse(val chapters: List<ChapterDto>)
+data class ChaptersResponse(val chapters: List<ChapterDto>, val addressMode: AddressMode = AddressMode.UNKNOWN)
 
-data class PagesResponse(val pages: List<PageDto>)
+data class PagesResponse(val pages: List<PageDto>, val addressMode: AddressMode = AddressMode.UNKNOWN)
 
 data class ErrorResponse(val error: String)
 

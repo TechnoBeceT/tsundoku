@@ -274,7 +274,7 @@ class EngineIsolationIntegrationTest {
         assertEquals(200, healthyResponse.statusCode())
         assertEquals(
             mapper.readTree(
-                """{"url":"/healthy/7","title":"Healthy response","author":"Source B","artist":null,"description":"response fidelity fixture","genres":["Action","Adventure"],"status":"UNKNOWN","thumbnailUrl":null,"realUrl":null}""",
+                """{"url":"/healthy/7","title":"Healthy response","author":"Source B","artist":null,"description":"response fidelity fixture","genres":["Action","Adventure"],"status":"UNKNOWN","thumbnailUrl":null,"realUrl":null,"addressMode":"direct"}""",
             ),
             mapper.readTree(healthyResponse.body()),
         )

@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
 
@@ -59,7 +60,7 @@ func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 	}
 
 	refs := []library.ProviderRef{
-		{Source: "1", URL: "/manga/91", Scanlator: ""},
+		{Source: "1", URL: "/manga/91", AddressMode: sourceengine.AddressModeDirect, WebURL: "https://source.test/manga/91", Scanlator: ""},
 		{Source: "2", URL: "/manga/92", Scanlator: ""},
 	}
 	dto, err := svc.AddProviders(ctx, ser.ID, refs)
@@ -76,6 +77,12 @@ func TestAddProviders_AttachesBelowExisting(t *testing.T) {
 	assertProviderImportanceDB(t, ctx, client, ser.ID, "1", 20)
 	assertProviderImportanceDB(t, ctx, client, ser.ID, "2", 10)
 	assertProviderImportanceDB(t, ctx, client, ser.ID, "mangadex", 30)
+	addressed := client.SeriesProvider.Query().
+		Where(seriesprovider.SeriesID(ser.ID), seriesprovider.Provider("1")).
+		OnlyX(ctx)
+	if addressed.AddressMode != seriesprovider.AddressModeDirect || addressed.WebURL != "https://source.test/manga/91" {
+		t.Errorf("provider address context = (%q, %q), want (direct, web URL)", addressed.AddressMode, addressed.WebURL)
+	}
 
 	found := make(map[string]int, len(dto.Providers))
 	for _, p := range dto.Providers {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // ComputeCoverage runs ONE per-scanlator coverage computation to completion
@@ -22,6 +24,12 @@ import (
 // still needs the terminal event even though nothing about this
 // computation ever reached "pending", let alone "ready".
 func (s *Service) ComputeCoverage(ctx context.Context, sourceID, url, mangaTitle string) error {
+	return s.ComputeCoverageRef(ctx, sourceID, url, sourceengine.AddressModeUnknown, "", mangaTitle)
+}
+
+// ComputeCoverageRef runs a coverage computation with the candidate's complete
+// engine address context.
+func (s *Service) ComputeCoverageRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL, mangaTitle string) error {
 	if err := s.markCoveragePending(ctx, sourceID, url); err != nil {
 		// The very first store write already failed. failCoverage is
 		// best-effort here: it can fail for the SAME reason
@@ -39,7 +47,7 @@ func (s *Service) ComputeCoverage(ctx context.Context, sourceID, url, mangaTitle
 		return fmt.Errorf("imports.ComputeCoverage: mark pending %s %s: %w", sourceID, url, err)
 	}
 
-	dto, err := s.SourceBreakdown(ctx, sourceID, url, mangaTitle)
+	dto, err := s.SourceBreakdownRef(ctx, sourceID, url, mode, webURL, mangaTitle)
 	if err != nil {
 		if failErr := s.failCoverage(ctx, sourceID, url, err); failErr != nil {
 			slog.WarnContext(ctx, "imports.ComputeCoverage: could not persist the failure",

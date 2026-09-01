@@ -38,8 +38,8 @@ type Client struct {
 	sources        []sourceengine.Source
 	searchResults  map[int64]sourceengine.SearchResult
 	mangaDetails   map[contentKey]sourceengine.MangaDetails
-	chapters       map[contentKey][]sourceengine.Chapter
-	pages          map[contentKey][]sourceengine.Page
+	chapters       map[contentKey]sourceengine.ChaptersResult
+	pages          map[contentKey]sourceengine.PagesResult
 	images         map[contentKey]imageEntry
 	coverImages    map[contentKey]imageEntry
 	extensions     []sourceengine.Extension
@@ -64,8 +64,8 @@ func New(opts ...Option) *Client {
 	c := &Client{
 		searchResults: map[int64]sourceengine.SearchResult{},
 		mangaDetails:  map[contentKey]sourceengine.MangaDetails{},
-		chapters:      map[contentKey][]sourceengine.Chapter{},
-		pages:         map[contentKey][]sourceengine.Page{},
+		chapters:      map[contentKey]sourceengine.ChaptersResult{},
+		pages:         map[contentKey]sourceengine.PagesResult{},
 		images:        map[contentKey]imageEntry{},
 		coverImages:   map[contentKey]imageEntry{},
 		preferences:   map[int64][]sourceengine.Preference{},
@@ -98,12 +98,22 @@ func WithMangaDetails(sourceID int64, url string, details sourceengine.MangaDeta
 
 // WithChapters seeds the chapter list returned for (sourceID, url).
 func WithChapters(sourceID int64, url string, chapters []sourceengine.Chapter) Option {
-	return func(c *Client) { c.chapters[contentKey{sourceID, url}] = chapters }
+	return WithChaptersResult(sourceID, url, sourceengine.ChaptersResult{Chapters: chapters})
+}
+
+// WithChaptersResult seeds chapters plus the engine-resolved address mode.
+func WithChaptersResult(sourceID int64, url string, result sourceengine.ChaptersResult) Option {
+	return func(c *Client) { c.chapters[contentKey{sourceID, url}] = result }
 }
 
 // WithPages seeds the page list returned for (sourceID, chapterURL).
 func WithPages(sourceID int64, chapterURL string, pages []sourceengine.Page) Option {
-	return func(c *Client) { c.pages[contentKey{sourceID, chapterURL}] = pages }
+	return WithPagesResult(sourceID, chapterURL, sourceengine.PagesResult{Pages: pages})
+}
+
+// WithPagesResult seeds pages plus the engine-resolved address mode.
+func WithPagesResult(sourceID int64, chapterURL string, result sourceengine.PagesResult) Option {
+	return func(c *Client) { c.pages[contentKey{sourceID, chapterURL}] = result }
 }
 
 // WithImage seeds the raw bytes + content type returned for (sourceID,
@@ -241,40 +251,57 @@ func (c *Client) searchResultFor(method string, sourceID int64) (sourceengine.Se
 
 // MangaDetails returns the WithMangaDetails-configured details for
 // (sourceID, url).
-func (c *Client) MangaDetails(_ context.Context, sourceID int64, url string) (sourceengine.MangaDetails, error) {
+func (c *Client) MangaDetails(ctx context.Context, sourceID int64, url string) (sourceengine.MangaDetails, error) {
+	return c.MangaDetailsRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url})
+}
+
+// MangaDetailsRef returns the configured details for ref's stable address.
+func (c *Client) MangaDetailsRef(_ context.Context, ref sourceengine.ProviderRef) (sourceengine.MangaDetails, error) {
 	c.record("MangaDetails")
 	if err := c.errFor("MangaDetails"); err != nil {
 		return sourceengine.MangaDetails{}, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.mangaDetails[contentKey{sourceID, url}], nil
+	return c.mangaDetails[contentKey{ref.SourceID, ref.URL}], nil
 }
 
 // Chapters returns the WithChapters-configured chapter list for (sourceID,
 // url). mangaTitle is accepted (interface parity with the real client) but
 // ignored — the fake never runs recognition, so it has no effect here.
-func (c *Client) Chapters(_ context.Context, sourceID int64, url string, _ string) ([]sourceengine.Chapter, error) {
+func (c *Client) Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
+	result, err := c.ChaptersRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, mangaTitle)
+	return result.Chapters, err
+}
+
+// ChaptersRef returns the configured chapters and resolved mode for ref.
+func (c *Client) ChaptersRef(_ context.Context, ref sourceengine.ProviderRef, _ string) (sourceengine.ChaptersResult, error) {
 	c.record("Chapters")
 	if err := c.errFor("Chapters"); err != nil {
-		return nil, err
+		return sourceengine.ChaptersResult{}, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.chapters[contentKey{sourceID, url}], nil
+	return c.chapters[contentKey{ref.SourceID, ref.URL}], nil
 }
 
 // Pages returns the WithPages-configured page list for (sourceID,
 // chapterURL). mangaURL is accepted to satisfy the Client port (the engine uses
 // it for series-scoped memo repopulation, GAP-109) and ignored by the fake.
-func (c *Client) Pages(_ context.Context, sourceID int64, chapterURL, _ string) ([]sourceengine.Page, error) {
+func (c *Client) Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]sourceengine.Page, error) {
+	result, err := c.PagesRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: mangaURL}, chapterURL)
+	return result.Pages, err
+}
+
+// PagesRef returns the configured pages and resolved mode for chapterURL.
+func (c *Client) PagesRef(_ context.Context, ref sourceengine.ProviderRef, chapterURL string) (sourceengine.PagesResult, error) {
 	c.record("Pages")
 	if err := c.errFor("Pages"); err != nil {
-		return nil, err
+		return sourceengine.PagesResult{}, err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.pages[contentKey{sourceID, chapterURL}], nil
+	return c.pages[contentKey{ref.SourceID, chapterURL}], nil
 }
 
 // Image returns the configured bytes + content type for one of two shapes,

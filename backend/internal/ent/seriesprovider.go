@@ -36,6 +36,8 @@ type SeriesProvider struct {
 	URL string `json:"url,omitempty"`
 	// WebURL holds the value of the "web_url" field.
 	WebURL string `json:"web_url,omitempty"`
+	// AddressMode holds the value of the "address_mode" field.
+	AddressMode seriesprovider.AddressMode `json:"address_mode,omitempty"`
 	// Title holds the value of the "title" field.
 	Title string `json:"title,omitempty"`
 	// Metadata holds the value of the "metadata" field.
@@ -124,7 +126,7 @@ func (*SeriesProvider) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case seriesprovider.FieldSuwayomiID, seriesprovider.FieldFlags, seriesprovider.FieldImportance:
 			values[i] = new(sql.NullInt64)
-		case seriesprovider.FieldProvider, seriesprovider.FieldProviderName, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldWebURL, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
+		case seriesprovider.FieldProvider, seriesprovider.FieldProviderName, seriesprovider.FieldScanlator, seriesprovider.FieldLanguage, seriesprovider.FieldURL, seriesprovider.FieldWebURL, seriesprovider.FieldAddressMode, seriesprovider.FieldTitle, seriesprovider.FieldStatus, seriesprovider.FieldCoverURL:
 			values[i] = new(sql.NullString)
 		case seriesprovider.FieldCreatedAt, seriesprovider.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -198,6 +200,12 @@ func (_m *SeriesProvider) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field web_url", values[i])
 			} else if value.Valid {
 				_m.WebURL = value.String
+			}
+		case seriesprovider.FieldAddressMode:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field address_mode", values[i])
+			} else if value.Valid {
+				_m.AddressMode = seriesprovider.AddressMode(value.String)
 			}
 		case seriesprovider.FieldTitle:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -332,6 +340,9 @@ func (_m *SeriesProvider) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("web_url=")
 	builder.WriteString(_m.WebURL)
+	builder.WriteString(", ")
+	builder.WriteString("address_mode=")
+	builder.WriteString(fmt.Sprintf("%v", _m.AddressMode))
 	builder.WriteString(", ")
 	builder.WriteString("title=")
 	builder.WriteString(_m.Title)

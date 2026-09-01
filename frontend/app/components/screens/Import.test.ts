@@ -213,10 +213,10 @@ describe('Import — adopt() with per-scanlator rows', () => {
     // Asura + Manganato were already selected from enterConfigure; the two
     // just-toggled split rows land after them in selection order.
     expect(request.providers).toEqual([
-      { source: asura.source, mangaId: asura.mangaId, url: asura.url, importance: 40, scanlator: '' },
-      { source: manganato.source, mangaId: manganato.mangaId, url: manganato.url, importance: 30, scanlator: '' },
-      { source: mangaDex.source, mangaId: mangaDex.mangaId, url: mangaDex.url, importance: 20, scanlator: 'ZScans' },
-      { source: mangaDex.source, mangaId: mangaDex.mangaId, url: mangaDex.url, importance: 10, scanlator: 'HiveToons' },
+      { source: asura.source, mangaId: asura.mangaId, url: asura.url, addressMode: asura.addressMode, webUrl: asura.realUrl, importance: 40, scanlator: '' },
+      { source: manganato.source, mangaId: manganato.mangaId, url: manganato.url, addressMode: manganato.addressMode, webUrl: manganato.realUrl, importance: 30, scanlator: '' },
+      { source: mangaDex.source, mangaId: mangaDex.mangaId, url: mangaDex.url, addressMode: mangaDex.addressMode, webUrl: mangaDex.realUrl, importance: 20, scanlator: 'ZScans' },
+      { source: mangaDex.source, mangaId: mangaDex.mangaId, url: mangaDex.url, addressMode: mangaDex.addressMode, webUrl: mangaDex.realUrl, importance: 10, scanlator: 'HiveToons' },
     ])
   })
 

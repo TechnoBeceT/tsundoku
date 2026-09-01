@@ -611,6 +611,26 @@ func WebURLContainsFold(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldContainsFold(FieldWebURL, v))
 }
 
+// AddressModeEQ applies the EQ predicate on the "address_mode" field.
+func AddressModeEQ(v AddressMode) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldEQ(FieldAddressMode, v))
+}
+
+// AddressModeNEQ applies the NEQ predicate on the "address_mode" field.
+func AddressModeNEQ(v AddressMode) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNEQ(FieldAddressMode, v))
+}
+
+// AddressModeIn applies the In predicate on the "address_mode" field.
+func AddressModeIn(vs ...AddressMode) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldIn(FieldAddressMode, vs...))
+}
+
+// AddressModeNotIn applies the NotIn predicate on the "address_mode" field.
+func AddressModeNotIn(vs ...AddressMode) predicate.SeriesProvider {
+	return predicate.SeriesProvider(sql.FieldNotIn(FieldAddressMode, vs...))
+}
+
 // TitleEQ applies the EQ predicate on the "title" field.
 func TitleEQ(v string) predicate.SeriesProvider {
 	return predicate.SeriesProvider(sql.FieldEQ(FieldTitle, v))

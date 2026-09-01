@@ -13916,6 +13916,7 @@ type SeriesProviderMutation struct {
 	language                  *string
 	url                       *string
 	web_url                   *string
+	address_mode              *seriesprovider.AddressMode
 	title                     *string
 	metadata                  *bool
 	status                    *string
@@ -14380,6 +14381,42 @@ func (m *SeriesProviderMutation) OldWebURL(ctx context.Context) (v string, err e
 // ResetWebURL resets all changes to the "web_url" field.
 func (m *SeriesProviderMutation) ResetWebURL() {
 	m.web_url = nil
+}
+
+// SetAddressMode sets the "address_mode" field.
+func (m *SeriesProviderMutation) SetAddressMode(sm seriesprovider.AddressMode) {
+	m.address_mode = &sm
+}
+
+// AddressMode returns the value of the "address_mode" field in the mutation.
+func (m *SeriesProviderMutation) AddressMode() (r seriesprovider.AddressMode, exists bool) {
+	v := m.address_mode
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAddressMode returns the old "address_mode" field's value of the SeriesProvider entity.
+// If the SeriesProvider object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SeriesProviderMutation) OldAddressMode(ctx context.Context) (v seriesprovider.AddressMode, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAddressMode is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAddressMode requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAddressMode: %w", err)
+	}
+	return oldValue.AddressMode, nil
+}
+
+// ResetAddressMode resets all changes to the "address_mode" field.
+func (m *SeriesProviderMutation) ResetAddressMode() {
+	m.address_mode = nil
 }
 
 // SetTitle sets the "title" field.
@@ -14954,7 +14991,7 @@ func (m *SeriesProviderMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SeriesProviderMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 18)
 	if m.series != nil {
 		fields = append(fields, seriesprovider.FieldSeriesID)
 	}
@@ -14978,6 +15015,9 @@ func (m *SeriesProviderMutation) Fields() []string {
 	}
 	if m.web_url != nil {
 		fields = append(fields, seriesprovider.FieldWebURL)
+	}
+	if m.address_mode != nil {
+		fields = append(fields, seriesprovider.FieldAddressMode)
 	}
 	if m.title != nil {
 		fields = append(fields, seriesprovider.FieldTitle)
@@ -15030,6 +15070,8 @@ func (m *SeriesProviderMutation) Field(name string) (ent.Value, bool) {
 		return m.URL()
 	case seriesprovider.FieldWebURL:
 		return m.WebURL()
+	case seriesprovider.FieldAddressMode:
+		return m.AddressMode()
 	case seriesprovider.FieldTitle:
 		return m.Title()
 	case seriesprovider.FieldMetadata:
@@ -15073,6 +15115,8 @@ func (m *SeriesProviderMutation) OldField(ctx context.Context, name string) (ent
 		return m.OldURL(ctx)
 	case seriesprovider.FieldWebURL:
 		return m.OldWebURL(ctx)
+	case seriesprovider.FieldAddressMode:
+		return m.OldAddressMode(ctx)
 	case seriesprovider.FieldTitle:
 		return m.OldTitle(ctx)
 	case seriesprovider.FieldMetadata:
@@ -15155,6 +15199,13 @@ func (m *SeriesProviderMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetWebURL(v)
+		return nil
+	case seriesprovider.FieldAddressMode:
+		v, ok := value.(seriesprovider.AddressMode)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAddressMode(v)
 		return nil
 	case seriesprovider.FieldTitle:
 		v, ok := value.(string)
@@ -15345,6 +15396,9 @@ func (m *SeriesProviderMutation) ResetField(name string) error {
 		return nil
 	case seriesprovider.FieldWebURL:
 		m.ResetWebURL()
+		return nil
+	case seriesprovider.FieldAddressMode:
+		m.ResetAddressMode()
 		return nil
 	case seriesprovider.FieldTitle:
 		m.ResetTitle()

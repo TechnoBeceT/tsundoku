@@ -50,6 +50,10 @@ type FetchRef struct {
 	// needs it to run a series-scoped fetch that repopulates per-chapter state
 	// (memo) some extensions require in getPageList (GAP-109); empty when unknown.
 	MangaURL string
+	// AddressMode tells the engine how to interpret MangaURL. WebURL is the
+	// optional browser-address witness used to resolve legacy unknown rows.
+	AddressMode string
+	WebURL      string
 
 	// SuwayomiID is the Suwayomi-internal numeric identifier for this chapter.
 	// It is used by the M2 Suwayomi fetcher implementation and is left zero in
@@ -112,6 +116,10 @@ type ChapterPages struct {
 	// the next attempt resumes from the pages already downloaded. "" when the
 	// fetcher does not stage (e.g. the in-memory test fake).
 	StagingDir string
+
+	// ResolvedAddressMode is the mode returned by a successful page-list
+	// resolution. Empty when cached links skipped that engine call.
+	ResolvedAddressMode string
 }
 
 // ChapterFetcher is the port that the M1 download dispatcher calls to retrieve

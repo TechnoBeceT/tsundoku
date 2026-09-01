@@ -39,6 +39,8 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/pkg/errorclass"
 	"github.com/technobecet/tsundoku/internal/pkg/providerid"
+	"github.com/technobecet/tsundoku/internal/provideraddress"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 	"github.com/technobecet/tsundoku/internal/sse"
@@ -1092,6 +1094,7 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	}
 	pages := result.pages
 	attempt.stagingDir = pages.StagingDir
+	d.persistResolvedAddressMode(ctx, cand.SeriesProvider.ID, pages.ResolvedAddressMode)
 
 	// Write-through the resolved page links the instant they are known (even on a
 	// byte-fetch failure), so a retry SKIPS the source's page-resolution step.
@@ -1252,6 +1255,19 @@ func linksWentStale(ctx context.Context, attempt fetchAttempt, cause error) bool
 		return true
 	}
 	return attempt.usedCachedLinks
+}
+
+// persistResolvedAddressMode records a successful page-resolution observation
+// without making a download fail when the metadata write is unavailable.
+func (d *Dispatcher) persistResolvedAddressMode(ctx context.Context, providerID uuid.UUID, wire string) {
+	mode, err := sourceengine.ParseAddressMode(wire)
+	if err != nil {
+		slog.WarnContext(ctx, "download: engine returned invalid address mode", "provider_id", providerID, "mode", wire, "err", err)
+		return
+	}
+	if err := provideraddress.PersistResolved(ctx, d.client, providerID, mode); err != nil {
+		slog.WarnContext(ctx, "download: could not persist resolved address mode", "provider_id", providerID, "err", err)
+	}
 }
 
 // persistPageLinks write-throughs the freshly-resolved page links onto the
@@ -1835,6 +1851,8 @@ func buildFetchRef(pc *ent.ProviderChapter, sp *ent.SeriesProvider) fetcher.Fetc
 		Language:          sp.Language,
 		URL:               pc.URL,
 		MangaURL:          sp.URL,
+		AddressMode:       sp.AddressMode.String(),
+		WebURL:            sp.WebURL,
 		SuwayomiID:        pc.SuwayomiChapterID,
 		SeriesProviderID:  sp.ID,
 		ProviderChapterID: pc.ID,

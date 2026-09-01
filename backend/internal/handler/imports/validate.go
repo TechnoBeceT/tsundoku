@@ -16,6 +16,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/pkg/urlx"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // cgnatRange is the Carrier-Grade NAT block (RFC 6598, 100.64.0.0/10) — ISPs
@@ -38,16 +39,17 @@ var cgnatRange = func() *net.IPNet {
 //
 // MangaID + URL (P2 Suwayomi-removal, slice 3b): MangaID is KEPT, additive
 // only, so the not-yet-updated frontend still typechecks; the backend reads
-// URL (the source-relative manga URL the engine host addresses this manga
-// by) instead.
+// URL (the exact source-owned serialized manga address) instead.
 type adoptProviderRequest struct {
 	// Source is the engine-host source ID, stringified.
 	Source string `json:"source"`
 	// MangaID is UNUSED by the backend — retained for FE wire compatibility
 	// only (prefer URL).
 	MangaID int `json:"mangaId"`
-	// URL is the source-relative manga URL.
-	URL string `json:"url"`
+	// URL is the exact source-owned serialized manga address.
+	URL         string                   `json:"url"`
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
 	// Importance is the provider rank (higher = preferred); must be >= 0.
 	Importance int `json:"importance"`
 	// Scanlator selects which scanlation group's chapters this provider
@@ -233,6 +235,16 @@ func parseOptionalTitle(raw string) string {
 	return strings.TrimSpace(raw)
 }
 
+// parseAddressContext parses the additive candidate provenance query fields.
+// Omitted mode remains the compatible unknown state.
+func parseAddressContext(modeRaw, webURL string) (sourceengine.AddressMode, string, error) {
+	mode, err := sourceengine.ParseAddressMode(strings.TrimSpace(modeRaw))
+	if err != nil {
+		return sourceengine.AddressModeUnknown, "", echo.NewHTTPError(http.StatusBadRequest, "addressMode must be one of: unknown, direct, url_search")
+	}
+	return mode, strings.TrimSpace(webURL), nil
+}
+
 // validateAdoptBody validates the parsed AdoptRequestBody:
 //   - title must be non-blank.
 //   - providers must have >= 1 entry.
@@ -267,6 +279,9 @@ func validateAdoptBody(req adoptRequestBody) error {
 		}
 		if strings.TrimSpace(p.URL) == "" {
 			return echo.NewHTTPError(http.StatusBadRequest, "provider url is required")
+		}
+		if !p.AddressMode.IsValid() {
+			return echo.NewHTTPError(http.StatusBadRequest, "provider addressMode is invalid")
 		}
 		key := p.Source + "\x00" + p.Scanlator
 		if seen[key] {

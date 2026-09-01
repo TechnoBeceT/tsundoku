@@ -991,7 +991,7 @@ export interface paths {
          *     before adopting to confirm the chapter count.
          *
          *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     `url` query parameter (the source-owned serialized manga address); mangaId in the
          *     path is kept for route-shape compatibility but is IGNORED. A request
          *     with no `url` gets 400.
          */
@@ -1022,7 +1022,7 @@ export interface paths {
          *     request to the source).
          *
          *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     `url` query parameter (the source-owned serialized manga address); mangaId in the
          *     path is kept for route-shape compatibility but is IGNORED. A request
          *     with no `url` gets 400.
          */
@@ -1068,7 +1068,7 @@ export interface paths {
          *     flight).
          *
          *     P2 Suwayomi-removal: the backend is now URL-addressed and requires the
-         *     `url` query parameter (the source-relative manga URL); mangaId in the
+         *     `url` query parameter (the source-owned serialized manga address); mangaId in the
          *     path is kept for route-shape compatibility but is IGNORED. A request
          *     with no `url` gets 400.
          */
@@ -3588,6 +3588,12 @@ export interface components {
              */
             degradedReason: string;
         };
+        /**
+         * @description How engine-host must interpret the stored source-owned manga address.
+         * @default unknown
+         * @enum {string}
+         */
+        AddressMode: "unknown" | "direct" | "url_search";
         SearchCandidate: {
             /** @description Suwayomi source ID from which this candidate came. */
             source: string;
@@ -3600,20 +3606,23 @@ export interface components {
             /** @description Manga display title as returned by the source. */
             title: string;
             /**
-             * @description Provider-canonical ADDRESSING url for this manga — what every adopt/
-             *     add-source/match request must send back to identify it. NOT a
-             *     clickable browser link; see realUrl for that. Empty string when not
-             *     provided.
+             * @description Provider-canonical ADDRESSING value for this manga — what every
+             *     adopt/add-source/match request sends back to identify it. It may be
+             *     a relative or opaque extension key, or an absolute cross-origin URL
+             *     retained for URL-search hydration. See addressMode for interpretation
+             *     and realUrl for the browser link. Empty string when not provided.
              */
             url: string;
             /**
              * @description Fully-qualified, browser-clickable URL for this manga (Mihon's
              *     HttpSource.getMangaUrl); powers the "View on source" external link.
-             *     Distinct from url (the addressing key) — never send this back to
-             *     the backend. Empty string when the engine host could not resolve
-             *     one.
+             *     Distinct in purpose from url (the addressing key), though the values
+             *     may be equal for an absolute URL-search address. Clients carry it
+             *     back only as the optional webUrl resolver witness. Empty string
+             *     when the engine host could not resolve one.
              */
             realUrl: string;
+            addressMode: components["schemas"]["AddressMode"];
             /**
              * @description The engine host's own resolved cover image URL, used verbatim (directly
              *     fetchable). Empty string when the source provided no thumbnail at all.
@@ -3656,8 +3665,11 @@ export interface components {
             source: string;
             /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
-            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
             url?: string;
+            addressMode?: components["schemas"]["AddressMode"];
+            /** @description Optional browser URL witness retained from the candidate. */
+            webUrl?: string;
             /** @description Provider rank for this series (higher = preferred). Ranks start at 1, matching the attach endpoint; the backend responds 400 below that. 0 is reserved as the sentinel a library merge writes onto a provider while it renames that series' files, and a provider adopted onto it would be read as unranked ever after. */
             importance: number;
             /**
@@ -5239,8 +5251,11 @@ export interface components {
         ConsolidateSourceTarget: {
             /** @description Engine-host source id (stringified) to attach as the survivor. */
             source: string;
-            /** @description Source-relative manga URL the backend addresses this manga by. */
+            /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. */
             url: string;
+            addressMode?: components["schemas"]["AddressMode"];
+            /** @description Optional browser URL witness retained from the candidate. */
+            webUrl?: string;
             /** @description Scanlation group to track; "" (or omitted) = all chapters from the source. */
             scanlator?: string;
             /** @description Priority to assign the new survivor (higher = preferred). */
@@ -5301,8 +5316,11 @@ export interface components {
             source: string;
             /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
-            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
             url?: string;
+            addressMode?: components["schemas"]["AddressMode"];
+            /** @description Optional browser URL witness retained from the candidate. */
+            webUrl?: string;
             /**
              * @description Selects which scanlation group's chapters this provider tracks; omit or send ""
              *     for "all chapters from this source". The same source may be attached again
@@ -5368,8 +5386,11 @@ export interface components {
             source: string;
             /** @description DEPRECATED, unused by the backend — kept only for wire compatibility with older clients. Use url instead. */
             mangaId: number;
-            /** @description Source-relative manga URL the engine host addresses this manga by (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+            /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
             url?: string;
+            addressMode?: components["schemas"]["AddressMode"];
+            /** @description Optional browser URL witness retained from the candidate. */
+            webUrl?: string;
             /** @description Provider importance to assign (higher number = higher priority). */
             importance: number;
             /**
@@ -7896,10 +7917,12 @@ export interface operations {
     inspectChapters: {
         parameters: {
             query?: {
-                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
                 url?: string;
                 /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
                 title?: string;
+                addressMode?: components["schemas"]["AddressMode"];
+                webUrl?: string;
             };
             header?: never;
             path: {
@@ -7944,8 +7967,10 @@ export interface operations {
     getMangaDetails: {
         parameters: {
             query?: {
-                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
                 url?: string;
+                addressMode?: components["schemas"]["AddressMode"];
+                webUrl?: string;
             };
             header?: never;
             path: {
@@ -8008,12 +8033,14 @@ export interface operations {
     getSourceBreakdown: {
         parameters: {
             query?: {
-                /** @description Source-relative manga URL (P2 Suwayomi-removal). Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
+                /** @description Source-owned serialized manga address; may be relative, opaque, or absolute. Optional on the wire for backward compatibility, but the backend requires a non-empty value and responds 400 when it is missing. */
                 url?: string;
                 /** @description Optional manga display title (e.g. from an already-fetched Discover candidate). Improves the engine host's chapter-number recognition and lets this preview share its cache entry with a later Adopt for the same manga+title (see the mangaTitle-keyed discovery chapter cache). Omitting it is safe; recognition still runs, just without the title-strip step. */
                 title?: string;
                 /** @description Force a recomputation, bypassing the `ready`/`failed`-cooldown admission guards that otherwise serve a stored snapshot as-is. Omit (or "false") for the ordinary "serve what is stored" GET — this is what a `ready` snapshot used to be stuck at forever, with no way for the owner to ask for a fresh count. It NEVER duplicates a walk already in flight: while a `pending` snapshot is genuinely live (i.e. it has not exceeded the internal "dead process" bound), `?refresh=true` is served that same `pending` body a plain GET would get, rather than starting a second walk against the source. Only "true"/"false" (case-insensitive) are accepted; any other value is a 400. */
                 refresh?: boolean;
+                addressMode?: components["schemas"]["AddressMode"];
+                webUrl?: string;
             };
             header?: never;
             path: {

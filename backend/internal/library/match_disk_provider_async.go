@@ -48,6 +48,11 @@ var matchBlock chan struct{}
 // once the background merge lands. The trigger()/convergence side effects live in
 // MatchDiskProvider itself and are unchanged.
 func (s *Service) StartMatchDiskProvider(ctx context.Context, seriesID, diskProviderID uuid.UUID, source, url, scanlator string, importance int) bool {
+	return s.StartMatchDiskProviderRef(ctx, seriesID, diskProviderID, ProviderRef{Source: source, URL: url, Scanlator: scanlator}, importance)
+}
+
+// StartMatchDiskProviderRef retains complete address context in the detached job.
+func (s *Service) StartMatchDiskProviderRef(ctx context.Context, seriesID, diskProviderID uuid.UUID, ref ProviderRef, importance int) bool {
 	if !s.acquireMerge(seriesID) {
 		return false
 	}
@@ -72,7 +77,7 @@ func (s *Service) StartMatchDiskProvider(ctx context.Context, seriesID, diskProv
 			}
 		}
 
-		if _, err := s.MatchDiskProvider(runCtx, seriesID, diskProviderID, source, url, scanlator, importance); err != nil {
+		if _, err := s.MatchDiskProviderRef(runCtx, seriesID, diskProviderID, ref, importance); err != nil {
 			// Log the RAW error server-side, but broadcast only a caller-safe message
 			// (safeMergeError). The SSE side-channel bypasses the central error
 			// middleware (middleware/error.go), which genericises unmapped errors so

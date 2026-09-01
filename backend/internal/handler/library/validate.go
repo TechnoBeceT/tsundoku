@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/pagination"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // maxBatchSize caps POST /api/library/import/batch's paths list so a single
@@ -31,15 +32,16 @@ type importBody struct {
 //
 // MangaID + URL (P2 Suwayomi-removal, slice 3b): MangaID is KEPT, additive
 // only, so the not-yet-updated frontend still typechecks; the backend reads
-// URL (the source-relative manga URL the engine host addresses this manga
-// by) instead.
+// URL (the exact source-owned serialized manga address) instead.
 type providerRefBody struct {
 	Source string `json:"source"`
 	// MangaID is UNUSED by the backend — retained for FE wire compatibility
 	// only (prefer URL).
-	MangaID   int    `json:"mangaId"`
-	URL       string `json:"url"`
-	Scanlator string `json:"scanlator"`
+	MangaID     int                      `json:"mangaId"`
+	URL         string                   `json:"url"`
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
+	Scanlator   string                   `json:"scanlator"`
 }
 
 // addProviderBody is the wire shape for POST /api/series/:id/providers.
@@ -50,9 +52,11 @@ type addProviderBody struct {
 	Source string `json:"source"`
 	// MangaID is UNUSED by the backend — retained for FE wire compatibility
 	// only (prefer URL).
-	MangaID    int    `json:"mangaId"`
-	URL        string `json:"url"`
-	Importance int    `json:"importance"`
+	MangaID     int                      `json:"mangaId"`
+	URL         string                   `json:"url"`
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
+	Importance  int                      `json:"importance"`
 	// Scanlator selects which scanlation group's chapters this provider
 	// tracks; optional, "" means "all chapters from this source".
 	Scanlator string `json:"scanlator"`
@@ -117,7 +121,7 @@ func validateImportBody(body importBody) error {
 // a non-empty source, a non-empty url, and an importance >= 1. Scanlator
 // is optional (no format constraint — "" means "all chapters").
 func validateAddProviderBody(body addProviderBody) error {
-	if err := validateProviderRef(providerRefBody{Source: body.Source, URL: body.URL, Scanlator: body.Scanlator}); err != nil {
+	if err := validateProviderRef(providerRefBody{Source: body.Source, URL: body.URL, AddressMode: body.AddressMode, WebURL: body.WebURL, Scanlator: body.Scanlator}); err != nil {
 		return err
 	}
 	if body.Importance < 1 {
@@ -131,11 +135,10 @@ func validateAddProviderBody(body addProviderBody) error {
 // DRY — every source-attach body shares the identical source/url shape).
 //
 // P2 Suwayomi-removal judgment call (slice 3b): url is validated as merely
-// non-empty (trimmed), NOT via pkg/urlx.IsAbsoluteHTTP. The stored manga/
-// chapter urls in this URL-addressed model are SOURCE-RELATIVE (e.g.
-// "/manga/x/chapter-1", mirroring what internal/sourceengine.MangaEntry.URL /
-// internal/ingest.Ingest.AddSeries actually expect) — requiring an ABSOLUTE
-// http(s) URL here would reject every legitimate value. This deliberately
+// non-empty (trimmed), NOT via pkg/urlx.IsAbsoluteHTTP. Source-owned serialized
+// addresses may be relative, opaque, or absolute cross-origin, and must pass
+// through byte-for-byte. Requiring or normalizing an absolute http(s) URL would
+// reject or corrupt legitimate values. This deliberately
 // does NOT check importance: library.ProviderRef (the matches-list shape)
 // carries none — AddProviders assigns it — while addProviderBody's importance
 // is checked separately by its caller. mangaId is no longer checked (the
@@ -146,6 +149,9 @@ func validateProviderRef(m providerRefBody) error {
 	}
 	if strings.TrimSpace(m.URL) == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "url is required")
+	}
+	if !m.AddressMode.IsValid() {
+		return echo.NewHTTPError(http.StatusBadRequest, "addressMode is invalid")
 	}
 	return nil
 }

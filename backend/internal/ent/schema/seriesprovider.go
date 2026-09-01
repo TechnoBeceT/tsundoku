@@ -43,12 +43,17 @@ func (SeriesProvider) Fields() []ent.Field {
 		field.String("url").Default(""),
 		// web_url is the fully-qualified, browser-clickable URL for this manga
 		// (Mihon's HttpSource.getMangaUrl, surfaced end-to-end as
-		// sourceengine.MangaEntry/MangaDetails.RealURL). Distinct from url (the
-		// source-relative ADDRESSING key every request sends back) — web_url is
-		// only ever meant to be opened in a browser (Komga ComicInfo <Web>,
-		// "View on source" links for an adopted series). "" when the engine host
+		// sourceengine.MangaEntry/MangaDetails.RealURL). Distinct in purpose from
+		// url, the source-owned ADDRESSING value every request sends back: url may
+		// be relative, opaque, or an absolute cross-origin value and may equal
+		// web_url. web_url powers browser/ComicInfo links and is also carried as an
+		// optional resolver witness for legacy unknown-mode addresses. "" when the engine host
 		// could not resolve one. Additive + defaulted ⇒ zero-data migration.
 		field.String("web_url").Default(""),
+		// address_mode records how engine-host must interpret url. Existing rows
+		// migrate to unknown without rewriting their stored address and self-heal
+		// after a successful source operation.
+		field.Enum("address_mode").Values("unknown", "direct", "url_search").Default("unknown"),
 		field.String("title").Default(""),
 		field.Bool("metadata").Default(false),
 		field.String("status").Default(""),

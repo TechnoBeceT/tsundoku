@@ -28,6 +28,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entsuwayomisyncstate "github.com/technobecet/tsundoku/internal/ent/suwayomisyncstate"
 	"github.com/technobecet/tsundoku/internal/ingest"
+	"github.com/technobecet/tsundoku/internal/provideraddress"
 	"github.com/technobecet/tsundoku/internal/series"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourceevents"
@@ -367,6 +368,7 @@ type refreshProvider struct {
 type refreshGroup struct {
 	sourceID  int64
 	url       string
+	ref       sourceengine.ProviderRef
 	sourceKey string
 	providers []refreshProvider
 }
@@ -385,8 +387,10 @@ type refreshGroup struct {
 // per-provider read would be a straight N+1 on the hottest loop in the package.
 func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Series, now time.Time) []refreshGroup {
 	type key struct {
-		source int64
-		url    string
+		source      int64
+		url         string
+		addressMode sourceengine.AddressMode
+		webURL      string
 	}
 	disabled := s.disabledSourceSet(ctx)
 	byKey := make(map[key]*refreshGroup)
@@ -397,10 +401,16 @@ func (s *Service) buildRefreshGroups(ctx context.Context, seriesList []*ent.Seri
 			if !ok {
 				continue
 			}
-			k := key{source: sourceID, url: p.URL}
+			mode := provideraddress.FromStored(p.AddressMode)
+			k := key{source: sourceID, url: p.URL, addressMode: mode, webURL: p.WebURL}
 			grp, ok := byKey[k]
 			if !ok {
-				grp = &refreshGroup{sourceID: sourceID, url: p.URL, sourceKey: sourceKey(p)}
+				grp = &refreshGroup{
+					sourceID:  sourceID,
+					url:       p.URL,
+					ref:       sourceengine.ProviderRef{SourceID: sourceID, URL: p.URL, AddressMode: mode, WebURL: p.WebURL},
+					sourceKey: sourceKey(p),
+				}
 				byKey[k] = grp
 				order = append(order, k)
 			}
@@ -485,14 +495,14 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 	// first provider's title feeds the engine host's chapter-number recognition
 	// for the whole group's fetch (groups are never built with zero providers).
 	start := time.Now()
-	raw, fetchErr := s.ingest.FetchChaptersUncached(ctx, grp.sourceID, grp.url, grp.providers[0].title)
+	raw, fetchErr := s.ingest.FetchChaptersUncachedRef(ctx, grp.ref, grp.providers[0].title)
 	fetchDuration := time.Since(start)
 	if fetchErr != nil {
 		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result, sink, fetchDuration)
 		return
 	}
 	s.gateRecordSuccess(ctx, grp.sourceKey)
-	itemsCount := len(raw)
+	itemsCount := len(raw.Chapters)
 	sink.add(newRefreshEvent(grp, sourceevents.StatusSuccess, fetchDuration, &itemsCount, nil))
 	for _, p := range grp.providers {
 		s.ingestProvider(ctx, grp, p, raw, mu, result)
@@ -526,8 +536,8 @@ func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, f
 // chapter list via AddSeriesWithChapters (no upstream fetch, no gate) and records
 // the outcome (sync-state + counters), preserving the per-provider partial-success
 // contract and the context-cancel skip.
-func (s *Service) ingestProvider(ctx context.Context, grp refreshGroup, p refreshProvider, raw []sourceengine.Chapter, mu *sync.Mutex, result *RefreshResult) {
-	res, addErr := s.ingest.AddSeriesWithChapters(ctx, grp.sourceID, grp.url, p.title, p.scanlator, raw)
+func (s *Service) ingestProvider(ctx context.Context, grp refreshGroup, p refreshProvider, raw sourceengine.ChaptersResult, mu *sync.Mutex, result *RefreshResult) {
+	res, addErr := s.ingest.AddSeriesWithChaptersRef(ctx, grp.ref, p.title, p.scanlator, raw)
 
 	// Persist polling health; upsertSyncState skips on ctx-cancel.
 	if uerr := s.upsertSyncState(ctx, p.providerID, addErr); uerr != nil {

@@ -59,7 +59,7 @@ export interface MatchDiskProviderPayload {
   source: string
   /** DEPRECATED, unused by the backend — see SearchCandidate.mangaId. */
   mangaId: number
-  /** Source-relative manga URL the backend addresses this manga by (P2 Suwayomi-removal). */
+  /** Source-owned serialized manga address; may be relative, opaque, or absolute. */
   url: string
   /** Priority to assign the newly-linked provider (higher = preferred). */
   importance: number
@@ -348,7 +348,7 @@ export function useSeriesDetail(id: string) {
    */
   type ConsolidateTarget =
     | { existingProviderId: string }
-    | { source: { source: string, url: string, scanlator?: string, importance: number } }
+    | { source: { source: string, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string, scanlator?: string, importance: number } }
 
   /**
    * Folds a SET of the series' providers into ONE survivor WITHOUT re-downloading

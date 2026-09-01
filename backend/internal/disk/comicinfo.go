@@ -119,9 +119,9 @@ func newComicInfo(m RenderMeta, pageCount int) ComicInfo {
 	}
 
 	// ci.Web is Komga's "read online" link — it must be the fully-qualified,
-	// browser-clickable chapter URL (WebURL), NEVER the source-relative
-	// addressing URL (m.URL is not even guaranteed to be an absolute URL for
-	// every source). "" (WebURL unresolved) omits the field (omitempty).
+	// browser-clickable chapter URL (WebURL), NEVER the source-owned serialized
+	// address (m.URL may be relative, opaque, or otherwise not browser-clickable).
+	// "" (WebURL unresolved) omits the field (omitempty).
 	if m.WebURL != "" {
 		ci.Web = m.WebURL
 	}

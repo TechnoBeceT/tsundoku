@@ -53,13 +53,15 @@ function openImport(candidate: DiscoverCandidate): void {
       source: candidate.source,
       mangaId: String(candidate.mangaId),
       url: candidate.url,
+      addressMode: candidate.addressMode,
+      webUrl: candidate.realUrl,
       title: candidate.title,
     },
   })
 }
 
 /** Opens a candidate's browser-clickable "View on source" link (`realUrl`,
- *  NOT the source-relative addressing `url`) in a new tab (noopener). Lives
+ *  NOT the source-owned addressing `url`) in a new tab (noopener). Lives
  *  in the script (not an inline template handler) so `window` resolves to
  *  the DOM global rather than a template binding. `isHttpUrl` blocks
  *  non-http(s) schemes — `realUrl` still comes from untrusted upstream data,

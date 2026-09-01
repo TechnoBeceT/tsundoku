@@ -380,6 +380,7 @@ var (
 		{Name: "language", Type: field.TypeString, Default: ""},
 		{Name: "url", Type: field.TypeString, Default: ""},
 		{Name: "web_url", Type: field.TypeString, Default: ""},
+		{Name: "address_mode", Type: field.TypeEnum, Enums: []string{"unknown", "direct", "url_search"}, Default: "unknown"},
 		{Name: "title", Type: field.TypeString, Default: ""},
 		{Name: "metadata", Type: field.TypeBool, Default: false},
 		{Name: "status", Type: field.TypeString, Default: ""},
@@ -399,7 +400,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "series_providers_series_providers",
-				Columns:    []*schema.Column{SeriesProvidersColumns[17]},
+				Columns:    []*schema.Column{SeriesProvidersColumns[18]},
 				RefColumns: []*schema.Column{SeriesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},

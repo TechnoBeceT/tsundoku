@@ -36,8 +36,8 @@ func parseSourceID(source string) (int64, error) {
 //     attached again under a DIFFERENT scanlator; see ingest.Ingest.AddSeries).
 //  3. Verify sourceID is a real, loaded source via s.sourceExists (a true
 //     membership check) — ErrSourceNotFound (404) ONLY on a genuine miss.
-//     Then call s.ingest.AddSeriesUngated(ctx, source, url, ser.Title,
-//     scanlator): the UNGATED variant, since a deliberate one-shot owner click
+//     Then call s.ingest.AddSeriesUngatedRef with the selected source address:
+//     the UNGATED variant, since a deliberate one-shot owner click
 //     must not be refused by the anti-ban circuit-breaker that throttles bulk
 //     sweeps. AddSeriesUngated find-or-creates a Series by slug(title), so
 //     passing the EXISTING series' canonical title attaches the new source to
@@ -69,9 +69,17 @@ func parseSourceID(source string) (int64, error) {
 //     refreshed series.SeriesDetailDTO (§16 round-trip).
 //
 // source is the engine-host source ID, stringified (parsed to int64 before
-// the ingest call); url is the source-relative manga URL (P2 Suwayomi-removal,
-// slice 3b — this replaces the retired mangaID int parameter).
+// the ingest call); url is the exact source-owned serialized manga address
+// (P2 Suwayomi-removal, slice 3b — this replaces the retired mangaID int
+// parameter). It may be relative, opaque, or absolute cross-origin.
 func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source string, url string, importance int, scanlator string) (series.SeriesDetailDTO, error) {
+	return s.AddProviderRef(ctx, seriesID, ProviderRef{Source: source, URL: url, Scanlator: scanlator}, importance)
+}
+
+// AddProviderRef is AddProvider with the complete engine address context
+// retained from the search candidate.
+func (s *Service) AddProviderRef(ctx context.Context, seriesID uuid.UUID, ref ProviderRef, importance int) (series.SeriesDetailDTO, error) {
+	source, scanlator := ref.Source, ref.Scanlator
 	// Collapse the scanlator to "" when the source is flagged ignore-scanlator, so
 	// the whole attach — the duplicate guard, the ingest, and the post-ingest
 	// SeriesProvider lookup — agrees on a single [Source] provider key (see
@@ -108,7 +116,8 @@ func (s *Service) AddProvider(ctx context.Context, seriesID uuid.UUID, source st
 	// Membership check + UNGATED owner-attach ingest with honest error taxonomy
 	// (true 404 only on a real miss; 503 cooled-down / 502 upstream on a fetch
 	// failure) — see resolveAndIngestSource.
-	if _, err := s.resolveAndIngestSource(ctx, source, url, ser.Title, scanlator); err != nil {
+	ref.Scanlator = scanlator
+	if _, err := s.resolveAndIngestSourceRef(ctx, ref, ser.Title); err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
 

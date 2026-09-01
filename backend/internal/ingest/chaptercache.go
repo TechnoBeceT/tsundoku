@@ -24,8 +24,9 @@ import (
 )
 
 // chapterCacheKey identifies one cached fetch by its physical source id, the
-// source-relative manga url, and the manga title used for the fetch — the
-// engine host's own addressing pair PLUS the recognition input. mangaTitle is
+// exact source-owned manga address, and the manga title used for the fetch —
+// the engine host's own addressing pair PLUS the recognition input. The address
+// may be relative, opaque, or absolute cross-origin. mangaTitle is
 // part of the key (not just an argument to fetch) because the engine host's
 // chapter-number recognition and name-sanitize post-processing (see
 // sourceengine.Client.Chapters's doc comment) are TITLE-SENSITIVE: the exact
@@ -38,9 +39,11 @@ import (
 // for the path a human is actually watching. See the P2 chapter-fidelity
 // review's "mangaTitle threading is defeated by the shared cache" finding.
 type chapterCacheKey struct {
-	sourceID   int64
-	url        string
-	mangaTitle string
+	sourceID    int64
+	url         string
+	mangaTitle  string
+	addressMode sourceengine.AddressMode
+	webURL      string
 }
 
 // chapterCacheEntry is one memoized fetch plus the instant it was WRITTEN. The
@@ -48,8 +51,8 @@ type chapterCacheKey struct {
 // (ttl(ctx)), not a precomputed expiry — so a runtime TTL change (shorter or
 // longer) applies immediately to entries already stored (true hot reload).
 type chapterCacheEntry struct {
-	chapters []sourceengine.Chapter
-	written  time.Time
+	result  sourceengine.ChaptersResult
+	written time.Time
 }
 
 // ChapterCache is a concurrency-safe memo of client.Chapters keyed by
@@ -103,27 +106,37 @@ func NewChapterCacheConst(ttl time.Duration) *ChapterCache {
 // — grouping/ordering dedupes it), which is race-clean and merely forfeits the
 // dedup for that one rare overlap.
 func (c *ChapterCache) Get(ctx context.Context, sourceID int64, url string, mangaTitle string, fetch func() ([]sourceengine.Chapter, error)) ([]sourceengine.Chapter, error) {
+	result, err := c.GetRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, mangaTitle, func() (sourceengine.ChaptersResult, error) {
+		chapters, fetchErr := fetch()
+		return sourceengine.ChaptersResult{Chapters: chapters}, fetchErr
+	})
+	return result.Chapters, err
+}
+
+// GetRef is the address-aware cache entry point. Mode and web URL are part of
+// the key so an unresolved preview cannot hide a later resolved observation.
+func (c *ChapterCache) GetRef(ctx context.Context, ref sourceengine.ProviderRef, mangaTitle string, fetch func() (sourceengine.ChaptersResult, error)) (sourceengine.ChaptersResult, error) {
 	ttl := c.ttl(ctx)
 	// A non-positive TTL disables the cache: always fetch, never store.
 	if ttl <= 0 {
 		return fetch()
 	}
-	key := chapterCacheKey{sourceID: sourceID, url: url, mangaTitle: mangaTitle}
+	key := chapterCacheKey{sourceID: ref.SourceID, url: ref.URL, mangaTitle: mangaTitle, addressMode: ref.AddressMode, webURL: ref.WebURL}
 
 	c.mu.Lock()
 	if entry, ok := c.entries[key]; ok && c.now().Sub(entry.written) <= ttl {
 		c.mu.Unlock()
-		return entry.chapters, nil
+		return entry.result, nil
 	}
 	c.mu.Unlock()
 
-	chapters, err := fetch()
+	result, err := fetch()
 	if err != nil {
-		return nil, err
+		return sourceengine.ChaptersResult{}, err
 	}
 
 	c.mu.Lock()
-	c.entries[key] = chapterCacheEntry{chapters: chapters, written: c.now()}
+	c.entries[key] = chapterCacheEntry{result: result, written: c.now()}
 	c.mu.Unlock()
-	return chapters, nil
+	return result, nil
 }

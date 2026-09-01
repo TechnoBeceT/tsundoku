@@ -356,7 +356,7 @@ func TestGetSeriesReturnsDetail(t *testing.T) {
 // TestGetSeriesLinksIncludeSourceLinks verifies the detail DTO's Links field
 // merges the metadata-engine links with the library's actual SOURCE links. The
 // source link is the provider's WEB_URL (the browser-clickable realUrl), NEVER
-// the source-relative addressing URL: a deduped source (its web_url already
+// a non-browser addressing value: a deduped source (its web_url already
 // listed by a metadata link, case-insensitive) keeps the METADATA label; a real
 // source with an unresolved (empty) web_url still emits a link with an empty URL
 // (the FE greys it); and a provider with no addressing URL at all (disk-origin/
@@ -377,7 +377,7 @@ func TestGetSeriesLinksIncludeSourceLinks(t *testing.T) {
 		}).
 		SaveX(ctx)
 
-	// flame: a source-relative addressing url plus a web_url that dups the
+	// flame: a deliberately relative addressing value plus a web_url that dups the
 	// metadata "Flame Scans" link above (differing only by case).
 	client.SeriesProvider.Create().
 		SetSeriesID(s.ID).

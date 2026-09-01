@@ -14,8 +14,9 @@
 //
 // Every request/response is addressed by STABLE (sourceId, url) pairs, never
 // an engine-assigned opaque id — a DB rebuild + extension reinstall yields
-// the same source ids and the same source-relative URLs, so a stored key
-// always resolves to the same series.
+// the same source ids and extension-owned serialized addresses, so a stored
+// key always resolves to the same series. The address may be relative, opaque,
+// or an absolute cross-origin URL; its AddressMode records how to interpret it.
 package sourceengine
 
 import (
@@ -172,6 +173,44 @@ type Client interface {
 	// Only patch's non-nil fields are sent, so an omitted reuse list preserves
 	// the host configuration while an explicitly empty list clears it.
 	SetImageTransport(ctx context.Context, patch ImageTransportPatch) (ImageTransportConfig, error)
+}
+
+// AddressClient is the additive address-aware extension implemented by the
+// HTTP client, router, and shared fake. Keeping it separate preserves source
+// compatibility for narrow Client test doubles and older integrations.
+type AddressClient interface {
+	MangaDetailsRef(ctx context.Context, ref ProviderRef) (MangaDetails, error)
+	ChaptersRef(ctx context.Context, ref ProviderRef, mangaTitle string) (ChaptersResult, error)
+	PagesRef(ctx context.Context, ref ProviderRef, chapterURL string) (PagesResult, error)
+}
+
+// MangaDetailsFor uses the address-aware extension when available and falls
+// back to the legacy unknown-mode call otherwise.
+func MangaDetailsFor(ctx context.Context, client Client, ref ProviderRef) (MangaDetails, error) {
+	if addressClient, ok := client.(AddressClient); ok {
+		return addressClient.MangaDetailsRef(ctx, ref)
+	}
+	return client.MangaDetails(ctx, ref.SourceID, ref.URL)
+}
+
+// ChaptersFor uses the address-aware extension when available and wraps the
+// legacy result with an unknown resolved mode otherwise.
+func ChaptersFor(ctx context.Context, client Client, ref ProviderRef, mangaTitle string) (ChaptersResult, error) {
+	if addressClient, ok := client.(AddressClient); ok {
+		return addressClient.ChaptersRef(ctx, ref, mangaTitle)
+	}
+	chapters, err := client.Chapters(ctx, ref.SourceID, ref.URL, mangaTitle)
+	return ChaptersResult{Chapters: chapters}, err
+}
+
+// PagesFor uses the address-aware extension when available and wraps the
+// legacy result with an unknown resolved mode otherwise.
+func PagesFor(ctx context.Context, client Client, ref ProviderRef, chapterURL string) (PagesResult, error) {
+	if addressClient, ok := client.(AddressClient); ok {
+		return addressClient.PagesRef(ctx, ref, chapterURL)
+	}
+	pages, err := client.Pages(ctx, ref.SourceID, chapterURL, ref.URL)
+	return PagesResult{Pages: pages}, err
 }
 
 // New constructs a Client that talks to the engine host at baseURL (e.g.

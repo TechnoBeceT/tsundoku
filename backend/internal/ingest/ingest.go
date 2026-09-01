@@ -47,6 +47,7 @@ import (
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
+	"github.com/technobecet/tsundoku/internal/provideraddress"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
 )
@@ -194,9 +195,9 @@ func NewIngestWithGate(client sourceengine.Client, db *ent.Client, cache *Chapte
 // Parameters:
 //   - sourceID is the engine-host's stable numeric source identifier, stored
 //     (stringified) as SeriesProvider.provider.
-//   - url is the source-relative manga URL — the stable key the engine host
-//     addresses this manga by (there is no manga-id lookup in the URL-addressed
-//     model).
+//   - url is the source-owned serialized manga address — a relative or opaque
+//     extension key, or an absolute cross-origin URL retained for URL-search
+//     hydration. It is passed back byte-for-byte; there is no manga-id lookup.
 //   - title is the manga's display title (used to derive the Series slug and
 //     set Series.title). The caller is responsible for providing the correct
 //     title; AddSeries does not search for it.
@@ -220,30 +221,17 @@ func (i *Ingest) AddSeries(
 	title string,
 	scanlator string,
 ) (chapter.IngestResult, error) {
-	// Resolve the source's display name ONCE (best-effort; "" when unresolved) —
-	// reused as the source-politeness gate key below AND passed into
-	// addSeriesWithChapters for the scanlator collapse + provider_name storage,
-	// so a whole AddSeries makes a single Sources() call.
-	providerName := i.resolveProviderName(ctx, sourceID)
+	return i.AddSeriesRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, title, scanlator)
+}
 
-	// 1. Fetch all chapters from the engine host, THROUGH the source-politeness
-	//    gate and the shared chapter cache. This contacts the upstream source
-	//    before we touch our own DB, so that a client failure does not leave
-	//    partially-created rows. The result is UNFILTERED — it holds every
-	//    scanlator's chapters; filtering happens in mapToFetchedChapters below.
-	//    On a cache hit NO upstream request is made, so the gate is
-	//    legitimately bypassed (there is nothing to throttle).
-	swChapters, err := i.fetchForAdopt(ctx, sourceID, url, title, providerName)
-	if err != nil {
-		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: fetch chapters for source %d url %q: %w", sourceID, url, err)
-	}
-
-	// Ignore-scanlator collapse: a flagged source's provider is keyed with
-	// scanlator="" so its per-uploader chapters merge into one [Source] provider
-	// (see EffectiveScanlator). Applied here (the adopt/attach entry), never in
-	// the shared refresh body — Slice A is apply-forward only.
-	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
-	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
+// AddSeriesRef is AddSeries with the complete engine address context.
+func (i *Ingest) AddSeriesRef(
+	ctx context.Context,
+	ref sourceengine.ProviderRef,
+	title string,
+	scanlator string,
+) (chapter.IngestResult, error) {
+	return i.addSeriesRef(ctx, ref, title, scanlator, "AddSeries", i.fetchForAdoptRef)
 }
 
 // AddSeriesUngated is AddSeries for a DELIBERATE, one-shot OWNER-initiated attach
@@ -271,19 +259,49 @@ func (i *Ingest) AddSeriesUngated(
 	title string,
 	scanlator string,
 ) (chapter.IngestResult, error) {
+	return i.AddSeriesUngatedRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, title, scanlator)
+}
+
+// AddSeriesUngatedRef is AddSeriesUngated with the complete engine address
+// context retained from the owner-selected candidate.
+func (i *Ingest) AddSeriesUngatedRef(
+	ctx context.Context,
+	ref sourceengine.ProviderRef,
+	title string,
+	scanlator string,
+) (chapter.IngestResult, error) {
+	return i.addSeriesRef(ctx, ref, title, scanlator, "AddSeriesUngated", i.fetchForAttachRef)
+}
+
+// addSeriesRef is the shared address-aware ingest body. The supplied fetcher
+// selects the gated adopt path or deliberate owner-attach path; both retain the
+// same source provenance and collapse behavior after the fetch.
+func (i *Ingest) addSeriesRef(
+	ctx context.Context,
+	ref sourceengine.ProviderRef,
+	title string,
+	scanlator string,
+	operation string,
+	fetch func(context.Context, sourceengine.ProviderRef, string, string) (sourceengine.ChaptersResult, error),
+) (chapter.IngestResult, error) {
+	sourceID, url := ref.SourceID, ref.URL
+	// Resolve the source's display name ONCE (best-effort; "" when unresolved) —
+	// reused as the source-politeness gate key below AND passed into
+	// addSeriesWithChapters for scanlator collapse + provider_name storage.
 	providerName := i.resolveProviderName(ctx, sourceID)
 
-	swChapters, err := i.fetchForAttach(ctx, sourceID, url, title, providerName)
+	// Fetch before touching the DB. The result is deliberately unfiltered; the
+	// selected scanlator is applied by addSeriesWithChapters below.
+	chapterResult, err := fetch(ctx, ref, title, providerName)
 	if err != nil {
-		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeriesUngated: fetch chapters for source %d url %q: %w", sourceID, url, err)
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.%s: fetch chapters for source %d url %q: %w", operation, sourceID, url, err)
 	}
 
-	// Ignore-scanlator collapse — same as AddSeries (see EffectiveScanlator).
-	// This is the owner attach path (library.AddProvider); AddSeriesWithChapters
-	// (refresh) deliberately keeps the STORED scanlator, so pre-flag per-uploader
-	// rows are never migrated (Slice A).
+	// Ignore-scanlator collapse is apply-forward at interactive ingest. Refresh's
+	// AddSeriesWithChapters path deliberately keeps the stored scanlator.
 	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
-	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, swChapters)
+	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, chapterResult.AddressMode)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, chapterResult.Chapters)
 }
 
 // AddSeriesWithChapters is AddSeries WITHOUT the upstream fetch: it ingests the
@@ -305,8 +323,21 @@ func (i *Ingest) AddSeriesWithChapters(
 	scanlator string,
 	raw []sourceengine.Chapter,
 ) (chapter.IngestResult, error) {
+	return i.AddSeriesWithChaptersRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, title, scanlator, sourceengine.ChaptersResult{Chapters: raw})
+}
+
+// AddSeriesWithChaptersRef ingests a pre-fetched address-aware chapter result.
+func (i *Ingest) AddSeriesWithChaptersRef(
+	ctx context.Context,
+	ref sourceengine.ProviderRef,
+	title string,
+	scanlator string,
+	raw sourceengine.ChaptersResult,
+) (chapter.IngestResult, error) {
+	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, raw.AddressMode)
+	sourceID := ref.SourceID
 	providerName := i.resolveProviderName(ctx, sourceID)
-	return i.addSeriesWithChapters(ctx, sourceID, url, title, scanlator, providerName, raw)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, raw.Chapters)
 }
 
 // addSeriesWithChapters is the shared ingest body for AddSeries and
@@ -316,13 +347,13 @@ func (i *Ingest) AddSeriesWithChapters(
 // upstream chapter fetch.
 func (i *Ingest) addSeriesWithChapters(
 	ctx context.Context,
-	sourceID int64,
-	url string,
+	ref sourceengine.ProviderRef,
 	title string,
 	scanlator string,
 	providerName string,
 	swChapters []sourceengine.Chapter,
 ) (chapter.IngestResult, error) {
+	sourceID := ref.SourceID
 	// Defensive scanlator collapse (mirrors the FE collapseUntaggedScanlator, but
 	// enforced at the ingest chokepoint so NO surface — a stale FE, a direct API
 	// call, a future caller — can leak). SourceBreakdown labels a source's
@@ -347,7 +378,7 @@ func (i *Ingest) addSeriesWithChapters(
 	//    MangaDetails is called inside upsertSeriesProvider to populate the
 	//    source's own title and cover — distinct from the canonical series title
 	//    above.
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, sourceID, url, scanlator, providerName)
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, ref, scanlator, providerName)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: upsert series provider %d (scanlator %q) for series %s: %w", sourceID, scanlator, series.ID, err)
 	}
@@ -441,25 +472,11 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
-	sourceID int64,
-	url string,
+	ref sourceengine.ProviderRef,
 	scanlator string,
 	providerName string,
 ) (*ent.SeriesProvider, error) {
-	// Fetch the source's own title and cover so SeriesProvider reflects what
-	// this specific source knows about the manga, not the canonical adopt title.
-	meta, err := i.client.MangaDetails(ctx, sourceID, url)
-	if err != nil {
-		return nil, fmt.Errorf("manga details (series=%s source=%d url=%q): %w", seriesID, sourceID, url, err)
-	}
-	srcTitle := meta.Title
-	cover := meta.ThumbnailURL
-	// webURL is the fully-qualified, browser-clickable manga URL (distinct
-	// from the url PARAMETER above, which is the source-relative addressing
-	// key) — stored so an adopted series' "View on source" link and Komga's
-	// ComicInfo <Web> field work without a live engine call.
-	webURL := meta.RealURL
-
+	sourceID, url := ref.SourceID, ref.URL
 	provider := providerKey(sourceID)
 
 	existing, existErr := i.db.SeriesProvider.Query().
@@ -481,23 +498,63 @@ func (i *Ingest) upsertSeriesProvider(
 	if existErr != nil {
 		return nil, existErr
 	}
+	if err := i.retainExistingProviderAddress(ctx, existing, &ref); err != nil {
+		return nil, err
+	}
+
+	// Fetch the source's own title and cover so SeriesProvider reflects what
+	// this specific source knows about the manga, not the canonical adopt title.
+	meta, err := sourceengine.MangaDetailsFor(ctx, i.client, ref)
+	if err != nil {
+		return nil, fmt.Errorf("manga details (series=%s source=%d url=%q): %w", seriesID, sourceID, url, err)
+	}
+	resolvedMode := provideraddress.PreserveKnown(ref.AddressMode, meta.AddressMode)
+	srcTitle := meta.Title
+	cover := meta.ThumbnailURL
+	webURL := meta.RealURL
+	if webURL == "" {
+		webURL = ref.WebURL
+	}
 
 	if existing != nil {
-		// Keep source title, cover, and url fresh in case the manga was
-		// re-added from a different engine host or updated upstream.
-		// SetScanlator is idempotent on the exact-match path (existing.Scanlator
-		// already == scanlator) and REPAIRS a self-healed broken twin (source-name
-		// → "").
-		update := i.db.SeriesProvider.UpdateOne(existing).
-			SetScanlator(scanlator).
-			SetURL(url)
-		applyOptionalSeriesProviderFields(update, srcTitle, cover, webURL, providerName)
-		updated, updateErr := update.Save(ctx)
-		if updateErr != nil {
-			// Defensive path: reachable only on DB connection loss mid-operation.
-			return nil, fmt.Errorf("update (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, updateErr)
-		}
-		return updated, nil
+		return i.updateSeriesProvider(ctx, existing, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
+	}
+	return i.createSeriesProvider(ctx, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
+}
+
+func (i *Ingest) updateSeriesProvider(
+	ctx context.Context,
+	existing *ent.SeriesProvider,
+	seriesID uuid.UUID,
+	provider, scanlator, url, srcTitle, cover, webURL, providerName string,
+	resolvedMode sourceengine.AddressMode,
+) (*ent.SeriesProvider, error) {
+	// Keep source title, cover, and url fresh in case the manga was re-added
+	// from a different engine host or updated upstream. SetScanlator also repairs
+	// a self-healed broken twin whose old scanlator was the source name.
+	update := i.db.SeriesProvider.UpdateOne(existing).
+		SetScanlator(scanlator).
+		SetURL(url)
+	applyOptionalSeriesProviderFields(update, srcTitle, cover, webURL, providerName)
+	updated, updateErr := update.Save(ctx)
+	if updateErr != nil {
+		return nil, fmt.Errorf("update (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, updateErr)
+	}
+	if err := provideraddress.PersistResolved(ctx, i.db, updated.ID, resolvedMode); err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (i *Ingest) createSeriesProvider(
+	ctx context.Context,
+	seriesID uuid.UUID,
+	provider, scanlator, url, srcTitle, cover, webURL, providerName string,
+	resolvedMode sourceengine.AddressMode,
+) (*ent.SeriesProvider, error) {
+	storedMode, err := provideraddress.ToStored(resolvedMode)
+	if err != nil {
+		return nil, err
 	}
 
 	created, createErr := i.db.SeriesProvider.Create().
@@ -509,6 +566,7 @@ func (i *Ingest) upsertSeriesProvider(
 		SetCoverURL(cover).
 		SetURL(url).
 		SetWebURL(webURL).
+		SetAddressMode(storedMode).
 		// importance=0 is the schema default; multi-source ranking is M3/M4.
 		Save(ctx)
 	if createErr != nil {
@@ -517,6 +575,20 @@ func (i *Ingest) upsertSeriesProvider(
 		return nil, fmt.Errorf("create (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, createErr)
 	}
 	return created, nil
+}
+
+// retainExistingProviderAddress makes a persisted known mode authoritative,
+// fills only a missing web witness, and records a successful chapter-resolution
+// observation before the independent details request can fail.
+func (i *Ingest) retainExistingProviderAddress(ctx context.Context, existing *ent.SeriesProvider, ref *sourceengine.ProviderRef) error {
+	if existing == nil {
+		return nil
+	}
+	ref.AddressMode = provideraddress.PreserveKnown(provideraddress.FromStored(existing.AddressMode), ref.AddressMode)
+	if ref.WebURL == "" {
+		ref.WebURL = existing.WebURL
+	}
+	return provideraddress.PersistResolved(ctx, i.db, existing.ID, ref.AddressMode)
 }
 
 // applyOptionalSeriesProviderFields guards the four MangaDetails-sourced
@@ -615,45 +687,51 @@ func (i *Ingest) resolveProviderName(ctx context.Context, sourceID int64) string
 // long-lived, interactive-only memo. mangaTitle is passed through to the
 // engine host's chapter-number recognition; "" is safe when unknown.
 func (i *Ingest) FetchChaptersUncached(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]sourceengine.Chapter, error) {
-	return i.client.Chapters(ctx, sourceID, url, mangaTitle)
+	result, err := i.FetchChaptersUncachedRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: url}, mangaTitle)
+	return result.Chapters, err
 }
 
-// fetchForAdopt returns the raw chapter list for the adopt/attach path: cached
+// FetchChaptersUncachedRef is the address-aware refresh pre-fetch.
+func (i *Ingest) FetchChaptersUncachedRef(ctx context.Context, ref sourceengine.ProviderRef, mangaTitle string) (sourceengine.ChaptersResult, error) {
+	return sourceengine.ChaptersFor(ctx, i.client, ref, mangaTitle)
+}
+
+// fetchForAdoptRef returns the raw chapter list for the adopt path: cached
 // AND, on a cache miss, gated. The gate wraps the ONE real upstream fetch, so a
 // cache hit makes no request and correctly skips the gate. title feeds the
 // engine host's chapter-number recognition on a cache miss (a cache hit never
 // re-fetches, so it has no effect then) AND is part of the cache key itself
-// (see chaptersThroughCache) — a title="" discovery preview populated by
+// (see chaptersThroughCacheRef) — a title="" discovery preview populated by
 // imports.Service never masquerades as this call's real-title result.
-func (i *Ingest) fetchForAdopt(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
-	return i.chaptersThroughCache(ctx, sourceID, url, title, func() ([]sourceengine.Chapter, error) {
-		return i.gatedUpstream(ctx, sourceID, url, title, providerName, true)
+func (i *Ingest) fetchForAdoptRef(ctx context.Context, ref sourceengine.ProviderRef, title string, providerName string) (sourceengine.ChaptersResult, error) {
+	return i.chaptersThroughCacheRef(ctx, ref, title, func() (sourceengine.ChaptersResult, error) {
+		return i.gatedUpstreamRef(ctx, ref, title, providerName, true)
 	})
 }
 
-// fetchForAttach is fetchForAdopt for the one-shot OWNER attach path
+// fetchForAttachRef is fetchForAdoptRef for the one-shot OWNER attach path
 // (AddSeriesUngated): cached, and on a cache miss fetched with the SAME
 // politeness delay + breaker bookkeeping BUT with the cooldown refusal skipped
-// (respectCooldown=false — see gatedUpstream). A cache hit still makes no request
-// (and correctly skips the gate entirely), exactly like fetchForAdopt.
-func (i *Ingest) fetchForAttach(ctx context.Context, sourceID int64, url string, title string, providerName string) ([]sourceengine.Chapter, error) {
-	return i.chaptersThroughCache(ctx, sourceID, url, title, func() ([]sourceengine.Chapter, error) {
-		return i.gatedUpstream(ctx, sourceID, url, title, providerName, false)
+// (respectCooldown=false — see gatedUpstreamRef). A cache hit still makes no
+// request (and correctly skips the gate entirely), exactly like fetchForAdoptRef.
+func (i *Ingest) fetchForAttachRef(ctx context.Context, ref sourceengine.ProviderRef, title string, providerName string) (sourceengine.ChaptersResult, error) {
+	return i.chaptersThroughCacheRef(ctx, ref, title, func() (sourceengine.ChaptersResult, error) {
+		return i.gatedUpstreamRef(ctx, ref, title, providerName, false)
 	})
 }
 
-// chaptersThroughCache routes fetch through the shared chapter cache when one is
+// chaptersThroughCacheRef routes fetch through the shared chapter cache when one is
 // wired, else calls fetch directly (nil cache = today's uncached behaviour).
 // title is threaded into the cache key (see chapterCacheKey's doc comment) so a
 // fetch made under one mangaTitle can never be served back for a different one.
-func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url string, title string, fetch func() ([]sourceengine.Chapter, error)) ([]sourceengine.Chapter, error) {
+func (i *Ingest) chaptersThroughCacheRef(ctx context.Context, ref sourceengine.ProviderRef, title string, fetch func() (sourceengine.ChaptersResult, error)) (sourceengine.ChaptersResult, error) {
 	if i.cache == nil {
 		return fetch()
 	}
-	return i.cache.Get(ctx, sourceID, url, title, fetch)
+	return i.cache.GetRef(ctx, ref, title, fetch)
 }
 
-// gatedUpstream performs exactly ONE client.Chapters call wrapped in the
+// gatedUpstreamRef performs exactly ONE client.Chapters call wrapped in the
 // source-politeness gate: refuse when the source's breaker is in cooldown
 // (ErrSourceCooledDown), enforce the politeness delay, then record the outcome
 // so the breaker converges. A nil gate makes every step a no-op (ungated fetch).
@@ -666,20 +744,21 @@ func (i *Ingest) chaptersThroughCache(ctx context.Context, sourceID int64, url s
 // adopt/sweep paths (a tripped breaker refuses the fetch); false for the one-shot
 // OWNER attach (AddSeriesUngated) — the politeness delay + breaker bookkeeping
 // still run, but a tripped breaker never blocks a deliberate owner click.
-func (i *Ingest) gatedUpstream(ctx context.Context, sourceID int64, url string, title string, providerName string, respectCooldown bool) ([]sourceengine.Chapter, error) {
+func (i *Ingest) gatedUpstreamRef(ctx context.Context, ref sourceengine.ProviderRef, title string, providerName string, respectCooldown bool) (sourceengine.ChaptersResult, error) {
+	sourceID := ref.SourceID
 	key := gateKey(providerName, sourceID)
 	now := time.Now()
 	if respectCooldown && !i.gateAvailable(ctx, key, now) {
-		return nil, fmt.Errorf("%w: %s", ErrSourceCooledDown, key)
+		return sourceengine.ChaptersResult{}, fmt.Errorf("%w: %s", ErrSourceCooledDown, key)
 	}
 	i.gateWait(ctx, key)
-	chs, err := i.client.Chapters(ctx, sourceID, url, title)
+	result, err := sourceengine.ChaptersFor(ctx, i.client, ref, title)
 	if err != nil {
 		i.gateRecordFailure(ctx, key, err, now)
-		return nil, err
+		return sourceengine.ChaptersResult{}, err
 	}
 	i.gateRecordSuccess(ctx, key)
-	return chs, nil
+	return result, nil
 }
 
 // gateKey is the physical-source identity used to key the source-politeness gate

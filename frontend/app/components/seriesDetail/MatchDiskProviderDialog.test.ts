@@ -83,7 +83,7 @@ describe('MatchDiskProviderDialog', () => {
     await wrapper.find('.group').trigger('click')
     await wrapper.find(`[aria-label="Toggle ${firstCandidate.sourceName}"]`).trigger('click')
 
-    expect(wrapper.emitted('pickCandidate')).toEqual([[{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url }]])
+    expect(wrapper.emitted('pickCandidate')).toEqual([[{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url, addressMode: firstCandidate.addressMode, webUrl: firstCandidate.realUrl }]])
   })
 
   it('deselecting the chosen candidate hides the breakdown section again', async () => {
@@ -102,8 +102,8 @@ describe('MatchDiskProviderDialog', () => {
     await wrapper.find(`[aria-label="Toggle ${secondCandidate.sourceName}"]`).trigger('click')
 
     expect(wrapper.emitted('pickCandidate')).toEqual([
-      [{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url }],
-      [{ source: secondCandidate.source, mangaId: secondCandidate.mangaId, url: secondCandidate.url }],
+      [{ source: firstCandidate.source, mangaId: firstCandidate.mangaId, url: firstCandidate.url, addressMode: firstCandidate.addressMode, webUrl: firstCandidate.realUrl }],
+      [{ source: secondCandidate.source, mangaId: secondCandidate.mangaId, url: secondCandidate.url, addressMode: secondCandidate.addressMode, webUrl: secondCandidate.realUrl }],
     ])
   })
 
@@ -145,6 +145,8 @@ describe('MatchDiskProviderDialog', () => {
       scanlator: scanlatorBreakdown[0]!.scanlator,
       importance: 3,
       url: firstCandidate.url,
+      addressMode: firstCandidate.addressMode,
+      webUrl: firstCandidate.realUrl,
     }]])
   })
 
@@ -171,6 +173,8 @@ describe('MatchDiskProviderDialog', () => {
       scanlator: '',
       importance: 1,
       url: firstCandidate.url,
+      addressMode: firstCandidate.addressMode,
+      webUrl: firstCandidate.realUrl,
     }]])
   })
 
@@ -187,6 +191,8 @@ describe('MatchDiskProviderDialog', () => {
       scanlator: '',
       importance: 1,
       url: firstCandidate.url,
+      addressMode: firstCandidate.addressMode,
+      webUrl: firstCandidate.realUrl,
     }]])
   })
 

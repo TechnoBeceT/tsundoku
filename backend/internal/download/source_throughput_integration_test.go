@@ -38,20 +38,25 @@ type throughputIntegrationClient struct {
 }
 
 func (c *throughputIntegrationClient) Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]sourceengine.Page, error) {
+	result, err := c.PagesRef(ctx, sourceengine.ProviderRef{SourceID: sourceID, URL: mangaURL}, chapterURL)
+	return result.Pages, err
+}
+
+func (c *throughputIntegrationClient) PagesRef(ctx context.Context, ref sourceengine.ProviderRef, chapterURL string) (sourceengine.PagesResult, error) {
 	c.mu.Lock()
-	c.pageInFlight[sourceID]++
-	c.pageMax[sourceID] = max(c.pageMax[sourceID], c.pageInFlight[sourceID])
+	c.pageInFlight[ref.SourceID]++
+	c.pageMax[ref.SourceID] = max(c.pageMax[ref.SourceID], c.pageInFlight[ref.SourceID])
 	c.mu.Unlock()
 	c.pageStarted <- struct{}{}
 	select {
 	case <-c.releasePages:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return sourceengine.PagesResult{}, ctx.Err()
 	}
 	c.mu.Lock()
-	c.pageInFlight[sourceID]--
+	c.pageInFlight[ref.SourceID]--
 	c.mu.Unlock()
-	return c.Client.Pages(ctx, sourceID, chapterURL, mangaURL)
+	return c.Client.PagesRef(ctx, ref, chapterURL)
 }
 
 func (c *throughputIntegrationClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {

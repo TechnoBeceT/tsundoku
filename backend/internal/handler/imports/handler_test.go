@@ -37,8 +37,8 @@ const testSecret = "imports-handler-test-secret"
 // it backs the imports.Service (via ingest.NewIngest) in every handler test.
 //
 // Results/errors are keyed by whatever addressing the real client uses:
-// sources by their numeric ID, chapters/details by the source-relative manga
-// URL (P2 Suwayomi-removal — the engine host is URL-addressed, not
+// sources by their numeric ID, chapters/details by the exact source-owned manga
+// address (P2 Suwayomi-removal — the engine host is address-based, not
 // manga-id-addressed).
 type fakeEngineClient struct {
 	sources    []sourceengine.Source
@@ -55,13 +55,13 @@ type fakeEngineClient struct {
 	popularResults map[int64]sourceengine.SearchResult
 	latestResults  map[int64]sourceengine.SearchResult
 
-	// chaptersByURL / chapterErrs back Chapters, keyed by the source-relative
-	// manga URL.
+	// chaptersByURL / chapterErrs back Chapters, keyed by the source-owned manga
+	// address.
 	chaptersByURL map[string][]sourceengine.Chapter
 	chapterErrs   map[string]error
 
 	// detailsByURL / detailsErrs back MangaDetails, keyed by the
-	// source-relative manga URL.
+	// source-owned manga address.
 	detailsByURL map[string]sourceengine.MangaDetails
 	detailsErrs  map[string]error
 

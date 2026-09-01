@@ -44,19 +44,22 @@ export interface SearchCandidate {
    *  a manga by, see below). */
   mangaId: number
   /**
-   * Source-relative manga URL the engine host addresses this manga by (P2
-   * Suwayomi-removal). Every adopt/add-source/match request MUST send this
-   * back to the backend — `mangaId` alone no longer resolves a manga. NOT a
-   * clickable browser link; see `realUrl` for that.
+   * Source-owned serialized manga address. It may be a relative or opaque
+   * extension key, or an absolute cross-origin URL. Every adopt/add-source/
+   * match request MUST send it back with its `addressMode`; `mangaId` alone
+   * no longer resolves a manga. See `realUrl` for the browser link.
    */
   url: string
   /**
    * Fully-qualified, browser-clickable URL for this manga (Mihon's
-   * `getMangaUrl`) — the "View on source" external link target. Distinct
-   * from `url`: never send this back to the backend. "" when the source
-   * could not resolve one.
+   * `getMangaUrl`) — the "View on source" external link target. It is distinct
+   * in purpose from `url`, though the values may be equal for an absolute
+   * URL-search address, and is also carried as the optional `webUrl` witness.
+   * "" when the source could not resolve one.
    */
   realUrl: string
+  /** Engine-resolved interpretation of url; omitted fixtures default unknown. */
+  addressMode?: 'unknown' | 'direct' | 'url_search'
   /** Manga display title as returned by the source. */
   title: string
   /** Cover image URL, or "" → the initial-letter placeholder. */
@@ -93,9 +96,10 @@ export interface AdoptProvider {
   /** Suwayomi-internal manga identifier within that source (DEPRECATED, unused
    *  by the backend — see SearchCandidate.mangaId). Kept for wire compat. */
   mangaId: number
-  /** Source-relative manga URL the engine host addresses this manga by (P2
-   *  Suwayomi-removal) — REQUIRED for the backend to resolve the manga. */
+  /** Source-owned serialized manga address — REQUIRED for the backend to resolve the manga. */
   url: string
+  addressMode?: 'unknown' | 'direct' | 'url_search'
+  webUrl?: string
   /** Priority weight — higher = preferred metadata/download source. */
   importance: number
   /**

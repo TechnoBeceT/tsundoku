@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // coverageFastPath is how long a request will WAIT for a fresh computation
@@ -206,6 +208,11 @@ func coverageAfterCompute(snap CoverageSnapshot, ok bool) CoverageSnapshot {
 // reserved for a genuine store failure — loadCoverage itself unable to read
 // the store.
 func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string, refresh bool) (CoverageSnapshot, error) {
+	return s.CoverageRef(ctx, sourceID, url, sourceengine.AddressModeUnknown, "", mangaTitle, refresh)
+}
+
+// CoverageRef retains address context for any chapter walk it starts.
+func (s *Service) CoverageRef(ctx context.Context, sourceID, url string, mode sourceengine.AddressMode, webURL, mangaTitle string, refresh bool) (CoverageSnapshot, error) {
 	if _, err := s.resolveSource(ctx, sourceID); err != nil {
 		return CoverageSnapshot{}, err
 	}
@@ -227,7 +234,7 @@ func (s *Service) Coverage(ctx context.Context, sourceID, url, mangaTitle string
 	bg := context.WithoutCancel(ctx)
 	go func() {
 		defer close(done)
-		if err := s.ComputeCoverage(bg, sourceID, url, mangaTitle); err != nil {
+		if err := s.ComputeCoverageRef(bg, sourceID, url, mode, webURL, mangaTitle); err != nil {
 			slog.WarnContext(bg, "imports.Coverage: background computation failed",
 				"source_id", sourceID, "manga_url", url, "err", err)
 		}

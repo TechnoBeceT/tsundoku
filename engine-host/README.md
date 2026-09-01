@@ -1,8 +1,9 @@
 # Tsundoku engine-host
 
 A stateless JVM extension-host that loads real Mihon/Tachiyomi extensions and answers
-`(sourceId, source-relative url)`-addressed source calls over a thin HTTP/JSON RPC — with **no
-Suwayomi server, no database, no GraphQL**. It replaces the embedded Suwayomi engine: Tsundoku
+`(sourceId, source-owned address)` calls over a thin HTTP/JSON RPC. Addresses may be relative or
+opaque extension keys, or absolute cross-origin URLs when the source's URL-search path owns request
+state. There is **no Suwayomi server, no database, no GraphQL**. It replaces the embedded engine: Tsundoku
 (the Go/Nuxt app) owns the library; this host only fetches from sources and manages the extension
 working-set (installed APKs + per-source preferences) on a mounted volume.
 

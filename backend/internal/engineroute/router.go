@@ -160,14 +160,29 @@ func (r *Router) MangaDetails(ctx context.Context, sourceID int64, url string) (
 	return r.clientFor(sourceID).MangaDetails(ctx, sourceID, url)
 }
 
+// MangaDetailsRef routes the address-aware request to ref's source instance.
+func (r *Router) MangaDetailsRef(ctx context.Context, ref sourceengine.ProviderRef) (sourceengine.MangaDetails, error) {
+	return sourceengine.MangaDetailsFor(ctx, r.clientFor(ref.SourceID), ref)
+}
+
 // Chapters routes to sourceID's instance.
 func (r *Router) Chapters(ctx context.Context, sourceID int64, url, mangaTitle string) ([]sourceengine.Chapter, error) {
 	return r.clientFor(sourceID).Chapters(ctx, sourceID, url, mangaTitle)
 }
 
+// ChaptersRef routes the address-aware request to ref's source instance.
+func (r *Router) ChaptersRef(ctx context.Context, ref sourceengine.ProviderRef, mangaTitle string) (sourceengine.ChaptersResult, error) {
+	return sourceengine.ChaptersFor(ctx, r.clientFor(ref.SourceID), ref, mangaTitle)
+}
+
 // Pages routes to sourceID's instance.
 func (r *Router) Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]sourceengine.Page, error) {
 	return r.clientFor(sourceID).Pages(ctx, sourceID, chapterURL, mangaURL)
+}
+
+// PagesRef routes the address-aware request to ref's source instance.
+func (r *Router) PagesRef(ctx context.Context, ref sourceengine.ProviderRef, chapterURL string) (sourceengine.PagesResult, error) {
+	return sourceengine.PagesFor(ctx, r.clientFor(ref.SourceID), ref, chapterURL)
 }
 
 // Image routes to sourceID's instance — the load-bearing egress: a bound

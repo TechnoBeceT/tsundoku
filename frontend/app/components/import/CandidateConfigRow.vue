@@ -124,7 +124,7 @@ const emit = defineEmits<{
 // The source name links to the candidate's browser-clickable realUrl, opening
 // in a new tab. Scheme-guarded via the shared safeHttpUrl (untrusted upstream
 // source data) → undefined when there is no valid link, so the name renders as
-// plain, non-clickable text instead of the source-relative addressing url.
+// plain, non-clickable text instead of the source-owned addressing value.
 const sourceHref = computed(() => safeHttpUrl(props.candidate.realUrl))
 </script>
 

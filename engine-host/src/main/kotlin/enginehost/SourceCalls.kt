@@ -2,9 +2,9 @@ package enginehost
 
 /*
  * SourceCalls bridges the RPC layer to a Mihon source's suspend API. Content is always
- * addressed by a source-relative URL. Most SManga/SChapter objects are reconstructed from that
- * url directly; sources that retain request state only on search results are rehydrated through
- * their own URL-search path. No opaque engine id ever enters the flow.
+ * addressed by a source-owned serialized value: a relative or opaque extension key, or an
+ * absolute cross-origin URL when URL-search hydration owns the request state. Explicit provenance
+ * determines reconstruction; no opaque engine id ever enters the flow.
  *
  * Uses a caller-cancellable runBlocking job to cross the Kotlin suspend boundary — the source
  * workers are plain blocking threads, while coroutine and OkHttp cancellation still propagate.
@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import okhttp3.ConnectionPool
@@ -165,25 +166,26 @@ object SourceCalls {
             SearchResponse(result.mangas.map { it.toEntryDto(source) }, result.hasNextPage)
         }
 
-    /** Fetch full manga details for a source-relative url. */
+    /** Fetch full manga details for a source-owned serialized address. */
     fun mangaDetails(
         source: Source,
         url: String,
+        addressMode: AddressMode = AddressMode.UNKNOWN,
+        webUrl: String? = null,
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): MangaDetailsDto =
         cancellation.run {
-            val seed = source.reconstructManga(url)
-            val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = true, fetchChapters = false)
+            val (seed, update, resolvedMode) = source.mangaUpdate(url, addressMode = addressMode, webUrl = webUrl, fetchDetails = true, fetchChapters = false)
             // A details parser returns a fresh SManga and may never set the `lateinit` identity `url`
             // (already known in the normal Mihon/Suwayomi flow). Re-seed it with the requested url —
             // the requested url IS the identity — so the toDetailsDto url read AND getMangaUrl below
             // cannot throw UninitializedPropertyAccessException (the Flame Comics / Manhuascan.us 502).
             update.manga.url = url
-            update.manga.toDetailsDto(url, source)
+            update.manga.toDetailsDto(url, source, resolvedMode)
         }
 
     /**
-     * Fetch the chapter list for a source-relative manga url, running Suwayomi's own
+     * Fetch the chapter list for a source-owned serialized manga address, running Suwayomi's own
      * service-layer chapter post-processing (Chapter.kt's `updateChapterListDatabase`) on the raw
      * extension output before returning it — see [SChapter.toChapterDto] for the per-chapter steps.
      * [mangaTitle] (optional; "" when unknown) improves number recognition and is passed to the
@@ -193,11 +195,12 @@ object SourceCalls {
         source: Source,
         url: String,
         mangaTitle: String = "",
+        addressMode: AddressMode = AddressMode.UNKNOWN,
+        webUrl: String? = null,
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): ChaptersResponse =
         cancellation.run {
-            val seed = source.reconstructManga(url, mangaTitle)
-            val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = false, fetchChapters = true)
+            val (seed, update, resolvedMode) = source.mangaUpdate(url, mangaTitle, addressMode, webUrl, fetchDetails = false, fetchChapters = true)
             val http = source as? HttpSource
             // A7 (P2 mapper audit): a source can return the same chapter url twice — dedup BEFORE
             // any other processing, mirroring Chapter.kt:150's `chapters.distinctBy { it.url }`.
@@ -213,12 +216,12 @@ object SourceCalls {
                     // still honored so a source relying on it isn't silently broken here.
                     http?.prepareNewChapter(chapter, seed)
                     chapter.toChapterDto(mangaTitle, http)
-                },
+                }, resolvedMode,
             )
         }
 
     /**
-     * Fetch the page list for a source-relative chapter url. Each page is returned as the source's
+     * Fetch the page list for a source-owned chapter address. Each page is returned as the source's
      * OWN address PAIR ([Page.url], [Page.imageUrl]) verbatim — NO image-URL resolution happens here.
      * Resolution (calling getImageUrl when imageUrl is null) is deferred to [image], which
      * reconstructs the exact Page and fetches the bytes, so the page list stays a cheap metadata call.
@@ -227,7 +230,8 @@ object SourceCalls {
      * [Source.getPageList] with a bare [SChapter] reconstructed from [chapterUrl] alone. For the vast
      * majority of sources this succeeds with ZERO extra requests — a url-only seed is everything their
      * getPageList needs. Only the bare attempt's `Refresh Chapter List` signal permits [mangaUrl]
-     * (the source-relative SERIES url; "" when unknown) to trigger a series-scoped chapter fetch (the
+     * (the source-owned serialized SERIES address; "" when unknown) to trigger a series-scoped
+     * chapter fetch (the
      * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs). When it yields a chapter
      * whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
      *
@@ -250,31 +254,33 @@ object SourceCalls {
         source: Source,
         chapterUrl: String,
         mangaUrl: String = "",
+        addressMode: AddressMode = AddressMode.UNKNOWN,
+        webUrl: String? = null,
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): PagesResponse =
         cancellation.run {
             val bareSeed = SChapter.create().apply { this.url = chapterUrl }
-            val pageList =
+            val pageResult: Pair<List<Page>, AddressMode> =
                 try {
-                    source.getPageList(bareSeed)
+                    source.getPageList(bareSeed) to addressMode
                 } catch (bareError: Exception) {
                     // Only keiyoushi's pre-network memo signal may enter stale-offer recovery. A
                     // genuine source failure must preserve its original source-wide classification.
                     if (!isRefreshChapterListSignal(bareError) || mangaUrl.isBlank()) throw bareError
 
-                    val mangaSeed = source.reconstructManga(mangaUrl)
+                    val (_, warmUpdate, resolvedMode) = source.mangaUpdate(mangaUrl, addressMode = addressMode, webUrl = webUrl, fetchDetails = false, fetchChapters = true)
                     val warmChapter =
-                        source
-                            .getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
+                        warmUpdate
                             .chapters
                             .firstOrNull { it.url == chapterUrl }
                             ?: throw NoSuchElementException(
                                 "chapter not found in refreshed chapter list: $chapterUrl",
                             )
-                    source.getPageList(warmChapter)
+                    source.getPageList(warmChapter) to resolvedMode
                 }
+            val (pages, resolvedMode) = pageResult
             PagesResponse(
-                pageList.map { page -> PageDto(index = page.index, url = page.url, imageUrl = page.imageUrl) },
+                pages.map { page -> PageDto(index = page.index, url = page.url, imageUrl = page.imageUrl) }, resolvedMode,
             )
         }
 
@@ -533,7 +539,7 @@ object SourceCalls {
 
     /**
      * Resolves the fully-qualified, browser-clickable url for [manga] via
-     * [HttpSource.getMangaUrl] — the "realUrl" the DTOs carry alongside the source-relative
+     * [HttpSource.getMangaUrl] — the "realUrl" the DTOs carry alongside the source-owned serialized
      * addressing [SManga.url]. Only an [HttpSource] exposes this call; any other [Source]
      * (or a source whose request-building throws, e.g. a malformed seed url) yields null,
      * never a thrown exception into the RPC handler.
@@ -544,24 +550,50 @@ object SourceCalls {
     ): String? = (source as? HttpSource)?.let { http -> runCatching { http.getMangaUrl(manga) }.getOrNull() }
 
     /**
-     * Rebuild a manga object after its serialized address crosses RPC. Most extensions can recreate
-     * their request from [address] alone. A source may instead keep request-critical state on the
-     * search-result object; when a bare object cannot reproduce the retained address, the source's
-     * standard URL-search path is the compatibility boundary that restores the exact extension-owned
-     * object. No source identity or URL-path convention is inspected here.
+     * Fetch an update after the serialized source address crosses RPC. The shared seed resolver uses
+     * explicit address mode; only unknown mode may fall back after the exact top-level base
+     * `Exception("Unsupported URL")` emitted pre-network by URL search. Every update runs once.
      */
-    private suspend fun Source.reconstructManga(
+    private suspend fun Source.mangaUpdate(
         address: String,
         title: String = "",
-    ): SManga {
+        addressMode: AddressMode = AddressMode.UNKNOWN,
+        webUrl: String? = null,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): Triple<SManga, SMangaUpdate, AddressMode> {
         require(address.isNotBlank()) { "malformed source candidate: missing source address" }
         val bare = SManga.create().apply { url = address; this.title = title }
-        if (this !is HttpSource) return bare
-        val absoluteAddress = absoluteAddress(address) ?: return bare
-        if (realMangaUrl(this, bare) == absoluteAddress) {
-            return bare
+        val (seed, resolvedMode) = selectMangaSeed(address, title, bare, addressMode, webUrl)
+        return Triple(seed, getMangaUpdate(seed, emptyList(), fetchDetails, fetchChapters), resolvedMode)
+    }
+
+    private suspend fun Source.selectMangaSeed(address: String, title: String, bare: SManga, mode: AddressMode, webUrl: String?): Pair<SManga, AddressMode> =
+        when (mode) {
+            AddressMode.DIRECT -> bare to AddressMode.DIRECT
+            AddressMode.URL_SEARCH -> requireNotNull(hydrateManga(address, title, bare, webUrl, force = true)) to AddressMode.URL_SEARCH
+            AddressMode.UNKNOWN -> {
+                if (this !is HttpSource) return bare to AddressMode.DIRECT
+                if (!webUrl.isNullOrBlank() && realMangaUrl(this, bare) == webUrl) bare to AddressMode.DIRECT
+                else try {
+                    requireNotNull(hydrateManga(address, title, bare, webUrl, force = true)) to AddressMode.URL_SEARCH
+                } catch (error: Exception) {
+                    if (error.javaClass == Exception::class.java && error.message == "Unsupported URL") bare to AddressMode.DIRECT else throw error
+                }
+            }
         }
 
+    /** Restores a source-owned search result only when a bare address cannot reproduce its browser URL. */
+    private suspend fun Source.hydrateManga(
+        address: String,
+        title: String,
+        bare: SManga,
+        webUrl: String? = null,
+        force: Boolean = false,
+    ): SManga? {
+        if (this !is HttpSource) return null
+        val absoluteAddress = absoluteAddress(webUrl ?: address) ?: return null
+        if (!force && realMangaUrl(this, bare) == absoluteAddress) return null
         val hydrated =
             getSearchManga(1, absoluteAddress, FilterList()).mangas
                 .firstOrNull { realMangaUrl(this, it) == absoluteAddress }
@@ -594,37 +626,39 @@ object SourceCalls {
     /**
      * Select the stable serialized address supplied by the extension. Prefer its normal source url
      * whenever a freshly reconstructed SManga produces the same real URL. If request-critical state
-     * exists only on the search object, retain the extension's real URL instead; [reconstructManga]
-     * can feed that address through the extension's own URL-search path after RPC serialization.
+     * exists only on the search object, retain the extension's real URL and emit `url_search` mode.
      */
     private fun SManga.sourceAddress(
         source: Source,
         realUrl: String?,
-    ): String {
+    ): Pair<String, AddressMode> {
         val sourceUrl = lateinitOr("") { url }
         if (sourceUrl.isBlank() && realUrl.isNullOrBlank()) {
             throw IllegalArgumentException("malformed source candidate: missing source address")
         }
-        if (sourceUrl.isBlank()) return source.serializedRealAddress(realUrl!!)
-        if (realUrl.isNullOrBlank()) return sourceUrl
+        if (sourceUrl.isBlank()) return source.serializedRealAddress(realUrl!!) to AddressMode.URL_SEARCH
+        if (realUrl.isNullOrBlank()) return sourceUrl to AddressMode.UNKNOWN
 
         val bare = SManga.create().apply { url = sourceUrl }
-        return if (realMangaUrl(source, bare) == realUrl) sourceUrl else source.serializedRealAddress(realUrl)
+        return if (realMangaUrl(source, bare) == realUrl) sourceUrl to AddressMode.DIRECT else source.serializedRealAddress(realUrl) to AddressMode.URL_SEARCH
     }
 
     private fun SManga.toEntryDto(source: Source): MangaEntryDto {
         val realUrl = realMangaUrl(source, this)
+        val (address, mode) = sourceAddress(source, realUrl)
         return MangaEntryDto(
-            url = sourceAddress(source, realUrl),
+            url = address,
             title = title,
             thumbnailUrl = thumbnail_url,
             realUrl = realUrl,
+            addressMode = mode,
         )
     }
 
     private fun SManga.toDetailsDto(
         requestedUrl: String,
         source: Source,
+        addressMode: AddressMode,
     ) = MangaDetailsDto(
         url = url.ifBlank { requestedUrl },
         // `title` is also a lateinit — a details parser that omits it would throw identically to the
@@ -638,6 +672,7 @@ object SourceCalls {
         status = statusLabel(status),
         thumbnailUrl = thumbnail_url,
         realUrl = realMangaUrl(source, this),
+        addressMode = addressMode,
     )
 
     /**

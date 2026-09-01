@@ -35,7 +35,8 @@ func (SourceCoverage) Fields() []ent.Field {
 		// The engine source id, as a string for the same reason the wire uses
 		// one: it is a 64-bit id and JSON numbers are lossy above 2^53.
 		field.String("source_id"),
-		// The source-relative manga URL — the other half of the identity.
+		// The exact source-owned serialized manga address — the other half of
+		// the identity. Its shape may be relative, opaque, or absolute.
 		field.String("manga_url"),
 		// The rendered SourceBreakdownDTO as JSON. Stored whole rather than
 		// normalised into rows: it is a snapshot to hand back verbatim, and

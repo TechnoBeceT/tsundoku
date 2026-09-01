@@ -204,8 +204,8 @@ func (s *Service) sourceExists(ctx context.Context, sourceID int64) (bool, error
 	return false, nil
 }
 
-// resolveAndIngestSource is the shared owner-attach prelude for AddProvider and
-// attachRealSource (§2 DRY — both had an identical block): parse the source id
+// resolveAndIngestSourceRef is the shared owner-attach prelude for AddProvider
+// and attachRealSourceRef (§2 DRY — both had an identical block): parse the source id
 // (ErrSourceNotFound on a non-numeric id — it can never resolve to a real
 // source), verify it is a currently-loaded source (ErrSourceNotFound on a TRUE
 // membership miss, ErrSourceUpstream if the engine host is unreachable), then
@@ -214,8 +214,8 @@ func (s *Service) sourceExists(ctx context.Context, sourceID int64) (bool, error
 // any fetch failure honestly (ErrSourceUnavailable / ErrSourceUpstream). It never
 // returns the old phantom ErrSourceNotFound for a mere fetch failure. Returns the
 // parsed numeric source id on success.
-func (s *Service) resolveAndIngestSource(ctx context.Context, source, url, title, scanlator string) (int64, error) {
-	sourceID, err := parseSourceID(source)
+func (s *Service) resolveAndIngestSourceRef(ctx context.Context, ref ProviderRef, title string) (int64, error) {
+	sourceID, err := parseSourceID(ref.Source)
 	if err != nil {
 		return 0, errors.Join(ErrSourceNotFound, err)
 	}
@@ -226,8 +226,9 @@ func (s *Service) resolveAndIngestSource(ctx context.Context, source, url, title
 	if !exists {
 		return 0, ErrSourceNotFound // true miss (404).
 	}
-	if _, err := s.ingest.AddSeriesUngated(ctx, sourceID, url, title, scanlator); err != nil {
-		return 0, classifyAttachError(source, err)
+	engineRef := sourceengine.ProviderRef{SourceID: sourceID, URL: ref.URL, AddressMode: ref.AddressMode, WebURL: ref.WebURL}
+	if _, err := s.ingest.AddSeriesUngatedRef(ctx, engineRef, title, ref.Scanlator); err != nil {
+		return 0, classifyAttachError(ref.Source, err)
 	}
 	return sourceID, nil
 }

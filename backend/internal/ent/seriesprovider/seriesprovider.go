@@ -3,6 +3,7 @@
 package seriesprovider
 
 import (
+	"fmt"
 	"time"
 
 	"entgo.io/ent/dialect/sql"
@@ -31,6 +32,8 @@ const (
 	FieldURL = "url"
 	// FieldWebURL holds the string denoting the web_url field in the database.
 	FieldWebURL = "web_url"
+	// FieldAddressMode holds the string denoting the address_mode field in the database.
+	FieldAddressMode = "address_mode"
 	// FieldTitle holds the string denoting the title field in the database.
 	FieldTitle = "title"
 	// FieldMetadata holds the string denoting the metadata field in the database.
@@ -100,6 +103,7 @@ var Columns = []string{
 	FieldLanguage,
 	FieldURL,
 	FieldWebURL,
+	FieldAddressMode,
 	FieldTitle,
 	FieldMetadata,
 	FieldStatus,
@@ -156,6 +160,33 @@ var (
 	DefaultID func() uuid.UUID
 )
 
+// AddressMode defines the type for the "address_mode" enum field.
+type AddressMode string
+
+// AddressModeUnknown is the default value of the AddressMode enum.
+const DefaultAddressMode = AddressModeUnknown
+
+// AddressMode values.
+const (
+	AddressModeUnknown   AddressMode = "unknown"
+	AddressModeDirect    AddressMode = "direct"
+	AddressModeURLSearch AddressMode = "url_search"
+)
+
+func (am AddressMode) String() string {
+	return string(am)
+}
+
+// AddressModeValidator is a validator for the "address_mode" field enum values. It is called by the builders before save.
+func AddressModeValidator(am AddressMode) error {
+	switch am {
+	case AddressModeUnknown, AddressModeDirect, AddressModeURLSearch:
+		return nil
+	default:
+		return fmt.Errorf("seriesprovider: invalid enum value for address_mode field: %q", am)
+	}
+}
+
 // OrderOption defines the ordering options for the SeriesProvider queries.
 type OrderOption func(*sql.Selector)
 
@@ -202,6 +233,11 @@ func ByURL(opts ...sql.OrderTermOption) OrderOption {
 // ByWebURL orders the results by the web_url field.
 func ByWebURL(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldWebURL, opts...).ToFunc()
+}
+
+// ByAddressMode orders the results by the address_mode field.
+func ByAddressMode(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAddressMode, opts...).ToFunc()
 }
 
 // ByTitle orders the results by the title field.

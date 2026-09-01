@@ -137,8 +137,8 @@ func (h *Handler) Search(c echo.Context) error {
 // InspectChapters handles GET /api/sources/:sourceId/manga/:mangaId/chapters?url=&title=.
 //
 // P2 Suwayomi-removal (slice 3b): the backend is URL-addressed — it requires a
-// REQUIRED ?url query param (the source-relative manga URL) and returns the
-// live chapter list as []ChapterInspectDTO. :mangaId stays in the route (FE
+// REQUIRED ?url query param (the exact source-owned serialized manga address)
+// and returns the live chapter list as []ChapterInspectDTO. :mangaId stays in the route (FE
 // compat) but is bound/ignored; a request that only sends :mangaId (the
 // not-yet-updated frontend) gets a clean 400 until slice 3b-FE sends ?url=.
 //
@@ -156,8 +156,12 @@ func (h *Handler) InspectChapters(c echo.Context) error {
 		return err
 	}
 	title := parseOptionalTitle(c.QueryParam("title"))
+	mode, webURL, err := parseAddressContext(c.QueryParam("addressMode"), c.QueryParam("webUrl"))
+	if err != nil {
+		return err
+	}
 
-	out, err := h.svc.InspectChapters(c.Request().Context(), sourceID, url, title)
+	out, err := h.svc.InspectChaptersRef(c.Request().Context(), sourceID, url, mode, webURL, title)
 	if err != nil {
 		// An unknown OR owner-disabled source is a 404 (GAP-146), mirroring
 		// Browse/Details/Breakdown; any other failure is a genuine upstream/source
@@ -218,8 +222,12 @@ func (h *Handler) Details(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	mode, webURL, err := parseAddressContext(c.QueryParam("addressMode"), c.QueryParam("webUrl"))
+	if err != nil {
+		return err
+	}
 
-	out, err := h.svc.MangaDetails(c.Request().Context(), sourceID, url)
+	out, err := h.svc.MangaDetailsRef(c.Request().Context(), sourceID, url, mode, webURL)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -310,12 +318,16 @@ func (h *Handler) Breakdown(c echo.Context) error {
 		return err
 	}
 	title := parseOptionalTitle(c.QueryParam("title"))
+	mode, webURL, err := parseAddressContext(c.QueryParam("addressMode"), c.QueryParam("webUrl"))
+	if err != nil {
+		return err
+	}
 	refresh, err := parseRefresh(c.QueryParam("refresh"))
 	if err != nil {
 		return err
 	}
 
-	snap, err := h.svc.Coverage(c.Request().Context(), sourceID, url, title, refresh)
+	snap, err := h.svc.CoverageRef(c.Request().Context(), sourceID, url, mode, webURL, title, refresh)
 	if err != nil {
 		if errors.Is(err, imports.ErrSourceNotFound) {
 			return echo.NewHTTPError(http.StatusNotFound, "source not found")
@@ -353,11 +365,13 @@ func (h *Handler) Adopt(c echo.Context) error {
 	providers := make([]imports.AdoptProvider, len(body.Providers))
 	for i, p := range body.Providers {
 		providers[i] = imports.AdoptProvider{
-			Source:     p.Source,
-			MangaID:    p.MangaID,
-			URL:        p.URL,
-			Importance: p.Importance,
-			Scanlator:  p.Scanlator,
+			Source:      p.Source,
+			MangaID:     p.MangaID,
+			URL:         p.URL,
+			AddressMode: p.AddressMode,
+			WebURL:      p.WebURL,
+			Importance:  p.Importance,
+			Scanlator:   p.Scanlator,
 		}
 	}
 

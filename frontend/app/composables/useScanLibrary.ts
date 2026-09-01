@@ -425,7 +425,8 @@ export function useScanLibrary() {
   // imports.coverage.done identifies its subject by (sourceId, mangaUrl), not
   // the mangaId-keyed cache key, so the SSE handler needs this to resolve
   // which cached entry (entries) to refetch.
-  const breakdownRefs = new Map<string, { source: string, mangaId: number, url: string }>()
+  interface AddressRef { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }
+  const breakdownRefs = new Map<string, AddressRef>()
 
   /**
    * Fetches one candidate's breakdown and writes both caches. Shared by the
@@ -437,13 +438,13 @@ export function useScanLibrary() {
    * recompute, while still never duplicating a walk already in flight (the
    * backend's own guarantee — see the endpoint's own doc).
    */
-  async function fetchBreakdown(ref: { source: string, mangaId: number, url: string }, opts?: { refresh?: boolean }): Promise<void> {
+  async function fetchBreakdown(ref: AddressRef, opts?: { refresh?: boolean }): Promise<void> {
     const key = breakdownKey(ref.source, ref.mangaId)
     try {
       const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
         params: {
           path: { sourceId: ref.source, mangaId: ref.mangaId },
-          query: { url: ref.url, refresh: opts?.refresh ? true : undefined },
+          query: { url: ref.url, addressMode: ref.addressMode, webUrl: ref.webUrl, refresh: opts?.refresh ? true : undefined },
         },
       })
       if (res.error || !res.data) {
@@ -481,12 +482,12 @@ export function useScanLibrary() {
     for (const c of toFetch) {
       const key = breakdownKey(c.source, c.mangaId)
       breakdownsInFlight.add(key)
-      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url })
+      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
     }
     await Promise.all(toFetch.map(async (c) => {
       const key = breakdownKey(c.source, c.mangaId)
       try {
-        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url })
+        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
       }
       finally {
         breakdownsInFlight.delete(key)
@@ -510,9 +511,9 @@ export function useScanLibrary() {
     const key = breakdownKey(candidate.source, candidate.mangaId)
     if (breakdownsInFlight.has(key)) return
     breakdownsInFlight.add(key)
-    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url })
+    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl })
     try {
-      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url }, { refresh: true })
+      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl }, { refresh: true })
     }
     finally {
       breakdownsInFlight.delete(key)

@@ -344,7 +344,7 @@ func TestRenderChapterMangaAndCount(t *testing.T) {
 
 // TestRenderChapterWebURL is the realUrl round-trip proof: ComicInfo.Web must
 // come from Meta.WebURL (the fully-qualified, browser-clickable chapter URL)
-// — NEVER Meta.URL (the source-relative ADDRESSING url). URL and WebURL are
+// — NEVER Meta.URL (the source-owned serialized address). URL and WebURL are
 // set to deliberately DIFFERENT values here so a regression that reverts to
 // the old (buggy) `ci.Web = m.URL` behavior fails loudly instead of
 // coincidentally passing.

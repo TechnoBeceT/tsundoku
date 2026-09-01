@@ -13,6 +13,8 @@ import (
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseries "github.com/technobecet/tsundoku/internal/ent/series"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
+	"github.com/technobecet/tsundoku/internal/provideraddress"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
 // CollapseIgnoredScanlatorSource is the Slice-B on-enable migration for the
@@ -171,8 +173,11 @@ func (s *Service) collapseSourceInSeries(ctx context.Context, seriesID uuid.UUID
 //     No uploader rows ⇒ nothing to collapse (idempotent no-op).
 //  2. Ensure a survivor exists: reuse an existing "" row, else CREATE a fresh
 //     one that copies the source's identity (provider id, display name, language,
-//     title, cover, url) from the highest-importance uploader, PARKED at
-//     importance 0.
+//     title, cover) and complete address tuple (url, web_url, address_mode) from
+//     the highest-importance uploader, PARKED at importance 0. An unknown tuple
+//     may adopt a known mode only from an uploader with the exact same address
+//     pair. Reused survivors keep their existing pair, and an already-known
+//     survivor remains authoritative when observations conflict.
 //  3. Merge every uploader's ProviderChapter feed into the survivor (union,
 //     de-duplicated by chapter_key) so the survivor offers every collapsed
 //     chapter's key — relabelOverlap keys its relabel off the SURVIVOR's feed,
@@ -265,18 +270,48 @@ func (s *Service) loadSeriesForCollapse(ctx context.Context, seriesID uuid.UUID)
 func (s *Service) ensureSurvivorWithFeed(ctx context.Context, seriesID uuid.UUID, survivor *ent.SeriesProvider, uploaders []*ent.SeriesProvider) (*ent.SeriesProvider, bool, error) {
 	created := false
 	if survivor == nil {
-		sp, err := s.createCollapsedSurvivor(ctx, seriesID, highestImportance(uploaders))
+		template := highestImportance(uploaders)
+		mode := highestImportanceKnownAddressModeFor(template.URL, template.WebURL, uploaders)
+		sp, err := s.createCollapsedSurvivor(ctx, seriesID, template, mode)
 		if err != nil {
 			return nil, false, err
 		}
 		survivor = sp
 		created = true
+	} else {
+		mode := highestImportanceKnownAddressModeFor(survivor.URL, survivor.WebURL, uploaders)
+		if err := provideraddress.PersistResolvedForAddress(ctx, s.db, survivor.ID, survivor.URL, survivor.WebURL, mode); err != nil {
+			return nil, false, fmt.Errorf("library.CollapseIgnoredScanlatorSource: preserve survivor address tuple: %w", err)
+		}
 	}
 	if err := s.mergeUploaderFeeds(ctx, survivor, uploaders); err != nil {
 		s.cleanupFreshSurvivor(ctx, survivor.ID, created)
 		return nil, false, err
 	}
 	return survivor, created, nil
+}
+
+// highestImportanceKnownAddressModeFor returns the resolved mode carried by the
+// highest-importance uploader with the exact address pair the survivor retains.
+// Both fields are compared byte-for-byte: opaque keys and absolute cross-origin
+// values are source-owned and must never be normalized here. Unknown and
+// different-address uploaders cannot establish provenance for this tuple. Ties
+// follow highestImportance's existing first-row rule.
+func highestImportanceKnownAddressModeFor(url, webURL string, uploaders []*ent.SeriesProvider) sourceengine.AddressMode {
+	var best *ent.SeriesProvider
+	for _, uploader := range uploaders {
+		mode := provideraddress.FromStored(uploader.AddressMode)
+		if uploader.URL != url || uploader.WebURL != webURL || !mode.IsKnown() {
+			continue
+		}
+		if best == nil || uploader.Importance > best.Importance {
+			best = uploader
+		}
+	}
+	if best == nil {
+		return sourceengine.AddressModeUnknown
+	}
+	return provideraddress.FromStored(best.AddressMode)
 }
 
 // foldUploaders folds every uploader into the survivor via mergeDiskIntoLive at
@@ -340,7 +375,11 @@ func highestImportance(uploaders []*ent.SeriesProvider) *ent.SeriesProvider {
 // finalizeCollapsedSurvivor after the folds). suwayomi_id is copied only when
 // non-zero so the row stays a linked/live provider (series.IsLinkedProvider keys
 // off the numeric provider field, which is copied verbatim).
-func (s *Service) createCollapsedSurvivor(ctx context.Context, seriesID uuid.UUID, template *ent.SeriesProvider) (*ent.SeriesProvider, error) {
+func (s *Service) createCollapsedSurvivor(ctx context.Context, seriesID uuid.UUID, template *ent.SeriesProvider, mode sourceengine.AddressMode) (*ent.SeriesProvider, error) {
+	storedMode, err := provideraddress.ToStored(mode)
+	if err != nil {
+		return nil, fmt.Errorf("library.CollapseIgnoredScanlatorSource: resolve collapsed provider address mode: %w", err)
+	}
 	create := s.db.SeriesProvider.Create().
 		SetSeriesID(seriesID).
 		SetProvider(template.Provider).
@@ -351,6 +390,7 @@ func (s *Service) createCollapsedSurvivor(ctx context.Context, seriesID uuid.UUI
 		SetCoverURL(template.CoverURL).
 		SetURL(template.URL).
 		SetWebURL(template.WebURL).
+		SetAddressMode(storedMode).
 		SetImportance(0)
 	if template.SuwayomiID != 0 {
 		create.SetSuwayomiID(template.SuwayomiID)
