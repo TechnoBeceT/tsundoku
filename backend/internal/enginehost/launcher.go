@@ -242,6 +242,7 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 		slog.WarnContext(ctx, "enginehost: cached instance is not reusable, respawning",
 			"profile", p.Key, "pid", mi.proc.Pid())
 		l.degradeLocked(mi)
+		l.protectActivePreparationLocked(mi.profile.SourceIDs)
 		if !l.stopInstanceLocked(ctx, mi) {
 			return engineroute.Instance{}, lingeringProcessGroupError(mi)
 		}

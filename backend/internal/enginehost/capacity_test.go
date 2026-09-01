@@ -130,6 +130,34 @@ func TestPrepareProfiles_RetirementDegradeSurvivesReplacementHealthUntilPublicat
 	}
 }
 
+func TestPrepareProfiles_SameKeyReplacementDegradeSurvivesHealthUntilPublication(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter, okProber,
+		enginehost.WithRerouter(rerouter),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	p := engineroute.Profile{Key: "same-key", SourceIDs: []int64{10}, KCEFEnabled: true}
+	initial := launcher.PrepareProfiles(context.Background(), []engineroute.Profile{p})
+	if _, err := launcher.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("EnsureProfile(initial): %v", err)
+	}
+	initial.CompletePublication()
+	starter.proc(0).exitJVM()
+
+	publication := launcher.PrepareProfiles(context.Background(), []engineroute.Profile{p})
+	if _, err := launcher.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("EnsureProfile(replacement): %v", err)
+	}
+	if !rerouter.isDegraded(10) {
+		t.Fatal("same-key replacement health reopened the stale base route before publication")
+	}
+
+	publication.CompletePublication()
+	if rerouter.isDegraded(10) {
+		t.Fatal("publication completion did not release same-key replacement degradation")
+	}
+}
+
 func TestPrepareProfiles_ReapsObsoleteGroupBeforeReplacementStart(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: false}
 	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter, okProber,

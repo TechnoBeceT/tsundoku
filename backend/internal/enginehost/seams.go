@@ -65,10 +65,11 @@ type ProcessStarter interface {
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses
 // it to detect an unexpected JVM exit (Done), to stop the entire owned process
 // group gracefully (Signal SIGTERM), and to force-kill that group (Kill) when it
-// ignores the term signal or its health-poll times out. Every group operation
-// revalidates the non-recyclable leader identity captured at spawn, so a reused
-// numeric PGID is never signalled as owned. GroupExists keeps lifecycle ownership
-// after the JVM exits while original descendants or probe uncertainty remain.
+// ignores the term signal or its health-poll times out. The exited leader remains
+// unreaped as a PGID pin until descendants are gone, and the final group-signal
+// syscall is serialized against the sole Wait; numeric PGID reuse therefore
+// cannot retarget delivery. GroupExists keeps lifecycle ownership while that
+// original generation or probe uncertainty remains.
 // The production implementation is execProcess (exec_process.go); tests provide
 // a fully in-memory fake.
 type RunningProcess interface {
@@ -77,7 +78,7 @@ type RunningProcess interface {
 	// GroupID is the dedicated process-group id assigned at spawn.
 	GroupID() int
 	// Signal delivers sig to the entire owned process group (SIGTERM for a
-	// graceful stop) and MUST refuse a recycled group identity.
+	// graceful stop) and MUST keep ownership pinned through the final syscall.
 	Signal(sig os.Signal) error
 	// Kill force-terminates the entire owned process group (SIGKILL) and MUST
 	// refuse a recycled group identity.
@@ -87,10 +88,11 @@ type RunningProcess interface {
 	// different leader identity; every uncertain result retains ownership
 	// fail-closed.
 	GroupExists() (bool, error)
-	// Done is closed once the process has exited and been reaped. The launcher
-	// selects on it to notice a crash during startup and to wait out a graceful
-	// stop before escalating to Kill. Implementations MUST close it exactly once,
-	// from the single goroutine that reaps the process, so it never zombies.
+	// Done is closed once process exit is observed. The launcher selects on it to
+	// notice a crash during startup and to wait out a graceful stop before
+	// escalating to Kill. Production may retain the exited leader as a bounded
+	// identity pin until its descendants drain, then its single reaper calls Wait
+	// exactly once.
 	Done() <-chan struct{}
 }
 

@@ -7,29 +7,84 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 type processGroupSystem interface {
 	LeaderStartTime(pid int) (uint64, error)
+	LeaderExited(pid int) (bool, error)
+	OtherGroupMembers(pgid int, leaderPID int) (bool, error)
 	SignalGroup(pgid int, signal syscall.Signal) error
 }
 
 type linuxProcessGroupSystem struct{}
 
 func (linuxProcessGroupSystem) LeaderStartTime(pid int) (uint64, error) {
-	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) //nolint:gosec // pid is the just-spawned owned child
+	stat, err := readProcStat(pid)
 	if err != nil {
 		return 0, err
 	}
-	return parseProcStartTime(stat)
+	return stat.startTime, nil
+}
+
+func (linuxProcessGroupSystem) LeaderExited(pid int) (bool, error) {
+	stat, err := readProcStat(pid)
+	if err != nil {
+		return false, err
+	}
+	return stat.state == 'Z' || stat.state == 'X' || stat.state == 'x', nil
+}
+
+func (linuxProcessGroupSystem) OtherGroupMembers(pgid int, leaderPID int) (bool, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		pid, parseErr := strconv.Atoi(entry.Name())
+		if parseErr != nil || pid == leaderPID {
+			continue
+		}
+		stat, statErr := readProcStat(pid)
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			return false, statErr
+		}
+		if stat.processGroup == pgid {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (linuxProcessGroupSystem) SignalGroup(pgid int, signal syscall.Signal) error {
 	return syscall.Kill(-pgid, signal)
 }
 
+type procStat struct {
+	state        byte
+	processGroup int
+	startTime    uint64
+}
+
+func readProcStat(pid int) (procStat, error) {
+	stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) //nolint:gosec // pid is an owned child or numeric /proc entry
+	if err != nil {
+		return procStat{}, err
+	}
+	return parseProcStat(stat)
+}
+
 func parseProcStartTime(stat []byte) (uint64, error) {
+	parsed, err := parseProcStat(stat)
+	return parsed.startTime, err
+}
+
+func parseProcStat(stat []byte) (procStat, error) {
 	// proc_pid_stat(5) makes comm parenthesized but otherwise unconstrained; use
 	// its final ')' rather than splitting the process name on spaces or ')'. The
 	// remaining fields begin at state (field 3), so starttime (field 22) is index
@@ -37,17 +92,24 @@ func parseProcStartTime(stat []byte) (uint64, error) {
 	statText := string(stat)
 	closeComm := strings.LastIndexByte(statText, ')')
 	if closeComm < 0 {
-		return 0, fmt.Errorf("enginehost: malformed proc stat: missing comm terminator")
+		return procStat{}, fmt.Errorf("enginehost: malformed proc stat: missing comm terminator")
 	}
 	fields := strings.Fields(statText[closeComm+1:])
 	if len(fields) <= 19 {
-		return 0, fmt.Errorf("enginehost: malformed proc stat: got %d post-comm fields", len(fields))
+		return procStat{}, fmt.Errorf("enginehost: malformed proc stat: got %d post-comm fields", len(fields))
+	}
+	if len(fields[0]) != 1 {
+		return procStat{}, fmt.Errorf("enginehost: malformed proc stat state %q", fields[0])
+	}
+	processGroup, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return procStat{}, fmt.Errorf("enginehost: parse proc process group: %w", err)
 	}
 	startTime, err := strconv.ParseUint(fields[19], 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("enginehost: parse proc starttime: %w", err)
+		return procStat{}, fmt.Errorf("enginehost: parse proc starttime: %w", err)
 	}
-	return startTime, nil
+	return procStat{state: fields[0][0], processGroup: processGroup, startTime: startTime}, nil
 }
 
 // execStarter is the production ProcessStarter: it launches the engine-host
@@ -60,11 +122,10 @@ type execStarter struct {
 	hostBin string
 }
 
-// Start spawns the engine-host binary, captures its Linux /proc starttime as the
-// non-recyclable group ownership token, and returns a handle to it. The single
-// reaper goroutine calls Wait exactly once and closes the done channel, so the
-// process never zombies. Failure to capture identity fails the spawn rather than
-// returning a handle that could later signal a recycled PGID.
+// Start spawns the engine-host binary and captures its Linux /proc starttime.
+// The single reaper observes exit without reaping, retains the zombie as a PGID
+// pin while any descendants remain, then calls Wait exactly once. Failure to
+// establish identity fails the spawn rather than returning an unsafe handle.
 func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	groups := processGroupSystem(linuxProcessGroupSystem{})
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
@@ -91,14 +152,12 @@ func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningP
 		return nil, fmt.Errorf("exec engine-host %q: capture process identity: %w", s.hostBin, err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(done)
-	}()
-	return &execProcess{
-		cmd: cmd, pgid: cmd.Process.Pid, leaderStartTime: leaderStartTime, groups: groups, done: done,
-	}, nil
+	proc := &execProcess{
+		cmd: cmd, pgid: cmd.Process.Pid, leaderStartTime: leaderStartTime,
+		groups: groups, done: make(chan struct{}), reaped: make(chan struct{}),
+	}
+	go proc.reapAfterGroupQuiesces()
+	return proc, nil
 }
 
 // buildHostEnv appends the per-instance TSUNDOKU_ENGINE_PORT + TSUNDOKU_ENGINE_DATA
@@ -124,6 +183,9 @@ type execProcess struct {
 	leaderStartTime uint64
 	groups          processGroupSystem
 	done            chan struct{}
+	reaped          chan struct{}
+	handleMu        sync.Mutex
+	waited          bool
 }
 
 // Pid returns the OS process id.
@@ -132,8 +194,8 @@ func (p *execProcess) Pid() int { return p.cmd.Process.Pid }
 // GroupID returns the dedicated process-group id assigned when the JVM started.
 func (p *execProcess) GroupID() int { return p.pgid }
 
-// Signal revalidates the captured leader identity and delivers sig only to the
-// original managed JVM group.
+// Signal delivers sig while the original leader remains an unreaped PGID pin,
+// so numeric reuse cannot retarget the final syscall.
 func (p *execProcess) Signal(sig os.Signal) error {
 	syscallSignal, ok := sig.(syscall.Signal)
 	if !ok {
@@ -142,8 +204,7 @@ func (p *execProcess) Signal(sig os.Signal) error {
 	return p.signalOwnedGroup(syscallSignal)
 }
 
-// Kill force-terminates the original managed JVM group after the same identity
-// validation.
+// Kill force-terminates the original managed JVM group under the same pin.
 func (p *execProcess) Kill() error { return p.signalOwnedGroup(syscall.SIGKILL) }
 
 // GroupExists probes the complete original process group. ESRCH or a different
@@ -158,17 +219,14 @@ func (p *execProcess) GroupExists() (bool, error) {
 }
 
 func (p *execProcess) signalOwnedGroup(signal syscall.Signal) error {
-	// Revalidate inside the signal operation even if a caller just probed. The
-	// second check also closes the ordinary leader-exit/recycle window between a
-	// descendant-only probe and the non-zero group signal.
-	for range 2 {
-		owned, absent, err := p.groupOwnership()
-		if err != nil {
-			return err
-		}
-		if absent || !owned {
-			return syscall.ESRCH
-		}
+	// handleMu serializes this complete group syscall against the sole Wait. The
+	// running or zombie leader therefore pins the numeric PGID until delivery has
+	// completed; if Wait won first, the original group was already quiescent and
+	// the numeric value is never touched again.
+	p.handleMu.Lock()
+	defer p.handleMu.Unlock()
+	if p.waited {
+		return syscall.ESRCH
 	}
 	return p.groups.SignalGroup(p.pgid, signal)
 }
@@ -187,19 +245,49 @@ func (p *execProcess) groupOwnership() (owned bool, absent bool, err error) {
 		return false, false, identityErr
 	}
 
-	// The original leader has been reaped. A still-existing PGID can only be its
-	// descendants; once those disappear, kill(-pgid, 0) returns ESRCH. A later
-	// recycled leader is detected by the identity read above.
-	probeErr := p.groups.SignalGroup(p.pgid, 0)
-	switch {
-	case probeErr == nil:
-		return true, false, nil
-	case errors.Is(probeErr, syscall.ESRCH):
-		return false, true, nil
-	default:
-		return false, false, probeErr
-	}
+	// The reaper retains the exited original leader as a zombie until no other
+	// group members remain. Therefore an absent leader means the original group
+	// was already proven quiescent and reaped; no numeric PGID probe is safe or
+	// necessary here.
+	return false, true, nil
 }
 
-// Done is closed by the reaper goroutine once the process has exited.
+func (p *execProcess) reapAfterGroupQuiesces() {
+	for {
+		exited, err := p.groups.LeaderExited(p.pgid)
+		if err == nil && exited {
+			break
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		time.Sleep(groupExitPollInterval)
+	}
+	close(p.done)
+
+	// The unreaped leader pins the numeric PGID while descendants drain, so every
+	// pidfd process-group signal remains attached to this generation. Only the
+	// no-other-member observation permits the exact Wait and handle close.
+	for {
+		others, err := p.groups.OtherGroupMembers(p.pgid, p.pgid)
+		if err == nil && !others {
+			break
+		}
+		time.Sleep(groupExitPollInterval)
+	}
+	p.finishReap(func() { _ = p.cmd.Wait() })
+	close(p.reaped)
+}
+
+func (p *execProcess) finishReap(wait func()) {
+	p.handleMu.Lock()
+	defer p.handleMu.Unlock()
+	wait()
+	p.waited = true
+}
+
+// Done is closed by the reaper goroutine once leader exit is observed. The
+// exact Wait may follow later while the zombie leader pins descendant identity.
 func (p *execProcess) Done() <-chan struct{} { return p.done }
+
+func (p *execProcess) Reaped() <-chan struct{} { return p.reaped }

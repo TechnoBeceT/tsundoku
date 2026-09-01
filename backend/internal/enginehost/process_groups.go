@@ -220,6 +220,14 @@ func waitForProcessGroupEvent(ctx context.Context, done <-chan struct{}, delay t
 }
 
 func processReaped(proc RunningProcess) bool {
+	if process, ok := proc.(interface{ Reaped() <-chan struct{} }); ok {
+		select {
+		case <-process.Reaped():
+			return true
+		default:
+			return false
+		}
+	}
 	select {
 	case <-proc.Done():
 		return true

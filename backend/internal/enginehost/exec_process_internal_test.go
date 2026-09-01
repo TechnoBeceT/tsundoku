@@ -36,14 +36,76 @@ func (s *fakeProcessGroupSystem) LeaderStartTime(int) (uint64, error) {
 	return s.current.startTime, s.current.err
 }
 
+func (s *fakeProcessGroupSystem) LeaderExited(int) (bool, error) { return false, nil }
+
+func (s *fakeProcessGroupSystem) OtherGroupMembers(int, int) (bool, error) { return false, nil }
+
 func (s *fakeProcessGroupSystem) SignalGroup(_ int, signal syscall.Signal) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.current.err != nil || s.current.startTime != 100 {
+		return syscall.ESRCH
+	}
 	s.signals = append(s.signals, signal)
 	if signal == 0 {
 		return s.probeErr
 	}
 	return nil
+}
+
+type blockingSignalGroupSystem struct {
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+}
+
+func (s *blockingSignalGroupSystem) LeaderStartTime(int) (uint64, error) { return 100, nil }
+func (s *blockingSignalGroupSystem) LeaderExited(int) (bool, error)      { return false, nil }
+func (s *blockingSignalGroupSystem) OtherGroupMembers(int, int) (bool, error) {
+	return false, nil
+}
+func (s *blockingSignalGroupSystem) SignalGroup(int, syscall.Signal) error {
+	close(s.entered)
+	<-s.release
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	return nil
+}
+
+func TestExecProcessPinsPGIDThroughFinalSignalSyscall(t *testing.T) {
+	system := &blockingSignalGroupSystem{entered: make(chan struct{}), release: make(chan struct{})}
+	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system}
+	signalDone := make(chan error, 1)
+	go func() { signalDone <- proc.Signal(syscall.SIGKILL) }()
+	<-system.entered
+
+	waitCalled := make(chan struct{})
+	reapDone := make(chan struct{})
+	go func() {
+		proc.finishReap(func() { close(waitCalled) })
+		close(reapDone)
+	}()
+	select {
+	case <-waitCalled:
+		t.Fatal("Wait released the PGID while the final group syscall was in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(system.release)
+	if err := <-signalDone; err != nil {
+		t.Fatalf("Signal: %v", err)
+	}
+	<-reapDone
+	if err := proc.Signal(syscall.SIGTERM); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("Signal after Wait = %v, want ESRCH without numeric group syscall", err)
+	}
+	system.mu.Lock()
+	calls := system.calls
+	system.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("numeric group syscalls = %d, want only the syscall completed before Wait", calls)
+	}
 }
 
 func (s *fakeProcessGroupSystem) nonProbeSignals() []syscall.Signal {
@@ -63,8 +125,8 @@ func TestExecProcessRecognizesAndSignalsOriginalLeader(t *testing.T) {
 	assertOwnedGroupCanBeSignalled(t, system)
 }
 
-func TestExecProcessRecognizesOriginalDescendantsAfterLeaderReap(t *testing.T) {
-	system := &fakeProcessGroupSystem{current: identityRead{err: os.ErrNotExist}}
+func TestExecProcessSignalsOriginalDescendantsWhileExitedLeaderPinsGroup(t *testing.T) {
+	system := &fakeProcessGroupSystem{current: identityRead{startTime: 100}}
 	assertOwnedGroupCanBeSignalled(t, system)
 }
 
@@ -97,7 +159,7 @@ func assertOwnedGroupCanBeSignalled(t *testing.T, system *fakeProcessGroupSystem
 
 func assertUnknownGroupIsNeverSignalled(t *testing.T, system *fakeProcessGroupSystem) {
 	t.Helper()
-	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system}
+	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system, waited: true}
 	exists, err := proc.GroupExists()
 	if err != nil || exists {
 		t.Fatalf("GroupExists = %v, %v; want false, nil", exists, err)
@@ -107,40 +169,6 @@ func assertUnknownGroupIsNeverSignalled(t *testing.T, system *fakeProcessGroupSy
 	}
 	if got := system.nonProbeSignals(); len(got) != 0 {
 		t.Fatalf("signalled unknown group: %v", got)
-	}
-}
-
-func TestExecProcessRefusesGroupRecycledBetweenProbeAndSignal(t *testing.T) {
-	system := &fakeProcessGroupSystem{current: identityRead{startTime: 100}}
-	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system}
-	if exists, err := proc.GroupExists(); err != nil || !exists {
-		t.Fatalf("initial GroupExists = %v, %v; want original group", exists, err)
-	}
-	system.current = identityRead{startTime: 200}
-
-	if err := proc.Signal(syscall.SIGKILL); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("Signal after recycle = %v, want ESRCH", err)
-	}
-	if got := system.nonProbeSignals(); len(got) != 0 {
-		t.Fatalf("signalled recycled group: %v", got)
-	}
-}
-
-func TestExecProcessRefusesRecycleDuringDescendantSignalChecks(t *testing.T) {
-	system := &fakeProcessGroupSystem{
-		reads: []identityRead{
-			{err: os.ErrNotExist},
-			{startTime: 200},
-		},
-		current: identityRead{startTime: 200},
-	}
-	proc := &execProcess{pgid: 42, leaderStartTime: 100, groups: system}
-
-	if err := proc.Signal(syscall.SIGKILL); !errors.Is(err, syscall.ESRCH) {
-		t.Fatalf("Signal during recycle = %v, want ESRCH", err)
-	}
-	if got := system.nonProbeSignals(); len(got) != 0 {
-		t.Fatalf("signalled group after descendant probe recycled: %v", got)
 	}
 }
 
@@ -208,5 +236,42 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	}
 	if err := proc.Signal(syscall.SIGTERM); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("signal absent group error = %v, want ESRCH", err)
+	}
+}
+
+func TestExecStarterPinsExitedLeaderUntilDescendantGroupIsKilledAndReaped(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "host-with-descendant")
+	contents := "#!/bin/sh\nsh -c 'trap \"\" HUP TERM; while :; do sleep 1; done' &\necho $! > \"$TSUNDOKU_ENGINE_DATA/child.pid\"\nsleep 0.05\nexit 0\n"
+	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
+		t.Fatalf("write helper: %v", err)
+	}
+	proc, err := (execStarter{hostBin: script}).Start(41001, dir, false)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = proc.Kill() })
+
+	select {
+	case <-proc.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader exit was not observed")
+	}
+	execProc := proc.(*execProcess)
+	select {
+	case <-execProc.Reaped():
+		t.Fatal("leader was reaped while its descendant still pinned the group")
+	case <-time.After(20 * time.Millisecond):
+	}
+	if err := proc.Kill(); err != nil {
+		t.Fatalf("Kill descendant group through pinned exited leader: %v", err)
+	}
+	select {
+	case <-execProc.Reaped():
+	case <-time.After(2 * time.Second):
+		t.Fatal("leader and killed descendant group were not exactly reaped")
+	}
+	if exists, probeErr := proc.GroupExists(); probeErr != nil || exists {
+		t.Fatalf("GroupExists after reap = %v, %v; want false, nil", exists, probeErr)
 	}
 }

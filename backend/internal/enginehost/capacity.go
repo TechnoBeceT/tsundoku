@@ -220,11 +220,16 @@ func (l *Launcher) degradeAndRetireInstanceLocked(ctx context.Context, key strin
 	// publication. The degrade overlay prevents new calls from reaching it while
 	// the capacity-critical pre-retirement runs.
 	l.degradeLocked(instance)
-	if l.activePreparation != nil {
-		for _, sourceID := range instance.profile.SourceIDs {
-			l.activePreparation.protected[sourceID] = true
-		}
-	}
+	l.protectActivePreparationLocked(instance.profile.SourceIDs)
 	l.stopInstanceLocked(ctx, instance)
 	delete(l.instances, key)
+}
+
+func (l *Launcher) protectActivePreparationLocked(sourceIDs []int64) {
+	if l.activePreparation == nil {
+		return
+	}
+	for _, sourceID := range sourceIDs {
+		l.activePreparation.protected[sourceID] = true
+	}
 }
