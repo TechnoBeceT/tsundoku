@@ -1,5 +1,19 @@
 package enginehost
 
+import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonValue
+
+enum class AddressMode(@get:JsonValue val wire: String) {
+    UNKNOWN("unknown"),
+    DIRECT("direct"),
+    URL_SEARCH("url_search"),
+    ;
+
+    companion object {
+        @JvmStatic @JsonCreator fun fromWire(value: String?) = entries.firstOrNull { it.wire == value } ?: UNKNOWN
+    }
+}
+
 /*
  * Tsundoku engine-host — RPC data-transfer objects.
  *
@@ -24,6 +38,7 @@ data class MangaEntryDto(
     val title: String,
     val thumbnailUrl: String?,
     val realUrl: String?,
+    val addressMode: AddressMode = AddressMode.UNKNOWN,
 )
 
 /** Full manga details, keyed by [url]. See [MangaEntryDto] for the [url] vs [realUrl] distinction. */
@@ -37,6 +52,7 @@ data class MangaDetailsDto(
     val status: String,
     val thumbnailUrl: String?,
     val realUrl: String?,
+    val addressMode: AddressMode = AddressMode.UNKNOWN,
 )
 
 /**
@@ -89,7 +105,7 @@ data class SearchRequest(
 /** Popular / latest browse of a source's catalogue (no query). */
 data class BrowseRequest(val sourceId: Long, val page: Int = 1)
 
-data class MangaRequest(val sourceId: Long, val url: String)
+data class MangaRequest(val sourceId: Long, val url: String, val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /**
  * [mangaTitle] feeds [enginehost.vendor.ChapterRecognition] (the vendored Suwayomi
@@ -98,7 +114,7 @@ data class MangaRequest(val sourceId: Long, val url: String)
  * than without. Optional/defaulted to "" for backward compatibility; recognition still works on ""
  * (it just skips the title-strip step).
  */
-data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "")
+data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /**
  * [mangaUrl] is the OPTIONAL source-relative SERIES url the chapter belongs to. Supplying it lets
@@ -108,7 +124,7 @@ data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: 
  * Defaulted to "" for backward compatibility: a blank value keeps the original bare-seed page fetch,
  * which is correct for every source whose `getPageList` needs only the chapter url.
  */
-data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "")
+data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /** [pageUrl] = the page's [PageDto.url]; [imageUrl] = the page's [PageDto.imageUrl] (may be null). */
 data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: String? = null)
@@ -117,9 +133,9 @@ data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: S
 
 data class SearchResponse(val manga: List<MangaEntryDto>, val hasNextPage: Boolean)
 
-data class ChaptersResponse(val chapters: List<ChapterDto>)
+data class ChaptersResponse(val chapters: List<ChapterDto>, val addressMode: AddressMode = AddressMode.UNKNOWN)
 
-data class PagesResponse(val pages: List<PageDto>)
+data class PagesResponse(val pages: List<PageDto>, val addressMode: AddressMode = AddressMode.UNKNOWN)
 
 data class ErrorResponse(val error: String)
 

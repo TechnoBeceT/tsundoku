@@ -104,17 +104,17 @@ class RpcServer(
         }
         registerContext("/manga") { exchange, response ->
             submitSource(exchange, response, MangaRequest::sourceId) { request, cancellation ->
-                response.respondJson(200, SourceCalls.mangaDetails(request.source(), request.url, cancellation))
+                response.respondJson(200, SourceCalls.mangaDetails(request.source(), request.url, request.addressMode, request.webUrl, cancellation))
             }
         }
         registerContext("/chapters") { exchange, response ->
             submitSource(exchange, response, ChaptersRequest::sourceId) { request, cancellation ->
-                response.respondJson(200, SourceCalls.chapters(request.source(), request.url, request.mangaTitle, cancellation))
+                response.respondJson(200, SourceCalls.chapters(request.source(), request.url, request.mangaTitle, request.addressMode, request.webUrl, cancellation))
             }
         }
         registerContext("/pages") { exchange, response ->
             submitSource(exchange, response, PagesRequest::sourceId) { request, cancellation ->
-                response.respondJson(200, SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl, cancellation))
+                response.respondJson(200, SourceCalls.pages(request.source(), request.chapterUrl, request.mangaUrl, request.addressMode, request.webUrl, cancellation))
             }
         }
         registerContext("/image") { exchange, response ->

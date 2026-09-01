@@ -285,7 +285,7 @@ class ClientConnectionObserverAdversarialTest {
 
     private companion object {
         val EXPECTED_RESPONSE_BODY =
-            """{"url":"/socket-lifecycle","title":"Socket lifecycle response","author":null,"artist":null,"description":null,"genres":[],"status":"UNKNOWN","thumbnailUrl":null,"realUrl":null}"""
+            """{"url":"/socket-lifecycle","title":"Socket lifecycle response","author":null,"artist":null,"description":null,"genres":[],"status":"UNKNOWN","thumbnailUrl":null,"realUrl":null,"addressMode":"direct"}"""
                 .toByteArray(StandardCharsets.UTF_8)
         val HTTP_HEADER_END = "\r\n\r\n".toByteArray(StandardCharsets.US_ASCII)
     }
