@@ -72,12 +72,7 @@ func (s *blockingSignalGroupSystem) SignalGroup(int, syscall.Signal) error {
 	return nil
 }
 
-func TestExecProcessDoesNotReapFromNonAtomicDescendantSnapshot(t *testing.T) {
-	// This is the old enumeration race in its false-negative state: a member
-	// listed by ReadDir forked, then vanished before its stat was read, leaving a
-	// new same-group descendant that was absent from the snapshot. The replacement
-	// implementation has no snapshot authorization seam, so leader exit alone
-	// must not permit Wait.
+func TestExecProcessAutonomouslyKillsGroupAndReapsExitedLeader(t *testing.T) {
 	cmd := exec.Command("true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start helper: %v", err)
@@ -100,17 +95,15 @@ func TestExecProcessDoesNotReapFromNonAtomicDescendantSnapshot(t *testing.T) {
 	}
 	select {
 	case <-proc.Reaped():
-		t.Fatal("non-atomic descendant snapshot authorized Wait")
-	case <-time.After(20 * time.Millisecond):
-	}
-
-	if err := proc.Kill(); err != nil {
-		t.Fatalf("Kill generation: %v", err)
-	}
-	select {
-	case <-proc.Reaped():
 	case <-time.After(time.Second):
-		t.Fatal("terminal group kill did not permit exact Wait")
+		// Unblock the old implementation so the failed regression does not leave
+		// its helper as a zombie until the test binary exits.
+		cleanupErr := proc.Kill()
+		<-proc.Reaped()
+		t.Fatalf("exited leader needed external cleanup before exact Wait: %v", cleanupErr)
+	}
+	if got := system.nonProbeSignals(); len(got) != 1 || got[0] != syscall.SIGKILL {
+		t.Fatalf("reaper group signals = %v, want one terminal KILL", got)
 	}
 }
 
@@ -280,14 +273,11 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("group TERM did not terminate the JVM")
 	}
-	if err := proc.Kill(); err != nil {
-		t.Fatalf("finalize terminated group: %v", err)
-	}
 	execProc := proc.(*execProcess)
 	select {
 	case <-execProc.Reaped():
 	case <-time.After(2 * time.Second):
-		t.Fatal("terminal group kill did not permit exact Wait")
+		t.Fatal("reaper did not autonomously finalize the terminated group")
 	}
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -305,7 +295,7 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	}
 }
 
-func TestExecStarterPinsExitedLeaderUntilDescendantGroupIsKilledAndReaped(t *testing.T) {
+func TestExecStarterKillsDescendantGroupAndReapsExitedLeader(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "host-with-descendant")
 	contents := "#!/bin/sh\nsh -c 'trap \"\" HUP TERM; while :; do sleep 1; done' &\necho $! > \"$TSUNDOKU_ENGINE_DATA/child.pid\"\nsleep 0.05\nexit 0\n"
@@ -326,16 +316,8 @@ func TestExecStarterPinsExitedLeaderUntilDescendantGroupIsKilledAndReaped(t *tes
 	execProc := proc.(*execProcess)
 	select {
 	case <-execProc.Reaped():
-		t.Fatal("leader was reaped while its descendant still pinned the group")
-	case <-time.After(20 * time.Millisecond):
-	}
-	if err := proc.Kill(); err != nil {
-		t.Fatalf("Kill descendant group through pinned exited leader: %v", err)
-	}
-	select {
-	case <-execProc.Reaped():
 	case <-time.After(2 * time.Second):
-		t.Fatal("leader and killed descendant group were not exactly reaped")
+		t.Fatal("reaper did not kill the descendant group and reap the exited leader")
 	}
 	deadline := time.Now().Add(time.Second)
 	for {

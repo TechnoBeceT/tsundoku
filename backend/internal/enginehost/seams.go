@@ -66,11 +66,11 @@ type ProcessStarter interface {
 // it to detect an unexpected JVM exit (Done), to stop the entire owned process
 // group gracefully (Signal SIGTERM), and to force-kill that group (Kill) when it
 // ignores the term signal or its health-poll times out. The exited leader remains
-// unreaped as a PGID pin until terminal group KILL, and that group-signal syscall
-// is serialized against the sole Wait; numeric PGID reuse therefore cannot
-// retarget delivery. GroupExists keeps lifecycle ownership until an identity
-// mismatch or the kernel's ESRCH group probe proves the original generation
-// absent; uncertainty remains owned.
+// unreaped as a PGID pin while the production reaper initiates terminal group
+// KILL, and that group-signal syscall is serialized against the sole Wait;
+// numeric PGID reuse therefore cannot retarget delivery. GroupExists keeps
+// lifecycle ownership until an identity mismatch or the kernel's ESRCH group
+// probe proves the original generation absent; uncertainty remains owned.
 // The production implementation is execProcess (exec_process.go); tests provide
 // a fully in-memory fake.
 type RunningProcess interface {
@@ -91,9 +91,10 @@ type RunningProcess interface {
 	GroupExists() (bool, error)
 	// Done is closed once process exit is observed. The launcher selects on it to
 	// notice a crash during startup and to wait out a graceful stop before
-	// escalating to Kill. Production retains the exited leader as an identity pin
-	// until that terminal group syscall, then its single reaper calls Wait exactly
-	// once; the later ESRCH group probe covers killed descendant zombies.
+	// escalating to Kill. Production retains the exited leader as an identity pin,
+	// autonomously delivers the terminal group syscall if no launcher path already
+	// did, then its single reaper calls Wait exactly once; the later ESRCH group
+	// probe covers killed descendant zombies.
 	Done() <-chan struct{}
 }
 

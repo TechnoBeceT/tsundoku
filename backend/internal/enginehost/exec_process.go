@@ -93,10 +93,11 @@ type execStarter struct {
 }
 
 // Start spawns the engine-host binary and captures its Linux /proc starttime.
-// The single reaper observes exit without reaping and retains the zombie as a
-// PGID pin until a terminal signal has been delivered to the complete group,
-// then calls Wait exactly once. Failure to establish identity fails the spawn
-// rather than returning an unsafe handle.
+// The single reaper observes exit without reaping, retains the zombie as a PGID
+// pin while it delivers a terminal signal to the complete group, then calls
+// Wait exactly once. A launcher stop may deliver that terminal signal first.
+// Failure to establish identity fails the spawn rather than returning an unsafe
+// handle.
 func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	groups := processGroupSystem(linuxProcessGroupSystem{})
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
@@ -259,8 +260,15 @@ func (p *execProcess) reapAfterGroupQuiesces() {
 	// /proc enumeration cannot prove group quiescence atomically: an observed
 	// member may fork after the snapshot and then disappear. Keep the exited
 	// leader as a non-recyclable PGID pin until SIGKILL has been delivered to the
-	// whole group. Members cannot fork after that terminal syscall, so exact Wait
-	// followed by the kernel's ESRCH group probe is the safe release boundary.
+	// whole group. The reaper initiates that cleanup itself so a crash is reaped
+	// even when no later launcher path supervises or retires the generation.
+	// Members cannot fork after the terminal syscall, so exact Wait followed by
+	// the kernel's ESRCH group probe is the safe release boundary.
+	select {
+	case <-p.terminalSignal:
+	default:
+		_ = p.Kill()
+	}
 	<-p.terminalSignal
 	p.finishReap(func() { _ = p.cmd.Wait() })
 	close(p.reaped)
@@ -274,7 +282,8 @@ func (p *execProcess) finishReap(wait func()) {
 }
 
 // Done is closed by the reaper goroutine once leader exit is observed. The
-// exact Wait may follow later while the zombie leader pins descendant identity.
+// exact Wait follows its autonomous terminal group cleanup while the zombie
+// leader pins descendant identity.
 func (p *execProcess) Done() <-chan struct{} { return p.done }
 
 func (p *execProcess) Reaped() <-chan struct{} { return p.reaped }
