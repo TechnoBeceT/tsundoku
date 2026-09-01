@@ -59,12 +59,14 @@ func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBin
 // fakeLauncher returns ONE shared instance fake for every profile (the tests use
 // a single profile), records its calls, and can be told to fail EnsureProfile.
 type fakeLauncher struct {
-	instance    *sourceenginefake.Client
-	fail        bool
-	ensureCalls int
-	profiles    []engineroute.Profile
-	retireCalls int
-	lastKeep    map[string]bool
+	instance     *sourceenginefake.Client
+	fail         bool
+	prepareCalls int
+	prepared     [][]engineroute.Profile
+	ensureCalls  int
+	profiles     []engineroute.Profile
+	retireCalls  int
+	lastKeep     map[string]bool
 }
 
 func kcefPolicyPtr(value runtimepolicy.KCEFPolicy) *runtimepolicy.KCEFPolicy { return &value }
@@ -84,6 +86,8 @@ func (c *preferenceReadClient) Preferences(ctx context.Context, sourceID int64) 
 }
 
 type preferenceLauncher struct{ instance sourceengine.Client }
+
+func (preferenceLauncher) PrepareProfiles(context.Context, []engineroute.Profile) {}
 
 func (l preferenceLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
@@ -166,6 +170,7 @@ func (c *runtimeConfigClient) session() string {
 type lifecycleLauncher struct {
 	instances map[string]*runtimeConfigClient
 	fail      map[string]error
+	prepared  [][]engineroute.Profile
 	retired   []string
 	lastKeep  map[string]bool
 	onCreate  func(engineroute.Profile, *runtimeConfigClient)
@@ -176,6 +181,8 @@ type blockingRetireLauncher struct {
 	entered  chan struct{}
 	release  chan struct{}
 }
+
+func (l *blockingRetireLauncher) PrepareProfiles(context.Context, []engineroute.Profile) {}
 
 func (l *blockingRetireLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
@@ -257,6 +264,10 @@ func (l *lifecycleLauncher) EnsureProfile(_ context.Context, p engineroute.Profi
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: client}, nil
 }
 
+func (l *lifecycleLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) {
+	l.prepared = append(l.prepared, append([]engineroute.Profile(nil), desired...))
+}
+
 func (l *lifecycleLauncher) Retire(_ context.Context, keep map[string]bool) {
 	l.lastKeep = keep
 	for key := range l.instances {
@@ -274,6 +285,11 @@ func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (
 		return engineroute.Instance{}, errors.New("launch failed")
 	}
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: f.instance}, nil
+}
+
+func (f *fakeLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) {
+	f.prepareCalls++
+	f.prepared = append(f.prepared, append([]engineroute.Profile(nil), desired...))
 }
 
 // TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources proves profile
@@ -394,6 +410,25 @@ func TestReconcileNetwork_DerivesKCEFAgainstDefaultHost(t *testing.T) {
 func (f *fakeLauncher) Retire(_ context.Context, keep map[string]bool) {
 	f.retireCalls++
 	f.lastKeep = keep
+}
+
+func TestReconcileNetwork_PreparesCanonicalDesiredProfilesBeforeEnsure(t *testing.T) {
+	launcher := &fakeLauncher{fail: true}
+	result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+		Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{
+			{SourceID: 2, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "z"}},
+			{SourceID: 1, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "a"}},
+		}},
+		Router: engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
+		BaseConfig: baseConfig(), DefaultKCEFEnabled: true,
+	})
+	if result.Profiles != 2 || launcher.prepareCalls != 1 || len(launcher.prepared) != 1 {
+		t.Fatalf("profiles/prepare calls = %d/%d (%v), want 2/1", result.Profiles, launcher.prepareCalls, launcher.prepared)
+	}
+	got := launcher.prepared[0]
+	if len(got) != 2 || got[0].Key > got[1].Key {
+		t.Fatalf("prepared profiles = %+v, want canonical key order", got)
+	}
 }
 
 // mustReconcileNetwork runs one pass and fails the test on a hard error.

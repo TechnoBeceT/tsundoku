@@ -1,9 +1,11 @@
 package enginehost
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
 // execStarter is the production ProcessStarter: it launches the engine-host
@@ -22,6 +24,10 @@ type execStarter struct {
 func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
 	cmd.Env = buildHostEnv(os.Environ(), port, dataDir, kcefEnabled)
+	// Every managed JVM owns a dedicated process group. Chromium descendants
+	// inherit it, allowing teardown and capacity accounting to cover the complete
+	// browser generation rather than only the JVM leader.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Inherit stdio so the JVM's logs are visible alongside the Go server's (the
 	// entrypoint does the same for the default instance).
 	cmd.Stdout = os.Stdout
@@ -36,7 +42,7 @@ func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningP
 		_ = cmd.Wait()
 		close(done)
 	}()
-	return &execProcess{cmd: cmd, done: done}, nil
+	return &execProcess{cmd: cmd, pgid: cmd.Process.Pid, done: done}, nil
 }
 
 // buildHostEnv appends the per-instance TSUNDOKU_ENGINE_PORT + TSUNDOKU_ENGINE_DATA
@@ -58,17 +64,41 @@ func buildHostEnv(base []string, port int, dataDir string, kcefEnabled bool) []s
 // execProcess is the production RunningProcess wrapping an *exec.Cmd.
 type execProcess struct {
 	cmd  *exec.Cmd
+	pgid int
 	done chan struct{}
 }
 
 // Pid returns the OS process id.
 func (p *execProcess) Pid() int { return p.cmd.Process.Pid }
 
-// Signal delivers sig to the process.
-func (p *execProcess) Signal(sig os.Signal) error { return p.cmd.Process.Signal(sig) }
+// GroupID returns the dedicated process-group id assigned when the JVM started.
+func (p *execProcess) GroupID() int { return p.pgid }
 
-// Kill force-terminates the process.
-func (p *execProcess) Kill() error { return p.cmd.Process.Kill() }
+// Signal delivers sig to every process in the managed JVM's group.
+func (p *execProcess) Signal(sig os.Signal) error {
+	syscallSignal, ok := sig.(syscall.Signal)
+	if !ok {
+		return os.ErrInvalid
+	}
+	return syscall.Kill(-p.pgid, syscallSignal)
+}
+
+// Kill force-terminates every process in the managed JVM's group.
+func (p *execProcess) Kill() error { return syscall.Kill(-p.pgid, syscall.SIGKILL) }
+
+// GroupExists probes the complete process group. Only ESRCH proves absence;
+// permission and all unexpected failures retain capacity fail-closed.
+func (p *execProcess) GroupExists() (bool, error) {
+	err := syscall.Kill(-p.pgid, 0)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, syscall.ESRCH):
+		return false, nil
+	default:
+		return true, err
+	}
+}
 
 // Done is closed by the reaper goroutine once the process has exited.
 func (p *execProcess) Done() <-chan struct{} { return p.done }

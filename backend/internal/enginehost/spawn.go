@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"syscall"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
@@ -23,19 +22,20 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	}
 	dataDir := dataDirFor(l.cfg.DataDir, p.Key)
 
-	proc, client, baseURL, err := l.startProcess(ctx, p, port, dataDir)
+	proc, client, baseURL, group, err := l.startProcess(ctx, p, port, dataDir)
 	if err != nil {
 		return engineroute.Instance{}, err
 	}
 
 	mi := &managedInstance{
-		key:     p.Key,
-		port:    port,
-		dataDir: dataDir,
-		baseURL: baseURL,
-		proc:    proc,
-		client:  client,
-		profile: p,
+		key:       p.Key,
+		port:      port,
+		dataDir:   dataDir,
+		baseURL:   baseURL,
+		proc:      proc,
+		client:    client,
+		kcefGroup: group,
+		profile:   p,
 	}
 	l.instances[p.Key] = mi
 	// A freshly-healthy instance: clear any stale degrade overlay for its sources
@@ -49,13 +49,13 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 // startProcess seeds KCEF, links the shared extensions dir, launches the
 // engine-host process for p on the given port + data dir, and waits for it to
 // become healthy-and-stable. On success it returns the running process, a
-// factory-built client aimed at the instance, and its base URL. On any failure
-// the (possibly-started) process is killed and reaped and an error is returned,
-// so the caller degrades p to the default instance. It is the SHARED core of both
-// the initial spawn (fresh allocated port) and a supervisor restart (existing
-// port + data dir), so the KCEF/extensions/health-gate logic lives in one place
-// (§2 DRY). Called with mu held.
-func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, error) {
+// factory-built client aimed at the instance, its base URL, and any KCEF group
+// reservation. On any failure the (possibly-started) process is killed and
+// reaped; an unconfirmed group remains charged to capacity. It is the SHARED
+// core of both the initial spawn (fresh allocated port) and a supervisor restart
+// (existing port + data dir), so the KCEF/extensions/health-gate logic lives in
+// one place (§2 DRY). Called with mu held.
+func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, *kcefProcessGroup, error) {
 	// Profile derivation owns this decision. Route mode is insufficient: Required
 	// can keep an endpoint profile on, and Disabled can turn a global profile off.
 	kcefEnabled := p.KCEFEnabled
@@ -74,13 +74,25 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 	// fails "unknown sourceId". A failure aborts the spawn so the profile
 	// degrades to the fully-provisioned default engine (see linkSharedExtensions).
 	if err := l.linkSharedExtensions(dataDir); err != nil {
-		return nil, nil, "", fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
+		return nil, nil, "", nil, fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
 	}
 
 	spawnedAt := l.readinessClock.Now()
+	var group *kcefProcessGroup
+	if kcefEnabled {
+		var reserveErr error
+		group, reserveErr = l.reserveKCEFGroupLocked(p.Key)
+		if reserveErr != nil {
+			return nil, nil, "", nil, reserveErr
+		}
+	}
 	proc, err := l.starter.Start(port, dataDir, kcefEnabled)
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
+		l.cancelStartingKCEFGroupLocked(group)
+		return nil, nil, "", nil, fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
+	}
+	if group != nil {
+		group.proc = proc
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -88,12 +100,21 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 	readinessCtx, cancelReadiness := l.readinessContext(ctx, readinessDeadline)
 	defer cancelReadiness()
 	if err := l.awaitReady(readinessCtx, proc, baseURL, p.KCEFEnabled, readinessDeadline); err != nil {
-		// The instance never came up: kill it so it does not linger, then report.
-		_ = proc.Kill()
-		<-proc.Done() // reap
-		return nil, nil, "", fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
+		// The instance never came up. Teardown uses an independent finite budget so
+		// caller cancellation cannot orphan the process, while an unconfirmed group
+		// remains charged to capacity for a later reap attempt.
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), l.stopGrace)
+		gone := killProcessGroup(cleanupCtx, proc, l.stopGrace)
+		cancelCleanup()
+		if group != nil {
+			group.retiring = true
+			if gone {
+				delete(l.kcefGroups, group)
+			}
+		}
+		return nil, nil, "", nil, fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
 	}
-	return proc, l.factory(baseURL), baseURL, nil
+	return proc, l.factory(baseURL), baseURL, group, nil
 }
 
 // readinessContext preserves the caller's cancellation while applying the one
@@ -144,15 +165,19 @@ func (l *Launcher) readinessContext(parent context.Context, deadline time.Time) 
 // killed here, both freeing the port + clearing the stale singleton lock the
 // startProcess KCEF-reseed step expects.
 func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error {
-	if alive(mi.proc) {
-		l.stopInstance(mi)
+	// Done proves only that the JVM was reaped; owned Chromium descendants may
+	// still keep its group alive. Always drive the old generation through group
+	// teardown before reserving the same key again.
+	if !l.stopInstanceLocked(ctx, mi) {
+		return lingeringProcessGroupError(mi)
 	}
-	proc, client, _, err := l.startProcess(ctx, mi.profile, mi.port, mi.dataDir)
+	proc, client, _, group, err := l.startProcess(ctx, mi.profile, mi.port, mi.dataDir)
 	if err != nil {
 		return err
 	}
 	mi.proc = proc
 	mi.client = client
+	mi.kcefGroup = group
 	resetExhaustionEvidence(mi)
 	return nil
 }
@@ -318,19 +343,4 @@ func (l *Launcher) readinessElapsed(deadline time.Time) error {
 
 func (l *Launcher) readinessTimeoutError() error {
 	return fmt.Errorf("timed out after %s waiting for launch readiness", l.readinessTimeout)
-}
-
-// stopInstance stops mi's process gracefully: SIGTERM, wait up to stopGrace for a
-// clean exit, then SIGKILL if it is still running, and finally wait for the
-// process to be reaped. Best-effort — signal/kill errors are ignored (the
-// process may already be gone). Callers invoke it OUTSIDE mu.
-func (l *Launcher) stopInstance(mi *managedInstance) {
-	_ = mi.proc.Signal(syscall.SIGTERM)
-	select {
-	case <-mi.proc.Done():
-		return // exited within the grace period
-	case <-time.After(l.stopGrace):
-	}
-	_ = mi.proc.Kill()
-	<-mi.proc.Done()
 }

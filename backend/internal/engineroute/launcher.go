@@ -42,6 +42,12 @@ type Instance struct {
 //     profile with a distinct port + data dir, mirroring the entrypoint's single
 //     launch, with lifecycle + fault isolation.
 type Launcher interface {
+	// PrepareProfiles gives the launcher the complete desired profile set before
+	// any EnsureProfile call in the pass. Process launchers use it to retire
+	// obsolete capacity owners first and choose a stable bounded admission set;
+	// launchers without capacity constraints may implement it as a no-op.
+	PrepareProfiles(ctx context.Context, desired []Profile)
+
 	// EnsureProfile ensures an engine-host instance for p exists and returns a
 	// handle to it. It MUST be idempotent: a second call for an already-running
 	// profile returns the same instance without relaunching. An error means the
@@ -73,6 +79,10 @@ type DisabledLauncher struct{}
 
 // Compile-time assertion.
 var _ Launcher = DisabledLauncher{}
+
+// PrepareProfiles is a no-op — a DisabledLauncher owns no processes or
+// admission state.
+func (DisabledLauncher) PrepareProfiles(_ context.Context, _ []Profile) {}
 
 // EnsureProfile always returns ErrLauncherDisabled — no non-default instance can
 // be brought up without the process launcher.

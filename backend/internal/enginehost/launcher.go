@@ -3,6 +3,7 @@ package enginehost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,6 +15,10 @@ import (
 // ErrLauncherClosed is returned by EnsureProfile after Close has run — the
 // launcher is shutting down and must not spawn anything new.
 var ErrLauncherClosed = errors.New("enginehost: launcher closed")
+
+// ErrKCEFCapacity means admitting the profile would exceed the hard limit of
+// two embedded-browser process groups, including the default host reservation.
+var ErrKCEFCapacity = errors.New("enginehost: embedded browser capacity exhausted")
 
 // EngineHostLauncherConfig is the typed configuration the launcher needs, copied
 // out of config.EngineConfig by main (config stays the sole env boundary — this
@@ -44,6 +49,9 @@ type managedInstance struct {
 	baseURL string
 	proc    RunningProcess
 	client  sourceengine.Client
+	// kcefGroup is non-nil for a KCEF-enabled generation. Its reservation can
+	// outlive the JVM/instance while Chromium descendants remain in the group.
+	kcefGroup *kcefProcessGroup
 	// profile is the full profile this instance serves — retained so a supervisor
 	// restart reuses the same port/data dir + KCEF mode, and so degrade/restore
 	// know which source ids to move (profile.SourceIDs).
@@ -87,15 +95,15 @@ func (m *managedInstance) instance() engineroute.Instance {
 // Launcher spawns and supervises one engine-host JVM per non-default network
 // profile, satisfying engineroute.Launcher. Construct with New.
 //
-// CONCURRENCY. All state (the instance map + the closed flag) is guarded by mu.
-// EnsureProfile holds mu for its whole body, INCLUDING the spawn + health-poll,
-// so two concurrent reconcile passes can never double-spawn the same profile
-// (the second blocks, then observes the first's healthy instance and reuses it).
-// This is safe because ReconcileNetwork calls EnsureProfile sequentially within a
-// pass, and the health-poll respects the passed ctx — a shutdown cancels ctx, so
-// an in-flight spawn returns promptly and releases mu for Close. Retire and Close
-// collect their victims under mu but stop them OUTSIDE it, so a graceful-stop
-// wait never blocks an EnsureProfile.
+// CONCURRENCY. All state (the instance map, process-group ledger, prepared
+// admission, and closed flag) is guarded by mu. PrepareProfiles and EnsureProfile
+// hold mu for their whole bodies, INCLUDING group retirement or spawn +
+// health-poll, so two concurrent reconcile passes can never over-admit or
+// double-spawn the same profile (the second blocks, then observes the first's
+// current state). This is safe because ReconcileNetwork calls them sequentially
+// within a pass and every wait respects a finite deadline or the passed ctx.
+// Retire and Close collect their victims under mu but stop them OUTSIDE it, so a
+// graceful-stop wait never blocks an EnsureProfile.
 //
 // SUPERVISION (GAP-114). The Supervisor (supervisor.go) keeps managed instances
 // alive after spawn. It PROBES /health and bounded /status outside mu, then takes
@@ -132,7 +140,16 @@ type Launcher struct {
 
 	mu        sync.Mutex
 	instances map[string]*managedInstance
-	closed    bool
+	// kcefGroups contains starting, running, and retiring owned KCEF groups. The
+	// static default reservation is derived from cfg and never appears here.
+	kcefGroups map[*kcefProcessGroup]struct{}
+	// preparedKCEF is nil before the first PrepareProfiles call. Afterwards it is
+	// the stable admitted key set for the current desired topology.
+	preparedKCEF map[string]bool
+	// preparedRetiredSources remain degraded until ReconcileNetwork publishes its
+	// final base table and calls Retire, which safely clears their overlay.
+	preparedRetiredSources []int64
+	closed                 bool
 }
 
 // Compile-time assertion: *Launcher is a drop-in engineroute.Launcher, so main
@@ -174,6 +191,7 @@ func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts .
 		settleDelay:           defaultSettleDelay,
 		stopGrace:             defaultStopGrace,
 		instances:             map[string]*managedInstance{},
+		kcefGroups:            map[*kcefProcessGroup]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -197,6 +215,9 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 	if l.closed {
 		return engineroute.Instance{}, ErrLauncherClosed
 	}
+	if p.KCEFEnabled && l.preparedKCEF != nil && !l.preparedKCEF[p.Key] {
+		return engineroute.Instance{}, fmt.Errorf("%w: profile %q", ErrKCEFCapacity, p.Key)
+	}
 
 	if mi, ok := l.instances[p.Key]; ok {
 		reusable, err := l.reusable(ctx, mi)
@@ -217,7 +238,9 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 		slog.WarnContext(ctx, "enginehost: cached instance is not reusable, respawning",
 			"profile", p.Key, "pid", mi.proc.Pid())
 		l.degradeLocked(mi)
-		l.stopInstance(mi)
+		if !l.stopInstanceLocked(ctx, mi) {
+			return engineroute.Instance{}, lingeringProcessGroupError(mi)
+		}
 		delete(l.instances, p.Key)
 	}
 
@@ -264,13 +287,20 @@ func (l *Launcher) reusable(ctx context.Context, mi *managedInstance) (bool, err
 // It also clears any degrade overlay for a retired profile's sources: a profile
 // no longer referenced by any binding must not leave its sources force-routed to
 // the default, or a stale overlay entry would mask a future rebinding.
-func (l *Launcher) Retire(_ context.Context, keep map[string]bool) {
+func (l *Launcher) Retire(ctx context.Context, keep map[string]bool) {
 	doomed := l.detach(func(mi *managedInstance) bool { return !keep[mi.key] })
 	for _, mi := range doomed {
-		l.stopInstance(mi)
+		l.stopDetachedInstance(ctx, mi)
 		if l.rerouter != nil {
 			l.rerouter.Restore(mi.profile.SourceIDs)
 		}
+	}
+	l.mu.Lock()
+	preparedRetiredSources := append([]int64(nil), l.preparedRetiredSources...)
+	l.preparedRetiredSources = nil
+	l.mu.Unlock()
+	if l.rerouter != nil && len(preparedRetiredSources) > 0 {
+		l.rerouter.Restore(preparedRetiredSources)
 	}
 }
 
@@ -317,7 +347,7 @@ func (l *Launcher) Close() error {
 	l.mu.Unlock()
 
 	for _, mi := range l.detach(func(*managedInstance) bool { return true }) {
-		l.stopInstance(mi)
+		l.stopDetachedInstance(context.Background(), mi)
 	}
 	return nil
 }

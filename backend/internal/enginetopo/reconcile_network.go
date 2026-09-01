@@ -111,12 +111,20 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 	res.Profiles = len(profiles)
 
 	// No non-default profiles: clear the routing table (everything → default) and
-	// retire any lingering instances. This is the zero-disruption fast path.
+	// retire any lingering instances. Publish first so PrepareProfiles can
+	// capacity-reap obsolete KCEF groups without leaving a base route aimed at a
+	// terminating process. This is the zero-disruption fast path.
 	if len(profiles) == 0 {
 		deps.Router.SetRoutes(nil)
+		deps.Launcher.PrepareProfiles(ctx, profiles)
 		deps.Launcher.Retire(ctx, map[string]bool{})
 		return res, nil
 	}
+
+	// Freeze stable KCEF admission before any spawn. The process launcher uses
+	// the complete desired set to retain ready profiles and fully reap obsolete
+	// browser groups before replacements can reserve capacity.
+	deps.Launcher.PrepareProfiles(ctx, profiles)
 
 	routes := make(map[int64]sourceengine.Client)
 	keep := make(map[string]bool, len(profiles))

@@ -18,23 +18,28 @@ import (
 // closeOnSignal is set) when it is first signalled — modelling a JVM that exits
 // cleanly on SIGTERM vs one that has to be SIGKILLed.
 type fakeProcess struct {
-	id            int
-	closeOnSignal bool
+	id              int
+	closeOnSignal   bool
+	keepGroupOnKill bool
 
-	mu       sync.Mutex
-	signals  []os.Signal
-	killed   bool
-	onSignal func()
+	mu            sync.Mutex
+	signals       []os.Signal
+	killed        bool
+	groupAlive    bool
+	groupProbeErr error
+	onSignal      func()
 
 	done     chan struct{}
 	doneOnce sync.Once
 }
 
 func newFakeProcess(id int, closeOnSignal bool) *fakeProcess {
-	return &fakeProcess{id: id, closeOnSignal: closeOnSignal, done: make(chan struct{})}
+	return &fakeProcess{id: id, closeOnSignal: closeOnSignal, groupAlive: true, done: make(chan struct{})}
 }
 
 func (p *fakeProcess) Pid() int { return p.id }
+
+func (p *fakeProcess) GroupID() int { return p.id }
 
 func (p *fakeProcess) Signal(sig os.Signal) error {
 	p.mu.Lock()
@@ -54,15 +59,38 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 func (p *fakeProcess) Kill() error {
 	p.mu.Lock()
 	p.killed = true
+	if !p.keepGroupOnKill {
+		p.groupAlive = false
+	}
 	p.mu.Unlock()
-	p.exit()
+	p.exitJVM()
 	return nil
 }
 
 func (p *fakeProcess) Done() <-chan struct{} { return p.done }
 
+func (p *fakeProcess) GroupExists() (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.groupAlive, p.groupProbeErr
+}
+
 // exit closes Done exactly once (idempotent — Kill after a graceful exit is safe).
-func (p *fakeProcess) exit() { p.doneOnce.Do(func() { close(p.done) }) }
+func (p *fakeProcess) exit() {
+	p.mu.Lock()
+	p.groupAlive = false
+	p.mu.Unlock()
+	p.exitJVM()
+}
+
+func (p *fakeProcess) exitJVM() { p.doneOnce.Do(func() { close(p.done) }) }
+
+func (p *fakeProcess) setGroupState(alive bool, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.groupAlive = alive
+	p.groupProbeErr = err
+}
 
 // wasKilled reports whether Kill was ever called.
 func (p *fakeProcess) wasKilled() bool {

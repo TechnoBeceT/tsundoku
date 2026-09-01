@@ -63,17 +63,26 @@ type ProcessStarter interface {
 }
 
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses
-// it to detect an unexpected exit (Done), to stop the instance gracefully
-// (Signal SIGTERM), and to force-kill it (Kill) when it ignores the term signal
-// or its health-poll times out. The production implementation is execProcess
-// (exec_process.go); tests provide a fully in-memory fake.
+// it to detect an unexpected JVM exit (Done), to stop the entire owned process
+// group gracefully (Signal SIGTERM), and to force-kill that group (Kill) when it
+// ignores the term signal or its health-poll times out. GroupExists keeps a KCEF
+// reservation live after the JVM exits while owned Chromium descendants remain.
+// The production implementation is execProcess (exec_process.go); tests provide
+// a fully in-memory fake.
 type RunningProcess interface {
 	// Pid is the OS process id (used only for logging).
 	Pid() int
-	// Signal delivers sig to the process (SIGTERM for a graceful stop).
+	// GroupID is the dedicated process-group id assigned at spawn.
+	GroupID() int
+	// Signal delivers sig to the entire process group (SIGTERM for a graceful
+	// stop).
 	Signal(sig os.Signal) error
-	// Kill force-terminates the process (SIGKILL).
+	// Kill force-terminates the entire process group (SIGKILL).
 	Kill() error
+	// GroupExists reports whether any process remains in the owned group. A false,
+	// nil result is produced only when the OS probe returns ESRCH; every other
+	// result retains capacity fail-closed.
+	GroupExists() (bool, error)
 	// Done is closed once the process has exited and been reaped. The launcher
 	// selects on it to notice a crash during startup and to wait out a graceful
 	// stop before escalating to Kill. Implementations MUST close it exactly once,
