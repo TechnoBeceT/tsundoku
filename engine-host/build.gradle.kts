@@ -27,6 +27,7 @@ dependencies {
 
     // server/AndroidCompat expose these as `implementation` (not api), so the host must
     // declare the ones it references directly. Versions pinned to Suwayomi's libs.versions.toml.
+    compileOnly("com.github.Suwayomi:android-jar:1.0.0")
     implementation("io.insert-koin:koin-core:4.2.2")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("io.github.oshai:kotlin-logging-jvm:8.0.4")

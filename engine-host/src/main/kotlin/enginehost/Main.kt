@@ -29,7 +29,9 @@ import eu.kanade.tachiyomi.network.NetworkHelper
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.flow.first
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.cef.CefApp
 import org.cef.network.CefCookieManager
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
@@ -44,6 +46,7 @@ import uy.kohesive.injekt.api.get
 import xyz.nulldev.androidcompat.AndroidCompat
 import xyz.nulldev.androidcompat.AndroidCompatInitializer
 import xyz.nulldev.androidcompat.androidCompatModule
+import xyz.nulldev.androidcompat.webkit.CefHelper
 import xyz.nulldev.androidcompat.webkit.KcefWebViewProvider
 import xyz.nulldev.ts.config.CONFIG_PREFIX
 import xyz.nulldev.ts.config.GlobalConfigManager
@@ -248,10 +251,17 @@ fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
  * flag and kicks off CEFManager (off-screen, no X display). For local dev the Chromium runtime
  * is downloaded to `<dataRoot>/bin/kcef` on first run; the Docker image bundles it (Task 8).
  */
-fun enableKcef() {
+private suspend fun initializeKcef() {
     serverConfig.kcefEnabled.value = true
     CEFManager.init()
-    logger.info { "KCEF enabled (off-screen Chromium); initializing in background" }
+    CefHelper.waitForInit().first()
+    logger.info { "KCEF enabled (off-screen Chromium)" }
+}
+
+/** Reports whether the initialized embedded-browser process remains usable. */
+private fun kcefCapabilityReady(): Boolean {
+    val app = CefHelper.cefApp.value.getOrNull() ?: return false
+    return CefApp.getState() == CefApp.CefAppState.INITIALIZED && !app.isShuttingDown && !app.isTerminated
 }
 
 fun main(args: Array<String>) {
@@ -261,10 +271,14 @@ fun main(args: Array<String>) {
     val dataRoot = File(System.getenv("TSUNDOKU_ENGINE_DATA") ?: "${System.getProperty("java.io.tmpdir")}/tsundoku-engine")
     val dirs = bootstrapAndroidCompat(dataRoot)
 
+    val kcefLifecycle =
+        KcefLifecycle(
+            initialize = ::initializeKcef,
+            capabilityProbe = ::kcefCapabilityReady,
+        )
+    installReadinessGatedWebViewProvider(kcefLifecycle)
     // Opt-in WebView (heavy Chromium download on first run) — default off keeps the host lean.
-    if (System.getenv("TSUNDOKU_ENGINE_KCEF")?.equals("true", ignoreCase = true) == true) {
-        enableKcef()
-    }
+    kcefLifecycle.start(System.getenv("TSUNDOKU_ENGINE_KCEF")?.equals("true", ignoreCase = true) == true)
 
     val extensionsDir = File(dirs.extensionsRoot)
     val loader = ExtensionLoader(extensionsDir)
@@ -282,11 +296,12 @@ fun main(args: Array<String>) {
     }
     loader.loaded().forEach { logger.info { "  source id=${it.id} name='${it.name}' lang='${it.lang}'" } }
 
-    val server = RpcServer(loader, extensions, port)
+    val server = RpcServer(loader, extensions, port, kcefStatus = kcefLifecycle::snapshot)
     server.start()
     Runtime.getRuntime().addShutdownHook(
         Thread {
             server.stop()
+            kcefLifecycle.close()
             extensions.close()
         },
     )
