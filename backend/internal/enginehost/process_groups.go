@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"syscall"
 	"time"
 )
 
@@ -130,7 +129,7 @@ func terminateProcessGroup(ctx context.Context, proc RunningProcess, grace time.
 	if ctx.Err() != nil {
 		return forceKillCanceledProcessGroup(proc)
 	}
-	_ = proc.Signal(syscall.SIGTERM)
+	_ = proc.SignalGracefully(grace)
 	if waitForProcessGroupExit(ctx, proc, grace) {
 		return true
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -54,6 +55,10 @@ func (p *fakeProcess) Signal(sig os.Signal) error {
 		p.exit()
 	}
 	return nil
+}
+
+func (p *fakeProcess) SignalGracefully(time.Duration) error {
+	return p.Signal(syscall.SIGTERM)
 }
 
 func (p *fakeProcess) Kill() error {

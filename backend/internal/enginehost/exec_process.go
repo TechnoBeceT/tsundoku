@@ -94,10 +94,10 @@ type execStarter struct {
 
 // Start spawns the engine-host binary and captures its Linux /proc starttime.
 // The single reaper observes exit without reaping, retains the zombie as a PGID
-// pin while it delivers a terminal signal to the complete group, then calls
-// Wait exactly once. A launcher stop may deliver that terminal signal first.
-// Failure to establish identity fails the spawn rather than returning an unsafe
-// handle.
+// pin until a terminal signal reaches the complete group, then calls Wait
+// exactly once. Spontaneous exits trigger immediate cleanup; an active graceful
+// stop retains its pre-registered deadline. Failure to establish identity fails
+// the spawn rather than returning an unsafe handle.
 func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error) {
 	groups := processGroupSystem(linuxProcessGroupSystem{})
 	cmd := exec.Command(s.hostBin) //nolint:gosec // hostBin is operator config, not user input
@@ -127,7 +127,7 @@ func (s execStarter) Start(port int, dataDir string, kcefEnabled bool) (RunningP
 	proc := &execProcess{
 		cmd: cmd, pgid: cmd.Process.Pid, leaderStartTime: leaderStartTime,
 		groups: groups, done: make(chan struct{}), reaped: make(chan struct{}),
-		terminalSignal: make(chan struct{}),
+		terminalSignal: make(chan struct{}), graceNow: time.Now, graceAfter: time.After,
 	}
 	go proc.reapAfterGroupQuiesces()
 	return proc, nil
@@ -161,6 +161,11 @@ type execProcess struct {
 	terminalOnce    sync.Once
 	handleMu        sync.Mutex
 	waited          bool
+	graceMu         sync.Mutex
+	gracefulStop    bool
+	graceDeadline   time.Time
+	graceNow        func() time.Time
+	graceAfter      func(time.Duration) <-chan time.Time
 }
 
 // Pid returns the OS process id.
@@ -177,6 +182,23 @@ func (p *execProcess) Signal(sig os.Signal) error {
 		return os.ErrInvalid
 	}
 	return p.signalGroup(syscallSignal)
+}
+
+// SignalGracefully records the caller's TERM-to-KILL grace before delivering
+// TERM. The reaper can therefore distinguish an active graceful stop from a
+// spontaneous exit and retain the same bounded window if the caller disappears.
+func (p *execProcess) SignalGracefully(grace time.Duration) error {
+	p.graceMu.Lock()
+	if !p.gracefulStop {
+		now := p.graceNow
+		if now == nil {
+			now = time.Now
+		}
+		p.gracefulStop = true
+		p.graceDeadline = now().Add(grace)
+	}
+	p.graceMu.Unlock()
+	return p.signalGroup(syscall.SIGTERM)
 }
 
 // Kill force-terminates the original managed JVM group under the same pin.
@@ -260,18 +282,47 @@ func (p *execProcess) reapAfterGroupQuiesces() {
 	// /proc enumeration cannot prove group quiescence atomically: an observed
 	// member may fork after the snapshot and then disappear. Keep the exited
 	// leader as a non-recyclable PGID pin until SIGKILL has been delivered to the
-	// whole group. The reaper initiates that cleanup itself so a crash is reaped
-	// even when no later launcher path supervises or retires the generation.
+	// whole group. A spontaneous exit is finalized immediately. When the leader
+	// exited inside a caller-owned graceful stop, retain that configured window;
+	// its expiry is also the bounded autonomous fallback if the caller vanishes.
 	// Members cannot fork after the terminal syscall, so exact Wait followed by
 	// the kernel's ESRCH group probe is the safe release boundary.
-	select {
-	case <-p.terminalSignal:
-	default:
-		_ = p.Kill()
-	}
-	<-p.terminalSignal
+	p.ensureTerminalSignalAfterExit()
 	p.finishReap(func() { _ = p.cmd.Wait() })
 	close(p.reaped)
+}
+
+func (p *execProcess) ensureTerminalSignalAfterExit() {
+	deadline, graceful := p.gracefulStopWindow()
+	if graceful {
+		now := p.graceNow
+		if now == nil {
+			now = time.Now
+		}
+		after := p.graceAfter
+		if after == nil {
+			after = time.After
+		}
+		select {
+		case <-p.terminalSignal:
+			return
+		case <-after(deadline.Sub(now())):
+		}
+	} else {
+		select {
+		case <-p.terminalSignal:
+			return
+		default:
+		}
+	}
+	_ = p.Kill()
+	<-p.terminalSignal
+}
+
+func (p *execProcess) gracefulStopWindow() (time.Time, bool) {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	return p.graceDeadline, p.gracefulStop
 }
 
 func (p *execProcess) finishReap(wait func()) {
@@ -281,9 +332,9 @@ func (p *execProcess) finishReap(wait func()) {
 	p.waited = true
 }
 
-// Done is closed by the reaper goroutine once leader exit is observed. The
-// exact Wait follows its autonomous terminal group cleanup while the zombie
-// leader pins descendant identity.
+// Done is closed by the reaper goroutine once leader exit is observed. The exact
+// Wait follows terminal group cleanup—immediately for a spontaneous exit or at
+// the registered graceful-stop deadline—while the zombie leader pins identity.
 func (p *execProcess) Done() <-chan struct{} { return p.done }
 
 func (p *execProcess) Reaped() <-chan struct{} { return p.reaped }

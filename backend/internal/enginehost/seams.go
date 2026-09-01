@@ -39,6 +39,7 @@ package enginehost
 import (
 	"context"
 	"os"
+	"time"
 )
 
 // ProcessStarter spawns one engine-host process listening on port with its data
@@ -64,11 +65,12 @@ type ProcessStarter interface {
 
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses
 // it to detect an unexpected JVM exit (Done), to stop the entire owned process
-// group gracefully (Signal SIGTERM), and to force-kill that group (Kill) when it
-// ignores the term signal or its health-poll times out. The exited leader remains
+// group gracefully (SignalGracefully), and to force-kill that group (Kill) when
+// it ignores TERM or its health-poll times out. The exited leader remains
 // unreaped as a PGID pin while the production reaper initiates terminal group
-// KILL, and that group-signal syscall is serialized against the sole Wait;
-// numeric PGID reuse therefore cannot retarget delivery. GroupExists keeps
+// KILL—immediately after a spontaneous exit or at an active graceful-stop
+// deadline—and that group-signal syscall is serialized against the sole Wait.
+// Numeric PGID reuse therefore cannot retarget delivery. GroupExists keeps
 // lifecycle ownership until an identity mismatch or the kernel's ESRCH group
 // probe proves the original generation absent; uncertainty remains owned.
 // The production implementation is execProcess (exec_process.go); tests provide
@@ -78,9 +80,14 @@ type RunningProcess interface {
 	Pid() int
 	// GroupID is the dedicated process-group id assigned at spawn.
 	GroupID() int
-	// Signal delivers sig to the entire owned process group (SIGTERM for a
-	// graceful stop) and MUST keep ownership pinned through the final syscall.
+	// Signal delivers a raw signal to the entire owned process group and MUST keep
+	// ownership pinned through the final syscall. Lifecycle TERM callers use
+	// SignalGracefully so the reaper receives their configured grace window.
 	Signal(sig os.Signal) error
+	// SignalGracefully records grace before delivering SIGTERM, allowing the
+	// process reaper to preserve the configured TERM-to-KILL window while still
+	// owning a bounded autonomous fallback if the stopping caller disappears.
+	SignalGracefully(grace time.Duration) error
 	// Kill force-terminates the entire owned process group (SIGKILL) and MUST
 	// refuse a recycled group identity.
 	Kill() error
@@ -92,9 +99,9 @@ type RunningProcess interface {
 	// Done is closed once process exit is observed. The launcher selects on it to
 	// notice a crash during startup and to wait out a graceful stop before
 	// escalating to Kill. Production retains the exited leader as an identity pin,
-	// autonomously delivers the terminal group syscall if no launcher path already
-	// did, then its single reaper calls Wait exactly once; the later ESRCH group
-	// probe covers killed descendant zombies.
+	// autonomously delivers the terminal group syscall immediately for a crash or
+	// at the registered graceful deadline, then its single reaper calls Wait
+	// exactly once; the later ESRCH group probe covers killed descendant zombies.
 	Done() <-chan struct{}
 }
 

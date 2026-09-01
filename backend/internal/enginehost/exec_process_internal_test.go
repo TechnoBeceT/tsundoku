@@ -1,6 +1,7 @@
 package enginehost
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -19,12 +20,14 @@ type identityRead struct {
 }
 
 type fakeProcessGroupSystem struct {
-	mu           sync.Mutex
-	reads        []identityRead
-	current      identityRead
-	leaderExited bool
-	probeErr     error
-	signals      []syscall.Signal
+	mu               sync.Mutex
+	reads            []identityRead
+	current          identityRead
+	leaderExited     bool
+	exitLeaderOnTERM bool
+	disappearOnKILL  bool
+	probeErr         error
+	signals          []syscall.Signal
 }
 
 func (s *fakeProcessGroupSystem) LeaderStartTime(int) (uint64, error) {
@@ -38,7 +41,11 @@ func (s *fakeProcessGroupSystem) LeaderStartTime(int) (uint64, error) {
 	return s.current.startTime, s.current.err
 }
 
-func (s *fakeProcessGroupSystem) LeaderExited(int) (bool, error) { return s.leaderExited, nil }
+func (s *fakeProcessGroupSystem) LeaderExited(int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.leaderExited, nil
+}
 
 func (s *fakeProcessGroupSystem) SignalGroup(_ int, signal syscall.Signal) error {
 	s.mu.Lock()
@@ -51,6 +58,13 @@ func (s *fakeProcessGroupSystem) SignalGroup(_ int, signal syscall.Signal) error
 		return syscall.ESRCH
 	}
 	s.signals = append(s.signals, signal)
+	if signal == syscall.SIGTERM && s.exitLeaderOnTERM {
+		s.leaderExited = true
+	}
+	if signal == syscall.SIGKILL && s.disappearOnKILL {
+		s.current = identityRead{err: os.ErrNotExist}
+		s.probeErr = syscall.ESRCH
+	}
 	return nil
 }
 
@@ -72,7 +86,7 @@ func (s *blockingSignalGroupSystem) SignalGroup(int, syscall.Signal) error {
 	return nil
 }
 
-func TestExecProcessAutonomouslyKillsGroupAndReapsExitedLeader(t *testing.T) {
+func TestExecProcessSpontaneousExitAutonomouslyKillsGroupAndReapsLeader(t *testing.T) {
 	cmd := exec.Command("true")
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("Start helper: %v", err)
@@ -104,6 +118,79 @@ func TestExecProcessAutonomouslyKillsGroupAndReapsExitedLeader(t *testing.T) {
 	}
 	if got := system.nonProbeSignals(); len(got) != 1 || got[0] != syscall.SIGKILL {
 		t.Fatalf("reaper group signals = %v, want one terminal KILL", got)
+	}
+}
+
+func TestTerminateProcessGroupPreservesConfiguredGraceAfterLeaderExit(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start helper: %v", err)
+	}
+	graceWaitStarted := make(chan time.Duration, 1)
+	graceExpired := make(chan time.Time)
+	graceStartedAt := time.Unix(1_700_000_000, 0)
+	graceTimes := make(chan time.Time, 2)
+	graceTimes <- graceStartedAt
+	graceTimes <- graceStartedAt.Add(2 * time.Second)
+	system := &fakeProcessGroupSystem{
+		current:          identityRead{startTime: 100},
+		exitLeaderOnTERM: true,
+		disappearOnKILL:  true,
+	}
+	proc := &execProcess{
+		cmd: cmd, pgid: 42, leaderStartTime: 100, groups: system,
+		done: make(chan struct{}), reaped: make(chan struct{}),
+		terminalSignal: make(chan struct{}),
+		graceNow:       func() time.Time { return <-graceTimes },
+		graceAfter: func(grace time.Duration) <-chan time.Time {
+			graceWaitStarted <- grace
+			return graceExpired
+		},
+	}
+	go proc.reapAfterGroupQuiesces()
+
+	const configuredGrace = 5 * time.Second
+	terminated := make(chan bool, 1)
+	go func() {
+		terminated <- terminateProcessGroup(context.Background(), proc, configuredGrace)
+	}()
+
+	select {
+	case got := <-graceWaitStarted:
+		wantRemaining := configuredGrace - 2*time.Second
+		if got != wantRemaining {
+			t.Fatalf("reaper remaining grace = %v, want %v from the TERM deadline", got, wantRemaining)
+		}
+	case <-time.After(time.Second):
+		_ = proc.Kill()
+		<-proc.Reaped()
+		t.Fatal("reaper did not enter the active graceful-stop window")
+	}
+	if got := system.nonProbeSignals(); len(got) != 1 || got[0] != syscall.SIGTERM {
+		t.Fatalf("signals before grace expiry = %v, want TERM only", got)
+	}
+	select {
+	case <-proc.Reaped():
+		t.Fatal("leader was reaped before configured grace expired")
+	default:
+	}
+
+	close(graceExpired)
+	select {
+	case <-proc.Reaped():
+	case <-time.After(time.Second):
+		t.Fatal("bounded autonomous fallback did not reap after grace expiry")
+	}
+	select {
+	case gone := <-terminated:
+		if !gone {
+			t.Fatal("graceful termination did not observe complete group absence")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("graceful termination did not finish after autonomous fallback")
+	}
+	if got := system.nonProbeSignals(); len(got) != 2 || got[0] != syscall.SIGTERM || got[1] != syscall.SIGKILL {
+		t.Fatalf("complete graceful-stop signals = %v, want TERM then KILL", got)
 	}
 }
 
