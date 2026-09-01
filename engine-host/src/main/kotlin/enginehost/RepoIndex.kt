@@ -42,6 +42,7 @@ internal data class RepoIndexEntry(
     val version: String,
     val nsfw: Int,
     val sources: List<RepoIndexSource>,
+    val signingKeyFingerprint: String? = null,
 )
 
 /** A source advertised by a repo entry, with the source id already parsed to the engine's [Long] id. */
@@ -95,7 +96,8 @@ internal object RepoIndexParser {
         return if (root.isArray) {
             mapper.convertValue<List<LegacyRepoEntry>>(root).map { it.toEntry(repoBase) }
         } else {
-            mapper.convertValue<JsonRepoIndex>(root).extensionList.extensions.map { it.toEntry() }
+            val index = mapper.convertValue<JsonRepoIndex>(root)
+            index.extensionList.extensions.map { it.toEntry(index.signingKey) }
         }
     }
 
@@ -127,6 +129,7 @@ private const val CONTENT_WARNING_NSFW_ORDINAL = 3
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 private data class JsonRepoIndex(
+    val signingKey: String? = null,
     val extensionList: JsonExtensionList = JsonExtensionList(),
 )
 
@@ -145,7 +148,7 @@ private data class JsonRepoExtension(
     val resources: JsonRepoResources = JsonRepoResources(),
     val sources: List<JsonRepoSource> = emptyList(),
 ) {
-    fun toEntry(): RepoIndexEntry {
+    fun toEntry(signingKeyFingerprint: String?): RepoIndexEntry {
         val srcs = sources.mapNotNull { it.toSource() }
         return RepoIndexEntry(
             name = name,
@@ -157,6 +160,7 @@ private data class JsonRepoExtension(
             version = versionName,
             nsfw = if (contentWarning == CONTENT_WARNING_NSFW) 1 else 0,
             sources = srcs,
+            signingKeyFingerprint = signingKeyFingerprint,
         )
     }
 }

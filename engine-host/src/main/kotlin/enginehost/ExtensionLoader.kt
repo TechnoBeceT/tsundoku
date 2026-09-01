@@ -48,6 +48,7 @@ internal data class PreparedExtension(
     val mainClass: String,
     val apkFile: Path,
     val jarFile: Path,
+    val signerFingerprints: Set<String>,
 )
 
 internal fun interface ExtensionPreparer {
@@ -60,9 +61,12 @@ internal fun interface ExtensionPreparer {
  * stable [Source.id] so the RPC layer can resolve `(sourceId, url)` calls; the per-package
  * source-id map lets [ExtensionManager] unload an extension cleanly on uninstall/update.
  */
-class ExtensionLoader(
+class ExtensionLoader internal constructor(
     private val workDir: File,
+    private val signatureVerifier: ApkSignatureVerifier,
 ) {
+    constructor(workDir: File) : this(workDir, ApkSignerVerifier)
+
     private val logger = KotlinLogging.logger {}
     private val sources = ConcurrentHashMap<Long, Source>()
 
@@ -91,6 +95,7 @@ class ExtensionLoader(
     internal fun prepareFromApk(apkPath: Path): PreparedExtension {
         val apkFile = apkPath.toFile()
         require(apkFile.exists()) { "APK not found: $apkPath" }
+        val signerFingerprints = signatureVerifier.verify(apkPath)
         val fileNameWithoutType = apkFile.name.substringBefore(".apk")
         val jarFile = File(workDir, "$fileNameWithoutType.jar")
 
@@ -128,12 +133,15 @@ class ExtensionLoader(
                 mainClass = className,
                 apkFile = apkFile.toPath(),
                 jarFile = jarFile.toPath(),
+                signerFingerprints = signerFingerprints,
             )
         } catch (failure: Throwable) {
             jarFile.delete()
             throw failure
         }
     }
+
+    internal fun verifyApkSigners(apk: Path): Set<String> = signatureVerifier.verify(apk)
 
     /** Instantiate a prepared jar without changing the active registry. */
     internal fun instantiatePrepared(prepared: PreparedExtension): LoadedExtension {

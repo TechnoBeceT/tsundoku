@@ -48,6 +48,7 @@ class RepoIndexParserTest {
         assertTrue(gc.iconUrl!!.startsWith("https://cdn.jsdelivr.net/"), "resources.iconUrl must be used directly")
         assertEquals("1.4.4", gc.version)
         assertEquals(4, gc.code, "versionCode string must parse to a Long")
+        assertEquals("9add655a78e96c4ec7a53ef89dccb557cb5d767489fac5e785d671a5a75d4da2", gc.signingKeyFingerprint)
         // A multi-language package: many distinct source languages collapse to "all".
         assertTrue(gc.sources.size > 1, "GlobalComix is a multi-source package")
         assertTrue(gc.sources.map { it.lang }.toSet().containsAll(setOf("en", "ja", "fr")))
@@ -67,9 +68,10 @@ class RepoIndexParserTest {
     fun `gzipped protobuf decodes to the identical entry set as the JSON ground truth`() {
         val json = parseNewJson()
         val pb = parseNewPb()
-        // Full structural equality is the strongest possible cross-check: it pins every protobuf
-        // field number (name/pkg/apk/icon/versionName/versionCode/nsfw/sources) against the JSON.
-        assertEquals(json, pb, "protobuf must decode to the same normalised entries as the JSON index")
+        // The fixture protobuf omits the wrapper signing key. Every extension field must still be
+        // byte-identical; the absent trust input remains null so repository mutation fails closed.
+        assertEquals(json.map { it.copy(signingKeyFingerprint = null) }, pb)
+        assertTrue(pb.all { it.signingKeyFingerprint == null })
     }
 
     @Test

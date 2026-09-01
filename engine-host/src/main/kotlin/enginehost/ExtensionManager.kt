@@ -45,13 +45,25 @@ data class InstalledExtension(
     val repoUrl: String?,
     val sourceIds: List<Long>,
     val sources: List<ExtensionSourceDto>,
+    val signerFingerprints: Set<String> = emptySet(),
 )
 
 /** Repository identity that a prepared APK must match exactly before it can replace active state. */
 private data class ExpectedArtifact(
     val pkgName: String,
     val versionCode: Long,
-)
+    val trustedSignerFingerprint: String,
+) {
+    companion object {
+        fun from(entry: RepoIndexEntry): ExpectedArtifact {
+            val trustedSigner =
+                requireNotNull(entry.signingKeyFingerprint) {
+                    "repository entry '${entry.pkg}' does not declare a trusted signing key"
+                }
+            return ExpectedArtifact(entry.pkg, entry.code, normalizeSignerFingerprint(trustedSigner))
+        }
+    }
+}
 
 /**
  * ExtensionManager owns the extension working-set on the mounted volume — the configured repo
@@ -233,7 +245,7 @@ class ExtensionManager internal constructor(
             url = url,
             repoUrl = repoUrl,
             repoEntry = repoEntry,
-            expectedArtifact = repoEntry?.let { ExpectedArtifact(it.pkg, it.code) },
+            expectedArtifact = repoEntry?.let(ExpectedArtifact::from),
             expectedRepos = if (apkUrl == null) stateSnapshot.repos else null,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -269,7 +281,7 @@ class ExtensionManager internal constructor(
             url = entry.apkUrl,
             repoUrl = repoUrl,
             repoEntry = entry,
-            expectedArtifact = ExpectedArtifact(entry.pkg, entry.code),
+            expectedArtifact = ExpectedArtifact.from(entry),
             expectedRepos = stateSnapshot.repos,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -358,6 +370,22 @@ class ExtensionManager internal constructor(
             }
         }
 
+        require(prepared.signerFingerprints.isNotEmpty()) {
+            "prepared APK '${prepared.pkgName}' has no cryptographically verified signer"
+        }
+        expectedArtifact?.let { expected ->
+            require(expected.trustedSignerFingerprint in prepared.signerFingerprints) {
+                "prepared APK signer is not trusted by the repository"
+            }
+        }
+        old?.let { installedRecord ->
+            val installedSigners =
+                loader.verifyApkSigners(File(extensionsRoot, installedRecord.apkFileName).toPath())
+            require(prepared.signerFingerprints == installedSigners) {
+                "prepared APK signer does not preserve installed signer continuity"
+            }
+        }
+
         val candidateSourceIds = loader.inspectPreparedSourceIds(prepared)
         require(candidateSourceIds.size == candidateSourceIds.toSet().size) {
             "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
@@ -397,6 +425,7 @@ class ExtensionManager internal constructor(
                     repoUrl = repoUrl,
                     sourceIds = ext.sources.map { it.id },
                     sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
+                    signerFingerprints = prepared.signerFingerprints,
                 )
             val nextInstalled = installed.toMutableMap().apply { put(record.pkgName, record) }
             val affectedSourceIds = (old?.sourceIds.orEmpty() + ext.sources.map { it.id }).toSet()

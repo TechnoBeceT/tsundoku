@@ -28,6 +28,70 @@ import kotlin.test.assertTrue
 
 class ExtensionManagerTest {
     @Test
+    fun `direct URL install rejects an invalid APK signature without mutation`() {
+        val unsigned = SignedApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateApkBytes = unsigned.unsignedApk.readBytes(),
+                signatureVerifier = ApkSignerVerifier,
+                useRealPreparer = true,
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            fixture.manager.install(apkUrl = "https://cdn.example.test/replacement.apk")
+        }
+
+        assertTrue(failure.message.orEmpty().contains("signature verification failed"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `repository update rejects a signer outside repository trust without mutation`() {
+        val installedSigner = SignedApkFixture()
+        val candidateSigner = SignedApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                oldApkBytes = installedSigner.signedApk.readBytes(),
+                candidateApkBytes = candidateSigner.signedApk.readBytes(),
+                repositorySigningKey = installedSigner.fingerprint,
+                candidateSignerFingerprints = setOf(candidateSigner.fingerprint),
+                signatureVerifier = ApkSignerVerifier,
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("is not trusted by the repository"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `repository update rejects installed signer continuity mismatch without mutation`() {
+        val installedSigner = SignedApkFixture()
+        val candidateSigner = SignedApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                oldApkBytes = installedSigner.signedApk.readBytes(),
+                candidateApkBytes = candidateSigner.signedApk.readBytes(),
+                repositorySigningKey = candidateSigner.fingerprint,
+                candidateSignerFingerprints = setOf(candidateSigner.fingerprint),
+                signatureVerifier = ApkSignerVerifier,
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("does not preserve installed signer continuity"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
     fun `repository update rejects an APK for a different requested package without mutation`() {
         val fixture = UpdateFixture(candidatePackage = "malicious.extension", candidateVersionCode = 2)
 
@@ -77,7 +141,7 @@ class ExtensionManagerTest {
                     targetDir: Path,
                 ): Path = error("unused")
             }
-        val loader = ExtensionLoader(root.toFile())
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
         val manager = ExtensionManager(loader, root.toFile(), downloader)
         manager.setRepos(listOf("https://repo.example.test/index.json"))
         val executor = Executors.newFixedThreadPool(2)
@@ -167,6 +231,7 @@ class ExtensionManagerTest {
                     mainClass = "example.Extension",
                     apkFile = apk,
                     jarFile = root.resolve("missing-prepared.jar"),
+                    signerFingerprints = setOf(TEST_SIGNER),
                 )
             }
         val manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
@@ -208,6 +273,12 @@ class ExtensionManagerTest {
         candidateVersionCode: Long,
         repositoryVersionCode: Long = 2,
         candidateJarSource: Class<out Source> = CandidateSource::class.java,
+        oldApkBytes: ByteArray = "old target apk".toByteArray(),
+        candidateApkBytes: ByteArray = "candidate apk".toByteArray(),
+        repositorySigningKey: String? = TEST_SIGNER,
+        candidateSignerFingerprints: Set<String> = setOf(TEST_SIGNER),
+        signatureVerifier: ApkSignatureVerifier = ApkSignatureVerifier { setOf(TEST_SIGNER) },
+        useRealPreparer: Boolean = false,
     ) {
         private val root = Files.createTempDirectory("extension-manager-identity")
         private val oldApk = root.resolve("target.apk")
@@ -219,12 +290,12 @@ class ExtensionManagerTest {
         private val unrelatedRecord = installedRecord(UNRELATED_PACKAGE, "unrelated.apk", listOf(UNRELATED_SOURCE_ID))
         private val oldSource = TestSource(TARGET_SOURCE_ID)
         private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
-        private val loader = ExtensionLoader(root.toFile())
+        private val loader = ExtensionLoader(root.toFile(), signatureVerifier)
         private val directoryBefore: Map<String, ByteArray>
         val manager: ExtensionManager
 
         init {
-            oldApk.writeBytes("old target apk".toByteArray())
+            oldApk.writeBytes(oldApkBytes)
             oldJar.writeBytes("old target jar".toByteArray())
             unrelatedApk.writeBytes("unrelated apk".toByteArray())
             unrelatedJar.writeBytes("unrelated jar".toByteArray())
@@ -234,16 +305,22 @@ class ExtensionManagerTest {
 
             val downloader =
                 object : ExtensionDownloadClient {
-                    override fun downloadRepoIndex(url: String): ByteArray =
-                        """[{"name":"Target","pkg":"$TARGET_PACKAGE","apk":"replacement.apk","lang":"en","code":$repositoryVersionCode,"version":"1.2.$repositoryVersionCode","sources":[]}]"""
-                            .toByteArray()
+                    override fun downloadRepoIndex(url: String): ByteArray {
+                        val entry =
+                            """{"name":"Target","packageName":"$TARGET_PACKAGE","resources":{"apkUrl":"https://cdn.example.test/replacement.apk"},"versionCode":"$repositoryVersionCode","versionName":"1.2.$repositoryVersionCode","sources":[]}"""
+                        return if (repositorySigningKey == null) {
+                            """[{"name":"Target","pkg":"$TARGET_PACKAGE","apk":"replacement.apk","lang":"en","code":$repositoryVersionCode,"version":"1.2.$repositoryVersionCode","sources":[]}]""".toByteArray()
+                        } else {
+                            """{"signingKey":"$repositorySigningKey","extensionList":{"extensions":[$entry]}}""".toByteArray()
+                        }
+                    }
 
                     override fun downloadApk(
                         url: String,
                         targetDir: Path,
                     ): Path =
                         Files.createTempFile(targetDir, ".test-download-", ".apk.tmp").also {
-                            it.writeBytes("candidate apk".toByteArray())
+                            it.writeBytes(candidateApkBytes)
                         }
                 }
             val preparer =
@@ -257,9 +334,15 @@ class ExtensionManagerTest {
                         mainClass = candidateJarSource.name,
                         apkFile = apk,
                         jarFile = jar,
+                        signerFingerprints = candidateSignerFingerprints,
                     )
                 }
-            manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
+            manager =
+                if (useRealPreparer) {
+                    ExtensionManager(loader, root.toFile(), downloader)
+                } else {
+                    ExtensionManager(loader, root.toFile(), downloader, preparer)
+                }
             manager.setRepos(listOf("https://repo.example.test"))
             directoryBefore = snapshotDirectory(root)
         }
@@ -278,6 +361,7 @@ class ExtensionManagerTest {
         private const val UNRELATED_PACKAGE = "unrelated.extension"
         private const val TARGET_SOURCE_ID = 7L
         private const val UNRELATED_SOURCE_ID = 9L
+        private const val TEST_SIGNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
         private fun installedRecord(
             pkgName: String,
@@ -366,6 +450,32 @@ private class TestSource(
 internal class CandidateSource : Source {
     override val id: Long = 9L
     override val name: String = "Candidate Source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = error("unused")
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal class CandidateOwnedSource : Source {
+    override val id: Long = 7L
+    override val name: String = "Owned Candidate Source"
     override val lang: String = "en"
     override val supportsLatest: Boolean = false
 

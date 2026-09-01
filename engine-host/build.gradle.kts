@@ -71,6 +71,7 @@ dependencies {
     // the same model the JSON path produces (RepoIndex.kt). It already rode Suwayomi server's runtime
     // classpath transitively; declared explicitly here (version pinned to Suwayomi's serialization).
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0")
+    implementation("com.android.tools.build:apksig:9.3.2")
 
     testImplementation(kotlin("test"))
     testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
