@@ -5,6 +5,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
@@ -23,6 +24,8 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		imageMode = *transportOverride.ImageConnectionMode
 	}
 	binding := effectiveBinding(sourceID, snapshot.routing)
+	kcefPolicy := kcefPolicy(transportOverride)
+	kcefEnabled := effectiveKCEFEnabled(kcefPolicy, binding)
 	storedBinding, configured := snapshot.routing.Stored[sourceID]
 	reuseGlobal, _ := resolveBypassSession(snapshot.globals.BypassSession, binding, nil)
 	reuse, sessionMode := resolveBypassSession(snapshot.globals.BypassSession, binding, transportOverride.ReuseBypassSession)
@@ -52,6 +55,10 @@ func compose(source sourceengine.Source, snapshot storesSnapshot, profileKey str
 		ImageConnectionMode: ImageConnectionPolicyValue{
 			Override: transportOverride.ImageConnectionMode, Global: snapshot.transport.DefaultImageConnectionMode, Effective: imageMode,
 			Inherited: transportOverride.ImageConnectionMode == nil,
+		},
+		KCEF: KCEFPolicyValue{
+			Override: transportOverride.KCEFPolicy, Global: runtimepolicy.KCEFPolicyAuto, Effective: kcefPolicy,
+			Inherited: transportOverride.KCEFPolicy == nil, Enabled: kcefEnabled,
 		},
 		ImageProxy: ImageProxyState{
 			OptedIn: optedIn, GatewayEnabled: snapshot.globals.ProxyEnabled, GatewayConfigured: proxyConfigured,
@@ -171,38 +178,37 @@ func containsSourceID(ids []int64, sourceID int64) bool {
 }
 
 func exceptionCount(sourceID int64, snapshot storesSnapshot) int {
-	count := 0
 	throughput := snapshot.throughput.Overrides[sourceID]
-	if throughput.DownloadConcurrency != nil {
-		count++
-	}
-	if throughput.ImageRequestDelay != nil {
-		count++
-	}
 	transport := snapshot.transport.Overrides[sourceID]
-	if transport.ReuseBypassSession != nil {
-		count++
-	}
-	if transport.ImageConnectionMode != nil {
-		count++
-	}
-	if containsSourceID(snapshot.globals.ProxySourceIDs, sourceID) {
-		count++
-	}
+	count := countTrue(
+		throughput.DownloadConcurrency != nil,
+		throughput.ImageRequestDelay != nil,
+		transport.ReuseBypassSession != nil,
+		transport.ImageConnectionMode != nil,
+		transport.KCEFPolicy != nil,
+		containsSourceID(snapshot.globals.ProxySourceIDs, sourceID),
+	)
 	binding, ok := snapshot.routing.Stored[sourceID]
 	if !ok {
 		return count
 	}
-	if binding.SocksEndpointID != nil {
-		count++
-	}
-	if binding.FlareMode != network.FlareModeGlobal || binding.FlareEndpointID != nil {
-		count++
+	return count + countTrue(
+		binding.SocksEndpointID != nil,
+		binding.FlareMode != network.FlareModeGlobal || binding.FlareEndpointID != nil,
+	)
+}
+
+func countTrue(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
 	}
 	return count
 }
 
-func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, overrides map[int64]sourcetransport.Override) map[int64]string {
+func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, overrides map[int64]sourcetransport.Override, defaultKCEFEnabled bool) map[int64]string {
 	inputs := make([]engineroute.BindingInput, 0, len(sources))
 	for _, source := range sources {
 		binding := effectiveBinding(source.ID, routing)
@@ -210,15 +216,31 @@ func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, o
 		inputs = append(inputs, engineroute.BindingInput{
 			SourceID: source.ID, Socks: toSocks(binding.Socks), FlareMode: binding.FlareMode,
 			Flare: toFlare(binding.Flare), DisableBypassSession: disableSession,
+			KCEFEnabled: effectiveKCEFEnabled(kcefPolicy(overrides[source.ID]), binding),
 		})
 	}
 	out := make(map[int64]string)
-	for _, profile := range engineroute.Derive(inputs) {
+	for _, profile := range engineroute.Derive(defaultKCEFEnabled, inputs) {
 		for _, sourceID := range profile.SourceIDs {
 			out[sourceID] = profile.Key
 		}
 	}
 	return out
+}
+
+func effectiveKCEFEnabled(policy runtimepolicy.KCEFPolicy, binding network.ResolvedBinding) bool {
+	enabled, err := runtimepolicy.ResolveKCEF(policy, binding.Socks != nil, binding.FlareMode)
+	if err != nil {
+		return false
+	}
+	return enabled
+}
+
+func kcefPolicy(override sourcetransport.Override) runtimepolicy.KCEFPolicy {
+	if override.KCEFPolicy == nil {
+		return runtimepolicy.KCEFPolicyAuto
+	}
+	return *override.KCEFPolicy
 }
 
 func toSocks(value *network.ResolvedSocks) *engineroute.SocksEndpoint {

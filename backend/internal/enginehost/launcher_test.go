@@ -3,8 +3,12 @@ package enginehost_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,8 +31,11 @@ func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, star
 	base := []enginehost.Option{
 		enginehost.WithStarter(starter),
 		enginehost.WithHealthProber(prober),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return readyKCEFStatus(), nil
+		}),
 		enginehost.WithPortAllocator(fixedPortAllocator(41001)),
-		enginehost.WithStartTimeout(50 * time.Millisecond),
+		enginehost.WithLaunchReadinessTimeout(50 * time.Millisecond),
 		enginehost.WithPollInterval(2 * time.Millisecond),
 		// Default the settle recheck OFF so a test's scripted prober sequence maps
 		// 1:1 to poll calls; the settle-specific tests re-enable it with an
@@ -79,6 +86,42 @@ func TestEnsureProfile_SpawnsWithAllocatedPortAndDataDir(t *testing.T) {
 	wantDir := enginehost.DataDirFor(root, "socks-1|global|")
 	if call.dataDir != wantDir {
 		t.Errorf("spawn dataDir = %q, want %q (per-profile dir)", call.dataDir, wantDir)
+	}
+}
+
+// TestEnsureProfile_UsesProfileKCEFIntent proves route mode does not override
+// the capability resolved by policy before launch.
+func TestEnsureProfile_UsesProfileKCEFIntent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		flareMode   string
+		kcefEnabled bool
+		wantEnabled bool
+	}{
+		{name: "required endpoint remains on", flareMode: engineroute.FlareModeEndpoint, kcefEnabled: true, wantEnabled: true},
+		{name: "disabled global turns off", flareMode: engineroute.FlareModeGlobal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+				enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+					if tt.kcefEnabled {
+						return readyKCEFStatus(), nil
+					}
+					return disabledKCEFStatus(), nil
+				}))
+			if _, err := launcher.EnsureProfile(context.Background(), engineroute.Profile{
+				Key: "profile-" + tt.name, FlareMode: tt.flareMode, KCEFEnabled: tt.kcefEnabled,
+			}); err != nil {
+				t.Fatalf("EnsureProfile: %v", err)
+			}
+			if got := starter.lastCall().kcefEnabled; got != tt.wantEnabled {
+				t.Fatalf("kcefEnabled = %v, want %v", got, tt.wantEnabled)
+			}
+		})
 	}
 }
 
@@ -182,7 +225,7 @@ func TestEnsureProfile_ExtensionsLinkFailureDegrades(t *testing.T) {
 // profile to the default instance).
 func TestEnsureProfile_HealthTimeoutKillsAndErrors(t *testing.T) {
 	starter := &fakeStarter{}
-	prober := func(string) error { return errors.New("never ready") }
+	prober := func(context.Context, string) error { return errors.New("never ready") }
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober)
 
 	inst, err := l.EnsureProfile(context.Background(), profile("k1"))
@@ -198,10 +241,10 @@ func TestEnsureProfile_HealthTimeoutKillsAndErrors(t *testing.T) {
 // during startup errors promptly (not only on the startup-timeout).
 func TestEnsureProfile_ProcessExitsBeforeReady(t *testing.T) {
 	starter := &fakeStarter{}
-	prober := func(string) error { return errors.New("not up") }
+	prober := func(context.Context, string) error { return errors.New("not up") }
 	// A long start timeout so the test can only pass via the early-exit branch.
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
-		enginehost.WithStartTimeout(10*time.Second))
+		enginehost.WithLaunchReadinessTimeout(10*time.Second))
 
 	// Kill the process right after it is created so awaitReady observes the exit.
 	go func() {
@@ -225,9 +268,9 @@ func TestEnsureProfile_ProcessExitsBeforeReady(t *testing.T) {
 // full startup timeout).
 func TestEnsureProfile_CtxCancelDuringWait(t *testing.T) {
 	starter := &fakeStarter{}
-	prober := func(string) error { return errors.New("not up") }
+	prober := func(context.Context, string) error { return errors.New("not up") }
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
-		enginehost.WithStartTimeout(10*time.Second))
+		enginehost.WithLaunchReadinessTimeout(10*time.Second))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -353,6 +396,88 @@ func TestClose_Idempotent(t *testing.T) {
 	}
 }
 
+func TestClose_DrainsFailedStartGroupOutsideInstanceMap(t *testing.T) {
+	starter := &fakeStarter{keepGroupOnKill: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{
+		State:     enginehost.KCEFStateFailed,
+		ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(sequenceStatus(failed)),
+		enginehost.WithStopGrace(2*time.Millisecond))
+	if _, err := l.EnsureProfile(context.Background(), profile("failed-start")); err == nil {
+		t.Fatal("EnsureProfile succeeded with failed KCEF")
+	}
+	proc := starter.proc(0)
+	proc.setKeepGroupOnKill(false)
+
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !proc.wasSignalled() {
+		t.Fatal("Close did not retry teardown for the ledger-only failed-start group")
+	}
+}
+
+func TestClose_ReportsUnresolvedProcessGroupOwnership(t *testing.T) {
+	starter := &fakeStarter{keepGroupOnKill: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{
+		State:     enginehost.KCEFStateFailed,
+		ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(sequenceStatus(failed)),
+		enginehost.WithStopGrace(2*time.Millisecond))
+	if _, err := l.EnsureProfile(context.Background(), profile("owned-after-close")); err == nil {
+		t.Fatal("EnsureProfile succeeded with failed KCEF")
+	}
+
+	err := l.Close()
+	if err == nil {
+		t.Fatal("Close returned nil while process-group ownership remained unresolved")
+	}
+	if message := err.Error(); !strings.Contains(message, "owned-after-close") || !strings.Contains(message, "group 1") {
+		t.Fatalf("Close error = %q, want profile and process-group identity", message)
+	}
+}
+
+func TestClose_BoundsAggregateTeardownAcrossManyProfiles(t *testing.T) {
+	const profileCount = 6
+	starter := &fakeStarter{keepGroupOnKill: true}
+	ports := make([]int, profileCount)
+	for i := range ports {
+		ports[i] = 41001 + i
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return disabledKCEFStatus(), nil
+		}),
+		enginehost.WithPortAllocator(fixedPortAllocator(ports...)),
+		enginehost.WithStopGrace(25*time.Millisecond))
+	for i := range profileCount {
+		p := engineroute.Profile{Key: fmt.Sprintf("non-kcef-%d", i), KCEFEnabled: false}
+		if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+			t.Fatalf("EnsureProfile(%s): %v", p.Key, err)
+		}
+	}
+
+	started := time.Now()
+	err := l.Close()
+	if elapsed := time.Since(started); elapsed >= 150*time.Millisecond {
+		t.Fatalf("Close took %s for %d profiles, want one bounded aggregate teardown", elapsed, profileCount)
+	}
+	if err == nil {
+		t.Fatal("Close returned nil while all process groups remained unresolved")
+	}
+	for i := range profileCount {
+		if proc := starter.proc(i); !proc.wasSignalled() || !proc.wasKilled() {
+			t.Fatalf("process %d teardown signals: graceful=%v killed=%v", i, proc.wasSignalled(), proc.wasKilled())
+		}
+	}
+}
+
 // TestStopInstance_KillEscalation proves a process that ignores SIGTERM is
 // SIGKILLed after the grace period.
 func TestStopInstance_KillEscalation(t *testing.T) {
@@ -383,13 +508,16 @@ func TestStopInstance_KillEscalation(t *testing.T) {
 // shared Xvfb (3+ concurrent Chromiums crash each other in a container).
 func TestSpawn_EndpointProfileDisablesKCEF(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
-	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return disabledKCEFStatus(), nil
+		}))
 
 	p := engineroute.Profile{Key: "socks-1|endpoint|flare-1", FlareMode: engineroute.FlareModeEndpoint}
 	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
 		t.Fatalf("EnsureProfile: %v", err)
 	}
-	if got := starter.lastCall(); !got.disableKCEF {
+	if got := starter.lastCall(); got.kcefEnabled {
 		t.Error("endpoint-mode profile was spawned with KCEF enabled, want disabled")
 	}
 }
@@ -403,11 +531,11 @@ func TestSpawn_NonEndpointProfileKeepsKCEF(t *testing.T) {
 			starter := &fakeStarter{closeOnSignal: true}
 			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
 
-			p := engineroute.Profile{Key: "socks-1|" + mode + "|", FlareMode: mode}
+			p := engineroute.Profile{Key: "socks-1|" + mode + "|", FlareMode: mode, KCEFEnabled: true}
 			if _, err := l.EnsureProfile(context.Background(), p); err != nil {
 				t.Fatalf("EnsureProfile: %v", err)
 			}
-			if got := starter.lastCall(); got.disableKCEF {
+			if got := starter.lastCall(); !got.kcefEnabled {
 				t.Errorf("%s-mode profile was spawned with KCEF disabled, want enabled", mode)
 			}
 		})
@@ -465,5 +593,358 @@ func TestAwaitReady_SettlePassesWhenStable(t *testing.T) {
 	}
 	if starter.callCount() != 1 {
 		t.Errorf("starter called %d times, want 1", starter.callCount())
+	}
+}
+
+func TestAwaitReady_SettleRejectsReadyToFailedKCEFTransition(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{
+		State:     enginehost.KCEFStateFailed,
+		ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(sequenceStatus(readyKCEFStatus(), failed)),
+		enginehost.WithSettleDelay(2*time.Millisecond))
+
+	if _, err := l.EnsureProfile(context.Background(), profile("ready-then-failed")); err == nil {
+		t.Fatal("EnsureProfile succeeded after KCEF failed during settle")
+	}
+	if !starter.proc(0).wasKilled() {
+		t.Fatal("capability-lost process was not killed after settle rejection")
+	}
+}
+
+func TestEnsureProfile_KCEFReadinessGatesHealthyHost(t *testing.T) {
+	tests := []struct {
+		name        string
+		profile     engineroute.Profile
+		status      enginehost.EngineStatus
+		wantSuccess bool
+	}{
+		{name: "enabled requires ready", profile: profile("enabled"), status: disabledKCEFStatus()},
+		{name: "enabled accepts ready", profile: profile("enabled-ready"), status: readyKCEFStatus(), wantSuccess: true},
+		{name: "disabled accepts disabled", profile: engineroute.Profile{Key: "disabled", KCEFEnabled: false}, status: disabledKCEFStatus(), wantSuccess: true},
+		{name: "disabled rejects ready", profile: engineroute.Profile{Key: "disabled-ready", KCEFEnabled: false}, status: readyKCEFStatus()},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+				enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+					return tt.status, nil
+				}))
+
+			_, err := l.EnsureProfile(context.Background(), tt.profile)
+			if tt.wantSuccess {
+				if err != nil {
+					t.Fatalf("EnsureProfile: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("EnsureProfile succeeded from health alone, want capability-gated failure")
+			}
+			if !starter.proc(0).wasKilled() {
+				t.Fatal("health-only profile was not killed after capability gate failure")
+			}
+		})
+	}
+}
+
+func TestEnsureProfile_KCEFFailedRejectsImmediately(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed)}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithLaunchReadinessTimeout(time.Second),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return failed, nil }))
+
+	started := time.Now()
+	if _, err := l.EnsureProfile(context.Background(), profile("failed")); err == nil {
+		t.Fatal("EnsureProfile succeeded with failed KCEF")
+	} else if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("failed KCEF took %s, want immediate rejection", elapsed)
+	}
+}
+
+func TestEnsureProfile_KCEFInitializingUsesStartTimeout(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithLaunchReadinessTimeout(30*time.Millisecond),
+		enginehost.WithPollInterval(time.Millisecond),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return initializing, nil }))
+
+	if _, err := l.EnsureProfile(context.Background(), profile("initializing")); err == nil {
+		t.Fatal("EnsureProfile succeeded while KCEF remained initializing")
+	}
+	if !starter.proc(0).wasKilled() {
+		t.Fatal("initializing KCEF process was not killed after launch timeout")
+	}
+}
+
+func TestEnsureProfile_CachedKCEFReadinessMatrix(t *testing.T) {
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed)}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+
+	tests := []struct {
+		name          string
+		profile       engineroute.Profile
+		statuses      []enginehost.EngineStatus
+		wantStarts    int
+		wantRecreated bool
+	}{
+		{name: "enabled ready reuses", profile: profile("enabled-ready"), statuses: []enginehost.EngineStatus{readyKCEFStatus()}, wantStarts: 1},
+		{name: "disabled disabled reuses", profile: engineroute.Profile{Key: "disabled", KCEFEnabled: false}, statuses: []enginehost.EngineStatus{disabledKCEFStatus()}, wantStarts: 1},
+		{name: "enabled failed recreates", profile: engineroute.Profile{Key: "enabled-failed", SourceIDs: []int64{1}, KCEFEnabled: true}, statuses: []enginehost.EngineStatus{readyKCEFStatus(), failed, readyKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+		{name: "enabled initializing recreates", profile: engineroute.Profile{Key: "enabled-initializing", SourceIDs: []int64{1}, KCEFEnabled: true}, statuses: []enginehost.EngineStatus{readyKCEFStatus(), initializing, readyKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+		{name: "disabled ready recreates", profile: engineroute.Profile{Key: "disabled-ready", SourceIDs: []int64{1}, KCEFEnabled: false}, statuses: []enginehost.EngineStatus{disabledKCEFStatus(), readyKCEFStatus(), disabledKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runCachedKCEFReadinessCase(t, tt.profile, tt.statuses, tt.wantStarts, tt.wantRecreated)
+		})
+	}
+}
+
+func runCachedKCEFReadinessCase(t *testing.T, p engineroute.Profile, statuses []enginehost.EngineStatus, wantStarts int, wantRecreated bool) {
+	t.Helper()
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(sequenceStatus(statuses...)),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("initial EnsureProfile: %v", err)
+	}
+	rerouter.resetEvents()
+	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("cached EnsureProfile: %v", err)
+	}
+	if got := starter.callCount(); got != wantStarts {
+		t.Fatalf("starts = %d, want %d", got, wantStarts)
+	}
+	if !wantRecreated {
+		return
+	}
+	if !starter.proc(0).wasSignalled() {
+		t.Fatal("non-ready cached host was not stopped")
+	}
+	if got := rerouter.recordedEvents(); len(got) < 2 || got[0] != "degrade" || got[len(got)-1] != "restore" {
+		t.Fatalf("reroute events = %v, want degrade before restoration", got)
+	}
+}
+
+func TestEnsureProfile_CoordinatedReadinessBudgetAllowsLateKCEFReady(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	clockBase := time.Now().Truncate(time.Second)
+	clock := newFakeReadinessClock(clockBase)
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithReadinessClock(clock),
+		enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithPollInterval(time.Second),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			if clock.Now().Before(clockBase.Add(70 * time.Second)) {
+				status := readyKCEFStatus()
+				status.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+				return status, nil
+			}
+			return readyKCEFStatus(), nil
+		}))
+
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(context.Background(), profile("late-kcef")); done <- err }()
+	clock.waitForTicker(t)
+	clock.Advance(61 * time.Second)
+	clock.Advance(9 * time.Second)
+	if err := <-done; err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+}
+
+func TestEnsureProfile_CoordinatedReadinessBudgetDoesNotResetPerPhase(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	clock := newFakeReadinessClock(time.Now().Truncate(time.Second))
+	health := func(context.Context, string) error {
+		clock.Advance(20 * time.Second)
+		return nil
+	}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, health,
+		enginehost.WithReadinessClock(clock),
+		enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithPollInterval(time.Second),
+		enginehost.WithStatusProber(sequenceStatus(initializing)))
+
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(context.Background(), profile("budget")); done <- err }()
+	clock.waitForTicker(t)
+	clock.Advance(115 * time.Second)
+	if err := <-done; err == nil {
+		t.Fatal("EnsureProfile succeeded after shared readiness budget elapsed")
+	}
+}
+
+func TestEnsureProfile_ReadinessDeadlineCancelsInFlightProbes(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, clock *fakeReadinessClock) (*enginehost.Launcher, <-chan struct{})
+	}{
+		{name: "health", setup: setupBlockingHealthProbe},
+		{name: "status", setup: setupBlockingStatusProbe},
+		{name: "settle health", setup: setupBlockingSettleHealthProbe},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runReadinessDeadlineCase(t, tt.name, tt.setup)
+		})
+	}
+}
+
+func setupBlockingHealthProbe(t *testing.T, clock *fakeReadinessClock) (*enginehost.Launcher, <-chan struct{}) {
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, &fakeStarter{closeOnSignal: true},
+		func(ctx context.Context, _ string) error {
+			clock.Advance(134 * time.Second)
+			startedOnce.Do(func() { close(started) })
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		enginehost.WithReadinessClock(clock), enginehost.WithLaunchReadinessTimeout(135*time.Second))
+	return l, started
+}
+
+func setupBlockingStatusProbe(t *testing.T, clock *fakeReadinessClock) (*enginehost.Launcher, <-chan struct{}) {
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, &fakeStarter{closeOnSignal: true}, okProber,
+		enginehost.WithReadinessClock(clock), enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithStatusProber(func(ctx context.Context, _ string) (enginehost.EngineStatus, error) {
+			clock.Advance(134 * time.Second)
+			startedOnce.Do(func() { close(started) })
+			<-ctx.Done()
+			return enginehost.EngineStatus{}, ctx.Err()
+		}))
+	return l, started
+}
+
+func setupBlockingSettleHealthProbe(t *testing.T, clock *fakeReadinessClock) (*enginehost.Launcher, <-chan struct{}) {
+	started := make(chan struct{})
+	var startedOnce sync.Once
+	var healthCalls atomic.Int32
+	health := func(ctx context.Context, _ string) error {
+		if healthCalls.Add(1) == 1 {
+			return nil
+		}
+		startedOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, &fakeStarter{closeOnSignal: true}, health,
+		enginehost.WithReadinessClock(clock), enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithSettleDelay(time.Second))
+	return l, started
+}
+
+func runReadinessDeadlineCase(t *testing.T, name string, setup func(*testing.T, *fakeReadinessClock) (*enginehost.Launcher, <-chan struct{})) {
+	t.Helper()
+	clock := newFakeReadinessClock(time.Now().Truncate(time.Second))
+	l, started := setup(t, clock)
+	startedAt := clock.Now()
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(context.Background(), profile(name)); done <- err }()
+	if name == "settle health" {
+		clock.waitForTimers(t, 4)
+		clock.Advance(134 * time.Second)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("probe did not begin")
+	}
+	if elapsed := clock.Now().Sub(startedAt); elapsed != 134*time.Second {
+		t.Fatalf("probe began after %s, want 134s", elapsed)
+	}
+	clock.Advance(time.Second)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("EnsureProfile succeeded after the readiness deadline")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("in-flight probe was not cancelled at the readiness deadline")
+	}
+}
+
+func TestEnsureProfile_CancelledCachedVerificationDoesNotMutateLifecycle(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(started chan struct{}) (enginehost.HealthProber, enginehost.StatusProber)
+	}{
+		{name: "health", setup: cancelledHealthProbe},
+		{name: "status", setup: cancelledStatusProbe},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runCancelledCachedVerificationCase(t, tt.name, tt.setup)
+		})
+	}
+}
+
+func cancelledHealthProbe(started chan struct{}) (enginehost.HealthProber, enginehost.StatusProber) {
+	var calls atomic.Int32
+	var startedOnce sync.Once
+	return func(ctx context.Context, _ string) error {
+		if calls.Add(1) == 1 {
+			return nil
+		}
+		startedOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return ctx.Err()
+	}, sequenceStatus(readyKCEFStatus())
+}
+
+func cancelledStatusProbe(started chan struct{}) (enginehost.HealthProber, enginehost.StatusProber) {
+	var calls atomic.Int32
+	var startedOnce sync.Once
+	return okProber, func(ctx context.Context, _ string) (enginehost.EngineStatus, error) {
+		if calls.Add(1) == 1 {
+			return readyKCEFStatus(), nil
+		}
+		startedOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return enginehost.EngineStatus{}, ctx.Err()
+	}
+}
+
+func runCancelledCachedVerificationCase(t *testing.T, name string, setup func(chan struct{}) (enginehost.HealthProber, enginehost.StatusProber)) {
+	t.Helper()
+	started := make(chan struct{})
+	health, status := setup(started)
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, health,
+		enginehost.WithStatusProber(status), enginehost.WithRerouter(rerouter))
+	p := engineroute.Profile{Key: "cached-" + name, SourceIDs: []int64{7}, KCEFEnabled: true}
+	if _, err := l.EnsureProfile(context.Background(), p); err != nil {
+		t.Fatalf("initial EnsureProfile: %v", err)
+	}
+	rerouter.resetEvents()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(ctx, p); done <- err }()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("EnsureProfile error = %v, want context cancellation", err)
+	}
+	if got := starter.callCount(); got != 1 || starter.proc(0).wasSignalled() || rerouter.isDegraded(7) || len(rerouter.recordedEvents()) != 0 {
+		t.Fatalf("cancelled cache verification mutated lifecycle: starts=%d signalled=%v degraded=%v events=%v", got, starter.proc(0).wasSignalled(), rerouter.isDegraded(7), rerouter.recordedEvents())
 	}
 }

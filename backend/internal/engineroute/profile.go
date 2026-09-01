@@ -79,6 +79,9 @@ type BindingInput struct {
 	FlareMode            string         // none|global|endpoint ("" is treated as global)
 	Flare                *FlareEndpoint // non-nil iff FlareMode == endpoint
 	DisableBypassSession bool           // true = push a blank disposable session when bypass can be used
+	// KCEFEnabled is the route-resolved embedded-browser capability for this
+	// source. It is already normalized by the policy owner before derivation.
+	KCEFEnabled bool
 }
 
 // Profile is one distinct network profile that needs its own engine-host
@@ -99,6 +102,10 @@ type Profile struct {
 	// DisableBypassSession makes this profile push a blank FlareSolverr session.
 	// It is normalized false for flare mode none, where bypass cannot be used.
 	DisableBypassSession bool
+	// KCEFEnabled is the explicit embedded-browser setting for this managed
+	// instance. Launching code must consume this value rather than infer it from
+	// the FlareSolverr route.
+	KCEFEnabled bool
 	// SourceIDs are every source bound to this profile, ascending. Two sources
 	// with the same profile share one instance.
 	SourceIDs []int64
@@ -108,21 +115,20 @@ type Profile struct {
 // profiles they require, each carrying the source ids that map to it.
 //
 // A binding is DEFAULT-equivalent — and therefore contributes NO profile (its
-// source keeps using the default instance) — when it has no SOCKS override, its
-// flare mode is global (or blank), and it keeps the configured bypass session.
-// That is exactly today's global config, so the byte-for-byte-unchanged
-// invariant falls straight out of Derive: with no bindings, or only
-// default-equivalent ones, Derive returns an empty slice and the Router routes
-// everything to the default instance. This is pinned by
-// TestDerive_NoBindingsYieldsNoProfiles + TestDerive_DefaultEquivalentBindings.
+// source keeps using the default instance) — when its network/session route is
+// default-equivalent AND its effective KCEF setting equals defaultKCEFEnabled.
+// That keeps a capability divergence managed even when its route is otherwise
+// global. Existing non-default route keys remain byte-identical when their
+// KCEF setting matches that route's historical behavior; only a divergence
+// from that behavior adds a capability discriminator.
 //
 // The result is deterministic: profiles are ordered by Key and each profile's
 // SourceIDs are ascending, so the same input always yields the same routing map
 // (a reconcile that changes nothing pushes nothing — idempotency).
-func Derive(bindings []BindingInput) []Profile {
+func Derive(defaultKCEFEnabled bool, bindings []BindingInput) []Profile {
 	byKey := make(map[string]*Profile)
 	for _, b := range bindings {
-		key := profileKey(b)
+		key := profileKey(b, defaultKCEFEnabled)
 		if key == "" {
 			continue // default-equivalent — routes to the default instance
 		}
@@ -135,6 +141,7 @@ func Derive(bindings []BindingInput) []Profile {
 				FlareMode:            mode,
 				Flare:                b.Flare,
 				DisableBypassSession: bypassCanBeUsed(mode) && b.DisableBypassSession,
+				KCEFEnabled:          b.KCEFEnabled,
 			}
 			byKey[key] = p
 		}
@@ -152,31 +159,60 @@ func Derive(bindings []BindingInput) []Profile {
 
 // profileKey is the canonical identity of a binding's profile — the empty string
 // for a default-equivalent binding, else a stable composite of the SOCKS
-// endpoint id, the normalized flare mode, and the flare endpoint id. Keying on
-// endpoint IDs (not resolved field values) means an owner editing an endpoint's
-// host/port/session keeps the SAME profile instance, which is simply re-pushed
-// the new config on the next reconcile — no instance churn on a field edit.
-// Disposable-session policy enters the key only when bypass can be used; flare
-// mode none ignores it because that profile cannot issue a bypass request.
-func profileKey(b BindingInput) string {
-	socksID := ""
-	if b.Socks != nil {
-		socksID = b.Socks.ID
-	}
+// endpoint id, normalized flare mode, flare endpoint id, and only when needed a
+// KCEF discriminator. Keying on endpoint IDs (not resolved field values) means
+// an owner editing an endpoint's host/port/session keeps the SAME profile
+// instance. The default-host comparison decides whether an otherwise-global
+// route needs management; the historical-route comparison decides whether an
+// already-managed route needs a KCEF discriminator, preserving legacy keys.
+func profileKey(b BindingInput, defaultKCEFEnabled bool) string {
+	socksID := socksEndpointID(b.Socks)
 	mode := normalizeFlareMode(b.FlareMode)
 	disableSession := bypassCanBeUsed(mode) && b.DisableBypassSession
-	if socksID == "" && mode == FlareModeGlobal && !disableSession {
+	networkDefault := socksID == "" && mode == FlareModeGlobal && !disableSession
+	if networkDefault && b.KCEFEnabled == defaultKCEFEnabled {
 		return "" // no SOCKS override + global flare == today's default
 	}
-	flareID := ""
-	if b.Flare != nil {
-		flareID = b.Flare.ID
+	if networkDefault {
+		return kcefKey(b.KCEFEnabled)
 	}
+	flareID := flareEndpointID(b.Flare)
 	key := strings.Join([]string{socksID, mode, flareID}, "|")
 	if disableSession {
 		key += "|session=disposable"
 	}
+	if b.KCEFEnabled != historicalKCEFEnabled(mode) {
+		key += "|" + kcefKey(b.KCEFEnabled)
+	}
 	return key
+}
+
+func socksEndpointID(endpoint *SocksEndpoint) string {
+	if endpoint == nil {
+		return ""
+	}
+	return endpoint.ID
+}
+
+func flareEndpointID(endpoint *FlareEndpoint) string {
+	if endpoint == nil {
+		return ""
+	}
+	return endpoint.ID
+}
+
+// historicalKCEFEnabled is the behavior profile keys represented before KCEF
+// became an explicit capability: endpoint bypass profiles ran without WebView;
+// global and none profiles ran with it.
+func historicalKCEFEnabled(flareMode string) bool {
+	return flareMode != FlareModeEndpoint
+}
+
+func kcefKey(enabled bool) string {
+	if enabled {
+		return "kcef=on"
+	}
+	return "kcef=off"
 }
 
 // bypassCanBeUsed reports whether mode can issue FlareSolverr requests whose

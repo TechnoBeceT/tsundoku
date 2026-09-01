@@ -21,6 +21,7 @@ export const SOURCE_CONFIGURATION_ROW_KEYS = [
   'byparr',
   'reuseBypassSession',
   'imageConnectionMode',
+  'kcefPolicy',
   'imageProxy',
   'socksBinding',
   'bypassBinding',

@@ -20,6 +20,7 @@ export type SourceConfigurationRowKey =
   | 'byparr'
   | 'reuseBypassSession'
   | 'imageConnectionMode'
+  | 'kcefPolicy'
   | 'imageProxy'
   | 'socksBinding'
   | 'bypassBinding'

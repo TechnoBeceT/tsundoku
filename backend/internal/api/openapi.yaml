@@ -2387,6 +2387,24 @@ components:
         inherited:
           type: boolean
 
+    KCEFPolicyValue:
+      type: object
+      required: [override, global, effective, inherited, enabled]
+      properties:
+        override:
+          type: [string, "null"]
+          enum: [auto, required, disabled, null]
+        global:
+          type: string
+          enum: [auto]
+        effective:
+          type: string
+          enum: [auto, required, disabled]
+        inherited:
+          type: boolean
+        enabled:
+          type: boolean
+
     BypassSessionPolicyValue:
       type: object
       required: [override, global, effective, inherited, mode]
@@ -2532,6 +2550,7 @@ components:
         - bypassEnabled
         - reuseBypassSession
         - imageConnectionMode
+        - kcef
         - imageProxy
         - routing
         - profileKey
@@ -2551,6 +2570,8 @@ components:
           $ref: "#/components/schemas/BypassSessionPolicyValue"
         imageConnectionMode:
           $ref: "#/components/schemas/ImageConnectionPolicyValue"
+        kcef:
+          $ref: "#/components/schemas/KCEFPolicyValue"
         imageProxy:
           $ref: "#/components/schemas/SourceImageProxyState"
         routing:
@@ -2585,6 +2606,26 @@ components:
           type: string
           enum: [fresh, reuse]
 
+    KCEFPolicyPatch:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [mode]
+          properties:
+            mode:
+              type: string
+              const: inherit
+        - type: object
+          additionalProperties: false
+          required: [mode, value]
+          properties:
+            mode:
+              type: string
+              const: override
+            value:
+              type: string
+              enum: [auto, required, disabled]
+
     SourceTransportPolicyUpdate:
       type: object
       additionalProperties: false
@@ -2593,6 +2634,8 @@ components:
           $ref: "#/components/schemas/BooleanPolicyPatch"
         imageConnectionMode:
           $ref: "#/components/schemas/ImageConnectionPolicyPatch"
+        kcefPolicy:
+          $ref: "#/components/schemas/KCEFPolicyPatch"
 
     SourceImageProxyMembershipUpdate:
       type: object

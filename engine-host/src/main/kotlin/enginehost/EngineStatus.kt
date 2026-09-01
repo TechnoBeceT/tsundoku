@@ -29,6 +29,7 @@ data class EngineStatus(
     @get:JsonProperty("busiest_sources") val busiestSources: List<EngineSourceStatus>,
     @get:JsonProperty("extension_running") val extensionRunning: Boolean,
     @get:JsonProperty("extension_queued") val extensionQueued: Int,
+    val kcef: KcefStatus,
 ) {
     companion object {
         private const val MAX_BUSY_SOURCES = 10
@@ -37,6 +38,7 @@ data class EngineStatus(
             ready: Boolean,
             source: SourceSchedulerSnapshot,
             extension: ExtensionExecutorSnapshot,
+            kcef: KcefStatus,
         ): EngineStatus =
             EngineStatus(
                 ready = ready,
@@ -63,6 +65,7 @@ data class EngineStatus(
                         .toList(),
                 extensionRunning = extension.running,
                 extensionQueued = extension.queued,
+                kcef = kcef,
             )
     }
 }

@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
@@ -21,13 +22,14 @@ type SourceTransportSnapshotter interface {
 type runtimeBinding struct {
 	network.ResolvedBinding
 	DisableBypassSession bool
+	KCEFPolicy           *runtimepolicy.KCEFPolicy
 }
 
 // composeRuntimeSnapshot returns the deterministic union of explicit network
-// bindings and policy-only sources whose stored session override is Off. An Off
-// source without a SourceNetworkBinding receives an otherwise-global binding so
-// profile derivation can isolate it on a blank-session instance. Inherit and On
-// do not add a binding by themselves because they retain the default profile.
+// bindings and policy-only sources whose stored transport policy changes profile
+// behavior. A source with an explicit session-Off or KCEF policy but no
+// SourceNetworkBinding receives an otherwise-global binding so profile derivation
+// can compare it with the default host. Inherited policy does not add a binding.
 func composeRuntimeSnapshot(
 	ctx context.Context,
 	networkSnapshot NetworkSnapshotter,
@@ -42,7 +44,7 @@ func composeRuntimeSnapshot(
 	for _, binding := range bindings {
 		bySource[binding.SourceID] = runtimeBinding{ResolvedBinding: binding}
 	}
-	if err := addDisposableSessionBindings(ctx, transportSnapshot, bySource); err != nil {
+	if err := addTransportPolicyBindings(ctx, transportSnapshot, bySource); err != nil {
 		return nil, err
 	}
 
@@ -58,7 +60,7 @@ func composeRuntimeSnapshot(
 	return out, nil
 }
 
-func addDisposableSessionBindings(ctx context.Context, snapshot SourceTransportSnapshotter, bySource map[int64]runtimeBinding) error {
+func addTransportPolicyBindings(ctx context.Context, snapshot SourceTransportSnapshotter, bySource map[int64]runtimeBinding) error {
 	if snapshot == nil {
 		return nil
 	}
@@ -67,14 +69,19 @@ func addDisposableSessionBindings(ctx context.Context, snapshot SourceTransportS
 		return fmt.Errorf("source transport policies: %w", err)
 	}
 	for sourceID, policy := range policies {
-		if policy.ReuseBypassSession == nil || *policy.ReuseBypassSession {
+		disableSession := policy.ReuseBypassSession != nil && !*policy.ReuseBypassSession
+		if !disableSession && policy.KCEFPolicy == nil {
 			continue
 		}
 		binding, ok := bySource[sourceID]
 		if !ok {
 			binding.ResolvedBinding = network.ResolvedBinding{SourceID: sourceID, FlareMode: network.FlareModeGlobal}
 		}
-		binding.DisableBypassSession = true
+		binding.DisableBypassSession = disableSession
+		if policy.KCEFPolicy != nil {
+			value := *policy.KCEFPolicy
+			binding.KCEFPolicy = &value
+		}
 		bySource[sourceID] = binding
 	}
 	return nil

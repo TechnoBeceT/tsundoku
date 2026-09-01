@@ -28,14 +28,19 @@
 // (spawn), HealthProber (readiness), StatusProber (bounded recovery evidence),
 // and PortAllocator (free-port pick). New
 // wires the production implementations (exec_process.go / health.go / status.go
-// / port.go); tests pass fakes via the With* options. The supervisor samples the
-// bounded /status contract only after /health succeeds, and requires six stable
-// full-pool samples before recovering an exhausted managed profile.
+// / port.go); tests pass fakes via the With* options. /health remains RPC
+// liveness only: a launch samples strict /status after health and before its
+// settle recheck of both contracts, admitting KCEF-enabled profiles only at
+// ready and KCEF-off profiles only at disabled. The supervisor uses the same
+// status capability to restart only a profile that loses its browser, and
+// requires six stable full-pool samples before recovering an exhausted managed
+// profile.
 package enginehost
 
 import (
 	"context"
 	"os"
+	"time"
 )
 
 // ProcessStarter spawns one engine-host process listening on port with its data
@@ -53,31 +58,51 @@ type ProcessStarter interface {
 	// Start launches the process. A non-nil error means nothing was spawned (the
 	// caller does not need to clean anything up).
 	//
-	// disableKCEF forces TSUNDOKU_ENGINE_KCEF=false for this instance, overriding
-	// the inherited default. A profile that solves Cloudflare through its own
-	// FlareSolverr endpoint does NOT need the embedded Chromium (KCEF) WebView, so
-	// it is spawned with KCEF off — every KCEF instance starts its own Chromium
-	// against the shared Xvfb, and 3+ concurrent Chromiums in one container crash
-	// each other (GAP-094). Off ⇒ no Chromium ⇒ no contention.
-	Start(port int, dataDir string, disableKCEF bool) (RunningProcess, error)
+	// kcefEnabled is the policy-resolved embedded-browser setting for this
+	// profile. Every child receives it explicitly so it never inherits a stale
+	// value from the entrypoint-managed default host.
+	Start(port int, dataDir string, kcefEnabled bool) (RunningProcess, error)
 }
 
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses
-// it to detect an unexpected exit (Done), to stop the instance gracefully
-// (Signal SIGTERM), and to force-kill it (Kill) when it ignores the term signal
-// or its health-poll times out. The production implementation is execProcess
-// (exec_process.go); tests provide a fully in-memory fake.
+// it to detect an unexpected JVM exit (Done), to stop the entire owned process
+// group gracefully (SignalGracefully), and to force-kill that group (Kill) when
+// it ignores TERM or its health-poll times out. The exited leader remains
+// unreaped as a PGID pin while the production reaper initiates terminal group
+// KILL—immediately after a spontaneous exit or at an active graceful-stop
+// deadline—and that group-signal syscall is serialized against the sole Wait.
+// Numeric PGID reuse therefore cannot retarget delivery. GroupExists keeps
+// lifecycle ownership until an identity mismatch or the kernel's ESRCH group
+// probe proves the original generation absent; uncertainty remains owned.
+// The production implementation is execProcess (exec_process.go); tests provide
+// a fully in-memory fake.
 type RunningProcess interface {
 	// Pid is the OS process id (used only for logging).
 	Pid() int
-	// Signal delivers sig to the process (SIGTERM for a graceful stop).
+	// GroupID is the dedicated process-group id assigned at spawn.
+	GroupID() int
+	// Signal delivers a raw signal to the entire owned process group and MUST keep
+	// ownership pinned through the final syscall. Lifecycle TERM callers use
+	// SignalGracefully so the reaper receives their configured grace window.
 	Signal(sig os.Signal) error
-	// Kill force-terminates the process (SIGKILL).
+	// SignalGracefully records grace before delivering SIGTERM, allowing the
+	// process reaper to preserve the configured TERM-to-KILL window while still
+	// owning a bounded autonomous fallback if the stopping caller disappears.
+	SignalGracefully(grace time.Duration) error
+	// Kill force-terminates the entire owned process group (SIGKILL) and MUST
+	// refuse a recycled group identity.
 	Kill() error
-	// Done is closed once the process has exited and been reaped. The launcher
-	// selects on it to notice a crash during startup and to wait out a graceful
-	// stop before escalating to Kill. Implementations MUST close it exactly once,
-	// from the single goroutine that reaps the process, so it never zombies.
+	// GroupExists reports whether any process remains in the original owned group.
+	// False means either the OS returned ESRCH or the numeric PGID now names a
+	// different leader identity; every uncertain result retains ownership
+	// fail-closed.
+	GroupExists() (bool, error)
+	// Done is closed once process exit is observed. The launcher selects on it to
+	// notice a crash during startup and to wait out a graceful stop before
+	// escalating to Kill. Production retains the exited leader as an identity pin,
+	// autonomously delivers the terminal group syscall immediately for a crash or
+	// at the registered graceful deadline, then its single reaper calls Wait
+	// exactly once; the later ESRCH group probe covers killed descendant zombies.
 	Done() <-chan struct{}
 }
 
@@ -85,8 +110,8 @@ type RunningProcess interface {
 // return means "ready" (its GET /health answered 200). The launcher polls it
 // after a spawn (readiness gate) and once on a cache hit (liveness check). The
 // production implementation (health.go) issues a short-timeout HTTP GET; tests
-// inject a deterministic function.
-type HealthProber func(baseURL string) error
+// inject a deterministic function. The context bounds each in-flight request.
+type HealthProber func(context.Context, string) error
 
 // StatusProber returns the bounded, typed operational snapshot served by
 // GET /status. The context must cancel an in-flight read promptly. Production

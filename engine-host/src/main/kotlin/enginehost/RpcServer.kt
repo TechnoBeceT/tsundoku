@@ -37,6 +37,7 @@ class RpcServer(
     private val extensions: ExtensionManager,
     private val port: Int,
     executors: RpcExecutors? = null,
+    private val kcefStatus: () -> KcefStatus = { KcefStatus(KcefState.DISABLED, null) },
 ) {
     private val logger = KotlinLogging.logger {}
     private val ownsExecutors = executors == null
@@ -75,6 +76,7 @@ class RpcServer(
                     ready = ready,
                     source = rpcExecutors.sourceScheduler.snapshot(),
                     extension = rpcExecutors.extensionSnapshot(),
+                    kcef = kcefStatus(),
                 ),
             )
             false

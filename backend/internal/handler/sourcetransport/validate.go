@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
 
@@ -46,7 +47,7 @@ func decodePatch(body io.Reader) (sourcetransport.Patch, error) {
 	if err != nil {
 		return sourcetransport.Patch{}, err
 	}
-	if len(fields) > 2 {
+	if len(fields) > 3 {
 		return sourcetransport.Patch{}, invalidBody()
 	}
 
@@ -57,6 +58,8 @@ func decodePatch(body io.Reader) (sourcetransport.Patch, error) {
 			patch.ReuseBypassSession, err = decodeBooleanPatch(raw)
 		case "imageConnectionMode":
 			patch.ImageConnectionMode, err = decodeImageConnectionPatch(raw)
+		case "kcefPolicy":
+			patch.KCEFPolicy, err = decodeKCEFPolicyPatch(raw)
 		default:
 			return sourcetransport.Patch{}, invalidBody()
 		}
@@ -65,6 +68,27 @@ func decodePatch(body io.Reader) (sourcetransport.Patch, error) {
 		}
 	}
 	return patch, nil
+}
+
+func decodeKCEFPolicyPatch(raw json.RawMessage) (sourcetransport.PatchField[runtimepolicy.KCEFPolicy], error) {
+	fields, err := decodeRawObject(raw)
+	if err != nil {
+		return sourcetransport.PatchField[runtimepolicy.KCEFPolicy]{}, err
+	}
+	mode, err := patchMode(fields)
+	if err != nil {
+		return sourcetransport.PatchField[runtimepolicy.KCEFPolicy]{}, err
+	}
+	switch mode {
+	case "inherit":
+		return decodeInheritedPatch[runtimepolicy.KCEFPolicy](fields)
+	case "override":
+		return decodeOverridePatch(fields, func(value runtimepolicy.KCEFPolicy) bool {
+			return value == runtimepolicy.KCEFPolicyAuto || value == runtimepolicy.KCEFPolicyRequired || value == runtimepolicy.KCEFPolicyDisabled
+		})
+	default:
+		return sourcetransport.PatchField[runtimepolicy.KCEFPolicy]{}, invalidBody()
+	}
 }
 
 func decodeObject(body io.Reader) (map[string]json.RawMessage, error) {

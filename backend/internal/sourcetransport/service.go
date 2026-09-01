@@ -89,21 +89,37 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		if err != nil {
 			return runtimepolicy.Proposal{}, err
 		}
-		return runtimepolicy.Proposal{Policies: map[int64]*bool{sourceID: applyPatch(stored, patch).ReuseBypassSession}}, nil
+		prospective := applyPatch(stored, patch)
+		return runtimepolicy.Proposal{
+			Policies:     map[int64]*bool{sourceID: prospective.ReuseBypassSession},
+			KCEFPolicies: map[int64]*runtimepolicy.KCEFPolicy{sourceID: prospective.KCEFPolicy},
+		}, nil
 	}, func(ctx context.Context) error {
 		result, updateErr = s.update(ctx, sourceID, patch, false, true)
 		return updateErr
 	})
 	if err != nil {
-		if errors.Is(err, runtimepolicy.ErrInvalidSelection) {
+		if isInvalidRuntimePolicy(err) {
 			return result, fmt.Errorf("%w: %w", ErrInvalidPolicy, err)
 		}
 		return result, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
-	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep {
+	if patchKeepsAllFields(patch) {
 		return result, nil
 	}
 	return s.applyUpdate(ctx, sourceID, result)
+}
+
+func isInvalidRuntimePolicy(err error) bool {
+	return errors.Is(err, runtimepolicy.ErrInvalidSelection) ||
+		errors.Is(err, runtimepolicy.ErrKCEFWithSocks) ||
+		errors.Is(err, runtimepolicy.ErrInvalidKCEFPolicy)
+}
+
+func patchKeepsAllFields(patch Patch) bool {
+	return patch.ReuseBypassSession.Operation == PatchKeep &&
+		patch.ImageConnectionMode.Operation == PatchKeep &&
+		patch.KCEFPolicy.Operation == PatchKeep
 }
 
 func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply, prevalidated bool) (UpdateResult, error) {
@@ -121,7 +137,7 @@ func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply
 	if _, err := s.resolveOverride(ctx, sourceID, applyPatch(stored, patch)); err != nil {
 		return UpdateResult{}, fmt.Errorf("sourcetransport.Update: resolve source %d: %w", sourceID, err)
 	}
-	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep {
+	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep && patch.KCEFPolicy.Operation == PatchKeep {
 		return s.unchangedUpdate(ctx, sourceID, stored)
 	}
 
@@ -441,5 +457,9 @@ func (s *Service) resolveOverride(ctx context.Context, sourceID int64, override 
 	if override.ImageConnectionMode != nil {
 		imageMode = *override.ImageConnectionMode
 	}
-	return Effective{ReuseBypassSession: reuse, BypassSessionMode: mode, ImageConnectionMode: imageMode}, nil
+	kcefPolicy := runtimepolicy.KCEFPolicyAuto
+	if override.KCEFPolicy != nil {
+		kcefPolicy = *override.KCEFPolicy
+	}
+	return Effective{ReuseBypassSession: reuse, BypassSessionMode: mode, ImageConnectionMode: imageMode, KCEFPolicy: kcefPolicy}, nil
 }

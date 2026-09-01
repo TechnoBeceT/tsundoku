@@ -42,6 +42,14 @@ type Instance struct {
 //     profile with a distinct port + data dir, mirroring the entrypoint's single
 //     launch, with lifecycle + fault isolation.
 type Launcher interface {
+	// PrepareProfiles gives the launcher the complete desired profile set before
+	// any EnsureProfile call in the pass. Process launchers use it to retire
+	// obsolete capacity owners first and choose a stable bounded admission set;
+	// the returned preparation MUST be completed only after SetRoutes publishes
+	// the pass's replacement base table. Launchers without capacity constraints
+	// may return a no-op preparation.
+	PrepareProfiles(ctx context.Context, desired []Profile) ProfilePreparation
+
 	// EnsureProfile ensures an engine-host instance for p exists and returns a
 	// handle to it. It MUST be idempotent: a second call for an already-running
 	// profile returns the same instance without relaunching. An error means the
@@ -51,9 +59,19 @@ type Launcher interface {
 
 	// Retire stops every running non-default instance whose key is NOT in keep
 	// (a profile no longer referenced by any binding after an owner edit).
-	// Best-effort: a teardown failure is logged, never returned — a lingering
-	// instance wastes memory but never breaks routing.
+	// Best-effort: teardown failure is retained for bounded follow-up ownership
+	// rather than returned to routing reconciliation.
 	Retire(ctx context.Context, keep map[string]bool)
+}
+
+// ProfilePreparation owns any temporary degradation established while obsolete
+// profile processes are retired. ReconcileNetwork completes it only after the
+// replacement base routing table has been atomically published.
+type ProfilePreparation interface {
+	// CompletePublication releases temporary retirement degradation after the
+	// caller has atomically published the replacement base routes. Idempotent;
+	// stale preparations cannot release a newer pass's ownership.
+	CompletePublication()
 }
 
 // ClientFactory builds a sourceengine.Client aimed at an instance's base URL.
@@ -73,6 +91,16 @@ type DisabledLauncher struct{}
 
 // Compile-time assertion.
 var _ Launcher = DisabledLauncher{}
+
+// PrepareProfiles is a no-op — a DisabledLauncher owns no processes or
+// admission state.
+func (DisabledLauncher) PrepareProfiles(_ context.Context, _ []Profile) ProfilePreparation {
+	return disabledPreparation{}
+}
+
+type disabledPreparation struct{}
+
+func (disabledPreparation) CompletePublication() {}
 
 // EnsureProfile always returns ErrLauncherDisabled — no non-default instance can
 // be brought up without the process launcher.

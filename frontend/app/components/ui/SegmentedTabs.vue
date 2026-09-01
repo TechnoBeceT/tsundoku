@@ -16,30 +16,60 @@ import type { TabItem } from './nav.types'
  * active tab `key` (v-model). Emits `update:modelValue` with the picked `key`.
  * Built as an accessible `role="tablist"` of real `role="tab"` buttons.
  */
-defineProps<{
+const props = defineProps<{
   /** The active tab key (v-model). */
   modelValue: string
   /** The ordered tabs to render. */
-  tabs: TabItem[]
+  tabs: readonly TabItem[]
+  /** Accessible name for tab bars whose surrounding context does not label them. */
+  accessibleLabel?: string
 }>()
 
 const emit = defineEmits<{
   /** A tab was picked — carries its key. */
   'update:modelValue': [value: string]
 }>()
+
+function moveFocus(event: KeyboardEvent, currentIndex: number): void {
+  const buttons = event.currentTarget instanceof HTMLElement
+    ? event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')
+    : null
+  if (!buttons?.length) return
+
+  const lastIndex = buttons.length - 1
+  let nextIndex: number | null = null
+
+  if (event.key === 'ArrowRight') nextIndex = currentIndex === lastIndex ? 0 : currentIndex + 1
+  if (event.key === 'ArrowLeft') nextIndex = currentIndex === 0 ? lastIndex : currentIndex - 1
+  if (event.key === 'Home') nextIndex = 0
+  if (event.key === 'End') nextIndex = lastIndex
+  if (nextIndex === null) return
+
+  event.preventDefault()
+  const tab = buttons[nextIndex]
+  const item = props.tabs[nextIndex]
+  if (!tab || !item) return
+
+  emit('update:modelValue', item.key)
+  tab.focus()
+}
 </script>
 
 <template>
-  <div class="tabs" role="tablist">
+  <div class="tabs" role="tablist" :aria-label="accessibleLabel">
     <button
-      v-for="t in tabs"
+      v-for="(t, index) in tabs"
+      :id="t.id"
       :key="t.key"
       type="button"
       role="tab"
       class="tab"
       :class="{ 'tab--active': modelValue === t.key }"
       :aria-selected="modelValue === t.key"
+      :aria-controls="t.panelId"
+      :tabindex="modelValue === t.key ? 0 : -1"
       @click="emit('update:modelValue', t.key)"
+      @keydown="moveFocus($event, index)"
     >
       {{ t.label }}
       <span

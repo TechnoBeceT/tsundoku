@@ -150,3 +150,170 @@ func TestCoordinatorPreservesWhitespaceOnlySessionAsNonblank(t *testing.T) {
 		t.Fatalf("whitespace-only configured session rejected: %v", err)
 	}
 }
+
+// TestResolveKCEF pins the fail-closed KCEF capability matrix. Chromium cannot
+// use the JVM SOCKS route, so required WebView capability and SOCKS are never
+// admitted together.
+func TestResolveKCEF(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		policy    runtimepolicy.KCEFPolicy
+		hasSocks  bool
+		flareMode string
+		want      bool
+		wantErr   error
+	}{
+		{name: "auto endpoint", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "endpoint"},
+		{name: "required endpoint", policy: runtimepolicy.KCEFPolicyRequired, flareMode: "endpoint", want: true},
+		{name: "disabled endpoint", policy: runtimepolicy.KCEFPolicyDisabled, flareMode: "endpoint"},
+		{name: "auto global", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "global", want: true},
+		{name: "auto none", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "none", want: true},
+		{name: "auto blank normalizes global", policy: runtimepolicy.KCEFPolicyAuto, want: true},
+		{name: "auto unknown normalizes global", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "unknown", want: true},
+		{name: "required global", policy: runtimepolicy.KCEFPolicyRequired, flareMode: "global", want: true},
+		{name: "disabled global", policy: runtimepolicy.KCEFPolicyDisabled, flareMode: "global"},
+		{name: "auto socks", policy: runtimepolicy.KCEFPolicyAuto, hasSocks: true},
+		{name: "required socks", policy: runtimepolicy.KCEFPolicyRequired, hasSocks: true, wantErr: runtimepolicy.ErrKCEFWithSocks},
+		{name: "disabled socks", policy: runtimepolicy.KCEFPolicyDisabled, hasSocks: true},
+		{name: "unknown socks fails closed", policy: runtimepolicy.KCEFPolicy("unknown"), hasSocks: true, wantErr: runtimepolicy.ErrInvalidKCEFPolicy},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runtimepolicy.ResolveKCEF(tt.policy, tt.hasSocks, tt.flareMode)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ResolveKCEF() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("ResolveKCEF() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCoordinatorRejectsRequiredKCEFWithProspectiveSocks proves policy and
+// binding projections share one admission boundary, so invalid combinations
+// cannot commit durable state between separate mutation services.
+func TestCoordinatorRejectsRequiredKCEFWithProspectiveSocks(t *testing.T) {
+	t.Parallel()
+
+	client := testdb.New(t)
+	coordinator := runtimepolicy.New(client, "")
+	endpointID := uuid.New()
+	if _, err := client.NetworkEndpoint.Create().SetID(endpointID).SetName("VPN").SetKind("socks").SetEnabled(true).SetHost("127.0.0.1").SetPort(1080).Save(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	required := runtimepolicy.KCEFPolicyRequired
+	committed := false
+	err := coordinator.Mutate(context.Background(), runtimepolicy.Proposal{
+		KCEFPolicies: map[int64]*runtimepolicy.KCEFPolicy{42: &required},
+		Bindings:     map[int64]*runtimepolicy.Binding{42: {SocksEndpointID: &endpointID, FlareMode: "global"}},
+	}, func(context.Context) error {
+		committed = true
+		return nil
+	})
+	if !errors.Is(err, runtimepolicy.ErrKCEFWithSocks) {
+		t.Fatalf("Mutate() error = %v, want ErrKCEFWithSocks", err)
+	}
+	if committed {
+		t.Fatal("commit ran for required KCEF with SOCKS")
+	}
+}
+
+// TestCoordinatorRecomputesSocksAfterEndpointProposal proves endpoint overlays
+// are resolved against their retained SOCKS endpoint identity before the KCEF
+// invariant is checked.
+func TestCoordinatorRecomputesSocksAfterEndpointProposal(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	endpointID := uuid.New()
+	if _, err := client.NetworkEndpoint.Create().SetID(endpointID).SetName("VPN").SetKind("socks").SetEnabled(false).SetHost("127.0.0.1").SetPort(1080).Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpointID).SetFlareMode("global").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").Save(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	committed := false
+	err := runtimepolicy.New(client, "").Mutate(ctx, runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{endpointID: {
+		Kind: "socks", Enabled: true,
+	}}}, func(context.Context) error {
+		committed = true
+		return nil
+	})
+	if !errors.Is(err, runtimepolicy.ErrKCEFWithSocks) {
+		t.Fatalf("Mutate error = %v, want ErrKCEFWithSocks", err)
+	}
+	if committed {
+		t.Fatal("commit ran for an endpoint proposal that makes SOCKS effective")
+	}
+}
+
+// TestCoordinatorRejectsCurrentRequiredBrowserWithEffectiveSocks proves boot
+// validation fails closed when legacy durable state combines a required browser
+// policy with an enabled SOCKS route.
+func TestCoordinatorRejectsCurrentRequiredBrowserWithEffectiveSocks(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	endpoint := client.NetworkEndpoint.Create().SetName("VPN").SetKind("socks").SetEnabled(true).SetHost("127.0.0.1").SetPort(1080).SaveX(ctx)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpoint.ID).SetFlareMode("global").ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	err := runtimepolicy.New(client, "").ValidateCurrent(ctx)
+	if !errors.Is(err, runtimepolicy.ErrKCEFWithSocks) {
+		t.Fatalf("ValidateCurrent error = %v, want ErrKCEFWithSocks", err)
+	}
+}
+
+// TestCoordinatorAllowsBindingDeletionToResolveCurrentKCEFConflict proves a
+// prospective binding deletion is evaluated before the current-state KCEF
+// invariant, so cleanup remains possible for legacy invalid state.
+func TestCoordinatorAllowsBindingDeletionToResolveCurrentKCEFConflict(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	endpoint := client.NetworkEndpoint.Create().SetName("VPN").SetKind("socks").SetEnabled(true).SetHost("127.0.0.1").SetPort(1080).SaveX(ctx)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpoint.ID).SetFlareMode("global").ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	committed := false
+	err := runtimepolicy.New(client, "").Mutate(ctx, runtimepolicy.Proposal{Bindings: map[int64]*runtimepolicy.Binding{42: nil}}, func(context.Context) error {
+		committed = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Mutate binding delete error = %v", err)
+	}
+	if !committed {
+		t.Fatal("commit did not run for a binding deletion that resolves the conflict")
+	}
+}
+
+// TestCoordinatorAllowsSocksEndpointDeletionToResolveCurrentKCEFConflict
+// proves endpoint deletion is projected as endpoint removal before effective
+// SOCKS routing is recomputed.
+func TestCoordinatorAllowsSocksEndpointDeletionToResolveCurrentKCEFConflict(t *testing.T) {
+	client := testdb.New(t)
+	ctx := context.Background()
+	endpoint := client.NetworkEndpoint.Create().SetName("VPN").SetKind("socks").SetEnabled(true).SetHost("127.0.0.1").SetPort(1080).SaveX(ctx)
+	client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpoint.ID).SetFlareMode("global").ExecX(ctx)
+	client.SourceTransportPolicy.Create().SetSourceID(42).SetKcefPolicy("required").ExecX(ctx)
+
+	committed := false
+	err := runtimepolicy.New(client, "").Mutate(ctx, runtimepolicy.Proposal{Endpoints: map[uuid.UUID]*runtimepolicy.Endpoint{endpoint.ID: nil}}, func(context.Context) error {
+		committed = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Mutate endpoint delete error = %v", err)
+	}
+	if !committed {
+		t.Fatal("commit did not run for an endpoint deletion that resolves the conflict")
+	}
+}

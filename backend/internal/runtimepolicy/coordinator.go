@@ -23,6 +23,7 @@ var ErrInvalidSelection = errors.New("reusable bypass session requires a nonblan
 type Proposal struct {
 	GlobalSession *string
 	Policies      map[int64]*bool
+	KCEFPolicies  map[int64]*KCEFPolicy
 	Bindings      map[int64]*Binding
 	Endpoints     map[uuid.UUID]*Endpoint
 }
@@ -30,6 +31,7 @@ type Proposal struct {
 type Binding struct {
 	FlareMode       string
 	FlareEndpointID *uuid.UUID
+	SocksEndpointID *uuid.UUID
 }
 
 type Endpoint struct {
@@ -75,7 +77,7 @@ func (c *Coordinator) MutateDynamic(ctx context.Context, proposal func(context.C
 }
 
 // ValidateCurrent fails closed when durable state contains an impossible
-// explicit reusable-session selection (including legacy/direct DB writes).
+// source transport combination, including legacy or direct database writes.
 func (c *Coordinator) ValidateCurrent(ctx context.Context) error {
 	if admitted, _ := ctx.Value(admissionKey{}).(*Coordinator); admitted == c {
 		return c.validate(ctx, Proposal{})
@@ -100,16 +102,26 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 			return fmt.Errorf("%w: source %d", ErrInvalidSelection, sourceID)
 		}
 	}
+	for sourceID, policy := range state.kcefPolicies {
+		if !state.shouldValidate(sourceID) {
+			continue
+		}
+		binding := state.bindings[sourceID]
+		if _, err := ResolveKCEF(policy, effectiveSocksEndpoint(binding.SocksEndpointID, state.endpoints), binding.FlareMode); err != nil {
+			return fmt.Errorf("source %d: %w", sourceID, err)
+		}
+	}
 	return nil
 }
 
 type prospectiveState struct {
-	global      string
-	policies    map[int64]bool
-	bindings    map[int64]Binding
-	endpoints   map[uuid.UUID]Endpoint
-	impacted    map[int64]bool
-	validateAll bool
+	global       string
+	policies     map[int64]bool
+	kcefPolicies map[int64]KCEFPolicy
+	bindings     map[int64]Binding
+	endpoints    map[uuid.UUID]Endpoint
+	impacted     map[int64]bool
+	validateAll  bool
 }
 
 func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospectiveState, error) {
@@ -131,42 +143,70 @@ func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospec
 	}
 	state := newProspectiveState(global, policies, bindings, endpoints, p)
 	applyOptionalMap(state.policies, p.Policies)
+	applyOptionalMap(state.kcefPolicies, p.KCEFPolicies)
 	applyOptionalMap(state.bindings, p.Bindings)
 	applyOptionalMap(state.endpoints, p.Endpoints)
-	for id := range p.Policies {
-		state.impacted[id] = true
+	markImpacted(state.impacted, p.Policies)
+	markImpacted(state.impacted, p.KCEFPolicies)
+	markImpacted(state.impacted, p.Bindings)
+	markEndpointImpacts(state, p.Endpoints)
+	return state, nil
+}
+
+func markImpacted[T any](impacted map[int64]bool, updates map[int64]T) {
+	for id := range updates {
+		impacted[id] = true
 	}
-	for id := range p.Bindings {
-		state.impacted[id] = true
-	}
+}
+
+func markEndpointImpacts(state prospectiveState, updates map[uuid.UUID]*Endpoint) {
 	for sourceID, binding := range state.bindings {
-		if binding.FlareEndpointID != nil {
-			if _, changed := p.Endpoints[*binding.FlareEndpointID]; changed {
-				state.impacted[sourceID] = true
-			}
+		if endpointChanged(binding.SocksEndpointID, updates) || endpointChanged(binding.FlareEndpointID, updates) {
+			state.impacted[sourceID] = true
 		}
 	}
-	return state, nil
 }
 
 func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, bindings []*ent.SourceNetworkBinding, endpoints []*ent.NetworkEndpoint, p Proposal) prospectiveState {
 	state := prospectiveState{
 		global: global, policies: make(map[int64]bool, len(policies)),
 		bindings: make(map[int64]Binding, len(bindings)), endpoints: make(map[uuid.UUID]Endpoint, len(endpoints)),
-		impacted: make(map[int64]bool), validateAll: p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0),
+		kcefPolicies: make(map[int64]KCEFPolicy), impacted: make(map[int64]bool), validateAll: p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.KCEFPolicies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0),
 	}
 	for _, row := range policies {
 		if row.ReuseBypassSession != nil {
 			state.policies[row.SourceID] = *row.ReuseBypassSession
 		}
-	}
-	for _, row := range bindings {
-		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID}
+		if row.KcefPolicy != nil {
+			state.kcefPolicies[row.SourceID] = KCEFPolicy(*row.KcefPolicy)
+		}
 	}
 	for _, row := range endpoints {
 		state.endpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}
 	}
+	for _, row := range bindings {
+		state.bindings[row.SourceID] = Binding{
+			FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID,
+			SocksEndpointID: row.SocksEndpointID,
+		}
+	}
 	return state
+}
+
+func endpointChanged(id *uuid.UUID, changes map[uuid.UUID]*Endpoint) bool {
+	if id == nil {
+		return false
+	}
+	_, changed := changes[*id]
+	return changed
+}
+
+func effectiveSocksEndpoint(id *uuid.UUID, endpoints map[uuid.UUID]Endpoint) bool {
+	if id == nil {
+		return false
+	}
+	endpoint, ok := endpoints[*id]
+	return ok && endpoint.Enabled && endpoint.Kind == "socks"
 }
 
 func (c *Coordinator) prospectiveGlobalSession(ctx context.Context, proposed *string) (string, error) {

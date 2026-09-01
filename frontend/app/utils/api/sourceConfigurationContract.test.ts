@@ -57,6 +57,13 @@ const configuration: EffectiveConfiguration = {
     effective: 'fresh',
     inherited: false,
   },
+  kcef: {
+    override: 'disabled',
+    global: 'auto',
+    effective: 'disabled',
+    inherited: false,
+    enabled: false,
+  },
   imageProxy: {
     optedIn: true,
     gatewayEnabled: true,
@@ -104,6 +111,7 @@ describe('source configuration generated contract', () => {
     const update: TransportRequest = {
       reuseBypassSession: { mode: 'inherit' },
       imageConnectionMode: { mode: 'override', value: 'reuse' },
+      kcefPolicy: { mode: 'override', value: 'required' },
     }
 
     expect(configuration.downloadConcurrency.override).toBeNull()
@@ -112,6 +120,7 @@ describe('source configuration generated contract', () => {
     expect(update).toEqual({
       reuseBypassSession: { mode: 'inherit' },
       imageConnectionMode: { mode: 'override', value: 'reuse' },
+      kcefPolicy: { mode: 'override', value: 'required' },
     })
   })
 

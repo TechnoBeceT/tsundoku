@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"syscall"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
@@ -23,19 +22,20 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	}
 	dataDir := dataDirFor(l.cfg.DataDir, p.Key)
 
-	proc, client, baseURL, err := l.startProcess(ctx, p, port, dataDir)
+	proc, client, baseURL, group, err := l.startProcess(ctx, p, port, dataDir)
 	if err != nil {
 		return engineroute.Instance{}, err
 	}
 
 	mi := &managedInstance{
-		key:     p.Key,
-		port:    port,
-		dataDir: dataDir,
-		baseURL: baseURL,
-		proc:    proc,
-		client:  client,
-		profile: p,
+		key:          p.Key,
+		port:         port,
+		dataDir:      dataDir,
+		baseURL:      baseURL,
+		proc:         proc,
+		client:       client,
+		processGroup: group,
+		profile:      p,
 	}
 	l.instances[p.Key] = mi
 	// A freshly-healthy instance: clear any stale degrade overlay for its sources
@@ -49,29 +49,24 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 // startProcess seeds KCEF, links the shared extensions dir, launches the
 // engine-host process for p on the given port + data dir, and waits for it to
 // become healthy-and-stable. On success it returns the running process, a
-// factory-built client aimed at the instance, and its base URL. On any failure
-// the (possibly-started) process is killed and reaped and an error is returned,
-// so the caller degrades p to the default instance. It is the SHARED core of both
-// the initial spawn (fresh allocated port) and a supervisor restart (existing
-// port + data dir), so the KCEF/extensions/health-gate logic lives in one place
-// (§2 DRY). Called with mu held.
-func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, error) {
-	// A profile that solves Cloudflare through its OWN FlareSolverr endpoint does
-	// not need the embedded Chromium (KCEF) WebView, so it is spawned with KCEF
-	// off. This is the GAP-094 fix: on prod, 2 bound profiles meant 3 engine-host
-	// JVMs (default + 2 profiles) each initializing Chromium against the one shared
-	// Xvfb, which crashed the extra instances right after they reported healthy.
-	// Dropping KCEF for endpoint-mode profiles removes that contention. Profiles
-	// WITHOUT their own FlareSolverr (global/none mode) keep KCEF, because they may
-	// still need the WebView to solve a challenge themselves.
-	disableKCEF := p.FlareMode == engineroute.FlareModeEndpoint
+// factory-built client aimed at the instance, its base URL, and its owned group
+// record. On any failure the (possibly-started) process is killed and reaped; an
+// unconfirmed group remains tracked, and consumes capacity only when KCEF is on.
+// It is the SHARED
+// core of both the initial spawn (fresh allocated port) and a supervisor restart
+// (existing port + data dir), so the KCEF/extensions/health-gate logic lives in
+// one place (§2 DRY). Called with mu held.
+func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, *ownedProcessGroup, error) {
+	// Profile derivation owns this decision. Route mode is insufficient: Required
+	// can keep an endpoint profile on, and Disabled can turn a global profile off.
+	kcefEnabled := p.KCEFEnabled
 
 	// KCEF seeding is best-effort — a failure only degrades WebView sources on
 	// this instance, never the spawn (see seedKCEF). Skip it entirely when KCEF is
 	// disabled: there is no Chromium to seed, so touching the shared bundle symlink
 	// + singleton locks would be pointless work. On a RESTART this also clears the
 	// dead instance's stale Chromium singleton locks, so the new Chromium can start.
-	if !disableKCEF {
+	if kcefEnabled {
 		l.seedKCEF(dataDir)
 	}
 
@@ -80,22 +75,69 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 	// fails "unknown sourceId". A failure aborts the spawn so the profile
 	// degrades to the fully-provisioned default engine (see linkSharedExtensions).
 	if err := l.linkSharedExtensions(dataDir); err != nil {
-		return nil, nil, "", fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
+		return nil, nil, "", nil, fmt.Errorf("enginehost: link shared extensions for profile %q: %w", p.Key, err)
 	}
 
-	proc, err := l.starter.Start(port, dataDir, disableKCEF)
-	if err != nil {
-		return nil, nil, "", fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
+	spawnedAt := l.readinessClock.Now()
+	group, reserveErr := l.reserveProcessGroupLocked(p.Key, kcefEnabled)
+	if reserveErr != nil {
+		return nil, nil, "", nil, reserveErr
 	}
+	proc, err := l.starter.Start(port, dataDir, kcefEnabled)
+	if err != nil {
+		l.cancelStartingProcessGroupLocked(group)
+		return nil, nil, "", nil, fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
+	}
+	group.proc = proc
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if err := l.awaitReady(ctx, proc, baseURL); err != nil {
-		// The instance never came up: kill it so it does not linger, then report.
-		_ = proc.Kill()
-		<-proc.Done() // reap
-		return nil, nil, "", fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
+	readinessDeadline := spawnedAt.Add(l.readinessTimeout)
+	readinessCtx, cancelReadiness := l.readinessContext(ctx, readinessDeadline)
+	defer cancelReadiness()
+	if err := l.awaitReady(readinessCtx, proc, baseURL, p.KCEFEnabled, readinessDeadline); err != nil {
+		// The instance never came up. Teardown uses an independent finite budget so
+		// caller cancellation cannot orphan the process, while an unconfirmed group
+		// remains charged to capacity for a later reap attempt.
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), l.stopGrace)
+		gone := killOwnedProcessGroup(cleanupCtx, group, l.stopGrace)
+		cancelCleanup()
+		group.retiring = true
+		if gone {
+			delete(l.processGroups, group)
+		}
+		return nil, nil, "", nil, fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
 	}
-	return proc, l.factory(baseURL), baseURL, nil
+	return proc, l.factory(baseURL), baseURL, group, nil
+}
+
+// readinessContext preserves the caller's cancellation while applying the one
+// spawn-relative readiness deadline to every in-flight probe. Context deadlines
+// use wall time in production; the clock timer also makes the same absolute
+// budget deterministic in tests and prevents a blocking probe from extending it.
+func (l *Launcher) readinessContext(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	effectiveDeadline := deadline
+	if parentDeadline, ok := parent.Deadline(); ok && parentDeadline.Before(effectiveDeadline) {
+		effectiveDeadline = parentDeadline
+	}
+	ctx, cancel := context.WithDeadline(parent, effectiveDeadline)
+	remaining := effectiveDeadline.Sub(l.readinessClock.Now())
+	if remaining <= 0 {
+		cancel()
+		return ctx, cancel
+	}
+	timer := l.readinessClock.NewTimer(remaining)
+	go func() {
+		select {
+		case <-timer.C():
+			cancel()
+		case <-ctx.Done():
+			_ = timer.Stop()
+		}
+	}()
+	return ctx, func() {
+		_ = timer.Stop()
+		cancel()
+	}
 }
 
 // restartLocked respawns a dead-or-wedged managed instance on its EXISTING port +
@@ -116,46 +158,127 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 // killed here, both freeing the port + clearing the stale singleton lock the
 // startProcess KCEF-reseed step expects.
 func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error {
-	if alive(mi.proc) {
-		l.stopInstance(mi)
+	// Done proves only that JVM exit was observed; the leader may remain unreaped
+	// as the identity pin and owned Chromium descendants may still keep its group
+	// alive. Always drive the old generation through group teardown before
+	// reserving the same key again.
+	if !l.stopInstanceLocked(ctx, mi) {
+		return lingeringProcessGroupError(mi)
 	}
-	proc, client, _, err := l.startProcess(ctx, mi.profile, mi.port, mi.dataDir)
+	proc, client, _, group, err := l.startProcess(ctx, mi.profile, mi.port, mi.dataDir)
 	if err != nil {
 		return err
 	}
 	mi.proc = proc
 	mi.client = client
+	mi.processGroup = group
 	resetExhaustionEvidence(mi)
 	return nil
 }
 
-// awaitReady gates a spawn on the instance being not just healthy but STABLE: it
-// first polls /health until it answers, then re-probes once after a short settle
-// window. The settle recheck exists because an engine-host JVM can pass /health
-// (its HTTP server is up) and then die moments later — the GAP-094 failure mode,
-// where the extra Chromium init crashed the process right after it reported
-// healthy, so the FIRST reconcile RPC hit an EOF instead of a clean degrade.
-// Catching "healthy-then-dead" here lets the caller degrade the profile to the
-// default instance instead of routing sources at a corpse.
-func (l *Launcher) awaitReady(ctx context.Context, proc RunningProcess, baseURL string) error {
-	if err := l.pollHealthy(ctx, proc, baseURL); err != nil {
+// awaitReady gates a spawn on the instance being healthy, capability-compatible,
+// and stable: it polls /health, requires the profile's KCEF state from /status,
+// then re-probes both after a short settle window. The settle recheck exists
+// because an engine-host JVM can pass /health (its HTTP server is up) and then
+// die moments later — the GAP-094 failure mode, where the extra Chromium init
+// crashed the process right after it reported healthy, so the FIRST reconcile
+// RPC hit an EOF instead of a clean degrade. Catching "healthy-then-dead" here
+// lets the caller degrade the profile to the default instance instead of routing
+// sources at a corpse.
+func (l *Launcher) awaitReady(ctx context.Context, proc RunningProcess, baseURL string, kcefEnabled bool, deadline time.Time) error {
+	if err := l.pollHealthy(ctx, proc, baseURL, deadline); err != nil {
 		return err
 	}
-	return l.settle(ctx, proc, baseURL)
+	if err := l.pollKCEF(ctx, proc, baseURL, kcefEnabled, deadline); err != nil {
+		return err
+	}
+	return l.settle(ctx, proc, baseURL, kcefEnabled, deadline)
 }
 
-// pollHealthy polls the instance's /health until it answers (ready → nil), the
-// process exits early (a boot crash → error), the startup timeout elapses
-// (→ error), or ctx is cancelled (a shutdown → ctx.Err()). It probes once
-// immediately so an already-healthy instance returns without waiting a tick.
-func (l *Launcher) pollHealthy(ctx context.Context, proc RunningProcess, baseURL string) error {
-	deadline := time.NewTimer(l.startTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(l.pollInterval)
+// pollKCEF waits for the capability that the profile was explicitly launched
+// with. /health only proves that RPC liveness is up; publishing an enabled
+// profile before its browser producer settles would route WebView calls into an
+// unbounded wait. A failed KCEF generation is terminal and rejects immediately;
+// an initializing one consumes only the normal launcher startup budget.
+func (l *Launcher) pollKCEF(ctx context.Context, proc RunningProcess, baseURL string, enabled bool, deadline time.Time) error {
+	timeout, err := l.readinessTimer(deadline)
+	if err != nil {
+		return err
+	}
+	defer timeout.Stop()
+	ticker := l.readinessClock.NewTicker(l.pollInterval)
 	defer ticker.Stop()
 
 	for {
-		if err := l.prober(baseURL); err == nil {
+		ready, terminalErr := l.probeKCEF(ctx, baseURL, enabled)
+		if err := l.readinessElapsed(deadline); err != nil {
+			return err
+		}
+		if terminalErr != nil {
+			return terminalErr
+		}
+		if ready {
+			return nil
+		}
+		select {
+		case <-proc.Done():
+			return fmt.Errorf("process exited before KCEF became ready")
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout.C():
+			return l.readinessTimeoutError()
+		case <-ticker.C():
+		}
+	}
+}
+
+func (l *Launcher) probeKCEF(ctx context.Context, baseURL string, enabled bool) (bool, error) {
+	status, err := l.statusProber(ctx, baseURL)
+	if err != nil {
+		return false, nil
+	}
+	return kcefStatusReady(status.KCEF, enabled)
+}
+
+func kcefStatusReady(status KCEFStatus, enabled bool) (bool, error) {
+	if enabled {
+		switch status.State {
+		case KCEFStateReady:
+			return true, nil
+		case KCEFStateFailed:
+			return false, fmt.Errorf("KCEF failed before readiness")
+		case KCEFStateInitializing:
+			return false, nil
+		case KCEFStateDisabled:
+			return false, fmt.Errorf("KCEF is disabled for an enabled profile")
+		default:
+			return false, fmt.Errorf("invalid KCEF status")
+		}
+	}
+	if status.State == KCEFStateDisabled {
+		return true, nil
+	}
+	return false, fmt.Errorf("KCEF is enabled for a disabled profile")
+}
+
+// pollHealthy polls the instance's /health until it answers (ready → nil), the
+// process exits early (a boot crash → error), the coordinated launch budget elapses
+// (→ error), or ctx is cancelled (a shutdown → ctx.Err()). It probes once
+// immediately so an already-healthy instance returns without waiting a tick.
+func (l *Launcher) pollHealthy(ctx context.Context, proc RunningProcess, baseURL string, deadline time.Time) error {
+	timeout, err := l.readinessTimer(deadline)
+	if err != nil {
+		return err
+	}
+	defer timeout.Stop()
+	ticker := l.readinessClock.NewTicker(l.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := l.prober(ctx, baseURL); err == nil {
+			if err := l.readinessElapsed(deadline); err != nil {
+				return err
+			}
 			return nil
 		}
 		select {
@@ -163,48 +286,85 @@ func (l *Launcher) pollHealthy(ctx context.Context, proc RunningProcess, baseURL
 			return fmt.Errorf("process exited before becoming healthy")
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline.C:
-			return fmt.Errorf("timed out after %s waiting for /health", l.startTimeout)
-		case <-ticker.C:
+		case <-timeout.C():
+			return l.readinessTimeoutError()
+		case <-ticker.C():
 			// Poll again at the top of the loop.
 		}
 	}
 }
 
-// settle waits settleDelay after the first healthy probe, then re-probes once, so
-// a JVM that reports healthy and immediately crashes is caught as not-ready
-// rather than handed back as a live instance (see awaitReady + GAP-094). A
+// settle waits settleDelay after initial health and capability readiness, then
+// re-probes both. A JVM that stays healthy while its browser fails, or reports
+// healthy and immediately crashes, is caught as not-ready rather than handed
+// back as a live instance (see awaitReady + GAP-094). A
 // non-positive settleDelay skips the recheck (used by tests that pin the
 // poll-only semantics). During the wait it also watches for an early process
 // exit / ctx cancel so a crash or shutdown returns promptly.
-func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL string) error {
+func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL string, kcefEnabled bool, deadline time.Time) error {
 	if l.settleDelay <= 0 {
-		return nil
+		return l.readinessElapsed(deadline)
 	}
+	if err := l.waitForSettle(ctx, proc, deadline); err != nil {
+		return err
+	}
+	return l.probeSettledReadiness(ctx, baseURL, kcefEnabled, deadline)
+}
+
+func (l *Launcher) waitForSettle(ctx context.Context, proc RunningProcess, deadline time.Time) error {
+	remaining := deadline.Sub(l.readinessClock.Now())
+	if remaining <= 0 {
+		return l.readinessTimeoutError()
+	}
+	delay := min(l.settleDelay, remaining)
+	timer := l.readinessClock.NewTimer(delay)
+	defer timer.Stop()
 	select {
 	case <-proc.Done():
 		return fmt.Errorf("process exited during settle after becoming healthy")
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(l.settleDelay):
-	}
-	if err := l.prober(baseURL); err != nil {
-		return fmt.Errorf("instance unhealthy after settle: %w", err)
+	case <-timer.C():
+		if delay < l.settleDelay {
+			return l.readinessTimeoutError()
+		}
 	}
 	return nil
 }
 
-// stopInstance stops mi's process gracefully: SIGTERM, wait up to stopGrace for a
-// clean exit, then SIGKILL if it is still running, and finally wait for the
-// process to be reaped. Best-effort — signal/kill errors are ignored (the
-// process may already be gone). Callers invoke it OUTSIDE mu.
-func (l *Launcher) stopInstance(mi *managedInstance) {
-	_ = mi.proc.Signal(syscall.SIGTERM)
-	select {
-	case <-mi.proc.Done():
-		return // exited within the grace period
-	case <-time.After(l.stopGrace):
+func (l *Launcher) probeSettledReadiness(ctx context.Context, baseURL string, kcefEnabled bool, deadline time.Time) error {
+	if err := l.prober(ctx, baseURL); err != nil {
+		return fmt.Errorf("instance unhealthy after settle: %w", err)
 	}
-	_ = mi.proc.Kill()
-	<-mi.proc.Done()
+	status, err := l.statusProber(ctx, baseURL)
+	if err != nil {
+		return fmt.Errorf("instance capability unavailable after settle: %w", err)
+	}
+	ready, err := kcefStatusReady(status.KCEF, kcefEnabled)
+	if err != nil {
+		return fmt.Errorf("instance capability incompatible after settle: %w", err)
+	}
+	if !ready {
+		return fmt.Errorf("instance capability not ready after settle")
+	}
+	return l.readinessElapsed(deadline)
+}
+
+func (l *Launcher) readinessTimer(deadline time.Time) (ReadinessTimer, error) {
+	remaining := deadline.Sub(l.readinessClock.Now())
+	if remaining <= 0 {
+		return nil, l.readinessTimeoutError()
+	}
+	return l.readinessClock.NewTimer(remaining), nil
+}
+
+func (l *Launcher) readinessElapsed(deadline time.Time) error {
+	if l.readinessClock.Now().Before(deadline) {
+		return nil
+	}
+	return l.readinessTimeoutError()
+}
+
+func (l *Launcher) readinessTimeoutError() error {
+	return fmt.Errorf("timed out after %s waiting for launch readiness", l.readinessTimeout)
 }

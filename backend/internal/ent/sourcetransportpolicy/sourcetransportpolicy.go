@@ -21,6 +21,8 @@ const (
 	FieldReuseBypassSession = "reuse_bypass_session"
 	// FieldImageConnectionMode holds the string denoting the image_connection_mode field in the database.
 	FieldImageConnectionMode = "image_connection_mode"
+	// FieldKcefPolicy holds the string denoting the kcef_policy field in the database.
+	FieldKcefPolicy = "kcef_policy"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
@@ -35,6 +37,7 @@ var Columns = []string{
 	FieldSourceID,
 	FieldReuseBypassSession,
 	FieldImageConnectionMode,
+	FieldKcefPolicy,
 	FieldCreatedAt,
 	FieldUpdatedAt,
 }
@@ -83,6 +86,30 @@ func ImageConnectionModeValidator(icm ImageConnectionMode) error {
 	}
 }
 
+// KcefPolicy defines the type for the "kcef_policy" enum field.
+type KcefPolicy string
+
+// KcefPolicy values.
+const (
+	KcefPolicyAuto     KcefPolicy = "auto"
+	KcefPolicyRequired KcefPolicy = "required"
+	KcefPolicyDisabled KcefPolicy = "disabled"
+)
+
+func (kp KcefPolicy) String() string {
+	return string(kp)
+}
+
+// KcefPolicyValidator is a validator for the "kcef_policy" field enum values. It is called by the builders before save.
+func KcefPolicyValidator(kp KcefPolicy) error {
+	switch kp {
+	case KcefPolicyAuto, KcefPolicyRequired, KcefPolicyDisabled:
+		return nil
+	default:
+		return fmt.Errorf("sourcetransportpolicy: invalid enum value for kcef_policy field: %q", kp)
+	}
+}
+
 // OrderOption defines the ordering options for the SourceTransportPolicy queries.
 type OrderOption func(*sql.Selector)
 
@@ -104,6 +131,11 @@ func ByReuseBypassSession(opts ...sql.OrderTermOption) OrderOption {
 // ByImageConnectionMode orders the results by the image_connection_mode field.
 func ByImageConnectionMode(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldImageConnectionMode, opts...).ToFunc()
+}
+
+// ByKcefPolicy orders the results by the kcef_policy field.
+func ByKcefPolicy(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldKcefPolicy, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

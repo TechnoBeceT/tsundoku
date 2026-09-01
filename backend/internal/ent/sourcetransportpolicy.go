@@ -24,6 +24,8 @@ type SourceTransportPolicy struct {
 	ReuseBypassSession *bool `json:"reuse_bypass_session,omitempty"`
 	// ImageConnectionMode holds the value of the "image_connection_mode" field.
 	ImageConnectionMode *sourcetransportpolicy.ImageConnectionMode `json:"image_connection_mode,omitempty"`
+	// KcefPolicy holds the value of the "kcef_policy" field.
+	KcefPolicy *sourcetransportpolicy.KcefPolicy `json:"kcef_policy,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
@@ -40,7 +42,7 @@ func (*SourceTransportPolicy) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case sourcetransportpolicy.FieldSourceID:
 			values[i] = new(sql.NullInt64)
-		case sourcetransportpolicy.FieldImageConnectionMode:
+		case sourcetransportpolicy.FieldImageConnectionMode, sourcetransportpolicy.FieldKcefPolicy:
 			values[i] = new(sql.NullString)
 		case sourcetransportpolicy.FieldCreatedAt, sourcetransportpolicy.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -86,6 +88,13 @@ func (_m *SourceTransportPolicy) assignValues(columns []string, values []any) er
 			} else if value.Valid {
 				_m.ImageConnectionMode = new(sourcetransportpolicy.ImageConnectionMode)
 				*_m.ImageConnectionMode = sourcetransportpolicy.ImageConnectionMode(value.String)
+			}
+		case sourcetransportpolicy.FieldKcefPolicy:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field kcef_policy", values[i])
+			} else if value.Valid {
+				_m.KcefPolicy = new(sourcetransportpolicy.KcefPolicy)
+				*_m.KcefPolicy = sourcetransportpolicy.KcefPolicy(value.String)
 			}
 		case sourcetransportpolicy.FieldCreatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -145,6 +154,11 @@ func (_m *SourceTransportPolicy) String() string {
 	builder.WriteString(", ")
 	if v := _m.ImageConnectionMode; v != nil {
 		builder.WriteString("image_connection_mode=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.KcefPolicy; v != nil {
+		builder.WriteString("kcef_policy=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -46,6 +47,10 @@ type NetworkReconcileDeps struct {
 	// BaseConfig is Tsundoku's OWN global FlareSolverr/SOCKS config — the source
 	// of the "global" flare mode a profile may inherit.
 	BaseConfig ConfigProvider
+	// DefaultKCEFEnabled is the entrypoint-managed default host's explicit
+	// embedded-browser capability. Profile derivation receives it directly so
+	// default equivalence stays independent of the network route spelling.
+	DefaultKCEFEnabled bool
 }
 
 // NetworkReconcileResult reports what a ReconcileNetwork pass did.
@@ -102,16 +107,25 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 		return res, fmt.Errorf("enginetopo.ReconcileNetwork: snapshot: %w", err)
 	}
 
-	profiles := engineroute.Derive(toBindingInputs(snapshot))
+	profiles := engineroute.Derive(deps.DefaultKCEFEnabled, toBindingInputs(snapshot))
 	res.Profiles = len(profiles)
 
 	// No non-default profiles: clear the routing table (everything → default) and
-	// retire any lingering instances. This is the zero-disruption fast path.
+	// retire any lingering instances. Publish first so PrepareProfiles can
+	// capacity-reap obsolete KCEF groups without leaving a base route aimed at a
+	// terminating process. This is the zero-disruption fast path.
 	if len(profiles) == 0 {
+		preparation := deps.Launcher.PrepareProfiles(ctx, profiles)
 		deps.Router.SetRoutes(nil)
+		preparation.CompletePublication()
 		deps.Launcher.Retire(ctx, map[string]bool{})
 		return res, nil
 	}
+
+	// Freeze stable KCEF admission before any spawn. The process launcher uses
+	// the complete desired set to retain ready profiles and fully reap obsolete
+	// browser groups before replacements can reserve capacity.
+	preparation := deps.Launcher.PrepareProfiles(ctx, profiles)
 
 	routes := make(map[int64]sourceengine.Client)
 	keep := make(map[string]bool, len(profiles))
@@ -137,6 +151,7 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 	// A cancelled or slow retirement can therefore only leave an unreferenced
 	// process lingering, never a route aimed at a terminating process.
 	deps.Router.SetRoutes(routes)
+	preparation.CompletePublication()
 	deps.Launcher.Retire(ctx, keep)
 	return res, nil
 }
@@ -213,9 +228,22 @@ func toBindingInputs(snapshot []runtimeBinding) []engineroute.BindingInput {
 			Socks:                toSocksEndpoint(b.Socks),
 			Flare:                toFlareEndpoint(b.Flare),
 			DisableBypassSession: b.DisableBypassSession,
+			KCEFEnabled:          resolveKCEF(b),
 		}
 	}
 	return out
+}
+
+func resolveKCEF(binding runtimeBinding) bool {
+	policy := runtimepolicy.KCEFPolicyAuto
+	if binding.KCEFPolicy != nil {
+		policy = *binding.KCEFPolicy
+	}
+	enabled, err := runtimepolicy.ResolveKCEF(policy, binding.Socks != nil, binding.FlareMode)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 // toSocksEndpoint maps a resolved SOCKS endpoint to the engine-side value (nil

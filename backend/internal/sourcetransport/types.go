@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 )
 
 var (
@@ -37,6 +39,7 @@ const (
 type Override struct {
 	ReuseBypassSession  *bool
 	ImageConnectionMode *ImageConnectionMode
+	KCEFPolicy          *runtimepolicy.KCEFPolicy
 }
 
 // Effective is the fully resolved policy for one source.
@@ -44,6 +47,7 @@ type Effective struct {
 	ReuseBypassSession  bool
 	BypassSessionMode   BypassSessionMode
 	ImageConnectionMode ImageConnectionMode
+	KCEFPolicy          runtimepolicy.KCEFPolicy
 }
 
 // Intent is the persisted desired-versus-applied runtime state for one source.
@@ -100,4 +104,5 @@ func Clear[T any]() PatchField[T] { return PatchField[T]{Operation: PatchClear} 
 type Patch struct {
 	ReuseBypassSession  PatchField[bool]
 	ImageConnectionMode PatchField[ImageConnectionMode]
+	KCEFPolicy          PatchField[runtimepolicy.KCEFPolicy]
 }

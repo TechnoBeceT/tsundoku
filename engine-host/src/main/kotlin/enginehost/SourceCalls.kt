@@ -2,8 +2,9 @@ package enginehost
 
 /*
  * SourceCalls bridges the RPC layer to a Mihon source's suspend API. Content is always
- * addressed by a source-relative URL: an SManga/SChapter is reconstructed from just the
- * url (that is all the source needs), so no opaque engine id ever enters the flow.
+ * addressed by a source-relative URL. Most SManga/SChapter objects are reconstructed from that
+ * url directly; sources that retain request state only on search results are rehydrated through
+ * their own URL-search path. No opaque engine id ever enters the flow.
  *
  * Uses a caller-cancellable runBlocking job to cross the Kotlin suspend boundary — the source
  * workers are plain blocking threads, while coroutine and OkHttp cancellation still propagate.
@@ -25,6 +26,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
 import okhttp3.ConnectionPool
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -41,6 +43,11 @@ private val jsonMediaType = "application/json".toMediaType()
 
 /** JSON mapper for the impersonate-gateway request body (its own, so it never shares config). */
 private val impersonateMapper = jacksonObjectMapper()
+
+/** The narrowly-scoped pre-network memo-refresh signal emitted by keiyoushi sources. */
+private fun isRefreshChapterListSignal(error: Throwable): Boolean =
+    generateSequence(error) { it.cause }
+        .any { it.message?.trim() == "Refresh Chapter List" }
 
 /**
  * Headers stripped before an upstream request is forwarded to the impersonate gateway (GAP-111).
@@ -165,7 +172,7 @@ object SourceCalls {
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): MangaDetailsDto =
         cancellation.run {
-            val seed = SManga.create().apply { this.url = url }
+            val seed = source.reconstructManga(url)
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = true, fetchChapters = false)
             // A details parser returns a fresh SManga and may never set the `lateinit` identity `url`
             // (already known in the normal Mihon/Suwayomi flow). Re-seed it with the requested url —
@@ -189,7 +196,7 @@ object SourceCalls {
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): ChaptersResponse =
         cancellation.run {
-            val seed = SManga.create().apply { this.url = url; title = mangaTitle }
+            val seed = source.reconstructManga(url, mangaTitle)
             val update = source.getMangaUpdate(seed, emptyList(), fetchDetails = false, fetchChapters = true)
             val http = source as? HttpSource
             // A7 (P2 mapper audit): a source can return the same chapter url twice — dedup BEFORE
@@ -219,10 +226,10 @@ object SourceCalls {
      * GAP-109 — bare-seed FIRST, warm-and-match ONLY on failure. The page fetch first calls
      * [Source.getPageList] with a bare [SChapter] reconstructed from [chapterUrl] alone. For the vast
      * majority of sources this succeeds with ZERO extra requests — a url-only seed is everything their
-     * getPageList needs. Only when the bare attempt THROWS is [mangaUrl] (the source-relative SERIES
-     * url; "" when unknown) consulted: a non-blank one triggers a series-scoped chapter fetch (the
-     * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs) and, when it yields a
-     * chapter whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
+     * getPageList needs. Only the bare attempt's `Refresh Chapter List` signal permits [mangaUrl]
+     * (the source-relative SERIES url; "" when unknown) to trigger a series-scoped chapter fetch (the
+     * same `fetchChapters=true` [Source.getMangaUpdate] call [chapters] runs). When it yields a chapter
+     * whose url equals [chapterUrl], getPageList is retried with that REAL SChapter.
      *
      * The warm path exists for the keiyoushi API-extension family (AsuraScans / HiveScans /
      * VortexScans — all extend `KeiSource`): their getPageList calls `getChapterUrl`, which reads a
@@ -232,13 +239,12 @@ object SourceCalls {
      * for keiyoushi. Because the series fetch reuses the same getMangaUpdate path [chapters] runs, the
      * matched chapter's url is byte-identical to the [chapterUrl] Tsundoku stored.
      *
-     * The warm fetch is GUARDED and NEVER masks the bare error: a blank [mangaUrl], a throwing warm
-     * fetch, or no url match all rethrow the ORIGINAL bare-seed exception. A non-keiyoushi transient
-     * failure (a Cloudflare / network blip in getPageList) therefore surfaces as its real error, so
-     * the existing retry and source-wide failure classification behave exactly as before — the warm
-     * fetch can only ever ADD a success, never hide a failure. (The earlier always-warm-FIRST version
-     * regressed this: an unguarded series fetch on EVERY download could trip the source breaker for a
-     * source that would have succeeded from the bare seed, and cost an HTTP request no source needed.)
+     * The warm fetch is authoritative once attempted. Every other bare-seed exception is rethrown
+     * unchanged, including source-wide timeout, rate-limit, and challenge errors. A blank [mangaUrl]
+     * also rethrows the refresh signal because there is no refresh boundary to consult. With a non-blank
+     * manga url, a throwing refresh propagates its own exception unchanged, while a successful refresh
+     * with no exact chapter-url match reports that stale offer explicitly. An exact match retries
+     * getPageList with the refreshed SChapter INSTANCE so extension-only memo state survives.
      */
     fun pages(
         source: Source,
@@ -252,23 +258,20 @@ object SourceCalls {
                 try {
                     source.getPageList(bareSeed)
                 } catch (bareError: Exception) {
-                    // Bare seed failed (keiyoushi's pre-network memo check, or a genuine fetch error).
-                    // Warm ONLY when we have a series url; guard the warm fetch so its own failure can
-                    // never replace `bareError`, and rethrow the original when no memo-bearing chapter
-                    // is found — the failure must classify exactly as the bare attempt would have.
+                    // Only keiyoushi's pre-network memo signal may enter stale-offer recovery. A
+                    // genuine source failure must preserve its original source-wide classification.
+                    if (!isRefreshChapterListSignal(bareError) || mangaUrl.isBlank()) throw bareError
+
+                    val mangaSeed = source.reconstructManga(mangaUrl)
                     val warmChapter =
-                        if (mangaUrl.isBlank()) {
-                            null
-                        } else {
-                            runCatching {
-                                val mangaSeed = SManga.create().apply { this.url = mangaUrl }
-                                source
-                                    .getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
-                                    .chapters
-                                    .firstOrNull { it.url == chapterUrl }
-                            }.getOrNull()
-                        }
-                    warmChapter?.let { source.getPageList(it) } ?: throw bareError
+                        source
+                            .getMangaUpdate(mangaSeed, emptyList(), fetchDetails = false, fetchChapters = true)
+                            .chapters
+                            .firstOrNull { it.url == chapterUrl }
+                            ?: throw NoSuchElementException(
+                                "chapter not found in refreshed chapter list: $chapterUrl",
+                            )
+                    source.getPageList(warmChapter)
                 }
             PagesResponse(
                 pageList.map { page -> PageDto(index = page.index, url = page.url, imageUrl = page.imageUrl) },
@@ -540,8 +543,84 @@ object SourceCalls {
         manga: SManga,
     ): String? = (source as? HttpSource)?.let { http -> runCatching { http.getMangaUrl(manga) }.getOrNull() }
 
-    private fun SManga.toEntryDto(source: Source) =
-        MangaEntryDto(url = url, title = title, thumbnailUrl = thumbnail_url, realUrl = realMangaUrl(source, this))
+    /**
+     * Rebuild a manga object after its serialized address crosses RPC. Most extensions can recreate
+     * their request from [address] alone. A source may instead keep request-critical state on the
+     * search-result object; when a bare object cannot reproduce the retained address, the source's
+     * standard URL-search path is the compatibility boundary that restores the exact extension-owned
+     * object. No source identity or URL-path convention is inspected here.
+     */
+    private suspend fun Source.reconstructManga(
+        address: String,
+        title: String = "",
+    ): SManga {
+        require(address.isNotBlank()) { "malformed source candidate: missing source address" }
+        val bare = SManga.create().apply { url = address; this.title = title }
+        if (this !is HttpSource) return bare
+        val absoluteAddress = absoluteAddress(address) ?: return bare
+        if (realMangaUrl(this, bare) == absoluteAddress) {
+            return bare
+        }
+
+        val hydrated =
+            getSearchManga(1, absoluteAddress, FilterList()).mangas
+                .firstOrNull { realMangaUrl(this, it) == absoluteAddress }
+                ?: throw NoSuchElementException("source candidate not found for address: $address")
+        hydrated.title = title
+        return hydrated
+    }
+
+    /** Resolve either an absolute or source-relative [address] without assuming a source path shape. */
+    private fun HttpSource.absoluteAddress(address: String): String? =
+        address.toHttpUrlOrNull()?.toString()
+            ?: runCatching { baseUrl.toHttpUrlOrNull()?.resolve(address)?.toString() }.getOrNull()
+
+    /**
+     * Keep a same-origin real URL source-relative on the wire. Cross-origin addresses remain
+     * absolute because resolving them against [HttpSource.baseUrl] would change their identity.
+     */
+    private fun Source.serializedRealAddress(realUrl: String): String {
+        val http = this as? HttpSource ?: return realUrl
+        val absolute = realUrl.toHttpUrlOrNull() ?: return realUrl
+        val base = runCatching { http.baseUrl.toHttpUrlOrNull() }.getOrNull() ?: return realUrl
+        if (absolute.scheme != base.scheme || absolute.host != base.host || absolute.port != base.port) return realUrl
+        return buildString {
+            append(absolute.encodedPath)
+            absolute.encodedQuery?.let { append('?').append(it) }
+            absolute.encodedFragment?.let { append('#').append(it) }
+        }
+    }
+
+    /**
+     * Select the stable serialized address supplied by the extension. Prefer its normal source url
+     * whenever a freshly reconstructed SManga produces the same real URL. If request-critical state
+     * exists only on the search object, retain the extension's real URL instead; [reconstructManga]
+     * can feed that address through the extension's own URL-search path after RPC serialization.
+     */
+    private fun SManga.sourceAddress(
+        source: Source,
+        realUrl: String?,
+    ): String {
+        val sourceUrl = lateinitOr("") { url }
+        if (sourceUrl.isBlank() && realUrl.isNullOrBlank()) {
+            throw IllegalArgumentException("malformed source candidate: missing source address")
+        }
+        if (sourceUrl.isBlank()) return source.serializedRealAddress(realUrl!!)
+        if (realUrl.isNullOrBlank()) return sourceUrl
+
+        val bare = SManga.create().apply { url = sourceUrl }
+        return if (realMangaUrl(source, bare) == realUrl) sourceUrl else source.serializedRealAddress(realUrl)
+    }
+
+    private fun SManga.toEntryDto(source: Source): MangaEntryDto {
+        val realUrl = realMangaUrl(source, this)
+        return MangaEntryDto(
+            url = sourceAddress(source, realUrl),
+            title = title,
+            thumbnailUrl = thumbnail_url,
+            realUrl = realUrl,
+        )
+    }
 
     private fun SManga.toDetailsDto(
         requestedUrl: String,

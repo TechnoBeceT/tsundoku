@@ -18,9 +18,10 @@ import kotlinx.coroutines.delay
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import org.koin.core.context.startKoin
-import org.koin.dsl.module
 import org.junit.jupiter.api.RepeatedTest
 import suwayomi.tachidesk.server.ApplicationDirs
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import xyz.nulldev.androidcompat.AndroidCompat
 import xyz.nulldev.androidcompat.AndroidCompatInitializer
 import xyz.nulldev.androidcompat.androidCompatModule
@@ -39,6 +40,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.io.path.listDirectoryEntries
 import kotlin.test.AfterTest
+import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -192,26 +194,20 @@ private class MutablePreferenceSource : Source, ConfigurableSource {
     override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
 }
 
-private object PreferenceIntegrationTestSetup {
+internal object EngineRuntimeIntegrationTestSetup {
     init {
         val dataRoot = Files.createTempDirectory("preference-integration-runtime")
         System.setProperty("$CONFIG_PREFIX.server.rootDir", dataRoot.toString())
         ServerConfigTestSetup.ensureRegistered()
         AndroidCompatInitializer().init()
         val app = App()
+        val applicationDirs = ApplicationDirs(dataRoot = dataRoot.toString())
         startKoin {
             modules(
                 createAppModule(app),
                 androidCompatModule(),
                 configManagerModule(),
-                module {
-                    single { ApplicationDirs(dataRoot = dataRoot.toString()) }
-                    single<KcefWebViewProvider.InitBrowserHandler> {
-                        object : KcefWebViewProvider.InitBrowserHandler {
-                            override fun init(provider: KcefWebViewProvider) = Unit
-                        }
-                    }
-                },
+                kcefRuntimeModule(applicationDirs),
             )
         }
         AndroidCompat().startApp(app)
@@ -232,6 +228,13 @@ class EngineIsolationIntegrationTest {
         released.set(true)
         blockedRequests.forEach { request -> runCatching { request.get(5, TimeUnit.SECONDS) } }
         server?.stop()
+    }
+
+    @Test
+    fun `production bootstrap installs the concrete Koin cookie hook`() {
+        EngineRuntimeIntegrationTestSetup.ensureReady()
+
+        assertTrue(Injekt.get<KcefWebViewProvider.InitBrowserHandler>() === KcefCookieInitHandler)
     }
 
     /**
@@ -303,7 +306,7 @@ class EngineIsolationIntegrationTest {
     /** A real bounded HTTP transfer stays outside the public preference write path. */
     @RepeatedTest(20)
     fun `slow repository transfer does not delay preference mutation`() {
-        PreferenceIntegrationTestSetup.ensureReady()
+        EngineRuntimeIntegrationTestSetup.ensureReady()
         MockWebServer().use { upstream ->
             upstream.enqueue(
                 MockResponse.Builder()
@@ -375,7 +378,7 @@ class EngineIsolationIntegrationTest {
     /** Uninstall's repository-backed response must not occupy the local preference lane. */
     @RepeatedTest(20)
     fun `slow uninstall listing does not delay preference mutation`() {
-        PreferenceIntegrationTestSetup.ensureReady()
+        EngineRuntimeIntegrationTestSetup.ensureReady()
         MockWebServer().use { upstream ->
             upstream.enqueue(
                 MockResponse.Builder()

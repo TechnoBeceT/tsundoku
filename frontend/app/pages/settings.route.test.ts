@@ -231,6 +231,8 @@ describe('Settings page route integration', () => {
 
     const first = await mountPage(route)
     expect(apiState.detailSourceIds).toEqual([sourceId])
+    expect(first.findAll('[role="tab"]')[4]!.attributes('aria-selected')).toBe('true')
+    expect(first.get('#download-engine-source-exceptions').attributes('hidden')).toBeUndefined()
     expect(document.activeElement).toBe(first.get('[data-source-setting-target="imageRequestDelay"]').element)
     first.unmount()
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/enginehost"
+	"github.com/technobecet/tsundoku/internal/engineroute"
 )
 
 // fixedInterval is a supervise-interval accessor returning a constant (the
@@ -27,6 +28,70 @@ func exhaustedStatus(sequence int64, queued int, sources ...enginehost.EngineSou
 		CompletionSequence:  sequence,
 		OldestRunningMillis: 180001,
 		BusiestSources:      append([]enginehost.EngineSourceStatus(nil), sources...),
+		KCEF:                enginehost.KCEFStatus{State: enginehost.KCEFStateReady},
+	}
+}
+
+func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	var lossAvailable atomic.Bool
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(kcefLossStatus(&lossAvailable)),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	s := enginehost.NewSupervisor(l, fixedInterval(time.Second))
+	p1 := engineroute.Profile{Key: "failed-kcef", SourceIDs: []int64{11}, KCEFEnabled: true}
+	p2 := engineroute.Profile{Key: "ready-kcef", SourceIDs: []int64{22}, KCEFEnabled: true}
+	if _, err := l.EnsureProfile(context.Background(), p1); err != nil {
+		t.Fatalf("EnsureProfile p1: %v", err)
+	}
+	if _, err := l.EnsureProfile(context.Background(), p2); err != nil {
+		t.Fatalf("EnsureProfile p2: %v", err)
+	}
+	rerouter.resetEvents()
+	starter.proc(0).setOnSignal(assertDegradedOnSignal(t, rerouter, 11))
+	lossAvailable.Store(true)
+
+	enginehost.SuperviseOnce(s, context.Background(), time.Now())
+	assertKCEFLossRestart(t, starter, rerouter)
+}
+
+func kcefLossStatus(lossAvailable *atomic.Bool) enginehost.StatusProber {
+	return func(_ context.Context, baseURL string) (enginehost.EngineStatus, error) {
+		if baseURL == "http://127.0.0.1:41001" && lossAvailable.CompareAndSwap(true, false) {
+			return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{
+				State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+			}}, nil
+		}
+		return readyKCEFStatus(), nil
+	}
+}
+
+func assertDegradedOnSignal(t *testing.T, rerouter *fakeRerouter, sourceID int64) func() {
+	t.Helper()
+	return func() {
+		if !rerouter.isDegraded(sourceID) {
+			t.Error("failed profile was stopped before its sources were degraded")
+		}
+	}
+}
+
+func assertKCEFLossRestart(t *testing.T, starter *fakeStarter, rerouter *fakeRerouter) {
+	t.Helper()
+	if got := starter.callCount(); got != 3 {
+		t.Fatalf("starts = %d, want only failed profile restarted", got)
+	}
+	if !starter.proc(0).wasSignalled() {
+		t.Fatal("failed profile process was not stopped before restart")
+	}
+	if starter.proc(1).wasSignalled() {
+		t.Fatal("ready profile process was disturbed by another profile's KCEF failure")
+	}
+	if rerouter.isDegraded(11) || rerouter.isDegraded(22) {
+		t.Fatal("successful restart must restore only the affected profile without degrading peers")
+	}
+	if got := rerouter.recordedEventsFor(11); len(got) < 2 || got[0] != "degrade" || got[len(got)-1] != "restore" {
+		t.Fatalf("reroute events = %v, want degrade before restart restoration", got)
 	}
 }
 
@@ -325,8 +390,12 @@ func TestSupervise_InstanceReplacementCannotRestartStaleTarget(t *testing.T) {
 func TestSupervise_CancelledContextCannotRestartExhaustedInstance(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	ctx, cancel := context.WithCancel(context.Background())
+	var statusCalls atomic.Int32
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
 		enginehost.WithStatusProber(func(probeCtx context.Context, _ string) (enginehost.EngineStatus, error) {
+			if statusCalls.Add(1) == 1 {
+				return readyKCEFStatus(), nil
+			}
 			cancel()
 			<-probeCtx.Done()
 			return enginehost.EngineStatus{}, probeCtx.Err()
@@ -344,11 +413,18 @@ func TestSupervise_CancelledContextCannotRestartExhaustedInstance(t *testing.T) 
 func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	var statusCalls atomic.Int32
+	var setupStatus atomic.Bool
 	prober := sequenceProber(nil, errors.New("health down"), nil)
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
 		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			if !setupStatus.Swap(true) {
+				return readyKCEFStatus(), nil
+			}
 			statusCalls.Add(1)
-			return enginehost.EngineStatus{}, errors.New("must not be called")
+			if got := starter.callCount(); got != 2 {
+				t.Errorf("status was consulted before replacement start: starts=%d, want 2", got)
+			}
+			return readyKCEFStatus(), nil
 		}))
 	sup := enginehost.NewSupervisor(l, fixedInterval(30*time.Second))
 	if _, err := l.EnsureProfile(context.Background(), profile("k1")); err != nil {
@@ -358,13 +434,13 @@ func TestSupervise_HealthDownPathDoesNotConsultStatus(t *testing.T) {
 	if got := starter.callCount(); got != 2 {
 		t.Fatalf("health-down starts = %d, want existing immediate restart", got)
 	}
-	if got := statusCalls.Load(); got != 0 {
-		t.Errorf("status calls while health down = %d, want 0", got)
+	if got := statusCalls.Load(); got != 1 {
+		t.Errorf("status calls = %d, want only the replacement readiness check", got)
 	}
 }
 
-func toggledHealthProber(healthDown *atomic.Bool) func(string) error {
-	return func(string) error {
+func toggledHealthProber(healthDown *atomic.Bool) func(context.Context, string) error {
+	return func(context.Context, string) error {
 		if healthDown.Load() {
 			return errors.New("health down")
 		}
@@ -475,7 +551,7 @@ func TestSupervise_CancellationDuringHealthPreventsProcessMutation(t *testing.T)
 	rr := newFakeRerouter()
 	var cancelOnHealth atomic.Bool
 	var cancel context.CancelFunc
-	prober := func(string) error {
+	prober := func(context.Context, string) error {
 		if cancelOnHealth.Swap(false) {
 			cancel()
 			return errors.New("cancelled health probe")
@@ -838,7 +914,7 @@ func TestSupervise_PassPanicRecovers(t *testing.T) {
 	var supCalls atomic.Int32
 	// Healthy during setup; once armed, panic on the FIRST supervise probe then
 	// report healthy — so the panic lands inside a pass, not during the spawn.
-	prober := func(string) error {
+	prober := func(context.Context, string) error {
 		if !armed.Load() {
 			return nil
 		}

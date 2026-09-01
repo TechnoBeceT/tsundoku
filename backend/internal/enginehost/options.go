@@ -17,8 +17,9 @@ func WithStarter(s ProcessStarter) Option { return func(l *Launcher) { l.starter
 // /health). Tests pass a deterministic function.
 func WithHealthProber(p HealthProber) Option { return func(l *Launcher) { l.prober = p } }
 
-// WithStatusProber replaces the bounded GET /status seam used by managed-profile
-// exhaustion recovery. Tests pass deterministic operational snapshots.
+// WithStatusProber replaces the bounded GET /status seam used by launch
+// capability readiness and managed-profile recovery. Tests pass deterministic
+// operational snapshots.
 func WithStatusProber(p StatusProber) Option { return func(l *Launcher) { l.statusProber = p } }
 
 // WithExhaustionDiagnosticSink replaces the bounded diagnostic sink invoked
@@ -37,17 +38,28 @@ func WithPortAllocator(a PortAllocator) Option { return func(l *Launcher) { l.al
 // are no-ops. Tests pass a fake Rerouter to assert the route transitions.
 func WithRerouter(r Rerouter) Option { return func(l *Launcher) { l.rerouter = r } }
 
-// WithStartTimeout sets how long a spawn waits for the first healthy /health
-// before killing the process and failing (default 60s). Tests shrink it to keep
-// the timeout path fast.
-func WithStartTimeout(d time.Duration) Option { return func(l *Launcher) { l.startTimeout = d } }
+// WithLaunchReadinessTimeout sets the single spawn-to-settle readiness budget.
+// It starts when the child process is created and covers /health, KCEF status,
+// and the settle recheck without any phase receiving a fresh timeout. Production
+// defaults to 135 seconds: the 120-second KCEF producer plus fifteen seconds of
+// bounded RPC/settle overhead, still below the 150-second source deadline.
+func WithLaunchReadinessTimeout(d time.Duration) Option {
+	return func(l *Launcher) { l.readinessTimeout = d }
+}
+
+// WithReadinessClock replaces the coordinated readiness clock. It exists for
+// deterministic lifecycle tests; production uses the system monotonic clock.
+func WithReadinessClock(clock ReadinessClock) Option {
+	return func(l *Launcher) { l.readinessClock = clock }
+}
 
 // WithPollInterval sets the gap between health polls during a spawn (default
 // 500ms). Tests shrink it.
 func WithPollInterval(d time.Duration) Option { return func(l *Launcher) { l.pollInterval = d } }
 
-// WithSettleDelay sets the post-healthy re-probe window that catches a
-// healthy-then-dead instance (default 1s; see Launcher.settle + GAP-094). A
+// WithSettleDelay sets the post-ready health-and-capability re-probe window that
+// catches a healthy-then-dead or ready-then-failed instance (default 1s; see
+// Launcher.settle + GAP-094). A
 // non-positive value disables the recheck — tests use 0 to pin the poll-only
 // semantics, and a small positive value to exercise the settle path fast.
 func WithSettleDelay(d time.Duration) Option { return func(l *Launcher) { l.settleDelay = d } }

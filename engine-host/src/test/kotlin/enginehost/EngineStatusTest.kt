@@ -24,7 +24,13 @@ class EngineStatusTest {
     fun `status accepts GET only`() {
         val workDir = Files.createTempDirectory("engine-status-method").toFile()
         val loader = ExtensionLoader(workDir)
-        val server = RpcServer(loader, ExtensionManager(loader, workDir), port = 0)
+        val server =
+            RpcServer(
+                loader,
+                ExtensionManager(loader, workDir),
+                port = 0,
+                kcefStatus = { KcefStatus(KcefState.DISABLED, null) },
+            )
         try {
             server.start()
             val request =
@@ -35,6 +41,10 @@ class EngineStatusTest {
             val response = client.send(request, HttpResponse.BodyHandlers.ofString())
 
             assertEquals(405, response.statusCode())
+            val status = mapper.readTree(get(server, "/status").body())["kcef"]
+            assertEquals(setOf("state", "errorCode"), status.fieldNames().asSequence().toSet())
+            assertEquals("disabled", status["state"].textValue())
+            assertTrue(status["errorCode"].isNull)
         } finally {
             server.stop()
         }
@@ -51,7 +61,14 @@ class EngineStatusTest {
         val extensionNetworkEntered = CountDownLatch(1)
         val workDir = Files.createTempDirectory("engine-status").toFile()
         val loader = ExtensionLoader(workDir)
-        val server = RpcServer(loader, ExtensionManager(loader, workDir), port = 0, executors = executors)
+        val server =
+            RpcServer(
+                loader,
+                ExtensionManager(loader, workDir),
+                port = 0,
+                executors = executors,
+                kcefStatus = { KcefStatus(KcefState.FAILED, "init_failed") },
+            )
         try {
             repeat(8) { index ->
                 assertIs<Submission.Accepted<Unit>>(
@@ -123,6 +140,7 @@ class EngineStatusTest {
                     "busiest_sources",
                     "extension_running",
                     "extension_queued",
+                    "kcef",
                 ),
                 status.fieldNames().asSequence().toSet(),
             )
@@ -138,6 +156,9 @@ class EngineStatusTest {
             assertEquals(1, status["rejected"].longValue())
             assertEquals(true, status["extension_running"].booleanValue())
             assertEquals(2, status["extension_queued"].intValue())
+            assertEquals("failed", status["kcef"]["state"].textValue())
+            assertEquals("init_failed", status["kcef"]["errorCode"].textValue())
+            assertEquals(setOf("state", "errorCode"), status["kcef"].fieldNames().asSequence().toSet())
             assertEquals(10, status["busiest_sources"].size())
             assertEquals(
                 listOf(1L, 2L, 3L, 4L, 1_000L, 1_001L, 1_002L, 1_003L, 1_004L, 1_005L),
@@ -154,6 +175,40 @@ class EngineStatusTest {
             executors.close()
         }
     }
+
+    @Test
+    fun `health remains independent when embedded browser capability has failed`() {
+        val workDir = Files.createTempDirectory("engine-health-kcef").toFile()
+        val loader = ExtensionLoader(workDir)
+        val server =
+            RpcServer(
+                loader,
+                ExtensionManager(loader, workDir),
+                port = 0,
+                kcefStatus = { KcefStatus(KcefState.FAILED, "init_failed") },
+            )
+        try {
+            server.start()
+            val health = get(server, "/health")
+            val status = get(server, "/status")
+
+            assertEquals(200, health.statusCode())
+            assertEquals(mapper.readTree("""{"status":"ok","sources":0}"""), mapper.readTree(health.body()))
+            assertEquals(200, status.statusCode())
+            assertEquals("failed", mapper.readTree(status.body())["kcef"]["state"].textValue())
+        } finally {
+            server.stop()
+        }
+    }
+
+    private fun get(
+        server: RpcServer,
+        path: String,
+    ): HttpResponse<String> =
+        client.send(
+            HttpRequest.newBuilder(URI("http://localhost:${boundPort(server)}$path")).GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        )
 
     private fun awaitExtensionQueue(
         executor: java.util.concurrent.ExecutorService,

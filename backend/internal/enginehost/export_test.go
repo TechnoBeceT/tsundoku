@@ -17,8 +17,8 @@ func FsSafeKey(key string) string { return fsSafeKey(key) }
 
 // BuildHostEnv exposes buildHostEnv so the per-instance env shape is testable
 // without exec.
-func BuildHostEnv(base []string, port int, dataDir string, disableKCEF bool) []string {
-	return buildHostEnv(base, port, dataDir, disableKCEF)
+func BuildHostEnv(base []string, port int, dataDir string, kcefEnabled bool) []string {
+	return buildHostEnv(base, port, dataDir, kcefEnabled)
 }
 
 // SeedKCEF exposes the (best-effort) KCEF-seeding step so it can be driven

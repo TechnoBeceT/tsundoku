@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	sourceenginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
@@ -37,6 +38,20 @@ func (f fakeTransportSnapshotter) Snapshot(context.Context) (map[int64]sourcetra
 	return f.policies, f.err
 }
 
+type acceptingTransportCatalog struct{}
+
+func (acceptingTransportCatalog) RequireSource(context.Context, int64) error { return nil }
+
+type topologyTransportDefaults struct{}
+
+func (topologyTransportDefaults) ImageConnectionMode(context.Context) sourcetransport.ImageConnectionMode {
+	return sourcetransport.ImageConnectionFresh
+}
+
+func (topologyTransportDefaults) ResolveBypassSession(context.Context, int64, *bool) (bool, sourcetransport.BypassSessionMode, error) {
+	return false, sourcetransport.BypassSessionDisabled, nil
+}
+
 func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBinding, error) {
 	return f.bindings, f.err
 }
@@ -44,13 +59,18 @@ func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBin
 // fakeLauncher returns ONE shared instance fake for every profile (the tests use
 // a single profile), records its calls, and can be told to fail EnsureProfile.
 type fakeLauncher struct {
-	instance    *sourceenginefake.Client
-	fail        bool
-	ensureCalls int
-	profiles    []engineroute.Profile
-	retireCalls int
-	lastKeep    map[string]bool
+	instance     *sourceenginefake.Client
+	fail         bool
+	onComplete   func()
+	prepareCalls int
+	prepared     [][]engineroute.Profile
+	ensureCalls  int
+	profiles     []engineroute.Profile
+	retireCalls  int
+	lastKeep     map[string]bool
 }
+
+func kcefPolicyPtr(value runtimepolicy.KCEFPolicy) *runtimepolicy.KCEFPolicy { return &value }
 
 type preferenceReadClient struct {
 	*sourceenginefake.Client
@@ -67,6 +87,22 @@ func (c *preferenceReadClient) Preferences(ctx context.Context, sourceID int64) 
 }
 
 type preferenceLauncher struct{ instance sourceengine.Client }
+
+type noopProfilePreparation struct{}
+
+func (noopProfilePreparation) CompletePublication() {}
+
+type callbackProfilePreparation struct{ complete func() }
+
+func (p callbackProfilePreparation) CompletePublication() {
+	if p.complete != nil {
+		p.complete()
+	}
+}
+
+func (preferenceLauncher) PrepareProfiles(context.Context, []engineroute.Profile) engineroute.ProfilePreparation {
+	return noopProfilePreparation{}
+}
 
 func (l preferenceLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
@@ -149,6 +185,7 @@ func (c *runtimeConfigClient) session() string {
 type lifecycleLauncher struct {
 	instances map[string]*runtimeConfigClient
 	fail      map[string]error
+	prepared  [][]engineroute.Profile
 	retired   []string
 	lastKeep  map[string]bool
 	onCreate  func(engineroute.Profile, *runtimeConfigClient)
@@ -158,6 +195,10 @@ type blockingRetireLauncher struct {
 	instance *sourceenginefake.Client
 	entered  chan struct{}
 	release  chan struct{}
+}
+
+func (l *blockingRetireLauncher) PrepareProfiles(context.Context, []engineroute.Profile) engineroute.ProfilePreparation {
+	return noopProfilePreparation{}
 }
 
 func (l *blockingRetireLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
@@ -240,6 +281,11 @@ func (l *lifecycleLauncher) EnsureProfile(_ context.Context, p engineroute.Profi
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: client}, nil
 }
 
+func (l *lifecycleLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) engineroute.ProfilePreparation {
+	l.prepared = append(l.prepared, append([]engineroute.Profile(nil), desired...))
+	return noopProfilePreparation{}
+}
+
 func (l *lifecycleLauncher) Retire(_ context.Context, keep map[string]bool) {
 	l.lastKeep = keep
 	for key := range l.instances {
@@ -257,6 +303,12 @@ func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (
 		return engineroute.Instance{}, errors.New("launch failed")
 	}
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: f.instance}, nil
+}
+
+func (f *fakeLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) engineroute.ProfilePreparation {
+	f.prepareCalls++
+	f.prepared = append(f.prepared, append([]engineroute.Profile(nil), desired...))
+	return callbackProfilePreparation{complete: f.onComplete}
 }
 
 // TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources proves profile
@@ -307,9 +359,131 @@ func TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources(t *testing.T) {
 	}
 }
 
+// TestReconcileNetwork_DerivesKCEFAgainstDefaultHost exercises the live
+// reconcile caller rather than profile derivation in isolation. Auto global
+// capability follows the default host, while Auto endpoint capability remains
+// a managed KCEF-off profile with its historical key.
+func TestReconcileNetwork_DerivesKCEFAgainstDefaultHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		defaultKCEF  bool
+		binding      network.ResolvedBinding
+		wantProfiles int
+		wantKey      string
+		wantKCEF     bool
+		policies     map[int64]sourcetransport.Override
+	}{
+		{
+			name: "default on global auto stays default", defaultKCEF: true,
+			binding: network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+		},
+		{
+			name: "default off global auto creates on profile", defaultKCEF: false,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+			wantProfiles: 1, wantKey: "kcef=on", wantKCEF: true,
+		},
+		{
+			name: "default on endpoint auto keeps legacy off key", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}},
+			wantProfiles: 1, wantKey: "|endpoint|flare",
+		},
+		{
+			name: "required endpoint creates KCEF on profile", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}},
+			wantProfiles: 1, wantKey: "|endpoint|flare|kcef=on", wantKCEF: true,
+			policies: map[int64]sourcetransport.Override{7: {KCEFPolicy: kcefPolicyPtr(runtimepolicy.KCEFPolicyRequired)}},
+		},
+		{
+			name: "disabled global creates KCEF off profile", defaultKCEF: true,
+			binding:      network.ResolvedBinding{SourceID: 7, FlareMode: network.FlareModeGlobal},
+			wantProfiles: 1, wantKey: "kcef=off", wantKCEF: false,
+			policies: map[int64]sourcetransport.Override{7: {KCEFPolicy: kcefPolicyPtr(runtimepolicy.KCEFPolicyDisabled)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			launcher := &fakeLauncher{fail: true}
+			result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+				Snapshot:          fakeSnapshotter{bindings: []network.ResolvedBinding{tt.binding}},
+				TransportSnapshot: fakeTransportSnapshotter{policies: tt.policies},
+				Router:            engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
+				BaseConfig: baseConfig(), DefaultKCEFEnabled: tt.defaultKCEF,
+			})
+			if result.Profiles != tt.wantProfiles || len(launcher.profiles) != tt.wantProfiles {
+				t.Fatalf("result/launches = %d/%d, want %d profiles", result.Profiles, len(launcher.profiles), tt.wantProfiles)
+			}
+			if tt.wantProfiles == 0 {
+				return
+			}
+			profile := launcher.profiles[0]
+			if profile.Key != tt.wantKey || profile.KCEFEnabled != tt.wantKCEF {
+				t.Fatalf("derived profile = %+v, want key %q and KCEF %v", profile, tt.wantKey, tt.wantKCEF)
+			}
+		})
+	}
+}
+
 func (f *fakeLauncher) Retire(_ context.Context, keep map[string]bool) {
 	f.retireCalls++
 	f.lastKeep = keep
+}
+
+func TestReconcileNetwork_PreparesCanonicalDesiredProfilesBeforeEnsure(t *testing.T) {
+	launcher := &fakeLauncher{fail: true}
+	result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+		Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{
+			{SourceID: 2, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "z"}},
+			{SourceID: 1, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "a"}},
+		}},
+		Router: engineroute.NewRouter(sourceenginefake.New()), Launcher: launcher,
+		BaseConfig: baseConfig(), DefaultKCEFEnabled: true,
+	})
+	if result.Profiles != 2 || launcher.prepareCalls != 1 || len(launcher.prepared) != 1 {
+		t.Fatalf("profiles/prepare calls = %d/%d (%v), want 2/1", result.Profiles, launcher.prepareCalls, launcher.prepared)
+	}
+	got := launcher.prepared[0]
+	if len(got) != 2 || got[0].Key > got[1].Key {
+		t.Fatalf("prepared profiles = %+v, want canonical key order", got)
+	}
+}
+
+func TestReconcileNetwork_CompletesPreparationAfterFailedProfileRoutePublication(t *testing.T) {
+	defaultClient := sourceenginefake.New(sourceenginefake.WithSearchResult(1, sourceengine.SearchResult{
+		Manga: []sourceengine.MangaEntry{{URL: "default"}},
+	}))
+	staleClient := sourceenginefake.New(sourceenginefake.WithSearchResult(1, sourceengine.SearchResult{
+		Manga: []sourceengine.MangaEntry{{URL: "stale-old-profile"}},
+	}))
+	router := engineroute.NewRouter(defaultClient)
+	router.SetRoutes(map[int64]sourceengine.Client{1: staleClient})
+	launcher := &fakeLauncher{fail: true}
+	completed := false
+	launcher.onComplete = func() {
+		completed = true
+		got, err := router.Search(context.Background(), 1, "q", 1)
+		if err != nil {
+			t.Fatalf("Search during publication completion: %v", err)
+		}
+		if len(got.Manga) != 1 || got.Manga[0].URL != "default" {
+			t.Fatalf("route at publication completion = %+v, want failed profile removed before degradation release", got)
+		}
+	}
+
+	result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+		Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{{
+			SourceID: 1, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "new"},
+		}}},
+		Router: router, Launcher: launcher, BaseConfig: baseConfig(), DefaultKCEFEnabled: true,
+	})
+	if len(result.Gaps) != 1 {
+		t.Fatalf("gaps = %v, want failed replacement gap", result.Gaps)
+	}
+	if !completed {
+		t.Fatal("preparation was not completed after route publication")
+	}
 }
 
 // mustReconcileNetwork runs one pass and fails the test on a hard error.
@@ -522,6 +696,38 @@ func TestReconcileNetwork_ProfilePreferencesIgnoreUnroutedHistory(t *testing.T) 
 // partial runtime apply: missing image/proxy sets on any active instance,
 // activating a newly-created route before its config lands, retaining an
 // obsolete profile, or treating a fallback as success.
+// TestSourcePolicyRevisionWaitsForItsKCEFProfile proves an applied source-policy
+// revision means the requested KCEF topology was actually converged.
+func TestSourcePolicyRevisionWaitsForItsKCEFProfile(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	defaultClient := &runtimeConfigClient{Client: sourceenginefake.New()}
+	launcher := &fakeLauncher{fail: true}
+	service := sourcetransport.NewService(db, topologyTransportDefaults{}, acceptingTransportCatalog{})
+	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
+		Snapshot:           fakeSnapshotter{bindings: []network.ResolvedBinding{{SourceID: 42, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "flare"}}}},
+		TransportSnapshot:  service,
+		Router:             engineroute.NewRouter(defaultClient),
+		Launcher:           launcher,
+		DB:                 db,
+		Cache:              apkcache.New(t.TempDir()),
+		BaseConfig:         baseConfig(),
+		DefaultKCEFEnabled: true,
+	})
+	service.WithRuntimeApplier(applier)
+
+	updated, err := service.Update(ctx, 42, sourcetransport.Patch{KCEFPolicy: sourcetransport.Set(runtimepolicy.KCEFPolicyRequired)})
+	if err == nil {
+		t.Fatal("Update error = nil, want KCEF profile convergence failure")
+	}
+	if updated.Intent.DesiredRevision != 1 || updated.Intent.AppliedRevision != 0 || updated.Intent.LastApplyAttempt == nil {
+		t.Fatalf("intent = %+v, want desired 1/applied 0 with failed convergence attempt", updated.Intent)
+	}
+	if len(launcher.profiles) != 1 || launcher.profiles[0].Key != "|endpoint|flare|kcef=on" || !launcher.profiles[0].KCEFEnabled {
+		t.Fatalf("requested profiles = %+v, want one KCEF-on endpoint profile", launcher.profiles)
+	}
+}
+
 func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testing.T) { //nolint:cyclop // Ordering test intentionally checks every phase and instance.
 	ctx := context.Background()
 	db := testdb.New(t)
@@ -536,7 +742,7 @@ func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testi
 	bindings[0].Socks.ID = "new"
 	bindings[1].Socks.ID = "reused"
 	bindings[2].Socks.ID = "fallback"
-	profiles := engineroute.Derive([]engineroute.BindingInput{
+	profiles := engineroute.Derive(true, []engineroute.BindingInput{
 		{SourceID: 11, Socks: &engineroute.SocksEndpoint{ID: "new"}, FlareMode: engineroute.FlareModeGlobal, DisableBypassSession: true},
 		{SourceID: 22, Socks: &engineroute.SocksEndpoint{ID: "reused"}, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 33, Socks: &engineroute.SocksEndpoint{ID: "fallback"}, FlareMode: engineroute.FlareModeGlobal},
@@ -575,13 +781,14 @@ func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testi
 		}
 	}
 	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
-		Snapshot:          fakeSnapshotter{bindings: bindings},
-		TransportSnapshot: fakeTransportSnapshotter{policies: policies},
-		Router:            router,
-		Launcher:          launcher,
-		DB:                db,
-		Cache:             cache,
-		BaseConfig:        base,
+		Snapshot:           fakeSnapshotter{bindings: bindings},
+		TransportSnapshot:  fakeTransportSnapshotter{policies: policies},
+		Router:             router,
+		Launcher:           launcher,
+		DB:                 db,
+		Cache:              cache,
+		BaseConfig:         base,
+		DefaultKCEFEnabled: true,
 	})
 
 	err := applier.ApplySourceRuntime(ctx, 11)

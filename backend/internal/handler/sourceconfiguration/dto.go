@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	configuration "github.com/technobecet/tsundoku/internal/sourceconfiguration"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
 )
@@ -35,6 +36,15 @@ type ImageConnectionPolicyValueDTO struct {
 	Global    sourcetransport.ImageConnectionMode  `json:"global"`
 	Effective sourcetransport.ImageConnectionMode  `json:"effective"`
 	Inherited bool                                 `json:"inherited"`
+}
+
+// KCEFPolicyValueDTO is the resolved embedded-browser policy wire projection.
+type KCEFPolicyValueDTO struct {
+	Override  *runtimepolicy.KCEFPolicy `json:"override"`
+	Global    runtimepolicy.KCEFPolicy  `json:"global"`
+	Effective runtimepolicy.KCEFPolicy  `json:"effective"`
+	Inherited bool                      `json:"inherited"`
+	Enabled   bool                      `json:"enabled"`
 }
 
 // BypassSessionPolicyValueDTO is the resolved bypass-session policy value.
@@ -106,6 +116,7 @@ type ConfigurationDTO struct {
 	BypassEnabled       bool                          `json:"bypassEnabled"`
 	ReuseBypassSession  BypassSessionPolicyValueDTO   `json:"reuseBypassSession"`
 	ImageConnectionMode ImageConnectionPolicyValueDTO `json:"imageConnectionMode"`
+	KCEF                KCEFPolicyValueDTO            `json:"kcef"`
 	ImageProxy          ImageProxyStateDTO            `json:"imageProxy"`
 	Routing             RoutingConfigurationDTO       `json:"routing"`
 	ProfileKey          string                        `json:"profileKey"`
@@ -139,6 +150,10 @@ func newConfigurationDTO(value configuration.Configuration) ConfigurationDTO {
 		ImageConnectionMode: ImageConnectionPolicyValueDTO{
 			Override: value.ImageConnectionMode.Override, Global: value.ImageConnectionMode.Global,
 			Effective: value.ImageConnectionMode.Effective, Inherited: value.ImageConnectionMode.Inherited,
+		},
+		KCEF: KCEFPolicyValueDTO{
+			Override: value.KCEF.Override, Global: value.KCEF.Global, Effective: value.KCEF.Effective,
+			Inherited: value.KCEF.Inherited, Enabled: value.KCEF.Enabled,
 		},
 		ImageProxy: ImageProxyStateDTO{
 			OptedIn: value.ImageProxy.OptedIn, GatewayEnabled: value.ImageProxy.GatewayEnabled,

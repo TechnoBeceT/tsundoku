@@ -42,6 +42,7 @@ const inherited: SourceConfiguration = {
   bypassEnabled: true,
   reuseBypassSession: { override: null, global: false, effective: false, inherited: true, mode: 'disposable' },
   imageConnectionMode: { override: null, global: 'fresh', effective: 'fresh', inherited: true },
+  kcef: { override: null, global: 'auto', effective: 'auto', inherited: true, enabled: true },
   imageProxy: { optedIn: false, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: false },
   routing: {
     stored: {
@@ -66,6 +67,7 @@ const overridden: SourceConfiguration = {
   imageRequestDelay: { override: '1250ms', effective: '1250ms', inherited: false },
   reuseBypassSession: { override: false, global: true, effective: false, inherited: false, mode: 'disposable' },
   imageConnectionMode: { override: 'reuse', global: 'fresh', effective: 'reuse', inherited: false },
+  kcef: { override: 'disabled', global: 'auto', effective: 'disabled', inherited: false, enabled: false },
   imageProxy: { optedIn: true, gatewayEnabled: true, gatewayConfigured: true, effectiveAvailable: true },
   routing: {
     stored: {
@@ -84,7 +86,7 @@ const overridden: SourceConfiguration = {
 }
 
 const summaries: SourceException[] = [
-  { source: overridden.source, exceptionCount: 6, runtime: overridden.runtime },
+  { source: overridden.source, exceptionCount: 7, runtime: overridden.runtime },
   {
     source: { sourceId: 'source-proxy', name: 'Hive Scans', language: 'en' },
     exceptionCount: 1,
@@ -198,7 +200,7 @@ describe('SourceExceptionsPanel', () => {
     const wrapper = mount(SourceExceptionsPanel, { props: baseProps })
 
     expect(wrapper.get('[data-testid="exception-source-count"]').text()).toContain('3')
-    expect(wrapper.get('[data-testid="explicit-setting-count"]').text()).toContain('9')
+    expect(wrapper.get('[data-testid="explicit-setting-count"]').text()).toContain('10')
     expect(wrapper.get('[data-testid="pending-apply-count"]').text()).toContain('2')
   })
 
@@ -232,14 +234,14 @@ describe('SourceExceptionsPanel', () => {
       props: { ...baseProps, selectedSourceId: inherited.source.sourceId, configuration: inherited },
     })
     const inheritedRows = inheritedWrapper.findAllComponents(SourceOverrideRow)
-    expect(inheritedRows).toHaveLength(4)
+    expect(inheritedRows).toHaveLength(5)
     expect(inheritedRows.every(row => row.text().includes('Inherited'))).toBe(true)
     expect(inheritedWrapper.getComponent(SourceProxyOptInRow).text()).toContain('Off')
     expect(inheritedWrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
 
     const overriddenWrapper = mount(SourceExceptionsPanel, { props: baseProps })
     const overriddenRows = overriddenWrapper.findAllComponents(SourceOverrideRow)
-    expect(overriddenRows).toHaveLength(4)
+    expect(overriddenRows).toHaveLength(5)
     expect(overriddenRows.every(row => row.text().includes('Override'))).toBe(true)
     expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).toContain('On · active')
     expect(overriddenWrapper.getComponent(SourceProxyOptInRow).text()).not.toMatch(/inherit/i)
@@ -254,12 +256,16 @@ describe('SourceExceptionsPanel', () => {
     expect(inheritedRows[2]!.text()).toContain('Effective Off')
     expect(inheritedRows[3]!.text()).toContain('Global fresh')
     expect(inheritedRows[3]!.text()).toContain('Effective fresh')
+    expect(inheritedRows[4]!.text()).toContain('Global auto')
+    expect(inheritedRows[4]!.text()).toContain('Effective auto')
 
     const overriddenRows = mount(SourceExceptionsPanel, { props: baseProps }).findAllComponents(SourceOverrideRow)
     expect(overriddenRows[2]!.text()).toContain('Global On')
     expect(overriddenRows[2]!.text()).toContain('Effective Off')
     expect(overriddenRows[3]!.text()).toContain('Global fresh')
     expect(overriddenRows[3]!.text()).toContain('Effective reuse')
+    expect(overriddenRows[4]!.text()).toContain('Global auto')
+    expect(overriddenRows[4]!.text()).toContain('Effective disabled')
   })
 
   it('shows a retryable local summary failure without claiming every source inherits', async () => {

@@ -12,7 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginehost"
 )
 
-const validStatusJSON = `{"ready":true,"source_workers":8,"per_source_limit":2,"queued":4,"running":8,"completion_sequence":41,"oldest_running_millis":181001,"completed":20,"cancelled":1,"timed_out":8,"rejected":0,"busiest_sources":[{"source_id":11,"queued":1,"running":2},{"source_id":22,"queued":1,"running":2},{"source_id":33,"queued":1,"running":2},{"source_id":44,"queued":1,"running":2}],"extension_running":false,"extension_queued":0}`
+const validStatusJSON = `{"ready":true,"source_workers":8,"per_source_limit":2,"queued":4,"running":8,"completion_sequence":41,"oldest_running_millis":181001,"completed":20,"cancelled":1,"timed_out":8,"rejected":0,"busiest_sources":[{"source_id":11,"queued":1,"running":2},{"source_id":22,"queued":1,"running":2},{"source_id":33,"queued":1,"running":2},{"source_id":44,"queued":1,"running":2}],"extension_running":false,"extension_queued":0,"kcef":{"state":"ready","errorCode":null}}`
 
 func TestHTTPStatusProber_ReturnsTypedApprovedStatus(t *testing.T) {
 	var gotPath string
@@ -30,11 +30,50 @@ func TestHTTPStatusProber_ReturnsTypedApprovedStatus(t *testing.T) {
 	if gotPath != "/status" {
 		t.Errorf("path = %q, want /status", gotPath)
 	}
-	if !status.Ready || status.SourceWorkers != 8 || status.Running != 8 || status.CompletionSequence != 41 {
-		t.Errorf("status = %+v, want decoded approved fields", status)
+	gotSummary := struct {
+		ready              bool
+		workers, running   int
+		completionSequence int64
+	}{status.Ready, status.SourceWorkers, status.Running, status.CompletionSequence}
+	wantSummary := struct {
+		ready              bool
+		workers, running   int
+		completionSequence int64
+	}{true, 8, 8, 41}
+	if gotSummary != wantSummary {
+		t.Errorf("status summary = %+v, want %+v", gotSummary, wantSummary)
 	}
 	if len(status.BusiestSources) != 4 || status.BusiestSources[0].SourceID != 11 {
 		t.Errorf("busiest_sources = %+v, want four typed source rows", status.BusiestSources)
+	}
+	if status.KCEF.State != enginehost.KCEFStateReady || status.KCEF.ErrorCode != nil {
+		t.Errorf("kcef = %+v, want ready with no error", status.KCEF)
+	}
+}
+
+func TestHTTPStatusProber_AcceptsApprovedKCEFStatusPairings(t *testing.T) {
+	tests := []struct {
+		name string
+		kcef string
+	}{
+		{name: "disabled", kcef: `{"state":"disabled","errorCode":null}`},
+		{name: "initializing", kcef: `{"state":"initializing","errorCode":null}`},
+		{name: "ready", kcef: `{"state":"ready","errorCode":null}`},
+		{name: "failed init timeout", kcef: `{"state":"failed","errorCode":"init_timeout"}`},
+		{name: "failed init failed", kcef: `{"state":"failed","errorCode":"init_failed"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(validStatusJSON, `{"state":"ready","errorCode":null}`, tt.kcef, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+
+			if _, err := enginehost.HTTPStatusProber(time.Second)(context.Background(), srv.URL); err != nil {
+				t.Fatalf("probe: %v", err)
+			}
+		})
 	}
 }
 
@@ -49,6 +88,13 @@ func TestHTTPStatusProber_FailsClosedOnUnapprovedMalformedAndOversizedBodies(t *
 		{name: "malformed", body: `{"ready":true`},
 		{name: "oversized", body: strings.Repeat("x", 32*1024+1)},
 		{name: "second value", body: validStatusJSON + `{}`},
+		{name: "missing kcef", body: strings.Replace(validStatusJSON, `,"kcef":{"state":"ready","errorCode":null}`, "", 1)},
+		{name: "kcef unknown field", body: strings.Replace(validStatusJSON, `"errorCode":null`, `"errorCode":null,"detail":"must-not-survive"`, 1)},
+		{name: "kcef duplicate field", body: strings.Replace(validStatusJSON, `"state":"ready"`, `"state":"ready","state":"ready"`, 1)},
+		{name: "kcef invalid state", body: strings.Replace(validStatusJSON, `"state":"ready"`, `"state":"unknown"`, 1)},
+		{name: "kcef ready error", body: strings.Replace(validStatusJSON, `"errorCode":null`, `"errorCode":"init_failed"`, 1)},
+		{name: "kcef failed missing error", body: strings.Replace(validStatusJSON, `"state":"ready"`, `"state":"failed"`, 1)},
+		{name: "kcef failed unknown error", body: strings.Replace(validStatusJSON, `"state":"ready","errorCode":null`, `"state":"failed","errorCode":"secret"`, 1)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,6 +174,7 @@ func TestExhaustionFingerprint_MatchesTask7PhysicalIdentity(t *testing.T) {
 			{SourceID: 33, Queued: 1, Running: 2},
 			{SourceID: 22, Queued: 1, Running: 2},
 		},
+		KCEF: enginehost.KCEFStatus{State: enginehost.KCEFStateReady},
 	}
 	second := first
 	second.CompletionSequence = 42

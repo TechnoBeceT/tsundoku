@@ -36,7 +36,10 @@ Returns HTTP 200 with one bounded runtime snapshot:
 | `busiest_sources` | array | At most ten `{source_id, queued, running}` entries. |
 | `extension_running` | boolean | Whether either bounded extension lane is running a task. |
 | `extension_queued` | integer | Tasks waiting across the bounded extension mutation and network lanes. |
+| `kcef` | object | Embedded-browser capability as `{state,errorCode}`. State is `disabled`, `initializing`, `ready`, or `failed`; errorCode is null, `init_timeout`, or `init_failed`. |
 
 `busiest_sources` is ordered by running descending, queued descending, then source id ascending.
 The response never includes request bodies, URLs, headers, cookies, tokens, preferences, or stack
 traces. Source ids are the engine's existing public identifiers. A non-GET request returns HTTP 405.
+`/health` remains independent RPC liveness and may return HTTP 200 while KCEF is initializing or
+failed.

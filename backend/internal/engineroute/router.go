@@ -25,14 +25,15 @@ import (
 // atomically under a mutex by SetRoutes, and read under the same mutex by every
 // RPC, so a live reconcile can rebuild the table while requests are in flight.
 //
-// TWO WRITERS, DISJOINT STATE (GAP-114). The routing table has two independent
-// writers that must never clobber each other:
+// TWO LAYERS, DISJOINT STATE (GAP-114). The routing table has two independent
+// state owners that must never clobber each other:
 //   - ReconcileNetwork owns the BASE table (SetRoutes) — the desired routing
 //     derived from DB-truth bindings. It is the sole caller of SetRoutes.
-//   - the enginehost supervisor owns the DEGRADE OVERLAY (Degrade/Restore) — a
-//     small set of source ids force-routed to the default instance while their
-//     profile's engine-host instance is observed DOWN, cleared the moment the
-//     instance is confirmed healthy again (or its profile is retired).
+//   - enginehost owns the DEGRADE OVERLAY (Degrade/Restore) — a small set of
+//     source ids force-routed to the default while their instance is observed
+//     down or an obsolete profile is being retired. Launcher-side ownership does
+//     not clear a retirement degradation until ReconcileNetwork has published
+//     the replacement base table.
 //
 // clientFor MERGES them with the overlay winning: a degraded source always
 // routes to the default, masking a stale base entry that still points at a dead
@@ -51,7 +52,7 @@ type Router struct {
 
 	mu     sync.RWMutex
 	routes map[int64]sourceengine.Client // source id → its instance client (base table, ReconcileNetwork-owned)
-	// degraded is the supervisor-owned overlay: a source id present here is
+	// degraded is the enginehost-owned overlay: a source id present here is
 	// force-routed to the default instance regardless of the base table, because
 	// its profile's instance is currently down. Empty ⇒ inert (no-op merge).
 	degraded map[int64]bool

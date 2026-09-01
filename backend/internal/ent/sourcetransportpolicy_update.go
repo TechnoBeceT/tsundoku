@@ -89,6 +89,26 @@ func (_u *SourceTransportPolicyUpdate) ClearImageConnectionMode() *SourceTranspo
 	return _u
 }
 
+// SetKcefPolicy sets the "kcef_policy" field.
+func (_u *SourceTransportPolicyUpdate) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpdate {
+	_u.mutation.SetKcefPolicy(v)
+	return _u
+}
+
+// SetNillableKcefPolicy sets the "kcef_policy" field if the given value is not nil.
+func (_u *SourceTransportPolicyUpdate) SetNillableKcefPolicy(v *sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpdate {
+	if v != nil {
+		_u.SetKcefPolicy(*v)
+	}
+	return _u
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (_u *SourceTransportPolicyUpdate) ClearKcefPolicy() *SourceTransportPolicyUpdate {
+	_u.mutation.ClearKcefPolicy()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SourceTransportPolicyUpdate) SetUpdatedAt(v time.Time) *SourceTransportPolicyUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -143,6 +163,11 @@ func (_u *SourceTransportPolicyUpdate) check() error {
 			return &ValidationError{Name: "image_connection_mode", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.image_connection_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.KcefPolicy(); ok {
+		if err := sourcetransportpolicy.KcefPolicyValidator(v); err != nil {
+			return &ValidationError{Name: "kcef_policy", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.kcef_policy": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -175,6 +200,12 @@ func (_u *SourceTransportPolicyUpdate) sqlSave(ctx context.Context) (_node int, 
 	}
 	if _u.mutation.ImageConnectionModeCleared() {
 		_spec.ClearField(sourcetransportpolicy.FieldImageConnectionMode, field.TypeEnum)
+	}
+	if value, ok := _u.mutation.KcefPolicy(); ok {
+		_spec.SetField(sourcetransportpolicy.FieldKcefPolicy, field.TypeEnum, value)
+	}
+	if _u.mutation.KcefPolicyCleared() {
+		_spec.ClearField(sourcetransportpolicy.FieldKcefPolicy, field.TypeEnum)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcetransportpolicy.FieldUpdatedAt, field.TypeTime, value)
@@ -260,6 +291,26 @@ func (_u *SourceTransportPolicyUpdateOne) ClearImageConnectionMode() *SourceTran
 	return _u
 }
 
+// SetKcefPolicy sets the "kcef_policy" field.
+func (_u *SourceTransportPolicyUpdateOne) SetKcefPolicy(v sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpdateOne {
+	_u.mutation.SetKcefPolicy(v)
+	return _u
+}
+
+// SetNillableKcefPolicy sets the "kcef_policy" field if the given value is not nil.
+func (_u *SourceTransportPolicyUpdateOne) SetNillableKcefPolicy(v *sourcetransportpolicy.KcefPolicy) *SourceTransportPolicyUpdateOne {
+	if v != nil {
+		_u.SetKcefPolicy(*v)
+	}
+	return _u
+}
+
+// ClearKcefPolicy clears the value of the "kcef_policy" field.
+func (_u *SourceTransportPolicyUpdateOne) ClearKcefPolicy() *SourceTransportPolicyUpdateOne {
+	_u.mutation.ClearKcefPolicy()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *SourceTransportPolicyUpdateOne) SetUpdatedAt(v time.Time) *SourceTransportPolicyUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -327,6 +378,11 @@ func (_u *SourceTransportPolicyUpdateOne) check() error {
 			return &ValidationError{Name: "image_connection_mode", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.image_connection_mode": %w`, err)}
 		}
 	}
+	if v, ok := _u.mutation.KcefPolicy(); ok {
+		if err := sourcetransportpolicy.KcefPolicyValidator(v); err != nil {
+			return &ValidationError{Name: "kcef_policy", err: fmt.Errorf(`ent: validator failed for field "SourceTransportPolicy.kcef_policy": %w`, err)}
+		}
+	}
 	return nil
 }
 
@@ -376,6 +432,12 @@ func (_u *SourceTransportPolicyUpdateOne) sqlSave(ctx context.Context) (_node *S
 	}
 	if _u.mutation.ImageConnectionModeCleared() {
 		_spec.ClearField(sourcetransportpolicy.FieldImageConnectionMode, field.TypeEnum)
+	}
+	if value, ok := _u.mutation.KcefPolicy(); ok {
+		_spec.SetField(sourcetransportpolicy.FieldKcefPolicy, field.TypeEnum, value)
+	}
+	if _u.mutation.KcefPolicyCleared() {
+		_spec.ClearField(sourcetransportpolicy.FieldKcefPolicy, field.TypeEnum)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(sourcetransportpolicy.FieldUpdatedAt, field.TypeTime, value)

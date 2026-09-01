@@ -3,6 +3,7 @@ package enginehost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -14,6 +15,10 @@ import (
 // ErrLauncherClosed is returned by EnsureProfile after Close has run — the
 // launcher is shutting down and must not spawn anything new.
 var ErrLauncherClosed = errors.New("enginehost: launcher closed")
+
+// ErrKCEFCapacity means admitting the profile would exceed the hard limit of
+// two embedded-browser process groups, including the default host reservation.
+var ErrKCEFCapacity = errors.New("enginehost: embedded browser capacity exhausted")
 
 // EngineHostLauncherConfig is the typed configuration the launcher needs, copied
 // out of config.EngineConfig by main (config stays the sole env boundary — this
@@ -29,6 +34,10 @@ type EngineHostLauncherConfig struct {
 	// profile's data dir; blank or absent ⇒ KCEF seeding is skipped
 	// (cfg.Engine.KCEFBundle).
 	KCEFBundle string
+	// DefaultKCEFEnabled records the entrypoint-managed default host's explicit
+	// embedded-browser intent so profile admission can account for it without
+	// reading environment variables outside internal/config.
+	DefaultKCEFEnabled bool
 }
 
 // managedInstance is one running (or previously-running) engine-host process the
@@ -40,6 +49,10 @@ type managedInstance struct {
 	baseURL string
 	proc    RunningProcess
 	client  sourceengine.Client
+	// processGroup owns this generation's non-recyclable OS group identity. Its
+	// ledger entry can outlive the JVM/instance while descendants or probe
+	// uncertainty remain; only KCEF-enabled entries consume browser capacity.
+	processGroup *ownedProcessGroup
 	// profile is the full profile this instance serves — retained so a supervisor
 	// restart reuses the same port/data dir + KCEF mode, and so degrade/restore
 	// know which source ids to move (profile.SourceIDs).
@@ -83,15 +96,15 @@ func (m *managedInstance) instance() engineroute.Instance {
 // Launcher spawns and supervises one engine-host JVM per non-default network
 // profile, satisfying engineroute.Launcher. Construct with New.
 //
-// CONCURRENCY. All state (the instance map + the closed flag) is guarded by mu.
-// EnsureProfile holds mu for its whole body, INCLUDING the spawn + health-poll,
-// so two concurrent reconcile passes can never double-spawn the same profile
-// (the second blocks, then observes the first's healthy instance and reuses it).
-// This is safe because ReconcileNetwork calls EnsureProfile sequentially within a
-// pass, and the health-poll respects the passed ctx — a shutdown cancels ctx, so
-// an in-flight spawn returns promptly and releases mu for Close. Retire and Close
-// collect their victims under mu but stop them OUTSIDE it, so a graceful-stop
-// wait never blocks an EnsureProfile.
+// CONCURRENCY. All state (the instance map, process-group ledger, prepared
+// admission, and closed flag) is guarded by mu. PrepareProfiles and EnsureProfile
+// hold mu for their whole bodies, INCLUDING group retirement or spawn +
+// health-poll, so two concurrent reconcile passes can never over-admit or
+// double-spawn the same profile (the second blocks, then observes the first's
+// current state). This is safe because ReconcileNetwork calls them sequentially
+// within a pass and every wait respects a finite deadline or the passed ctx.
+// Retire and Close collect their victims under mu but stop them OUTSIDE it, so a
+// graceful-stop wait never blocks an EnsureProfile.
 //
 // SUPERVISION (GAP-114). The Supervisor (supervisor.go) keeps managed instances
 // alive after spawn. It PROBES /health and bounded /status outside mu, then takes
@@ -99,8 +112,9 @@ func (m *managedInstance) instance() engineroute.Instance {
 // EnsureProfile does, so a supervisor restart and a concurrent reconcile
 // EnsureProfile serialise on mu and can never double-spawn one profile.
 // Route degrade/restore go through the optional Rerouter (a disjoint overlay on
-// engineroute.Router), never the base routing table, so supervision never clobbers
-// ReconcileNetwork's routing.
+// engineroute.Router), never the base routing table. Launcher-side ownership
+// keeps retirement degradation live until its explicit publication completion,
+// while supervision ownership keeps a currently-down instance degraded.
 type Launcher struct {
 	cfg     EngineHostLauncherConfig
 	factory engineroute.ClientFactory
@@ -112,33 +126,47 @@ type Launcher struct {
 	exhaustionDiagnostics ExhaustionDiagnosticSink
 	allocPort             PortAllocator
 
-	// rerouter degrades a down profile's sources to the default engine and
-	// restores them on recovery (GAP-114). Optional: nil in deployments/tests
-	// without per-source routing, in which case degrade/restore are pure no-ops
-	// and the launcher behaves exactly as before. Set via WithRerouter;
-	// *engineroute.Router satisfies it.
+	// rerouter degrades profile sources to the default engine during down episodes
+	// and retirement publication windows. Optional: nil in deployments/tests
+	// without per-source routing, in which case degrade/restore are pure no-ops.
+	// Set via WithRerouter; *engineroute.Router satisfies it.
 	rerouter Rerouter
 
 	// Tunables (production defaults set by New; overridden in tests).
-	startTimeout time.Duration // how long a spawn waits for the first healthy /health
-	pollInterval time.Duration // gap between health polls during a spawn
-	settleDelay  time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
-	stopGrace    time.Duration // SIGTERM→SIGKILL grace on stop
+	readinessTimeout time.Duration // one spawn-to-settle budget across health, KCEF, and settle
+	readinessClock   ReadinessClock
+	pollInterval     time.Duration // gap between health polls during a spawn
+	settleDelay      time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
+	stopGrace        time.Duration // SIGTERM→SIGKILL grace on stop
 
 	mu        sync.Mutex
 	instances map[string]*managedInstance
-	closed    bool
+	// processGroups contains every starting, running, and retiring managed group,
+	// including uncertain KCEF-off teardown. The static default KCEF reservation
+	// is derived from cfg and never appears here.
+	processGroups map[*ownedProcessGroup]struct{}
+	// preparedKCEF is nil before the first PrepareProfiles call. Afterwards it is
+	// the stable admitted key set for the current desired topology.
+	preparedKCEF map[string]bool
+	// activePreparation owns retirement degradation until the matching reconcile
+	// publishes its replacement base routes. A later preparation absorbs an
+	// unfinished predecessor so a stale completion cannot reopen old routes.
+	prepareGeneration uint64
+	activePreparation *profilePreparation
+	closed            bool
 }
 
 // Compile-time assertion: *Launcher is a drop-in engineroute.Launcher, so main
 // can swap it for the placeholder engineroute.DisabledLauncher.
 var _ engineroute.Launcher = (*Launcher)(nil)
 
-// Default lifecycle tunables. startTimeout mirrors the entrypoint's own bounded
-// /health wait (60 polls × ~2s ≈ 60s); the others are conservative.
+// Default lifecycle tunables. defaultLaunchReadinessTimeout gives KCEF's
+// 120-second producer fifteen seconds for the health/status/settle hand-off,
+// while staying below the 150-second source deadline. It is ONE budget measured
+// from process spawn: no readiness phase may reset it.
 const (
-	defaultStartTimeout = 60 * time.Second
-	defaultPollInterval = 500 * time.Millisecond
+	defaultLaunchReadinessTimeout = 135 * time.Second
+	defaultPollInterval           = 500 * time.Millisecond
 	// defaultSettleDelay is the post-healthy re-probe window: long enough for a
 	// crash-after-health (e.g. a failed Chromium init — GAP-094) to manifest,
 	// short enough to add negligible latency to a rare profile spawn.
@@ -161,11 +189,13 @@ func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts .
 		statusProber:          newHTTPStatusProber(defaultProbeTimeout),
 		exhaustionDiagnostics: logExhaustionDiagnostic,
 		allocPort:             allocFreePort,
-		startTimeout:          defaultStartTimeout,
+		readinessTimeout:      defaultLaunchReadinessTimeout,
+		readinessClock:        systemReadinessClock{},
 		pollInterval:          defaultPollInterval,
 		settleDelay:           defaultSettleDelay,
 		stopGrace:             defaultStopGrace,
 		instances:             map[string]*managedInstance{},
+		processGroups:         map[*ownedProcessGroup]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -189,9 +219,16 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 	if l.closed {
 		return engineroute.Instance{}, ErrLauncherClosed
 	}
+	if p.KCEFEnabled && l.preparedKCEF != nil && !l.preparedKCEF[p.Key] {
+		return engineroute.Instance{}, fmt.Errorf("%w: profile %q", ErrKCEFCapacity, p.Key)
+	}
 
 	if mi, ok := l.instances[p.Key]; ok {
-		if l.reusable(mi) {
+		reusable, err := l.reusable(ctx, mi)
+		if err != nil {
+			return engineroute.Instance{}, err
+		}
+		if reusable {
 			// A confirmed-healthy instance: clear any stale degrade overlay left by
 			// the supervisor from a prior down episode, so its sources resume using
 			// their base route.
@@ -199,10 +236,16 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 			l.markHealthyLocked(mi)
 			return mi.instance(), nil
 		}
-		// Dead or wedged: tear it down and fall through to a fresh spawn.
+		// Dead, wedged, or capability-incompatible: keep this profile's sources
+		// on the default engine while the existing process-control path replaces
+		// it. A health-only cache hit must never clear a degradation overlay.
 		slog.WarnContext(ctx, "enginehost: cached instance is not reusable, respawning",
 			"profile", p.Key, "pid", mi.proc.Pid())
-		l.stopInstance(mi)
+		l.degradeLocked(mi)
+		l.protectActivePreparationLocked(mi.profile.SourceIDs)
+		if !l.stopInstanceLocked(ctx, mi) {
+			return engineroute.Instance{}, lingeringProcessGroupError(mi)
+		}
 		delete(l.instances, p.Key)
 	}
 
@@ -210,11 +253,35 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 }
 
 // reusable reports whether a cached instance can be handed back as-is: its
-// process must still be running AND its /health must answer. An alive-but-wedged
-// JVM (health failing) is treated as NOT reusable so EnsureProfile restarts it,
-// rather than routing a source at a dead engine.
-func (l *Launcher) reusable(mi *managedInstance) bool {
-	return alive(mi.proc) && l.prober(mi.baseURL) == nil
+// process must be running, /health must answer, and the strict status capability
+// must still match the profile's explicit KCEF intent. An alive-but-wedged or
+// health-only JVM is treated as NOT reusable so EnsureProfile keeps its sources
+// degraded while replacing it rather than routing WebView calls at a dead browser.
+func (l *Launcher) reusable(ctx context.Context, mi *managedInstance) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !alive(mi.proc) {
+		return false, nil
+	}
+	if err := l.prober(ctx, mi.baseURL); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, nil
+	}
+	status, err := l.statusProber(ctx, mi.baseURL)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	ready, err := kcefStatusReady(status.KCEF, mi.profile.KCEFEnabled)
+	return err == nil && ready, nil
 }
 
 // Retire stops every running instance whose key is NOT in keep and removes it
@@ -225,13 +292,13 @@ func (l *Launcher) reusable(mi *managedInstance) bool {
 // It also clears any degrade overlay for a retired profile's sources: a profile
 // no longer referenced by any binding must not leave its sources force-routed to
 // the default, or a stale overlay entry would mask a future rebinding.
-func (l *Launcher) Retire(_ context.Context, keep map[string]bool) {
+func (l *Launcher) Retire(ctx context.Context, keep map[string]bool) {
 	doomed := l.detach(func(mi *managedInstance) bool { return !keep[mi.key] })
 	for _, mi := range doomed {
-		l.stopInstance(mi)
-		if l.rerouter != nil {
-			l.rerouter.Restore(mi.profile.SourceIDs)
-		}
+		l.stopDetachedInstance(ctx, mi)
+		l.mu.Lock()
+		l.restoreEligibleSourcesLocked(mi.profile.SourceIDs)
+		l.mu.Unlock()
 	}
 }
 
@@ -249,9 +316,7 @@ func (l *Launcher) markHealthyLocked(mi *managedInstance) {
 	mi.degraded = false
 	mi.restartFailures = 0
 	mi.nextRestartAt = time.Time{}
-	if l.rerouter != nil {
-		l.rerouter.Restore(mi.profile.SourceIDs)
-	}
+	l.restoreEligibleSourcesLocked(mi.profile.SourceIDs)
 }
 
 // degradeLocked marks mi down and force-routes its sources to the default engine
@@ -264,23 +329,60 @@ func (l *Launcher) degradeLocked(mi *managedInstance) {
 	}
 }
 
-// Close stops ALL instances and marks the launcher closed so no further profile
-// can be brought up. It is wired into main's graceful-shutdown path. Idempotent;
-// always returns nil (teardown is best-effort). The error return exists so main
-// can treat it uniformly with the other closers.
+func (l *Launcher) restoreEligibleSourcesLocked(sourceIDs []int64) {
+	if l.rerouter == nil || len(sourceIDs) == 0 {
+		return
+	}
+	eligible := make([]int64, 0, len(sourceIDs))
+	seen := make(map[int64]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if seen[sourceID] || l.preparationProtectsSourceLocked(sourceID) || l.degradedInstanceOwnsSourceLocked(sourceID) {
+			continue
+		}
+		seen[sourceID] = true
+		eligible = append(eligible, sourceID)
+	}
+	l.rerouter.Restore(eligible)
+}
+
+func (l *Launcher) preparationProtectsSourceLocked(sourceID int64) bool {
+	return l.activePreparation != nil && l.activePreparation.protected[sourceID]
+}
+
+func (l *Launcher) degradedInstanceOwnsSourceLocked(sourceID int64) bool {
+	for _, instance := range l.instances {
+		if !instance.degraded {
+			continue
+		}
+		for _, candidate := range instance.profile.SourceIDs {
+			if candidate == sourceID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Close marks the launcher closed, then drains every group still present in the
+// ownership ledger, including failed-start and detached-retirement groups that
+// no longer have an instance-map entry. All groups share one two-grace shutdown
+// deadline and are driven concurrently, so aggregate latency is bounded rather
+// than growing with profile count. Any ownership not proven absent is reported.
 func (l *Launcher) Close() error {
 	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
 	l.closed = true
+	l.instances = map[string]*managedInstance{}
+	groups := make([]*ownedProcessGroup, 0, len(l.processGroups))
+	for group := range l.processGroups {
+		group.retiring = true
+		groups = append(groups, group)
+	}
 	l.mu.Unlock()
 
-	for _, mi := range l.detach(func(*managedInstance) bool { return true }) {
-		l.stopInstance(mi)
-	}
-	return nil
+	l.closeProcessGroups(groups)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.unresolvedProcessGroupOwnershipLocked()
 }
 
 // detach removes every instance matching pred from the map under mu and returns

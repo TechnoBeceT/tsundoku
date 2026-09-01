@@ -60,12 +60,18 @@ const baseProps = {
   sourceConfiguration: comicAsuraSourceConfiguration,
 }
 
-const mountPane = () => mount(DownloadEnginePane, { props: baseProps })
+type PaneProps = InstanceType<typeof DownloadEnginePane>['$props']
+
+const mountPane = (overrides: Partial<PaneProps> = {}) => mount(DownloadEnginePane, {
+  attachTo: document.body,
+  props: { ...baseProps, ...overrides } as PaneProps,
+})
 
 describe('DownloadEnginePane', () => {
-  it('renders exactly five canonical anchored sections in the intended hierarchy', () => {
-    const wrapper = mountPane()
-    const sections = wrapper.findAll('[data-engine-section]')
+  it('renders exactly five linked tabs and five stable panels with Scheduling active by default', () => {
+    const wrapper = mountPane({ selectedSourceId: null, sourceConfiguration: null })
+    const tabs = wrapper.findAll('[role="tab"]')
+    const sections = wrapper.findAll('[role="tabpanel"]')
 
     expect(sections.map(section => section.attributes('id'))).toEqual([
       'download-engine-scheduling',
@@ -81,7 +87,93 @@ describe('DownloadEnginePane', () => {
       'Routing',
       'Source exceptions',
     ])
-    expect(wrapper.findAll('[data-testid="engine-section-nav"] a')).toHaveLength(5)
+    expect(tabs.map(tab => tab.text())).toEqual([
+      'Scheduling',
+      'Protection',
+      'Access & bypass',
+      'Routing',
+      'Source exceptions',
+    ])
+    expect(tabs.map(tab => tab.attributes('aria-controls'))).toEqual(sections.map(section => section.attributes('id')))
+    expect(tabs.map(tab => tab.attributes('aria-selected'))).toEqual(['true', 'false', 'false', 'false', 'false'])
+    expect(sections[0]!.attributes('hidden')).toBeUndefined()
+    expect(sections.slice(1).every(section => section.attributes('hidden') !== undefined)).toBe(true)
+    expect(wrapper.findAllComponents(SourceExceptionsPanel)).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps edited scheduling state and save boundaries intact across tab switches', async () => {
+    const wrapper = mountPane({ selectedSourceId: null, sourceConfiguration: null })
+    const maxRetries = wrapper.get<HTMLInputElement>('input[aria-label="Chapter max retries"]')
+
+    await maxRetries.setValue('12')
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('click')
+    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
+    expect(wrapper.get<HTMLInputElement>('input[aria-label="Chapter max retries"]').element.value).toBe('12')
+
+    await wrapper.get('#download-engine-scheduling .save-foot button').trigger('click')
+    expect(wrapper.emitted('save-library')?.[0]?.[0]).toMatchObject({ maxRetries: 12 })
+    wrapper.unmount()
+  })
+
+  it('keeps endpoint dialog and error state mounted across tab switches', async () => {
+    const wrapper = mountPane({
+      selectedSourceId: null,
+      sourceConfiguration: null,
+      endpointAction: { busyId: null, error: 'Endpoint could not be saved.' },
+    })
+
+    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
+    await wrapper.get('#download-engine-routing button').trigger('click')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Endpoint could not be saved.')
+
+    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
+    await wrapper.findAll('[role="tab"]')[3]!.trigger('click')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Endpoint could not be saved.')
+    wrapper.unmount()
+  })
+
+  it('keeps Source exceptions loading and error state mounted across tab switches', async () => {
+    const wrapper = mountPane({
+      selectedSourceId: null,
+      sourceConfiguration: null,
+      sourceExceptionsPending: true,
+      sourceSummariesError: 'Source exceptions could not be loaded.',
+    })
+    const panel = wrapper.get<HTMLElement>('#download-engine-source-exceptions .source-exceptions').element
+
+    await wrapper.findAll('[role="tab"]')[4]!.trigger('click')
+    expect(wrapper.get('#download-engine-source-exceptions').text()).toContain('Source exceptions could not be loaded.')
+    expect(wrapper.find('[aria-label="Loading source exceptions"]').exists()).toBe(true)
+
+    await wrapper.findAll('[role="tab"]')[0]!.trigger('click')
+    await wrapper.findAll('[role="tab"]')[4]!.trigger('click')
+    expect(wrapper.get<HTMLElement>('#download-engine-source-exceptions .source-exceptions').element).toBe(panel)
+    expect(wrapper.get('#download-engine-source-exceptions').text()).toContain('Source exceptions could not be loaded.')
+    expect(wrapper.find('[aria-label="Loading source exceptions"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it.each([
+    ['selected source', { selectedSourceId: '9127482910938471028' }],
+    ['highlighted source', { selectedSourceId: null, highlightedSourceId: '9127482910938471028' }],
+    ['highlighted setting', { selectedSourceId: null, highlightedSetting: 'imageRequestDelay' as const }],
+  ])('activates Source exceptions for a %s deep link', (_label, overrides) => {
+    const wrapper = mountPane(overrides)
+
+    expect(wrapper.findAll('[role="tab"]')[4]!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('#download-engine-source-exceptions').attributes('hidden')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('activates and focuses Source exceptions before a contextual shortcut completes', async () => {
+    const wrapper = mountPane({ selectedSourceId: null, sourceConfiguration: null })
+
+    await wrapper.get('button[data-source-exceptions-shortcut]').trigger('click')
+
+    expect(wrapper.findAll('[role="tab"]')[4]!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('#download-engine-source-exceptions').element).toBe(document.activeElement)
+    wrapper.unmount()
   })
 
   it('uses one h1, canonical h2 section titles, and nested h3 card titles', () => {
@@ -188,10 +280,9 @@ describe('DownloadEnginePane', () => {
 
   it('targets every contextual shortcut at the one canonical Source exceptions panel', () => {
     const wrapper = mountPane()
-    const shortcuts = wrapper.findAll('a[data-source-exceptions-shortcut]')
+    const shortcuts = wrapper.findAll('button[data-source-exceptions-shortcut]')
 
     expect(shortcuts.length).toBeGreaterThan(1)
-    expect(shortcuts.every(link => link.attributes('href') === '#download-engine-source-exceptions')).toBe(true)
     expect(wrapper.findAllComponents(SourceExceptionsPanel)).toHaveLength(1)
     expect(wrapper.findAll('[data-testid="source-editor"]')).toHaveLength(1)
   })

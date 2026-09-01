@@ -1238,6 +1238,30 @@ func TestEngineConfig_FromEnv(t *testing.T) {
 	}
 }
 
+// TestEngineConfig_KCEFEnabled confirms the entrypoint-owned default is true
+// unless TSUNDOKU_ENGINE_KCEF explicitly overrides it.
+func TestEngineConfig_KCEFEnabled(t *testing.T) {
+	t.Setenv("TSUNDOKU_DATABASE_PASSWORD", "x")
+	t.Setenv("TSUNDOKU_AUTH_SECRET", "supersecretpassword1234")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load defaults: %v", err)
+	}
+	if !cfg.Engine.KCEFEnabled {
+		t.Fatal("Engine.KCEFEnabled = false, want default true")
+	}
+
+	t.Setenv("TSUNDOKU_ENGINE_KCEF", "false")
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("load override: %v", err)
+	}
+	if cfg.Engine.KCEFEnabled {
+		t.Fatal("Engine.KCEFEnabled = true, want false from TSUNDOKU_ENGINE_KCEF")
+	}
+}
+
 // TestValidateAcceptsEngineURL confirms validate() accepts the default plus any
 // well-formed absolute http(s) URL.
 func TestValidateAcceptsEngineURL(t *testing.T) {

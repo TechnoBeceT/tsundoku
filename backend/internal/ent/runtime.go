@@ -825,11 +825,11 @@ func init() {
 	sourcetransportpolicyFields := schema.SourceTransportPolicy{}.Fields()
 	_ = sourcetransportpolicyFields
 	// sourcetransportpolicyDescCreatedAt is the schema descriptor for created_at field.
-	sourcetransportpolicyDescCreatedAt := sourcetransportpolicyFields[4].Descriptor()
+	sourcetransportpolicyDescCreatedAt := sourcetransportpolicyFields[5].Descriptor()
 	// sourcetransportpolicy.DefaultCreatedAt holds the default value on creation for the created_at field.
 	sourcetransportpolicy.DefaultCreatedAt = sourcetransportpolicyDescCreatedAt.Default.(func() time.Time)
 	// sourcetransportpolicyDescUpdatedAt is the schema descriptor for updated_at field.
-	sourcetransportpolicyDescUpdatedAt := sourcetransportpolicyFields[5].Descriptor()
+	sourcetransportpolicyDescUpdatedAt := sourcetransportpolicyFields[6].Descriptor()
 	// sourcetransportpolicy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	sourcetransportpolicy.DefaultUpdatedAt = sourcetransportpolicyDescUpdatedAt.Default.(func() time.Time)
 	// sourcetransportpolicy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.

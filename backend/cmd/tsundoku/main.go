@@ -325,11 +325,7 @@ func main() {
 	// ClientFactory reuses the shared httpc so an instance's client is built
 	// exactly like the default one. Close() is wired into the shutdown path below.
 	engineHostLauncher := enginehost.New(
-		enginehost.EngineHostLauncherConfig{
-			HostBin:    cfg.Engine.HostBin,
-			DataDir:    cfg.Engine.DataDir,
-			KCEFBundle: cfg.Engine.KCEFBundle,
-		},
+		engineHostLauncherConfig(cfg.Engine),
 		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
 		// The routing seam the launcher + supervisor use to degrade a down
 		// profile's sources to the default engine and restore them on recovery
@@ -488,13 +484,14 @@ func main() {
 	// detached), used both on boot (after the default-instance reconcile) and as
 	// the network-mutation write-through. With no bindings it is a pure no-op.
 	netDeps := enginetopo.NetworkReconcileDeps{
-		Snapshot:          networkSvc,
-		TransportSnapshot: sourceTransportSvc,
-		Router:            engineRouter,
-		Launcher:          engineLauncher,
-		DB:                entClient,
-		Cache:             apkStore,
-		BaseConfig:        settingsSvc,
+		Snapshot:           networkSvc,
+		TransportSnapshot:  sourceTransportSvc,
+		Router:             engineRouter,
+		Launcher:           engineLauncher,
+		DB:                 entClient,
+		Cache:              apkStore,
+		BaseConfig:         settingsSvc,
+		DefaultKCEFEnabled: cfg.Engine.KCEFEnabled,
 	}
 	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
@@ -506,6 +503,7 @@ func main() {
 		sourceTransportSvc,
 		networkSvc,
 		transportDefaults,
+		cfg.Engine.KCEFEnabled,
 	)
 	sourceImageProxySvc := sourceimageproxy.NewService(
 		entClient,
@@ -1056,6 +1054,18 @@ func runEngineTopoReconcile(
 // nothing.
 type networkReconciler interface {
 	ReconcileNetwork(context.Context) (enginetopo.NetworkReconcileResult, error)
+}
+
+// engineHostLauncherConfig copies the sole env-bound EngineConfig into the
+// launcher-owned shape, keeping the default host's KCEF intent typed across the
+// process boundary.
+func engineHostLauncherConfig(cfg config.EngineConfig) enginehost.EngineHostLauncherConfig {
+	return enginehost.EngineHostLauncherConfig{
+		HostBin:            cfg.HostBin,
+		DataDir:            cfg.DataDir,
+		KCEFBundle:         cfg.KCEFBundle,
+		DefaultKCEFEnabled: cfg.KCEFEnabled,
+	}
 }
 
 func runNetworkReconcile(ctx context.Context, reconciler networkReconciler) {

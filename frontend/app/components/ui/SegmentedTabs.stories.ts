@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/vue3'
+import { expect, userEvent, within } from 'storybook/test'
 import { ref } from 'vue'
 import SegmentedTabs from './SegmentedTabs.vue'
 
@@ -71,4 +72,37 @@ export const NoCounts: Story = {
     }),
     template: '<SegmentedTabs v-model="value" :tabs="tabs" />',
   }),
+}
+
+/** Panel-linked tabs demonstrate automatic keyboard activation and roving focus. */
+export const PanelNavigation: Story = {
+  render: () => ({
+    components: { SegmentedTabs },
+    setup: () => ({
+      value: ref('scheduling'),
+      tabs: [
+        { key: 'scheduling', label: 'Scheduling', id: 'scheduling-tab', panelId: 'scheduling-panel' },
+        { key: 'protection', label: 'Protection', id: 'protection-tab', panelId: 'protection-panel' },
+        { key: 'routing', label: 'Routing', id: 'routing-tab', panelId: 'routing-panel' },
+      ],
+    }),
+    template: `
+      <div>
+        <SegmentedTabs v-model="value" :tabs="tabs" accessible-label="Download engine sections" />
+        <p id="scheduling-panel" role="tabpanel" aria-labelledby="scheduling-tab" :hidden="value !== 'scheduling'">Scheduling controls</p>
+        <p id="protection-panel" role="tabpanel" aria-labelledby="protection-tab" :hidden="value !== 'protection'">Protection controls</p>
+        <p id="routing-panel" role="tabpanel" aria-labelledby="routing-tab" :hidden="value !== 'routing'">Routing controls</p>
+      </div>
+    `,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const scheduling = canvas.getByRole('tab', { name: 'Scheduling' })
+    scheduling.focus()
+    await userEvent.keyboard('{ArrowLeft}')
+    await expect(canvas.getByRole('tab', { name: 'Routing' })).toHaveFocus()
+    await expect(canvas.getByRole('tabpanel', { name: 'Routing' })).toBeVisible()
+    await userEvent.keyboard('{Home}')
+    await expect(scheduling).toHaveFocus()
+  },
 }

@@ -32,12 +32,11 @@ import kotlinx.coroutines.GlobalScope
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.cef.network.CefCookieManager
 import org.koin.core.context.startKoin
+import org.koin.core.module.Module
 import org.koin.dsl.module
 import suwayomi.tachidesk.global.impl.KcefWebView.Companion.toCefCookie
 import suwayomi.tachidesk.server.ApplicationDirs
 import suwayomi.tachidesk.server.ServerConfig
-import suwayomi.tachidesk.server.serverConfig
-import suwayomi.tachidesk.server.util.CEFManager
 import suwayomi.tachidesk.server.util.ConfigTypeRegistration
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -56,6 +55,7 @@ import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
 import java.security.Security
 import java.util.Locale
+import kotlin.time.Duration
 
 private val logger = KotlinLogging.logger {}
 
@@ -64,7 +64,7 @@ private val logger = KotlinLogging.logger {}
  * on off-screen browser creation, copy NetworkHelper's stored cookies (incl. FlareSolverr's
  * cf_clearance) into CEF's global cookie manager so the WebView shares the source client's session.
  */
-private object KcefCookieInitHandler : KcefWebViewProvider.InitBrowserHandler {
+internal object KcefCookieInitHandler : KcefWebViewProvider.InitBrowserHandler {
     override fun init(provider: KcefWebViewProvider) {
         val networkHelper = Injekt.get<NetworkHelper>()
         CefCookieManager.getGlobalManager().apply {
@@ -171,6 +171,13 @@ private fun closeQuietly(channel: FileChannel) {
     }
 }
 
+/** [kcefRuntimeModule] provides the real application-directory and KCEF cookie-hook bindings. */
+internal fun kcefRuntimeModule(applicationDirs: ApplicationDirs): Module =
+    module {
+        single { applicationDirs }
+        single<KcefWebViewProvider.InitBrowserHandler> { KcefCookieInitHandler }
+    }
+
 /** Stand up the AndroidCompat runtime on a plain JVM. Returns the app data dir. */
 fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
     // Suwayomi ServerSetup.kt:381-384 (fixes Suwayomi-Server issue #119): Mihon's source-ID
@@ -216,15 +223,8 @@ fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
             createAppModule(app),
             androidCompatModule(),
             configManagerModule(),
-            module {
-                single { applicationDirs }
-                // KCEF WebView init hook — seeds NetworkHelper's stored cookies into CEF's cookie
-                // manager on browser creation (adapted 1:1 from Suwayomi's ServerSetup, MPL-2.0),
-                // so cf_clearance / session cookies carry into the off-screen Chromium.
-                single<KcefWebViewProvider.InitBrowserHandler> {
-                    KcefCookieInitHandler
-                }
-            },
+            // Seeds NetworkHelper cookies into off-screen Chromium on concrete provider init.
+            kcefRuntimeModule(applicationDirs),
         )
     }
 
@@ -242,16 +242,26 @@ fun bootstrapAndroidCompat(dataRoot: File): ApplicationDirs {
     return applicationDirs
 }
 
-/**
- * Enable the embedded Chromium (KCEF) WebView so JS-challenge / WebView-dependent sources work.
- * KcefWebViewProvider is already registered by AndroidCompatInitializer; this flips the config
- * flag and kicks off CEFManager (off-screen, no X display). For local dev the Chromium runtime
- * is downloaded to `<dataRoot>/bin/kcef` on first run; the Docker image bundles it (Task 8).
- */
-fun enableKcef() {
-    serverConfig.kcefEnabled.value = true
-    CEFManager.init()
-    logger.info { "KCEF enabled (off-screen Chromium); initializing in background" }
+/** [createKcefLifecycle] creates the lifecycle that owns physical KCEF initialization and cleanup. */
+internal fun createKcefLifecycle(process: KcefProcess = PinnedKcefProcess()): KcefLifecycle =
+    KcefLifecycle(
+        initialize = process::initialize,
+        cleanup = process::close,
+        capabilityProbe = process::isReady,
+    )
+
+/** [shutdownEngineHost] overlaps KCEF cleanup with server stop under the cleanup's original bound. */
+internal fun shutdownEngineHost(
+    kcefLifecycle: KcefLifecycle,
+    stopServer: () -> Unit,
+    closeExtensions: () -> Unit,
+    kcefCleanupTimeout: Duration = KCEFShutdownCleanupTimeout,
+): Boolean {
+    val kcefCleanup = kcefLifecycle.beginShutdownCleanup(kcefCleanupTimeout)
+    stopServer()
+    val cleanupCompleted = kcefCleanup.awaitCompletion()
+    closeExtensions()
+    return cleanupCompleted
 }
 
 fun main(args: Array<String>) {
@@ -261,10 +271,10 @@ fun main(args: Array<String>) {
     val dataRoot = File(System.getenv("TSUNDOKU_ENGINE_DATA") ?: "${System.getProperty("java.io.tmpdir")}/tsundoku-engine")
     val dirs = bootstrapAndroidCompat(dataRoot)
 
+    val kcefLifecycle = createKcefLifecycle()
+    installReadinessGatedWebViewProvider(kcefLifecycle)
     // Opt-in WebView (heavy Chromium download on first run) — default off keeps the host lean.
-    if (System.getenv("TSUNDOKU_ENGINE_KCEF")?.equals("true", ignoreCase = true) == true) {
-        enableKcef()
-    }
+    kcefLifecycle.start(System.getenv("TSUNDOKU_ENGINE_KCEF")?.equals("true", ignoreCase = true) == true)
 
     val extensionsDir = File(dirs.extensionsRoot)
     val loader = ExtensionLoader(extensionsDir)
@@ -282,12 +292,19 @@ fun main(args: Array<String>) {
     }
     loader.loaded().forEach { logger.info { "  source id=${it.id} name='${it.name}' lang='${it.lang}'" } }
 
-    val server = RpcServer(loader, extensions, port)
+    val server = RpcServer(loader, extensions, port, kcefStatus = kcefLifecycle::snapshot)
     server.start()
     Runtime.getRuntime().addShutdownHook(
         Thread {
-            server.stop()
-            extensions.close()
+            if (
+                !shutdownEngineHost(
+                    kcefLifecycle = kcefLifecycle,
+                    stopServer = server::stop,
+                    closeExtensions = extensions::close,
+                )
+            ) {
+                logger.warn { "KCEF cleanup exceeded the $KCEFShutdownCleanupTimeout JVM shutdown bound" }
+            }
         },
     )
 

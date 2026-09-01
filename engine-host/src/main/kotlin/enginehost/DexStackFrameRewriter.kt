@@ -22,13 +22,14 @@ import java.net.URLClassLoader
 import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import kotlin.streams.asSequence
 
 /**
  * Repairs dex2jar mistranslations in every class of a dex2jar-produced extension jar (GAP-100).
  *
- * Four distinct dex2jar bugs are repaired:
+ * Five distinct dex2jar bugs are repaired:
  *  - **(c) object collapse** — `new X` mistranslated to `new java/lang/Object` with X's constructor
  *    dropped; undone by [repairObjectCollapse], a WHOLE-JAR pass that runs FIRST (the dropped constructor
  *    must be synthesized in a class OTHER than the one holding the `new`, so it cannot be done per class);
@@ -40,6 +41,11 @@ import kotlin.streams.asSequence
  *    `NoSuchMethodError: k0.<init>()`. [backfillMissingCtors], a WHOLE-JAR pass right after (c), synthesizes a
  *    forwarding constructor for EVERY dangling in-jar `invokespecial <init>` (the superset of the bug-(b)/(c)
  *    retarget-only synthesis), guarded so it never relocates the error onto its own super-call;
+ *  - **wrong direct-super constructor owners** — R8 can leave `new X` followed by
+ *    `invokespecial X.super.<init>(d)`. Android accepts that optimized form, but the JVM requires the
+ *    uninitialized value from `new X` to enter `X.<init>`. [repairInvalidConstructorOwners] retargets only
+ *    an exact, unmerged allocation-to-initializer pair whose direct-super relationship and trivial forwarding
+ *    constructor are both proven across the whole jar;
  *  - **(b) self-instantiation collapse** — a class instantiating itself (R8 lambda singletons, minified
  *    enum constants) mistranslated to `new <superclass>`; undone in [repairSelfInstantiation] before the
  *    frame recompute;
@@ -97,10 +103,10 @@ object DexStackFrameRewriter {
     private const val JAVA_LANG_OBJECT = "java/lang/Object"
 
     /**
-     * Run the whole-jar object-collapse repair (bug (c)), then the whole-jar constructor backfill, and finally
-     * recompute the StackMapTable of every `.class` in [jarFile], resolving referenced types against the jar
-     * plus [referenceClassLoader] (the engine-host runtime classpath). Classes that cannot be recomputed are
-     * kept unchanged. Best-effort per class; a single failure never aborts the jar.
+     * Run the whole-jar object-collapse and invalid-constructor-owner repairs, then the whole-jar constructor
+     * backfill, and finally recompute the StackMapTable of every `.class` in [jarFile], resolving referenced
+     * types against the jar plus [referenceClassLoader] (the engine-host runtime classpath). Classes that
+     * cannot be recomputed are kept unchanged. Best-effort per class; a single failure never aborts the jar.
      *
      * The WHOLE pass is fail-safe too: a jar-level failure (opening/walking/closing the zip filesystem)
      * is logged and swallowed, leaving the jar exactly as dex2jar produced it. This repair can only ever
@@ -115,6 +121,10 @@ object DexStackFrameRewriter {
         // it rewrites instructions, so it must land before the per-class COMPUTE_FRAMES walk recomputes
         // frames from the instruction stream. It guards itself, so it can never abort this pass.
         repairObjectCollapse(jarFile)
+        // A `new X` paired with `X.super.<init>` is a distinct whole-jar defect: the allocation already names
+        // the right type, but JVM initialization rules require the call to name X. Prove the exact receiver and
+        // constructor availability atomically before the universal backfill and final frame recomputation.
+        repairInvalidConstructorOwners(jarFile, referenceClassLoader)
         // Then the universal ctor backfill: whole-jar, right AFTER (c) so it composes with (c)'s retargeted
         // allocations, and BEFORE the per-class walk so its added constructors get frames recomputed by the
         // COMPUTE_FRAMES step below. It guards itself, so it can never abort this pass either.
@@ -642,6 +652,342 @@ object DexStackFrameRewriter {
         return provenance
     }
 
+    /** One proven `new X` plus the direct-super constructor invocation that must instead initialize X. */
+    private data class ConstructorOwnerRepair(
+        val caller: ClassNode,
+        val initializer: MethodInsnNode,
+        val target: ClassNode,
+        val missingCtor: MissingCtor?,
+    )
+
+    /** Constructor receivers recovered for one method, including allocations disqualified by uncertainty. */
+    private class ConstructorInitCandidates {
+        val initializers = LinkedHashMap<TypeInsnNode, MutableSet<MethodInsnNode>>()
+        val uncertain = mutableSetOf<TypeInsnNode>()
+    }
+
+    /** Provenance used only by the constructor-owner repair; object-collapse recovery stays isolated. */
+    private class ConstructorAllocationProvenance {
+        val allocations = LinkedHashSet<TypeInsnNode>()
+        var ambiguous = false
+        var uninitializedThis = false
+    }
+
+    /**
+     * Repair `new X … invokespecial X.super.<init>(d)` across the whole jar.
+     *
+     * A JVM constructor invocation may initialize only the exact uninitialized type produced by `NEW`.
+     * Android/R8 output can instead call the direct superclass constructor. Retargeting is safe only when
+     * dataflow proves one unmerged `NEW X` reaches exactly one initializer, X is an instantiable in-jar class,
+     * the named owner is X's direct superclass, and `X.<init>(d)` is either a trivial same-descriptor forwarder
+     * or can be synthesized by the existing constructor-backfill safety gate. Constructor availability and
+     * every call-site edit are staged in memory and serialized in full before any jar entry is written.
+     *
+     * This analysis is deliberately separate from [resolveAllocationProvenance]: object-collapse recovery is
+     * usage-driven and recognizes only `new java/lang/Object`, while this repair already knows X from `NEW` and
+     * must reason about the uninitialized constructor receiver itself. Any ambiguity, constructor chaining on
+     * uninitialized `this`, analyzer failure, or serialization failure leaves the affected bytes untouched.
+     */
+    internal fun repairInvalidConstructorOwners(
+        jarFile: Path,
+        referenceClassLoader: ClassLoader,
+    ) {
+        try {
+            var rewritten = emptyMap<String, ByteArray>()
+            var repairCount = 0
+            FileSystems.newFileSystem(jarFile, null as ClassLoader?)?.use { fs ->
+                val classes = LinkedHashMap<Path, ClassNode>()
+                Files
+                    .walk(fs.getPath("/"))
+                    .asSequence()
+                    .filterNot(Files::isDirectory)
+                    .filter { it.toString().endsWith(".class") }
+                    .forEach { path ->
+                        val bytes = Files.readAllBytes(path)
+                        if (!isClassFile(bytes)) return@forEach
+                        val node = ClassNode()
+                        ClassReader(bytes).accept(node, ClassReader.SKIP_FRAMES)
+                        classes[path] = node
+                    }
+
+                val inJar = classes.values.associateBy(ClassNode::name)
+                val provisional = mutableListOf<ConstructorOwnerRepair>()
+                for (node in classes.values) {
+                    for (method in node.methods) {
+                        val insns = method.instructions.toArray()
+                        if (insns.none { it is TypeInsnNode && it.opcode == Opcodes.NEW }) continue
+                        val candidates =
+                            try {
+                                collectConstructorInitCandidates(node.name, method)
+                            } catch (t: Throwable) {
+                                logger.debug(t) {
+                                    "Constructor-owner analysis skipped ${node.name}.${method.name}: ${t.message}"
+                                }
+                                continue
+                            }
+                        for ((allocation, initializers) in candidates.initializers) {
+                            if (allocation in candidates.uncertain) continue
+                            val initializer = initializers.singleOrNull() ?: continue
+                            if (initializer.owner == allocation.desc) continue // already-valid NEW X / X.<init>
+                            if (initializer.itf) continue
+                            val target = inJar[allocation.desc] ?: continue
+                            if (!isInstantiable(target)) continue
+                            if (target.superName != initializer.owner) continue
+
+                            val matchingCtors =
+                                target.methods.filter { it.name == "<init>" && it.desc == initializer.desc }
+                            if (matchingCtors.size > 1) continue
+                            val existing = matchingCtors.singleOrNull()
+                            if (existing != null &&
+                                (!isTrivialForwardingCtor(target, existing) ||
+                                    !isConstructorAccessibleFrom(target, existing, node))
+                            ) {
+                                continue
+                            }
+                            provisional +=
+                                ConstructorOwnerRepair(
+                                    caller = node,
+                                    initializer = initializer,
+                                    target = target,
+                                    missingCtor =
+                                        if (existing == null) MissingCtor(target.name, initializer.desc) else null,
+                                )
+                        }
+                    }
+                }
+                if (provisional.isEmpty()) return@use
+
+                val requiredRoots = provisional.mapNotNullTo(LinkedHashSet(), ConstructorOwnerRepair::missingCtor)
+                val backfillCandidates = collectMissingCtorCandidates(inJar) + requiredRoots
+                val confirmed = confirmMissingCtors(backfillCandidates, inJar, referenceClassLoader)
+                val accepted = provisional.filter { it.missingCtor == null || it.missingCtor in confirmed }
+                if (accepted.isEmpty()) return@use
+
+                val requiredCtors = LinkedHashSet<MissingCtor>()
+                for (repair in accepted) {
+                    val root = repair.missingCtor ?: continue
+                    var current: MissingCtor? = root
+                    while (current != null && requiredCtors.add(current)) {
+                        val node = inJar[current.owner] ?: break
+                        val superNode = inJar[node.superName]
+                        current =
+                            if (superNode != null &&
+                                superNode.methods.none { it.name == "<init>" && it.desc == current.desc }
+                            ) {
+                                MissingCtor(superNode.name, current.desc).takeIf { it in confirmed }
+                            } else {
+                                null
+                            }
+                    }
+                }
+
+                val changed = mutableSetOf<String>()
+                for (ctor in requiredCtors) {
+                    val target = inJar[ctor.owner] ?: continue
+                    if (!synthesizeForwardingCtor(target, ctor.desc)) return@use
+                    changed += target.name
+                }
+                for (repair in accepted) {
+                    repair.initializer.owner = repair.target.name
+                    changed += repair.caller.name
+                }
+
+                val typeResolver = URLClassLoader(arrayOf<URL>(jarFile.toUri().toURL()), referenceClassLoader)
+                rewritten = typeResolver.use { loader ->
+                    classes
+                        .filterValues { it.name in changed }
+                        .map { (path, node) ->
+                            val writer = FrameComputingClassWriter(loader)
+                            node.accept(writer)
+                            path.toString() to writer.toByteArray()
+                        }
+                        .toMap()
+                }
+                repairCount = accepted.size
+            }
+            if (rewritten.isEmpty()) return
+            replaceJarEntriesAtomically(jarFile, rewritten)
+            logger.debug {
+                "Constructor-owner repair retargeted $repairCount initializer(s) in ${jarFile.fileName}"
+            }
+        } catch (t: Throwable) {
+            logger.warn(t) {
+                "Constructor-owner repair failed for ${jarFile.fileName}; leaving the jar as dex2jar produced " +
+                    "it and continuing to load (repair is best-effort): ${t.message}"
+            }
+        }
+    }
+
+    /** Commit a complete serialized repair set by replacing the jar only after every entry write succeeds. */
+    private fun replaceJarEntriesAtomically(
+        jarFile: Path,
+        rewritten: Map<String, ByteArray>,
+    ) {
+        val absolute = jarFile.toAbsolutePath()
+        val temporary = Files.createTempFile(absolute.parent, ".${absolute.fileName}.constructor-owner-", ".tmp")
+        try {
+            Files.copy(absolute, temporary, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
+            FileSystems.newFileSystem(temporary, null as ClassLoader?)?.use { fs ->
+                for ((entry, bytes) in rewritten) {
+                    Files.write(
+                        fs.getPath(entry),
+                        bytes,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.TRUNCATE_EXISTING,
+                    )
+                }
+            }
+            Files.move(
+                temporary,
+                absolute,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
+    /** Collect every constructor receiver back to its NEW producer without borrowing object-collapse evidence. */
+    private fun collectConstructorInitCandidates(
+        ownerName: String,
+        method: MethodNode,
+    ): ConstructorInitCandidates {
+        val frames = Analyzer(SourceInterpreter()).analyze(ownerName, method)
+        val insns = method.instructions.toArray()
+        val found = ConstructorInitCandidates()
+        for (i in insns.indices) {
+            val initializer = insns[i] as? MethodInsnNode ?: continue
+            if (initializer.opcode != Opcodes.INVOKESPECIAL || initializer.name != "<init>") continue
+            val frame = frames[i] ?: continue
+            val receiverIndex = receiverStackIndex(initializer, frame.stackSize) ?: continue
+            if (receiverIndex < 0) continue
+            val provenance = resolveConstructorAllocationProvenance(frame.getStack(receiverIndex), frames, method)
+            for (allocation in provenance.allocations) {
+                found.initializers.getOrPut(allocation) { mutableSetOf() } += initializer
+            }
+            if (provenance.ambiguous || provenance.uninitializedThis || provenance.allocations.size != 1) {
+                found.uncertain += provenance.allocations
+            }
+        }
+        return found
+    }
+
+    /** Follow copies of one uninitialized constructor receiver back to every NEW instruction that can produce it. */
+    private fun resolveConstructorAllocationProvenance(
+        value: SourceValue,
+        frames: Array<Frame<SourceValue>?>,
+        method: MethodNode,
+    ): ConstructorAllocationProvenance {
+        val provenance = ConstructorAllocationProvenance()
+        val visited = mutableSetOf<AbstractInsnNode>()
+        val pending = ArrayDeque(value.insns)
+        if (pending.isEmpty()) provenance.ambiguous = true
+        while (pending.isNotEmpty()) {
+            val producer = pending.removeFirst()
+            if (!visited.add(producer)) continue
+            if (producer is TypeInsnNode && producer.opcode == Opcodes.NEW) {
+                provenance.allocations += producer
+                continue
+            }
+            val frame = frames.getOrNull(method.instructions.indexOf(producer))
+            val copied =
+                when (producer.opcode) {
+                    Opcodes.ALOAD -> {
+                        val local = (producer as VarInsnNode).`var`
+                        if (method.name == "<init>" && local == 0) provenance.uninitializedThis = true
+                        frame?.getLocal(local)
+                    }
+                    Opcodes.ASTORE, Opcodes.DUP, Opcodes.CHECKCAST ->
+                        if (frame != null && frame.stackSize > 0) frame.getStack(frame.stackSize - 1) else null
+                    else -> null
+                }
+            if (copied == null || copied.insns.isEmpty()) {
+                provenance.ambiguous = true
+                continue
+            }
+            pending += copied.insns
+        }
+        return provenance
+    }
+
+    /** True only for `X.<init>(d) { super.<init>(d); }`, with no field writes or other behavior. */
+    private fun isTrivialForwardingCtor(
+        owner: ClassNode,
+        ctor: MethodNode,
+    ): Boolean {
+        if (ctor.tryCatchBlocks.isNotEmpty()) return false
+        val instructions = ctor.instructions.toArray().filter { it.opcode >= 0 }
+        var index = 0
+        val receiver = instructions.getOrNull(index++) as? VarInsnNode ?: return false
+        if (receiver.opcode != Opcodes.ALOAD || receiver.`var` != 0) return false
+        var slot = 1
+        for (arg in Type.getArgumentTypes(ctor.desc)) {
+            val load = instructions.getOrNull(index++) as? VarInsnNode ?: return false
+            if (load.opcode != arg.getOpcode(Opcodes.ILOAD) || load.`var` != slot) return false
+            slot += arg.size
+        }
+        val superCall = instructions.getOrNull(index++) as? MethodInsnNode ?: return false
+        if (superCall.opcode != Opcodes.INVOKESPECIAL ||
+            superCall.owner != owner.superName ||
+            superCall.name != "<init>" ||
+            superCall.desc != ctor.desc ||
+            superCall.itf
+        ) {
+            return false
+        }
+        val returned = instructions.getOrNull(index++) ?: return false
+        return returned.opcode == Opcodes.RETURN && index == instructions.size
+    }
+
+    /** Conservative JVM access gate for an existing constructor at the retargeted call site. */
+    private fun isConstructorAccessibleFrom(
+        owner: ClassNode,
+        ctor: MethodNode,
+        caller: ClassNode,
+    ): Boolean {
+        if (ctor.access and Opcodes.ACC_PUBLIC != 0) return true
+        if (ctor.access and Opcodes.ACC_PRIVATE != 0) return caller.name == owner.name
+        return caller.name.substringBeforeLast('/', "") == owner.name.substringBeforeLast('/', "")
+    }
+
+    /** Every dangling invocation whose in-jar owner does not yet declare the requested constructor. */
+    private fun collectMissingCtorCandidates(inJar: Map<String, ClassNode>): LinkedHashSet<MissingCtor> {
+        val candidates = LinkedHashSet<MissingCtor>()
+        for (node in inJar.values) {
+            for (method in node.methods) {
+                for (insn in method.instructions) {
+                    if (insn !is MethodInsnNode) continue
+                    if (insn.opcode != Opcodes.INVOKESPECIAL || insn.name != "<init>") continue
+                    val owner = inJar[insn.owner] ?: continue
+                    if (owner.methods.any { it.name == "<init>" && it.desc == insn.desc }) continue
+                    candidates += MissingCtor(insn.owner, insn.desc)
+                }
+            }
+        }
+        return candidates
+    }
+
+    /** Resolve constructor-backfill candidates to a fixpoint using the existing exact-super gate. */
+    private fun confirmMissingCtors(
+        candidates: Set<MissingCtor>,
+        inJar: Map<String, ClassNode>,
+        referenceClassLoader: ClassLoader,
+    ): LinkedHashSet<MissingCtor> {
+        val confirmed = LinkedHashSet<MissingCtor>()
+        do {
+            var added = false
+            for (candidate in candidates) {
+                if (candidate in confirmed) continue
+                if (superWillDeclareInit(candidate, inJar, confirmed, referenceClassLoader)) {
+                    confirmed += candidate
+                    added = true
+                }
+            }
+        } while (added)
+        return confirmed
+    }
+
     /**
      * Backfill the constructor dex2jar DROPPED for every R8-optimized class across the WHOLE jar (GAP-100).
      *
@@ -710,33 +1056,8 @@ object DexStackFrameRewriter {
 
                 val inJar = classes.values.associateBy(ClassNode::name)
 
-                // Every dangling in-jar `invokespecial <init>` whose owner does not already declare that ctor.
-                val candidates = LinkedHashSet<MissingCtor>()
-                for (node in classes.values) {
-                    for (method in node.methods) {
-                        for (insn in method.instructions) {
-                            if (insn !is MethodInsnNode) continue
-                            if (insn.opcode != Opcodes.INVOKESPECIAL || insn.name != "<init>") continue
-                            val owner = inJar[insn.owner] ?: continue // library/parent ctors exist on the classpath
-                            if (owner.methods.any { it.name == "<init>" && it.desc == insn.desc }) continue
-                            candidates += MissingCtor(insn.owner, insn.desc)
-                        }
-                    }
-                }
-
-                // Confirm a candidate only when its super will declare <init><desc> after this pass. Fixpoint,
-                // so a chain of in-jar supers all backfilled here composes (each round can enable the next).
-                val confirmed = LinkedHashSet<MissingCtor>()
-                do {
-                    var added = false
-                    for (candidate in candidates) {
-                        if (candidate in confirmed) continue
-                        if (superWillDeclareInit(candidate, inJar, confirmed, referenceClassLoader)) {
-                            confirmed += candidate
-                            added = true
-                        }
-                    }
-                } while (added)
+                val candidates = collectMissingCtorCandidates(inJar)
+                val confirmed = confirmMissingCtors(candidates, inJar, referenceClassLoader)
 
                 for (candidate in candidates) {
                     if (candidate !in confirmed) {
