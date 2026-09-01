@@ -12,10 +12,10 @@ import (
 // everything to the default instance — byte-for-byte today's single-instance
 // behavior.
 func TestDerive_NoBindingsYieldsNoProfiles(t *testing.T) {
-	if got := engineroute.Derive(nil); len(got) != 0 {
+	if got := engineroute.Derive(true, nil); len(got) != 0 {
 		t.Fatalf("Derive(nil) = %v, want no profiles", got)
 	}
-	if got := engineroute.Derive([]engineroute.BindingInput{}); len(got) != 0 {
+	if got := engineroute.Derive(true, []engineroute.BindingInput{}); len(got) != 0 {
 		t.Fatalf("Derive(empty) = %v, want no profiles", got)
 	}
 }
@@ -25,11 +25,47 @@ func TestDerive_NoBindingsYieldsNoProfiles(t *testing.T) {
 // profile — its source stays on the default instance.
 func TestDerive_DefaultEquivalentBindings(t *testing.T) {
 	bindings := []engineroute.BindingInput{
-		{SourceID: 1, FlareMode: engineroute.FlareModeGlobal},
-		{SourceID: 2, FlareMode: ""}, // blank normalizes to global
+		{SourceID: 1, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true},
+		{SourceID: 2, FlareMode: "", KCEFEnabled: true}, // blank normalizes to global
 	}
-	if got := engineroute.Derive(bindings); len(got) != 0 {
+	if got := engineroute.Derive(true, bindings); len(got) != 0 {
 		t.Fatalf("Derive(default-equivalent) = %v, want no profiles", got)
+	}
+}
+
+// TestDerive_KCEFDefaultEquivalence keeps legacy profile keys unchanged while
+// separating sources whose effective embedded-browser capability differs from
+// the entrypoint-managed default host.
+func TestDerive_KCEFDefaultEquivalence(t *testing.T) {
+	t.Parallel()
+
+	defaultRoute := engineroute.BindingInput{SourceID: 1, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true}
+	if got := engineroute.Derive(true, []engineroute.BindingInput{defaultRoute}); len(got) != 0 {
+		t.Fatalf("Derive(default-on equivalent) = %+v, want no managed profiles", got)
+	}
+
+	disabled := defaultRoute
+	disabled.SourceID = 2
+	disabled.KCEFEnabled = false
+	got := engineroute.Derive(true, []engineroute.BindingInput{disabled, {SourceID: 3, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: false}})
+	if len(got) != 1 {
+		t.Fatalf("Derive(default-on disabled) yielded %d profiles, want 1", len(got))
+	}
+	if got[0].Key != "kcef=off" || got[0].KCEFEnabled || !reflect.DeepEqual(got[0].SourceIDs, []int64{2, 3}) {
+		t.Fatalf("Derive(default-on disabled) = %+v, want grouped KCEF-off profile", got[0])
+	}
+
+	required := engineroute.BindingInput{SourceID: 4, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true}
+	got = engineroute.Derive(false, []engineroute.BindingInput{required})
+	if len(got) != 1 || got[0].Key != "kcef=on" || !got[0].KCEFEnabled {
+		t.Fatalf("Derive(default-off enabled) = %+v, want KCEF-on profile", got)
+	}
+
+	legacy := engineroute.Derive(true, []engineroute.BindingInput{{
+		SourceID: 5, Socks: &engineroute.SocksEndpoint{ID: "vpn"}, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true,
+	}})
+	if len(legacy) != 1 || legacy[0].Key != "vpn|global|" {
+		t.Fatalf("Derive(legacy network profile) = %+v, want unchanged key", legacy)
 	}
 }
 
@@ -37,7 +73,7 @@ func TestDerive_DefaultEquivalentBindings(t *testing.T) {
 // OFF for a source) is a DISTINCT profile from the global default — it is not the
 // same as "use whatever global is".
 func TestDerive_FlareNoneIsNonDefault(t *testing.T) {
-	got := engineroute.Derive([]engineroute.BindingInput{
+	got := engineroute.Derive(true, []engineroute.BindingInput{
 		{SourceID: 7, FlareMode: engineroute.FlareModeNone},
 	})
 	if len(got) != 1 {
@@ -58,7 +94,7 @@ func TestDerive_GroupsSourcesBySameProfile(t *testing.T) {
 	vpn := &engineroute.SocksEndpoint{ID: "vpn-uuid", Host: "10.0.0.1", Port: 1080, Version: 5}
 	other := &engineroute.SocksEndpoint{ID: "other-uuid", Host: "10.0.0.2", Port: 1080, Version: 5}
 
-	got := engineroute.Derive([]engineroute.BindingInput{
+	got := engineroute.Derive(true, []engineroute.BindingInput{
 		{SourceID: 3, Socks: vpn, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 1, Socks: vpn, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 9, Socks: other, FlareMode: engineroute.FlareModeGlobal},
@@ -88,7 +124,7 @@ func TestDerive_EndpointFlareIsDistinctProfile(t *testing.T) {
 	vpn := &engineroute.SocksEndpoint{ID: "vpn", Host: "10.0.0.1", Port: 1080, Version: 5}
 	fs := &engineroute.FlareEndpoint{ID: "fs", URL: "http://fs:8191"}
 
-	got := engineroute.Derive([]engineroute.BindingInput{
+	got := engineroute.Derive(true, []engineroute.BindingInput{
 		{SourceID: 1, Socks: vpn, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 2, Socks: vpn, FlareMode: engineroute.FlareModeEndpoint, Flare: fs},
 	})
@@ -107,8 +143,8 @@ func TestDerive_Deterministic(t *testing.T) {
 		{SourceID: 5, Socks: b, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 2, Socks: a, FlareMode: engineroute.FlareModeGlobal},
 	}
-	first := engineroute.Derive(in)
-	second := engineroute.Derive(in)
+	first := engineroute.Derive(true, in)
+	second := engineroute.Derive(true, in)
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("Derive not deterministic:\n first=%+v\nsecond=%+v", first, second)
 	}
@@ -155,6 +191,7 @@ func TestDerive_SessionPolicyMatrix(t *testing.T) { //nolint:gocognit,cyclop // 
 						SourceID:             41,
 						FlareMode:            mode,
 						DisableBypassSession: policy.disable,
+						KCEFEnabled:          true,
 					}
 					if mode == engineroute.FlareModeEndpoint {
 						input.Flare = &engineroute.FlareEndpoint{
@@ -163,7 +200,7 @@ func TestDerive_SessionPolicyMatrix(t *testing.T) { //nolint:gocognit,cyclop // 
 						}
 					}
 
-					got := engineroute.Derive([]engineroute.BindingInput{input})
+					got := engineroute.Derive(true, []engineroute.BindingInput{input})
 					if mode == engineroute.FlareModeGlobal && !policy.disable {
 						if len(got) != 0 {
 							t.Fatalf("Derive() = %+v, want default-equivalent binding", got)
@@ -190,7 +227,7 @@ func TestDerive_SessionPolicyMatrix(t *testing.T) { //nolint:gocognit,cyclop // 
 func TestDerive_EquivalentDisposableSessionsGroup(t *testing.T) {
 	t.Parallel()
 
-	got := engineroute.Derive([]engineroute.BindingInput{
+	got := engineroute.Derive(true, []engineroute.BindingInput{
 		{
 			SourceID: 8, FlareMode: engineroute.FlareModeEndpoint,
 			Flare:                &engineroute.FlareEndpoint{ID: "flare", URL: "http://old", Session: "old"},
@@ -222,7 +259,7 @@ func TestDerive_SessionPolicyUsesStableIdentity(t *testing.T) {
 
 	deriveKey := func(flare *engineroute.FlareEndpoint, disable bool) string {
 		t.Helper()
-		got := engineroute.Derive([]engineroute.BindingInput{{
+		got := engineroute.Derive(true, []engineroute.BindingInput{{
 			SourceID: 1, FlareMode: engineroute.FlareModeEndpoint, Flare: flare,
 			DisableBypassSession: disable,
 		}})
@@ -247,14 +284,14 @@ func TestDerive_SessionPolicyUsesStableIdentity(t *testing.T) {
 func TestDerive_ClearingSessionOffRestoresDefaultEquivalence(t *testing.T) {
 	t.Parallel()
 
-	off := engineroute.Derive([]engineroute.BindingInput{{
+	off := engineroute.Derive(true, []engineroute.BindingInput{{
 		SourceID: 1, FlareMode: engineroute.FlareModeGlobal, DisableBypassSession: true,
 	}})
 	if len(off) != 1 {
 		t.Fatalf("Off Derive() yielded %d profiles, want 1", len(off))
 	}
-	inherited := engineroute.Derive([]engineroute.BindingInput{{
-		SourceID: 1, FlareMode: engineroute.FlareModeGlobal,
+	inherited := engineroute.Derive(true, []engineroute.BindingInput{{
+		SourceID: 1, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true,
 	}})
 	if len(inherited) != 0 {
 		t.Fatalf("cleared Off Derive() = %+v, want default-equivalent binding", inherited)

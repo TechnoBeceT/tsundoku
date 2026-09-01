@@ -536,7 +536,7 @@ func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testi
 	bindings[0].Socks.ID = "new"
 	bindings[1].Socks.ID = "reused"
 	bindings[2].Socks.ID = "fallback"
-	profiles := engineroute.Derive([]engineroute.BindingInput{
+	profiles := engineroute.Derive(true, []engineroute.BindingInput{
 		{SourceID: 11, Socks: &engineroute.SocksEndpoint{ID: "new"}, FlareMode: engineroute.FlareModeGlobal, DisableBypassSession: true},
 		{SourceID: 22, Socks: &engineroute.SocksEndpoint{ID: "reused"}, FlareMode: engineroute.FlareModeGlobal},
 		{SourceID: 33, Socks: &engineroute.SocksEndpoint{ID: "fallback"}, FlareMode: engineroute.FlareModeGlobal},
@@ -575,13 +575,14 @@ func TestSourceRuntimeApplierConvergesEveryDesiredInstanceBeforeRouting(t *testi
 		}
 	}
 	applier := enginetopo.NewSourceRuntimeApplier(defaultClient, enginetopo.NetworkReconcileDeps{
-		Snapshot:          fakeSnapshotter{bindings: bindings},
-		TransportSnapshot: fakeTransportSnapshotter{policies: policies},
-		Router:            router,
-		Launcher:          launcher,
-		DB:                db,
-		Cache:             cache,
-		BaseConfig:        base,
+		Snapshot:           fakeSnapshotter{bindings: bindings},
+		TransportSnapshot:  fakeTransportSnapshotter{policies: policies},
+		Router:             router,
+		Launcher:           launcher,
+		DB:                 db,
+		Cache:              cache,
+		BaseConfig:         base,
+		DefaultKCEFEnabled: true,
 	})
 
 	err := applier.ApplySourceRuntime(ctx, 11)

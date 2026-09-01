@@ -462,6 +462,11 @@ type EngineConfig struct {
 	// HostBin, deliberately NOT fail-closed-validated. Set via
 	// TSUNDOKU_ENGINE_KCEFBUNDLE.
 	KCEFBundle string
+	// KCEFEnabled is the embedded-browser intent for the entrypoint-managed
+	// default engine host. Per-source profiles compare their resolved capability
+	// with this value rather than inferring it from bypass routing. Default true.
+	// Set via TSUNDOKU_ENGINE_KCEF.
+	KCEFEnabled bool `koanf:"kcef"`
 }
 
 // ExtensionsConfig holds source-extension management settings.
@@ -543,6 +548,7 @@ func defaults() map[string]any {
 		"engine.hostbin":    "/app/engine-host/bin/tsundoku-engine-host",
 		"engine.data":       "/config/engine",
 		"engine.kcefbundle": "/app/kcef-runtime/bin/kcef",
+		"engine.kcef":       true,
 		// Extensions — source-extension management.
 		"extensions.retainedversions": 3,
 	}
@@ -640,6 +646,7 @@ func Load() (*Config, error) {
 //	                                          `koanf:"data"` tag on
 //	                                          EngineConfig.DataDir)
 //	TSUNDOKU_ENGINE_KCEFBUNDLE              → engine.kcefbundle
+//	TSUNDOKU_ENGINE_KCEF                    → engine.kcef
 //
 // Convention: after stripping the prefix the first "_" separates the
 // top-level struct key from the field name; the remainder is kept as-is

@@ -326,9 +326,10 @@ func main() {
 	// exactly like the default one. Close() is wired into the shutdown path below.
 	engineHostLauncher := enginehost.New(
 		enginehost.EngineHostLauncherConfig{
-			HostBin:    cfg.Engine.HostBin,
-			DataDir:    cfg.Engine.DataDir,
-			KCEFBundle: cfg.Engine.KCEFBundle,
+			HostBin:            cfg.Engine.HostBin,
+			DataDir:            cfg.Engine.DataDir,
+			KCEFBundle:         cfg.Engine.KCEFBundle,
+			DefaultKCEFEnabled: cfg.Engine.KCEFEnabled,
 		},
 		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
 		// The routing seam the launcher + supervisor use to degrade a down
@@ -488,13 +489,14 @@ func main() {
 	// detached), used both on boot (after the default-instance reconcile) and as
 	// the network-mutation write-through. With no bindings it is a pure no-op.
 	netDeps := enginetopo.NetworkReconcileDeps{
-		Snapshot:          networkSvc,
-		TransportSnapshot: sourceTransportSvc,
-		Router:            engineRouter,
-		Launcher:          engineLauncher,
-		DB:                entClient,
-		Cache:             apkStore,
-		BaseConfig:        settingsSvc,
+		Snapshot:           networkSvc,
+		TransportSnapshot:  sourceTransportSvc,
+		Router:             engineRouter,
+		Launcher:           engineLauncher,
+		DB:                 entClient,
+		Cache:              apkStore,
+		BaseConfig:         settingsSvc,
+		DefaultKCEFEnabled: cfg.Engine.KCEFEnabled,
 	}
 	runtimeApplier := enginetopo.NewSourceRuntimeApplier(defaultEngineClient, netDeps)
 	sourceTransportSvc.WithRuntimeApplier(runtimeApplier)
@@ -506,6 +508,7 @@ func main() {
 		sourceTransportSvc,
 		networkSvc,
 		transportDefaults,
+		cfg.Engine.KCEFEnabled,
 	)
 	sourceImageProxySvc := sourceimageproxy.NewService(
 		entClient,

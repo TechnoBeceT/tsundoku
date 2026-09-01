@@ -17,12 +17,13 @@ var (
 )
 
 type dependencies struct {
-	catalog    sourceCatalog
-	globals    globalSnapshotter
-	throughput throughputSnapshotter
-	transport  transportSnapshotter
-	routing    routingSnapshotter
-	runtime    runtimeSnapshotter
+	catalog            sourceCatalog
+	globals            globalSnapshotter
+	throughput         throughputSnapshotter
+	transport          transportSnapshotter
+	routing            routingSnapshotter
+	runtime            runtimeSnapshotter
+	defaultKCEFEnabled *bool
 }
 
 // Service composes bounded store snapshots into source configuration reads.
@@ -37,14 +38,16 @@ func NewService(
 	transport transportStore,
 	routing routingStore,
 	transportDefaults imageConnectionDefaults,
+	defaultKCEFEnabled bool,
 ) *Service {
 	return newService(dependencies{
-		catalog:    catalog,
-		globals:    settingsSnapshotter{settings: globals},
-		throughput: throughputStoreSnapshotter{store: throughput},
-		transport:  transportStoreSnapshotter{store: transport, defaults: transportDefaults},
-		routing:    routingStoreSnapshotter{store: routing},
-		runtime:    runtimeStoreSnapshotter{client: client},
+		catalog:            catalog,
+		globals:            settingsSnapshotter{settings: globals},
+		throughput:         throughputStoreSnapshotter{store: throughput},
+		transport:          transportStoreSnapshotter{store: transport, defaults: transportDefaults},
+		routing:            routingStoreSnapshotter{store: routing},
+		runtime:            runtimeStoreSnapshotter{client: client},
+		defaultKCEFEnabled: &defaultKCEFEnabled,
 	})
 }
 
@@ -71,8 +74,15 @@ func (s *Service) Get(ctx context.Context, sourceID int64) (Configuration, error
 	if err != nil {
 		return Configuration{}, fmt.Errorf("sourceconfiguration.Get source %d: %w", sourceID, err)
 	}
-	profiles := deriveProfileKeys(sources, snapshot.routing, snapshot.transport.Overrides)
+	profiles := deriveProfileKeys(sources, snapshot.routing, snapshot.transport.Overrides, s.defaultKCEFEnabled())
 	return compose(source, snapshot, profiles[sourceID]), nil
+}
+
+func (s *Service) defaultKCEFEnabled() bool {
+	if s.deps.defaultKCEFEnabled == nil {
+		return true
+	}
+	return *s.deps.defaultKCEFEnabled
 }
 
 // Exceptions returns only live sources with at least one field-level exception.

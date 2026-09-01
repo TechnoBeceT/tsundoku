@@ -23,6 +23,7 @@ var ErrInvalidSelection = errors.New("reusable bypass session requires a nonblan
 type Proposal struct {
 	GlobalSession *string
 	Policies      map[int64]*bool
+	KCEFPolicies  map[int64]*KCEFPolicy
 	Bindings      map[int64]*Binding
 	Endpoints     map[uuid.UUID]*Endpoint
 }
@@ -30,6 +31,7 @@ type Proposal struct {
 type Binding struct {
 	FlareMode       string
 	FlareEndpointID *uuid.UUID
+	HasSocks        bool
 }
 
 type Endpoint struct {
@@ -100,16 +102,26 @@ func (c *Coordinator) validate(ctx context.Context, p Proposal) error {
 			return fmt.Errorf("%w: source %d", ErrInvalidSelection, sourceID)
 		}
 	}
+	for sourceID, policy := range state.kcefPolicies {
+		if !state.shouldValidate(sourceID) {
+			continue
+		}
+		binding := state.bindings[sourceID]
+		if _, err := ResolveKCEF(policy, binding.HasSocks, binding.FlareMode); err != nil {
+			return fmt.Errorf("source %d: %w", sourceID, err)
+		}
+	}
 	return nil
 }
 
 type prospectiveState struct {
-	global      string
-	policies    map[int64]bool
-	bindings    map[int64]Binding
-	endpoints   map[uuid.UUID]Endpoint
-	impacted    map[int64]bool
-	validateAll bool
+	global       string
+	policies     map[int64]bool
+	kcefPolicies map[int64]KCEFPolicy
+	bindings     map[int64]Binding
+	endpoints    map[uuid.UUID]Endpoint
+	impacted     map[int64]bool
+	validateAll  bool
 }
 
 func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospectiveState, error) {
@@ -131,9 +143,13 @@ func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospec
 	}
 	state := newProspectiveState(global, policies, bindings, endpoints, p)
 	applyOptionalMap(state.policies, p.Policies)
+	applyOptionalMap(state.kcefPolicies, p.KCEFPolicies)
 	applyOptionalMap(state.bindings, p.Bindings)
 	applyOptionalMap(state.endpoints, p.Endpoints)
 	for id := range p.Policies {
+		state.impacted[id] = true
+	}
+	for id := range p.KCEFPolicies {
 		state.impacted[id] = true
 	}
 	for id := range p.Bindings {
@@ -153,7 +169,7 @@ func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, b
 	state := prospectiveState{
 		global: global, policies: make(map[int64]bool, len(policies)),
 		bindings: make(map[int64]Binding, len(bindings)), endpoints: make(map[uuid.UUID]Endpoint, len(endpoints)),
-		impacted: make(map[int64]bool), validateAll: p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0),
+		kcefPolicies: make(map[int64]KCEFPolicy), impacted: make(map[int64]bool), validateAll: p.GlobalSession != nil || (len(p.Policies) == 0 && len(p.KCEFPolicies) == 0 && len(p.Bindings) == 0 && len(p.Endpoints) == 0),
 	}
 	for _, row := range policies {
 		if row.ReuseBypassSession != nil {
@@ -161,7 +177,7 @@ func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, b
 		}
 	}
 	for _, row := range bindings {
-		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID}
+		state.bindings[row.SourceID] = Binding{FlareMode: row.FlareMode, FlareEndpointID: row.FlareEndpointID, HasSocks: row.SocksEndpointID != nil}
 	}
 	for _, row := range endpoints {
 		state.endpoints[row.ID] = Endpoint{Kind: row.Kind, Session: row.Session, Enabled: row.Enabled}

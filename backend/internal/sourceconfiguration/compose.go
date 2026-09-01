@@ -5,6 +5,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/engineroute"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sourcetransport"
@@ -202,7 +203,7 @@ func exceptionCount(sourceID int64, snapshot storesSnapshot) int {
 	return count
 }
 
-func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, overrides map[int64]sourcetransport.Override) map[int64]string {
+func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, overrides map[int64]sourcetransport.Override, defaultKCEFEnabled bool) map[int64]string {
 	inputs := make([]engineroute.BindingInput, 0, len(sources))
 	for _, source := range sources {
 		binding := effectiveBinding(source.ID, routing)
@@ -210,15 +211,24 @@ func deriveProfileKeys(sources []sourceengine.Source, routing routingSnapshot, o
 		inputs = append(inputs, engineroute.BindingInput{
 			SourceID: source.ID, Socks: toSocks(binding.Socks), FlareMode: binding.FlareMode,
 			Flare: toFlare(binding.Flare), DisableBypassSession: disableSession,
+			KCEFEnabled: autoKCEFEnabled(binding),
 		})
 	}
 	out := make(map[int64]string)
-	for _, profile := range engineroute.Derive(inputs) {
+	for _, profile := range engineroute.Derive(defaultKCEFEnabled, inputs) {
 		for _, sourceID := range profile.SourceIDs {
 			out[sourceID] = profile.Key
 		}
 	}
 	return out
+}
+
+func autoKCEFEnabled(binding network.ResolvedBinding) bool {
+	enabled, err := runtimepolicy.ResolveKCEF(runtimepolicy.KCEFPolicyAuto, binding.Socks != nil, binding.FlareMode)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 func toSocks(value *network.ResolvedSocks) *engineroute.SocksEndpoint {

@@ -29,6 +29,10 @@ type EngineHostLauncherConfig struct {
 	// profile's data dir; blank or absent ⇒ KCEF seeding is skipped
 	// (cfg.Engine.KCEFBundle).
 	KCEFBundle string
+	// DefaultKCEFEnabled records the entrypoint-managed default host's explicit
+	// embedded-browser intent so profile admission can account for it without
+	// reading environment variables outside internal/config.
+	DefaultKCEFEnabled bool
 }
 
 // managedInstance is one running (or previously-running) engine-host process the

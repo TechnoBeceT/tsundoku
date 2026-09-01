@@ -150,3 +150,72 @@ func TestCoordinatorPreservesWhitespaceOnlySessionAsNonblank(t *testing.T) {
 		t.Fatalf("whitespace-only configured session rejected: %v", err)
 	}
 }
+
+// TestResolveKCEF pins the fail-closed KCEF capability matrix. Chromium cannot
+// use the JVM SOCKS route, so required WebView capability and SOCKS are never
+// admitted together.
+func TestResolveKCEF(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		policy    runtimepolicy.KCEFPolicy
+		hasSocks  bool
+		flareMode string
+		want      bool
+		wantErr   error
+	}{
+		{name: "auto endpoint", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "endpoint"},
+		{name: "required endpoint", policy: runtimepolicy.KCEFPolicyRequired, flareMode: "endpoint", want: true},
+		{name: "disabled endpoint", policy: runtimepolicy.KCEFPolicyDisabled, flareMode: "endpoint"},
+		{name: "auto global", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "global", want: true},
+		{name: "auto none", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "none", want: true},
+		{name: "auto blank normalizes global", policy: runtimepolicy.KCEFPolicyAuto, want: true},
+		{name: "auto unknown normalizes global", policy: runtimepolicy.KCEFPolicyAuto, flareMode: "unknown", want: true},
+		{name: "required global", policy: runtimepolicy.KCEFPolicyRequired, flareMode: "global", want: true},
+		{name: "disabled global", policy: runtimepolicy.KCEFPolicyDisabled, flareMode: "global"},
+		{name: "auto socks", policy: runtimepolicy.KCEFPolicyAuto, hasSocks: true},
+		{name: "required socks", policy: runtimepolicy.KCEFPolicyRequired, hasSocks: true, wantErr: runtimepolicy.ErrKCEFWithSocks},
+		{name: "disabled socks", policy: runtimepolicy.KCEFPolicyDisabled, hasSocks: true},
+		{name: "unknown socks fails closed", policy: runtimepolicy.KCEFPolicy("unknown"), hasSocks: true, wantErr: runtimepolicy.ErrInvalidKCEFPolicy},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := runtimepolicy.ResolveKCEF(tt.policy, tt.hasSocks, tt.flareMode)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ResolveKCEF() error = %v, want %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("ResolveKCEF() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCoordinatorRejectsRequiredKCEFWithProspectiveSocks proves policy and
+// binding projections share one admission boundary, so invalid combinations
+// cannot commit durable state between separate mutation services.
+func TestCoordinatorRejectsRequiredKCEFWithProspectiveSocks(t *testing.T) {
+	t.Parallel()
+
+	client := testdb.New(t)
+	coordinator := runtimepolicy.New(client, "")
+	required := runtimepolicy.KCEFPolicyRequired
+	committed := false
+	err := coordinator.Mutate(context.Background(), runtimepolicy.Proposal{
+		KCEFPolicies: map[int64]*runtimepolicy.KCEFPolicy{42: &required},
+		Bindings:     map[int64]*runtimepolicy.Binding{42: {HasSocks: true, FlareMode: "global"}},
+	}, func(context.Context) error {
+		committed = true
+		return nil
+	})
+	if !errors.Is(err, runtimepolicy.ErrKCEFWithSocks) {
+		t.Fatalf("Mutate() error = %v, want ErrKCEFWithSocks", err)
+	}
+	if committed {
+		t.Fatal("commit ran for required KCEF with SOCKS")
+	}
+}

@@ -79,6 +79,9 @@ type BindingInput struct {
 	FlareMode            string         // none|global|endpoint ("" is treated as global)
 	Flare                *FlareEndpoint // non-nil iff FlareMode == endpoint
 	DisableBypassSession bool           // true = push a blank disposable session when bypass can be used
+	// KCEFEnabled is the route-resolved embedded-browser capability for this
+	// source. It is already normalized by the policy owner before derivation.
+	KCEFEnabled bool
 }
 
 // Profile is one distinct network profile that needs its own engine-host
@@ -99,6 +102,10 @@ type Profile struct {
 	// DisableBypassSession makes this profile push a blank FlareSolverr session.
 	// It is normalized false for flare mode none, where bypass cannot be used.
 	DisableBypassSession bool
+	// KCEFEnabled is the explicit embedded-browser setting for this managed
+	// instance. Launching code must consume this value rather than infer it from
+	// the FlareSolverr route.
+	KCEFEnabled bool
 	// SourceIDs are every source bound to this profile, ascending. Two sources
 	// with the same profile share one instance.
 	SourceIDs []int64
@@ -119,10 +126,10 @@ type Profile struct {
 // The result is deterministic: profiles are ordered by Key and each profile's
 // SourceIDs are ascending, so the same input always yields the same routing map
 // (a reconcile that changes nothing pushes nothing — idempotency).
-func Derive(bindings []BindingInput) []Profile {
+func Derive(defaultKCEFEnabled bool, bindings []BindingInput) []Profile {
 	byKey := make(map[string]*Profile)
 	for _, b := range bindings {
-		key := profileKey(b)
+		key := profileKey(b, defaultKCEFEnabled)
 		if key == "" {
 			continue // default-equivalent — routes to the default instance
 		}
@@ -135,6 +142,7 @@ func Derive(bindings []BindingInput) []Profile {
 				FlareMode:            mode,
 				Flare:                b.Flare,
 				DisableBypassSession: bypassCanBeUsed(mode) && b.DisableBypassSession,
+				KCEFEnabled:          b.KCEFEnabled,
 			}
 			byKey[key] = p
 		}
@@ -158,15 +166,19 @@ func Derive(bindings []BindingInput) []Profile {
 // the new config on the next reconcile — no instance churn on a field edit.
 // Disposable-session policy enters the key only when bypass can be used; flare
 // mode none ignores it because that profile cannot issue a bypass request.
-func profileKey(b BindingInput) string {
+func profileKey(b BindingInput, defaultKCEFEnabled bool) string {
 	socksID := ""
 	if b.Socks != nil {
 		socksID = b.Socks.ID
 	}
 	mode := normalizeFlareMode(b.FlareMode)
 	disableSession := bypassCanBeUsed(mode) && b.DisableBypassSession
-	if socksID == "" && mode == FlareModeGlobal && !disableSession {
+	networkDefault := socksID == "" && mode == FlareModeGlobal && !disableSession
+	if networkDefault && b.KCEFEnabled == defaultKCEFEnabled {
 		return "" // no SOCKS override + global flare == today's default
+	}
+	if networkDefault {
+		return kcefKey(b.KCEFEnabled)
 	}
 	flareID := ""
 	if b.Flare != nil {
@@ -176,7 +188,17 @@ func profileKey(b BindingInput) string {
 	if disableSession {
 		key += "|session=disposable"
 	}
+	if b.KCEFEnabled != defaultKCEFEnabled {
+		key += "|" + kcefKey(b.KCEFEnabled)
+	}
 	return key
+}
+
+func kcefKey(enabled bool) string {
+	if enabled {
+		return "kcef=on"
+	}
+	return "kcef=off"
 }
 
 // bypassCanBeUsed reports whether mode can issue FlareSolverr requests whose

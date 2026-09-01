@@ -10,6 +10,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/network"
+	"github.com/technobecet/tsundoku/internal/runtimepolicy"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -46,6 +47,10 @@ type NetworkReconcileDeps struct {
 	// BaseConfig is Tsundoku's OWN global FlareSolverr/SOCKS config — the source
 	// of the "global" flare mode a profile may inherit.
 	BaseConfig ConfigProvider
+	// DefaultKCEFEnabled is the entrypoint-managed default host's explicit
+	// embedded-browser capability. Profile derivation receives it directly so
+	// default equivalence stays independent of the network route spelling.
+	DefaultKCEFEnabled bool
 }
 
 // NetworkReconcileResult reports what a ReconcileNetwork pass did.
@@ -102,7 +107,7 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 		return res, fmt.Errorf("enginetopo.ReconcileNetwork: snapshot: %w", err)
 	}
 
-	profiles := engineroute.Derive(toBindingInputs(snapshot))
+	profiles := engineroute.Derive(deps.DefaultKCEFEnabled, toBindingInputs(snapshot))
 	res.Profiles = len(profiles)
 
 	// No non-default profiles: clear the routing table (everything → default) and
@@ -213,9 +218,18 @@ func toBindingInputs(snapshot []runtimeBinding) []engineroute.BindingInput {
 			Socks:                toSocksEndpoint(b.Socks),
 			Flare:                toFlareEndpoint(b.Flare),
 			DisableBypassSession: b.DisableBypassSession,
+			KCEFEnabled:          resolveAutoKCEF(b),
 		}
 	}
 	return out
+}
+
+func resolveAutoKCEF(binding runtimeBinding) bool {
+	enabled, err := runtimepolicy.ResolveKCEF(runtimepolicy.KCEFPolicyAuto, binding.Socks != nil, binding.FlareMode)
+	if err != nil {
+		return false
+	}
+	return enabled
 }
 
 // toSocksEndpoint maps a resolved SOCKS endpoint to the engine-side value (nil
