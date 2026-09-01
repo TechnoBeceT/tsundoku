@@ -34,10 +34,11 @@ func (p *profilePreparation) CompletePublication() {
 }
 
 // PrepareProfiles freezes one reconcile pass's KCEF admission set. Existing
-// desired instances retain their slots; obsolete KCEF generations are degraded,
-// terminated, and reaped before new candidates are considered; remaining
-// candidates are admitted in canonical key order. KCEF-off profiles bypass
-// browser admission but remain in the lifecycle ledger until teardown is proven.
+// ready desired instances retain their slots; obsolete or unready KCEF
+// generations are degraded, terminated, and reaped before new candidates are
+// considered; remaining candidates are admitted in canonical key order. KCEF-off
+// profiles bypass browser admission but remain in the lifecycle ledger until
+// teardown is proven.
 func (l *Launcher) PrepareProfiles(ctx context.Context, desired []engineroute.Profile) engineroute.ProfilePreparation {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -47,7 +48,7 @@ func (l *Launcher) PrepareProfiles(ctx context.Context, desired []engineroute.Pr
 	preparation := l.beginPreparationLocked()
 	ordered := canonicalProfiles(desired)
 	l.reconcileRetiringGroupsLocked(ctx, desiredKCEFKeys(ordered))
-	admitted, retainedReady := l.readyKCEFAdmissionLocked(ordered)
+	admitted, retainedReady := l.readyKCEFAdmissionLocked(ctx, ordered)
 	managedSlots := maxKCEFProcessGroups - l.defaultKCEFReservationLocked()
 	l.fillKCEFAdmissionLocked(ordered, admitted, managedSlots)
 	l.retireDisplacedKCEFLocked(ctx, ordered, admitted, retainedReady)
@@ -95,12 +96,16 @@ func (l *Launcher) reconcileRetiringGroupsLocked(ctx context.Context, desired ma
 	l.reapRetiringProcessGroupsLocked(ctx)
 }
 
-func (l *Launcher) readyKCEFAdmissionLocked(ordered []engineroute.Profile) (map[string]bool, map[string]bool) {
+func (l *Launcher) readyKCEFAdmissionLocked(ctx context.Context, ordered []engineroute.Profile) (map[string]bool, map[string]bool) {
 	admitted := make(map[string]bool)
 	retained := make(map[string]bool)
 	for _, profile := range ordered {
 		instance, ok := l.instances[profile.Key]
-		if !profile.KCEFEnabled || !ok || !instance.profile.KCEFEnabled || !alive(instance.proc) {
+		if !profile.KCEFEnabled || !ok || !instance.profile.KCEFEnabled {
+			continue
+		}
+		ready, err := l.reusable(ctx, instance)
+		if err != nil || !ready {
 			continue
 		}
 		admitted[profile.Key] = true
@@ -168,7 +173,7 @@ func (l *Launcher) retireUnadmittedDesiredKCEFLocked(ctx context.Context, ordere
 			return
 		}
 		instance, ok := l.instances[profile.Key]
-		if !profile.KCEFEnabled || admitted[profile.Key] || !ok || !instance.profile.KCEFEnabled || alive(instance.proc) {
+		if !profile.KCEFEnabled || admitted[profile.Key] || !ok || !instance.profile.KCEFEnabled {
 			continue
 		}
 		l.degradeAndRetireInstanceLocked(ctx, profile.Key, instance)

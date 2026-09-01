@@ -97,6 +97,12 @@ func (p *fakeProcess) setGroupState(alive bool, err error) {
 	p.groupProbeErr = err
 }
 
+func (p *fakeProcess) setKeepGroupOnKill(keep bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.keepGroupOnKill = keep
+}
+
 // wasKilled reports whether Kill was ever called.
 func (p *fakeProcess) wasKilled() bool {
 	p.mu.Lock()
@@ -276,27 +282,34 @@ func (c *fakeReadinessClock) Advance(d time.Duration) {
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
 	for _, timer := range c.timers {
-		timer.mu.Lock()
-		if !timer.stopped && !timer.fired && !timer.deadline.After(c.now) {
-			timer.fired = true
-			timer.channel <- c.now
-		}
-		timer.mu.Unlock()
+		timer.advance(c.now)
 	}
 	for _, ticker := range c.tickers {
-		ticker.mu.Lock()
-		if ticker.stopped || ticker.next.After(c.now) {
-			ticker.mu.Unlock()
-			continue
-		}
-		select {
-		case ticker.channel <- c.now:
-		default:
-		}
-		for !ticker.next.After(c.now) {
-			ticker.next = ticker.next.Add(ticker.interval)
-		}
-		ticker.mu.Unlock()
+		ticker.advance(c.now)
+	}
+}
+
+func (t *fakeReadinessTimer) advance(now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.stopped && !t.fired && !t.deadline.After(now) {
+		t.fired = true
+		t.channel <- now
+	}
+}
+
+func (t *fakeReadinessTicker) advance(now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.stopped || t.next.After(now) {
+		return
+	}
+	select {
+	case t.channel <- now:
+	default:
+	}
+	for !t.next.After(now) {
+		t.next = t.next.Add(t.interval)
 	}
 }
 

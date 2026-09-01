@@ -224,7 +224,7 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         :class="{ 'source-setting-target--highlighted': focusTarget === 'kcefPolicy' }"
         setting-key="kcefPolicy"
         name="Embedded browser"
-        :hint="`Effective embedded browser: ${configuration.kcef.enabled ? 'Enabled' : 'Disabled'}. Required is incompatible with SOCKS routing.`"
+        :hint="`Effective embedded browser: ${configuration.kcef.enabled ? 'On' : 'Off'}. Required is incompatible with SOCKS routing.`"
         control="select"
         :model-value="configuration.kcef.effective"
         :global-value="configuration.kcef.global"

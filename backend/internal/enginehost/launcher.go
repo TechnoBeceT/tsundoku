@@ -363,23 +363,26 @@ func (l *Launcher) degradedInstanceOwnsSourceLocked(sourceID int64) bool {
 	return false
 }
 
-// Close stops ALL instances and marks the launcher closed so no further profile
-// can be brought up. It is wired into main's graceful-shutdown path. Idempotent;
-// always returns nil (teardown is best-effort). The error return exists so main
-// can treat it uniformly with the other closers.
+// Close marks the launcher closed, then drains every group still present in the
+// ownership ledger, including failed-start and detached-retirement groups that
+// no longer have an instance-map entry. All groups share one two-grace shutdown
+// deadline and are driven concurrently, so aggregate latency is bounded rather
+// than growing with profile count. Any ownership not proven absent is reported.
 func (l *Launcher) Close() error {
 	l.mu.Lock()
-	if l.closed {
-		l.mu.Unlock()
-		return nil
-	}
 	l.closed = true
+	l.instances = map[string]*managedInstance{}
+	groups := make([]*ownedProcessGroup, 0, len(l.processGroups))
+	for group := range l.processGroups {
+		group.retiring = true
+		groups = append(groups, group)
+	}
 	l.mu.Unlock()
 
-	for _, mi := range l.detach(func(*managedInstance) bool { return true }) {
-		l.stopDetachedInstance(context.Background(), mi)
-	}
-	return nil
+	l.closeProcessGroups(groups)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.unresolvedProcessGroupOwnershipLocked()
 }
 
 // detach removes every instance matching pred from the map under mu and returns

@@ -435,15 +435,20 @@ func TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithSanitizedBadRequest(
 	if strings.Contains(rec.Body.String(), "source 42") || strings.Contains(rec.Body.String(), "required embedded browser") {
 		t.Fatalf("DELETE leaked coordinator detail: %s", rec.Body.String())
 	}
+	assertRejectedLegacyDeleteState(t, env, ctx, socks.ID, flare.ID)
+}
+
+func assertRejectedLegacyDeleteState(t *testing.T, env *testEnv, ctx context.Context, socksID, flareID uuid.UUID) {
+	t.Helper()
 	policy := env.client.SourceTransportPolicy.Query().OnlyX(ctx)
 	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
 		t.Fatalf("browser policy after rejected DELETE = %+v, want required unchanged", policy)
 	}
 	binding := env.client.SourceNetworkBinding.Query().OnlyX(ctx)
-	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != socks.ID || binding.FlareEndpointID == nil || *binding.FlareEndpointID != flare.ID {
+	if binding.SocksEndpointID == nil || *binding.SocksEndpointID != socksID || binding.FlareEndpointID == nil || *binding.FlareEndpointID != flareID {
 		t.Fatalf("binding after rejected DELETE = %+v, want both references unchanged", binding)
 	}
-	if !env.client.NetworkEndpoint.GetX(ctx, socks.ID).Enabled || !env.client.NetworkEndpoint.GetX(ctx, flare.ID).Enabled {
+	if !env.client.NetworkEndpoint.GetX(ctx, socksID).Enabled || !env.client.NetworkEndpoint.GetX(ctx, flareID).Enabled {
 		t.Fatal("endpoint changed after rejected DELETE")
 	}
 	if got := env.client.SourceRuntimeIntent.Query().CountX(ctx); got != 0 {

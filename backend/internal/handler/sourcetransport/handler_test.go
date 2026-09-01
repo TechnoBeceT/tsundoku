@@ -405,43 +405,50 @@ func TestTransportExplicitReuseRejectsExactlyBlankSessionBeforePersistenceButAcc
 // proves policy PATCH rejects only an enabled SOCKS endpoint and leaves durable
 // policy/runtime state untouched on the sanitized 400 response.
 func TestTransportRequiredEmbeddedBrowserValidatesCurrentEffectiveSocksRoute(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		kind       string
-		enabled    bool
-		wantStatus int
-		wantRows   int
-	}{
+	for _, tc := range []requiredBrowserRouteCase{
 		{name: "enabled SOCKS rejects", kind: "socks", enabled: true, wantStatus: http.StatusBadRequest},
 		{name: "disabled SOCKS does not route", kind: "socks", wantStatus: http.StatusOK, wantRows: 1},
 		{name: "enabled non SOCKS does not route", kind: "flaresolverr", enabled: true, wantStatus: http.StatusOK, wantRows: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			client := testdb.New(t)
-			endpoint := client.NetworkEndpoint.Create().SetName("route").SetKind(tc.kind).SetEnabled(tc.enabled).SaveX(ctx)
-			if _, err := client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpoint.ID).Save(ctx); err != nil {
-				t.Fatalf("create binding: %v", err)
-			}
-			service := sourcetransport.NewService(client, fixedDefaults{}, acceptingCatalog{}).
-				WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
-			applier := &fakeApplier{}
-			reader := &fakeConfigurationReader{configuration: testConfiguration{Marker: "composed"}}
-			e, token := mountHandler(t, handler.NewHandler(service, applier, reader))
-
-			rec := doPatch(e, token, "/api/sources/42/transport", `{"kcefPolicy":{"mode":"override","value":"required"}}`, true)
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status=%d body=%s want=%d", rec.Code, rec.Body.String(), tc.wantStatus)
-			}
-			if tc.wantStatus == http.StatusBadRequest && rec.Body.String() != `{"message":"invalid source transport policy"}`+"\n" {
-				t.Fatalf("rejection body=%q, want sanitized invalid-policy response", rec.Body.String())
-			}
-			if got := client.SourceTransportPolicy.Query().Where(sourcetransportpolicy.SourceID(42)).CountX(ctx); got != tc.wantRows {
-				t.Fatalf("policy rows=%d, want=%d", got, tc.wantRows)
-			}
-			if got := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(42)).CountX(ctx); got != tc.wantRows {
-				t.Fatalf("runtime intent rows=%d, want=%d", got, tc.wantRows)
-			}
+			runRequiredBrowserRouteCase(t, tc)
 		})
+	}
+}
+
+type requiredBrowserRouteCase struct {
+	name       string
+	kind       string
+	enabled    bool
+	wantStatus int
+	wantRows   int
+}
+
+func runRequiredBrowserRouteCase(t *testing.T, tc requiredBrowserRouteCase) {
+	t.Helper()
+	ctx := context.Background()
+	client := testdb.New(t)
+	endpoint := client.NetworkEndpoint.Create().SetName("route").SetKind(tc.kind).SetEnabled(tc.enabled).SaveX(ctx)
+	if _, err := client.SourceNetworkBinding.Create().SetSourceID(42).SetSocksEndpointID(endpoint.ID).Save(ctx); err != nil {
+		t.Fatalf("create binding: %v", err)
+	}
+	service := sourcetransport.NewService(client, fixedDefaults{}, acceptingCatalog{}).
+		WithRuntimePolicyCoordinator(runtimepolicy.New(client, ""))
+	applier := &fakeApplier{}
+	reader := &fakeConfigurationReader{configuration: testConfiguration{Marker: "composed"}}
+	e, token := mountHandler(t, handler.NewHandler(service, applier, reader))
+
+	rec := doPatch(e, token, "/api/sources/42/transport", `{"kcefPolicy":{"mode":"override","value":"required"}}`, true)
+	if rec.Code != tc.wantStatus {
+		t.Fatalf("status=%d body=%s want=%d", rec.Code, rec.Body.String(), tc.wantStatus)
+	}
+	if tc.wantStatus == http.StatusBadRequest && rec.Body.String() != `{"message":"invalid source transport policy"}`+"\n" {
+		t.Fatalf("rejection body=%q, want sanitized invalid-policy response", rec.Body.String())
+	}
+	if got := client.SourceTransportPolicy.Query().Where(sourcetransportpolicy.SourceID(42)).CountX(ctx); got != tc.wantRows {
+		t.Fatalf("policy rows=%d, want=%d", got, tc.wantRows)
+	}
+	if got := client.SourceRuntimeIntent.Query().Where(sourceruntimeintent.SourceID(42)).CountX(ctx); got != tc.wantRows {
+		t.Fatalf("runtime intent rows=%d, want=%d", got, tc.wantRows)
 	}
 }

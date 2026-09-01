@@ -146,21 +146,25 @@ func (c *Coordinator) prospectiveState(ctx context.Context, p Proposal) (prospec
 	applyOptionalMap(state.kcefPolicies, p.KCEFPolicies)
 	applyOptionalMap(state.bindings, p.Bindings)
 	applyOptionalMap(state.endpoints, p.Endpoints)
-	for id := range p.Policies {
-		state.impacted[id] = true
+	markImpacted(state.impacted, p.Policies)
+	markImpacted(state.impacted, p.KCEFPolicies)
+	markImpacted(state.impacted, p.Bindings)
+	markEndpointImpacts(state, p.Endpoints)
+	return state, nil
+}
+
+func markImpacted[T any](impacted map[int64]bool, updates map[int64]T) {
+	for id := range updates {
+		impacted[id] = true
 	}
-	for id := range p.KCEFPolicies {
-		state.impacted[id] = true
-	}
-	for id := range p.Bindings {
-		state.impacted[id] = true
-	}
+}
+
+func markEndpointImpacts(state prospectiveState, updates map[uuid.UUID]*Endpoint) {
 	for sourceID, binding := range state.bindings {
-		if endpointChanged(binding.SocksEndpointID, p.Endpoints) || endpointChanged(binding.FlareEndpointID, p.Endpoints) {
+		if endpointChanged(binding.SocksEndpointID, updates) || endpointChanged(binding.FlareEndpointID, updates) {
 			state.impacted[sourceID] = true
 		}
 	}
-	return state, nil
 }
 
 func newProspectiveState(global string, policies []*ent.SourceTransportPolicy, bindings []*ent.SourceNetworkBinding, endpoints []*ent.NetworkEndpoint, p Proposal) prospectiveState {

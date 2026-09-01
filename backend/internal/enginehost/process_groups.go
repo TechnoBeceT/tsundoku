@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +22,7 @@ type ownedProcessGroup struct {
 	proc        RunningProcess
 	kcefEnabled bool
 	retiring    bool
+	teardownMu  sync.Mutex
 }
 
 func (l *Launcher) reapRetiringProcessGroupsLocked(ctx context.Context) {
@@ -34,7 +37,7 @@ func (l *Launcher) reapRetiringProcessGroupsLocked(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if group.proc != nil && terminateProcessGroup(ctx, group.proc, l.stopGrace) {
+		if group.proc != nil && terminateOwnedProcessGroup(ctx, group, l.stopGrace) {
 			delete(l.processGroups, group)
 		}
 	}
@@ -93,7 +96,7 @@ func (l *Launcher) stopInstanceLocked(ctx context.Context, instance *managedInst
 	if instance.processGroup != nil {
 		instance.processGroup.retiring = true
 	}
-	gone := terminateProcessGroup(ctx, instance.proc, l.stopGrace)
+	gone := terminateOwnedProcessGroup(ctx, instance.processGroup, l.stopGrace)
 	if gone && instance.processGroup != nil {
 		delete(l.processGroups, instance.processGroup)
 	}
@@ -106,7 +109,7 @@ func (l *Launcher) stopDetachedInstance(ctx context.Context, instance *managedIn
 		instance.processGroup.retiring = true
 		l.mu.Unlock()
 	}
-	gone := terminateProcessGroup(ctx, instance.proc, l.stopGrace)
+	gone := terminateOwnedProcessGroup(ctx, instance.processGroup, l.stopGrace)
 	if gone && instance.processGroup != nil {
 		l.mu.Lock()
 		delete(l.processGroups, instance.processGroup)
@@ -119,6 +122,65 @@ func lingeringProcessGroupError(instance *managedInstance) error {
 		return fmt.Errorf("%w: prior process group for profile %q remains", ErrKCEFCapacity, instance.key)
 	}
 	return fmt.Errorf("enginehost: prior process group for profile %q remains", instance.key)
+}
+
+func terminateOwnedProcessGroup(ctx context.Context, group *ownedProcessGroup, grace time.Duration) bool {
+	if group == nil || group.proc == nil {
+		return group == nil
+	}
+	group.teardownMu.Lock()
+	defer group.teardownMu.Unlock()
+	return terminateProcessGroup(ctx, group.proc, grace)
+}
+
+func killOwnedProcessGroup(ctx context.Context, group *ownedProcessGroup, grace time.Duration) bool {
+	if group == nil || group.proc == nil {
+		return group == nil
+	}
+	group.teardownMu.Lock()
+	defer group.teardownMu.Unlock()
+	return killProcessGroup(ctx, group.proc, grace)
+}
+
+func (l *Launcher) closeProcessGroups(groups []*ownedProcessGroup) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*l.stopGrace)
+	defer cancel()
+	type result struct {
+		group *ownedProcessGroup
+		gone  bool
+	}
+	results := make(chan result, len(groups))
+	for _, group := range groups {
+		go func() {
+			results <- result{group: group, gone: terminateOwnedProcessGroup(ctx, group, l.stopGrace)}
+		}()
+	}
+	for range groups {
+		result := <-results
+		if !result.gone {
+			continue
+		}
+		l.mu.Lock()
+		delete(l.processGroups, result.group)
+		l.mu.Unlock()
+	}
+}
+
+func (l *Launcher) unresolvedProcessGroupOwnershipLocked() error {
+	l.releaseAbsentProcessGroupsLocked()
+	if len(l.processGroups) == 0 {
+		return nil
+	}
+	identities := make([]string, 0, len(l.processGroups))
+	for group := range l.processGroups {
+		groupID := 0
+		if group.proc != nil {
+			groupID = group.proc.GroupID()
+		}
+		identities = append(identities, fmt.Sprintf("profile %q group %d", group.profileKey, groupID))
+	}
+	sort.Strings(identities)
+	return fmt.Errorf("enginehost: unresolved process-group ownership after close: %s", strings.Join(identities, ", "))
 }
 
 // terminateProcessGroup sends TERM and then KILL to the complete managed group,

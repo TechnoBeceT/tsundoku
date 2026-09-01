@@ -30,10 +30,11 @@
 // wires the production implementations (exec_process.go / health.go / status.go
 // / port.go); tests pass fakes via the With* options. /health remains RPC
 // liveness only: a launch samples strict /status after health and before its
-// settle recheck, admitting KCEF-enabled profiles only at ready and KCEF-off
-// profiles only at disabled. The supervisor uses the same status capability to
-// restart only a profile that loses its browser, and requires six stable
-// full-pool samples before recovering an exhausted managed profile.
+// settle recheck of both contracts, admitting KCEF-enabled profiles only at
+// ready and KCEF-off profiles only at disabled. The supervisor uses the same
+// status capability to restart only a profile that loses its browser, and
+// requires six stable full-pool samples before recovering an exhausted managed
+// profile.
 package enginehost
 
 import (

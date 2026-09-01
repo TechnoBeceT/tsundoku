@@ -36,16 +36,8 @@ func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	rerouter := newFakeRerouter()
 	var lossAvailable atomic.Bool
-	status := func(_ context.Context, baseURL string) (enginehost.EngineStatus, error) {
-		if baseURL == "http://127.0.0.1:41001" && lossAvailable.CompareAndSwap(true, false) {
-			return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{
-				State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
-			}}, nil
-		}
-		return readyKCEFStatus(), nil
-	}
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-		enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(status),
+		enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(kcefLossStatus(&lossAvailable)),
 		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
 	s := enginehost.NewSupervisor(l, fixedInterval(time.Second))
 	p1 := engineroute.Profile{Key: "failed-kcef", SourceIDs: []int64{11}, KCEFEnabled: true}
@@ -57,15 +49,35 @@ func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
 		t.Fatalf("EnsureProfile p2: %v", err)
 	}
 	rerouter.resetEvents()
-	starter.proc(0).setOnSignal(func() {
-		if !rerouter.isDegraded(11) {
-			t.Error("failed profile was stopped before its sources were degraded")
-		}
-	})
+	starter.proc(0).setOnSignal(assertDegradedOnSignal(t, rerouter, 11))
 	lossAvailable.Store(true)
 
 	enginehost.SuperviseOnce(s, context.Background(), time.Now())
+	assertKCEFLossRestart(t, starter, rerouter)
+}
 
+func kcefLossStatus(lossAvailable *atomic.Bool) enginehost.StatusProber {
+	return func(_ context.Context, baseURL string) (enginehost.EngineStatus, error) {
+		if baseURL == "http://127.0.0.1:41001" && lossAvailable.CompareAndSwap(true, false) {
+			return enginehost.EngineStatus{KCEF: enginehost.KCEFStatus{
+				State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+			}}, nil
+		}
+		return readyKCEFStatus(), nil
+	}
+}
+
+func assertDegradedOnSignal(t *testing.T, rerouter *fakeRerouter, sourceID int64) func() {
+	t.Helper()
+	return func() {
+		if !rerouter.isDegraded(sourceID) {
+			t.Error("failed profile was stopped before its sources were degraded")
+		}
+	}
+}
+
+func assertKCEFLossRestart(t *testing.T, starter *fakeStarter, rerouter *fakeRerouter) {
+	t.Helper()
 	if got := starter.callCount(); got != 3 {
 		t.Fatalf("starts = %d, want only failed profile restarted", got)
 	}

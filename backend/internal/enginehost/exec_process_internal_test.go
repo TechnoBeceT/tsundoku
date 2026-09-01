@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -154,7 +155,22 @@ func TestTerminateProcessGroupPreservesConfiguredGraceAfterLeaderExit(t *testing
 	go func() {
 		terminated <- terminateProcessGroup(context.Background(), proc, configuredGrace)
 	}()
+	assertConfiguredGraceWindow(t, proc, system, configuredGrace, graceWaitStarted, graceExpired, terminated)
+}
 
+func assertConfiguredGraceWindow(t *testing.T, proc *execProcess, system *fakeProcessGroupSystem, configuredGrace time.Duration, graceWaitStarted <-chan time.Duration, graceExpired chan time.Time, terminated <-chan bool) {
+	t.Helper()
+	requireGraceWaitStarted(t, proc, configuredGrace, graceWaitStarted)
+	assertProcessGroupSignals(t, system, []syscall.Signal{syscall.SIGTERM}, "signals before grace expiry")
+	assertProcessNotReaped(t, proc)
+	close(graceExpired)
+	requireProcessReaped(t, proc, time.Second, "bounded autonomous fallback did not reap after grace expiry")
+	requireTerminatedGroupAbsent(t, terminated)
+	assertProcessGroupSignals(t, system, []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL}, "complete graceful-stop signals")
+}
+
+func requireGraceWaitStarted(t *testing.T, proc *execProcess, configuredGrace time.Duration, graceWaitStarted <-chan time.Duration) {
+	t.Helper()
 	select {
 	case got := <-graceWaitStarted:
 		wantRemaining := configuredGrace - 2*time.Second
@@ -166,21 +182,26 @@ func TestTerminateProcessGroupPreservesConfiguredGraceAfterLeaderExit(t *testing
 		<-proc.Reaped()
 		t.Fatal("reaper did not enter the active graceful-stop window")
 	}
-	if got := system.nonProbeSignals(); len(got) != 1 || got[0] != syscall.SIGTERM {
-		t.Fatalf("signals before grace expiry = %v, want TERM only", got)
+}
+
+func assertProcessGroupSignals(t *testing.T, system *fakeProcessGroupSystem, want []syscall.Signal, message string) {
+	t.Helper()
+	if got := system.nonProbeSignals(); !slices.Equal(got, want) {
+		t.Fatalf("%s = %v, want %v", message, got, want)
 	}
+}
+
+func assertProcessNotReaped(t *testing.T, proc *execProcess) {
+	t.Helper()
 	select {
 	case <-proc.Reaped():
 		t.Fatal("leader was reaped before configured grace expired")
 	default:
 	}
+}
 
-	close(graceExpired)
-	select {
-	case <-proc.Reaped():
-	case <-time.After(time.Second):
-		t.Fatal("bounded autonomous fallback did not reap after grace expiry")
-	}
+func requireTerminatedGroupAbsent(t *testing.T, terminated <-chan bool) {
+	t.Helper()
 	select {
 	case gone := <-terminated:
 		if !gone {
@@ -188,9 +209,6 @@ func TestTerminateProcessGroupPreservesConfiguredGraceAfterLeaderExit(t *testing
 		}
 	case <-time.After(time.Second):
 		t.Fatal("graceful termination did not finish after autonomous fallback")
-	}
-	if got := system.nonProbeSignals(); len(got) != 2 || got[0] != syscall.SIGTERM || got[1] != syscall.SIGKILL {
-		t.Fatalf("complete graceful-stop signals = %v, want TERM then KILL", got)
 	}
 }
 
@@ -330,6 +348,7 @@ func TestParseProcStartTimeHandlesComplexComm(t *testing.T) {
 func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "host")
+	//nolint:gosec // This owner-only test helper must be directly executable.
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ntrap 'exit 0' TERM\nwhile :; do sleep 1; done\n"), 0o700); err != nil {
 		t.Fatalf("write helper: %v", err)
 	}
@@ -337,13 +356,7 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = proc.Kill()
-		select {
-		case <-proc.Done():
-		case <-time.After(time.Second):
-		}
-	})
+	t.Cleanup(func() { cleanupRunningProcess(proc) })
 
 	pgid, err := syscall.Getpgid(proc.Pid())
 	if err != nil {
@@ -355,28 +368,10 @@ func TestExecStarterCreatesAndSignalsDedicatedProcessGroup(t *testing.T) {
 	if err := proc.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("Signal group: %v", err)
 	}
-	select {
-	case <-proc.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("group TERM did not terminate the JVM")
-	}
+	requireProcessDone(t, proc, 2*time.Second, "group TERM did not terminate the JVM")
 	execProc := proc.(*execProcess)
-	select {
-	case <-execProc.Reaped():
-	case <-time.After(2 * time.Second):
-		t.Fatal("reaper did not autonomously finalize the terminated group")
-	}
-	deadline := time.Now().Add(time.Second)
-	for {
-		exists, probeErr := proc.GroupExists()
-		if probeErr == nil && !exists {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("process group still exists/error = %v/%v", exists, probeErr)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	requireProcessReaped(t, execProc, 2*time.Second, "reaper did not autonomously finalize the terminated group")
+	requireProcessGroupAbsent(t, proc, "process group still exists/error")
 	if err := proc.Signal(syscall.SIGTERM); !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("signal absent group error = %v, want ESRCH", err)
 	}
@@ -386,6 +381,7 @@ func TestExecStarterKillsDescendantGroupAndReapsExitedLeader(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "host-with-descendant")
 	contents := "#!/bin/sh\nsh -c 'trap \"\" HUP TERM; while :; do sleep 1; done' &\necho $! > \"$TSUNDOKU_ENGINE_DATA/child.pid\"\nsleep 0.05\nexit 0\n"
+	//nolint:gosec // This owner-only test helper must be directly executable.
 	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
 		t.Fatalf("write helper: %v", err)
 	}
@@ -395,17 +391,40 @@ func TestExecStarterKillsDescendantGroupAndReapsExitedLeader(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = proc.Kill() })
 
+	requireProcessDone(t, proc, 2*time.Second, "leader exit was not observed")
+	execProc := proc.(*execProcess)
+	requireProcessReaped(t, execProc, 2*time.Second, "reaper did not kill the descendant group and reap the exited leader")
+	requireProcessGroupAbsent(t, proc, "GroupExists after reap")
+}
+
+func cleanupRunningProcess(proc RunningProcess) {
+	_ = proc.Kill()
 	select {
 	case <-proc.Done():
-	case <-time.After(2 * time.Second):
-		t.Fatal("leader exit was not observed")
+	case <-time.After(time.Second):
 	}
-	execProc := proc.(*execProcess)
+}
+
+func requireProcessDone(t *testing.T, proc RunningProcess, timeout time.Duration, message string) {
+	t.Helper()
 	select {
-	case <-execProc.Reaped():
-	case <-time.After(2 * time.Second):
-		t.Fatal("reaper did not kill the descendant group and reap the exited leader")
+	case <-proc.Done():
+	case <-time.After(timeout):
+		t.Fatal(message)
 	}
+}
+
+func requireProcessReaped(t *testing.T, proc *execProcess, timeout time.Duration, message string) {
+	t.Helper()
+	select {
+	case <-proc.Reaped():
+	case <-time.After(timeout):
+		t.Fatal(message)
+	}
+}
+
+func requireProcessGroupAbsent(t *testing.T, proc RunningProcess, message string) {
+	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for {
 		exists, probeErr := proc.GroupExists()
@@ -413,7 +432,7 @@ func TestExecStarterKillsDescendantGroupAndReapsExitedLeader(t *testing.T) {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("GroupExists after reap = %v, %v; want false, nil", exists, probeErr)
+			t.Fatalf("%s = %v/%v, want false/nil", message, exists, probeErr)
 		}
 		time.Sleep(time.Millisecond)
 	}

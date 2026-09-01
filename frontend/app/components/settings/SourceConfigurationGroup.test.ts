@@ -28,7 +28,7 @@ describe('SourceConfigurationGroup', () => {
     expect(row.text()).toContain('Override')
     expect(row.text()).toContain('Global auto')
     expect(row.text()).toContain('Effective required')
-    expect(row.text()).toContain('Enabled')
+    expect(row.text()).toContain('Effective embedded browser: On')
     expect(row.text()).toContain('Required is incompatible with SOCKS routing.')
   })
 
@@ -51,6 +51,8 @@ describe('SourceConfigurationGroup', () => {
       'kcefPolicy',
       value,
     ]])
+    expect(wrapper.get('[data-source-setting-target="kcefPolicy"]').text())
+      .toContain(`Effective embedded browser: ${enabled ? 'On' : 'Off'}`)
   })
 
   it('labels inherited Auto separately from the effective embedded-browser state', () => {
@@ -63,7 +65,7 @@ describe('SourceConfigurationGroup', () => {
     const row = wrapper.get('[data-source-setting-target="kcefPolicy"]')
     expect(row.text()).toContain('Inherited')
     expect(row.text()).toContain('Effective auto')
-    expect(row.text()).toContain('Enabled')
+    expect(row.text()).toContain('Effective embedded browser: On')
     expect(row.get('[data-testid="use-global"]').attributes('disabled')).toBeDefined()
   })
 

@@ -57,8 +57,9 @@ func WithReadinessClock(clock ReadinessClock) Option {
 // 500ms). Tests shrink it.
 func WithPollInterval(d time.Duration) Option { return func(l *Launcher) { l.pollInterval = d } }
 
-// WithSettleDelay sets the post-healthy re-probe window that catches a
-// healthy-then-dead instance (default 1s; see Launcher.settle + GAP-094). A
+// WithSettleDelay sets the post-ready health-and-capability re-probe window that
+// catches a healthy-then-dead or ready-then-failed instance (default 1s; see
+// Launcher.settle + GAP-094). A
 // non-positive value disables the recheck — tests use 0 to pin the poll-only
 // semantics, and a small positive value to exercise the settle path fast.
 func WithSettleDelay(d time.Duration) Option { return func(l *Launcher) { l.settleDelay = d } }

@@ -99,15 +99,27 @@ func (s *Service) Update(ctx context.Context, sourceID int64, patch Patch) (Upda
 		return updateErr
 	})
 	if err != nil {
-		if errors.Is(err, runtimepolicy.ErrInvalidSelection) || errors.Is(err, runtimepolicy.ErrKCEFWithSocks) || errors.Is(err, runtimepolicy.ErrInvalidKCEFPolicy) {
+		if isInvalidRuntimePolicy(err) {
 			return result, fmt.Errorf("%w: %w", ErrInvalidPolicy, err)
 		}
 		return result, fmt.Errorf("sourcetransport.Update: %w", err)
 	}
-	if patch.ReuseBypassSession.Operation == PatchKeep && patch.ImageConnectionMode.Operation == PatchKeep && patch.KCEFPolicy.Operation == PatchKeep {
+	if patchKeepsAllFields(patch) {
 		return result, nil
 	}
 	return s.applyUpdate(ctx, sourceID, result)
+}
+
+func isInvalidRuntimePolicy(err error) bool {
+	return errors.Is(err, runtimepolicy.ErrInvalidSelection) ||
+		errors.Is(err, runtimepolicy.ErrKCEFWithSocks) ||
+		errors.Is(err, runtimepolicy.ErrInvalidKCEFPolicy)
+}
+
+func patchKeepsAllFields(patch Patch) bool {
+	return patch.ReuseBypassSession.Operation == PatchKeep &&
+		patch.ImageConnectionMode.Operation == PatchKeep &&
+		patch.KCEFPolicy.Operation == PatchKeep
 }
 
 func (s *Service) update(ctx context.Context, sourceID int64, patch Patch, apply, prevalidated bool) (UpdateResult, error) {

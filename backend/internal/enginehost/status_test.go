@@ -30,8 +30,18 @@ func TestHTTPStatusProber_ReturnsTypedApprovedStatus(t *testing.T) {
 	if gotPath != "/status" {
 		t.Errorf("path = %q, want /status", gotPath)
 	}
-	if !status.Ready || status.SourceWorkers != 8 || status.Running != 8 || status.CompletionSequence != 41 {
-		t.Errorf("status = %+v, want decoded approved fields", status)
+	gotSummary := struct {
+		ready              bool
+		workers, running   int
+		completionSequence int64
+	}{status.Ready, status.SourceWorkers, status.Running, status.CompletionSequence}
+	wantSummary := struct {
+		ready              bool
+		workers, running   int
+		completionSequence int64
+	}{true, 8, 8, 41}
+	if gotSummary != wantSummary {
+		t.Errorf("status summary = %+v, want %+v", gotSummary, wantSummary)
 	}
 	if len(status.BusiestSources) != 4 || status.BusiestSources[0].SourceID != 11 {
 		t.Errorf("busiest_sources = %+v, want four typed source rows", status.BusiestSources)

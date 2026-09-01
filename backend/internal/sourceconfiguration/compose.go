@@ -178,36 +178,32 @@ func containsSourceID(ids []int64, sourceID int64) bool {
 }
 
 func exceptionCount(sourceID int64, snapshot storesSnapshot) int {
-	count := 0
 	throughput := snapshot.throughput.Overrides[sourceID]
-	if throughput.DownloadConcurrency != nil {
-		count++
-	}
-	if throughput.ImageRequestDelay != nil {
-		count++
-	}
 	transport := snapshot.transport.Overrides[sourceID]
-	if transport.ReuseBypassSession != nil {
-		count++
-	}
-	if transport.ImageConnectionMode != nil {
-		count++
-	}
-	if transport.KCEFPolicy != nil {
-		count++
-	}
-	if containsSourceID(snapshot.globals.ProxySourceIDs, sourceID) {
-		count++
-	}
+	count := countTrue(
+		throughput.DownloadConcurrency != nil,
+		throughput.ImageRequestDelay != nil,
+		transport.ReuseBypassSession != nil,
+		transport.ImageConnectionMode != nil,
+		transport.KCEFPolicy != nil,
+		containsSourceID(snapshot.globals.ProxySourceIDs, sourceID),
+	)
 	binding, ok := snapshot.routing.Stored[sourceID]
 	if !ok {
 		return count
 	}
-	if binding.SocksEndpointID != nil {
-		count++
-	}
-	if binding.FlareMode != network.FlareModeGlobal || binding.FlareEndpointID != nil {
-		count++
+	return count + countTrue(
+		binding.SocksEndpointID != nil,
+		binding.FlareMode != network.FlareModeGlobal || binding.FlareEndpointID != nil,
+	)
+}
+
+func countTrue(values ...bool) int {
+	count := 0
+	for _, value := range values {
+		if value {
+			count++
+		}
 	}
 	return count
 }

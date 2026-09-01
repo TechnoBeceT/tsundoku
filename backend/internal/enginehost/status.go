@@ -194,30 +194,9 @@ func approvedStatusField(key string) bool {
 }
 
 func validateKCEFStatus(decoder *json.Decoder) error {
-	if err := requireJSONDelim(decoder, '{', "kcef must be an object"); err != nil {
-		return err
-	}
-	seen := make(map[string]struct{}, 2)
-	for decoder.More() {
-		key, err := readApprovedField(decoder, approvedKCEFField, "unapproved kcef field")
-		if err != nil {
-			return err
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return fmt.Errorf("duplicate kcef field %q", key)
-		}
-		seen[key] = struct{}{}
-		if err := discardJSONValue(decoder); err != nil {
-			return err
-		}
-	}
-	if err := requireJSONDelim(decoder, '}', "unterminated kcef object"); err != nil {
-		return err
-	}
-	if len(seen) != 2 {
-		return fmt.Errorf("kcef is missing required fields")
-	}
-	return nil
+	return validateStatusObject(decoder, statusObjectContract{
+		approved: approvedKCEFField, requiredFields: 2, objectName: "kcef",
+	})
 }
 
 func approvedKCEFField(key string) bool { return key == "state" || key == "errorCode" }
@@ -240,28 +219,40 @@ func validateSourceRows(decoder *json.Decoder) error {
 }
 
 func validateSourceRow(decoder *json.Decoder) error {
-	if err := requireJSONDelim(decoder, '{', "source status must be an object"); err != nil {
+	return validateStatusObject(decoder, statusObjectContract{
+		approved: approvedSourceField, requiredFields: 3, objectName: "source status",
+	})
+}
+
+type statusObjectContract struct {
+	approved       func(string) bool
+	requiredFields int
+	objectName     string
+}
+
+func validateStatusObject(decoder *json.Decoder, contract statusObjectContract) error {
+	if err := requireJSONDelim(decoder, '{', contract.objectName+" must be an object"); err != nil {
 		return err
 	}
-	seen := make(map[string]struct{}, 3)
+	seen := make(map[string]struct{}, contract.requiredFields)
 	for decoder.More() {
-		key, err := readApprovedField(decoder, approvedSourceField, "unapproved source status field")
+		key, err := readApprovedField(decoder, contract.approved, "unapproved "+contract.objectName+" field")
 		if err != nil {
 			return err
 		}
 		if _, duplicate := seen[key]; duplicate {
-			return fmt.Errorf("duplicate source status field %q", key)
+			return fmt.Errorf("duplicate %s field %q", contract.objectName, key)
 		}
 		seen[key] = struct{}{}
 		if err := discardJSONValue(decoder); err != nil {
 			return err
 		}
 	}
-	if err := requireJSONDelim(decoder, '}', "unterminated source status object"); err != nil {
+	if err := requireJSONDelim(decoder, '}', "unterminated "+contract.objectName+" object"); err != nil {
 		return err
 	}
-	if len(seen) != 3 {
-		return fmt.Errorf("source status is missing required fields")
+	if len(seen) != contract.requiredFields {
+		return fmt.Errorf("%s is missing required fields", contract.objectName)
 	}
 	return nil
 }

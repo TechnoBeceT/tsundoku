@@ -87,6 +87,11 @@ func TestSetBindingUpdateRejectsSocksForRequiredBrowserWithoutIntentChurn(t *tes
 		t.Fatalf("SetBinding update error = %v, want ErrInvalidBinding", err)
 	}
 	assertSanitizedKCEFMutation(t, err)
+	assertRejectedBindingUpdateState(t, client, ctx, socksID)
+}
+
+func assertRejectedBindingUpdateState(t *testing.T, client *ent.Client, ctx context.Context, socksID uuid.UUID) {
+	t.Helper()
 	stored := client.SourceNetworkBinding.Query().Where(entbinding.SourceID(42)).OnlyX(ctx)
 	if stored.SocksEndpointID != nil || stored.FlareMode != network.FlareModeGlobal {
 		t.Fatalf("binding after rejected update = %+v, want direct global route", stored)

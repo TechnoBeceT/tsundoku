@@ -166,10 +166,7 @@ func Derive(defaultKCEFEnabled bool, bindings []BindingInput) []Profile {
 // route needs management; the historical-route comparison decides whether an
 // already-managed route needs a KCEF discriminator, preserving legacy keys.
 func profileKey(b BindingInput, defaultKCEFEnabled bool) string {
-	socksID := ""
-	if b.Socks != nil {
-		socksID = b.Socks.ID
-	}
+	socksID := socksEndpointID(b.Socks)
 	mode := normalizeFlareMode(b.FlareMode)
 	disableSession := bypassCanBeUsed(mode) && b.DisableBypassSession
 	networkDefault := socksID == "" && mode == FlareModeGlobal && !disableSession
@@ -179,10 +176,7 @@ func profileKey(b BindingInput, defaultKCEFEnabled bool) string {
 	if networkDefault {
 		return kcefKey(b.KCEFEnabled)
 	}
-	flareID := ""
-	if b.Flare != nil {
-		flareID = b.Flare.ID
-	}
+	flareID := flareEndpointID(b.Flare)
 	key := strings.Join([]string{socksID, mode, flareID}, "|")
 	if disableSession {
 		key += "|session=disposable"
@@ -191,6 +185,20 @@ func profileKey(b BindingInput, defaultKCEFEnabled bool) string {
 		key += "|" + kcefKey(b.KCEFEnabled)
 	}
 	return key
+}
+
+func socksEndpointID(endpoint *SocksEndpoint) string {
+	if endpoint == nil {
+		return ""
+	}
+	return endpoint.ID
+}
+
+func flareEndpointID(endpoint *FlareEndpoint) string {
+	if endpoint == nil {
+		return ""
+	}
+	return endpoint.ID
 }
 
 // historicalKCEFEnabled is the behavior profile keys represented before KCEF

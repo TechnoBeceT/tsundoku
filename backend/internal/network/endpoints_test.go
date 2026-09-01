@@ -73,6 +73,11 @@ func TestUpdateEndpointRejectsEnablingSocksForRequiredBrowserWithoutIntentChurn(
 		t.Fatalf("UpdateEndpoint error = %v, want ErrInvalidEndpoint", err)
 	}
 	assertSanitizedKCEFMutation(t, err)
+	assertRejectedEndpointEnableState(t, client, ctx, id)
+}
+
+func assertRejectedEndpointEnableState(t *testing.T, client *ent.Client, ctx context.Context, id uuid.UUID) {
+	t.Helper()
 	stored := client.NetworkEndpoint.GetX(ctx, id)
 	if stored.Enabled {
 		t.Fatal("endpoint enabled after rejected update")
@@ -233,6 +238,11 @@ func TestDeleteEndpointRejectsLegacyRequiredBrowserRouteWithoutWrites(t *testing
 		t.Fatalf("DeleteEndpoint error = %v, want ErrInvalidEndpoint", err)
 	}
 	assertSanitizedKCEFMutation(t, err)
+	assertRejectedEndpointDeleteState(t, client, ctx, socksID, flareID)
+}
+
+func assertRejectedEndpointDeleteState(t *testing.T, client *ent.Client, ctx context.Context, socksID, flareID uuid.UUID) {
+	t.Helper()
 	policy := client.SourceTransportPolicy.Query().OnlyX(ctx)
 	if policy.KcefPolicy == nil || *policy.KcefPolicy != "required" {
 		t.Fatalf("browser policy after rejected delete = %+v, want required unchanged", policy)

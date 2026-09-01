@@ -97,6 +97,35 @@ func TestPrepareProfiles_DeadDesiredProfileDoesNotDisplaceCanonicalCandidate(t *
 	}
 }
 
+func TestPrepareProfiles_FailedLiveDesiredProfileDoesNotDisplaceCanonicalCandidate(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{
+		State:     enginehost.KCEFStateFailed,
+		ErrorCode: kcefError(enginehost.KCEFErrorInitFailed),
+	}
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter, okProber,
+		enginehost.WithStatusProber(sequenceStatus(readyKCEFStatus(), failed, readyKCEFStatus())),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	z := profile("z-failed")
+	a := profile("a-new")
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{z})
+	if _, err := launcher.EnsureProfile(context.Background(), z); err != nil {
+		t.Fatalf("EnsureProfile(z): %v", err)
+	}
+
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{z, a})
+	if _, err := launcher.EnsureProfile(context.Background(), z); !errors.Is(err, enginehost.ErrKCEFCapacity) {
+		t.Fatalf("EnsureProfile(z failed) error = %v, want canonical capacity degradation", err)
+	}
+	if _, err := launcher.EnsureProfile(context.Background(), a); err != nil {
+		t.Fatalf("EnsureProfile(a): %v", err)
+	}
+	if !starter.proc(0).wasSignalled() {
+		t.Fatal("failed live generation was not retired before canonical replacement")
+	}
+}
+
 func TestPrepareProfiles_RetirementDegradeSurvivesReplacementHealthUntilPublication(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: true}
 	rerouter := newFakeRerouter()

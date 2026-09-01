@@ -207,12 +207,7 @@ func TestGetComposesEmbeddedBrowserPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.KCEF.Override == nil || *got.KCEF.Override != runtimepolicy.KCEFPolicyRequired || got.KCEF.Global != runtimepolicy.KCEFPolicyAuto || got.KCEF.Effective != runtimepolicy.KCEFPolicyRequired || got.KCEF.Inherited || !got.KCEF.Enabled {
-		t.Fatalf("embedded-browser configuration = %+v", got.KCEF)
-	}
-	if got.ProfileKey != "|endpoint||kcef=on" {
-		t.Fatalf("profile key = %q, want |endpoint||kcef=on", got.ProfileKey)
-	}
+	assertRequiredKCEFConfiguration(t, got)
 
 	summaries, err := svc.Exceptions(context.Background())
 	if err != nil {
@@ -220,6 +215,16 @@ func TestGetComposesEmbeddedBrowserPolicy(t *testing.T) {
 	}
 	if len(summaries) != 1 || summaries[0].ExceptionCount != 1 {
 		t.Fatalf("summaries = %+v, want one embedded-browser exception", summaries)
+	}
+}
+
+func assertRequiredKCEFConfiguration(t *testing.T, got Configuration) {
+	t.Helper()
+	if got.KCEF.Override == nil || *got.KCEF.Override != runtimepolicy.KCEFPolicyRequired || got.KCEF.Global != runtimepolicy.KCEFPolicyAuto || got.KCEF.Effective != runtimepolicy.KCEFPolicyRequired || got.KCEF.Inherited || !got.KCEF.Enabled {
+		t.Fatalf("embedded-browser configuration = %+v", got.KCEF)
+	}
+	if got.ProfileKey != "|endpoint||kcef=on" {
+		t.Fatalf("profile key = %q, want |endpoint||kcef=on", got.ProfileKey)
 	}
 }
 

@@ -40,24 +40,20 @@ func TestDerive_KCEFDefaultEquivalence(t *testing.T) {
 	t.Parallel()
 
 	defaultRoute := engineroute.BindingInput{SourceID: 1, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true}
-	if got := engineroute.Derive(true, []engineroute.BindingInput{defaultRoute}); len(got) != 0 {
-		t.Fatalf("Derive(default-on equivalent) = %+v, want no managed profiles", got)
-	}
+	requireProfileCount(t, "default-on equivalent", engineroute.Derive(true, []engineroute.BindingInput{defaultRoute}), 0)
 
 	disabled := defaultRoute
 	disabled.SourceID = 2
 	disabled.KCEFEnabled = false
 	got := engineroute.Derive(true, []engineroute.BindingInput{disabled, {SourceID: 3, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: false}})
-	if len(got) != 1 {
-		t.Fatalf("Derive(default-on disabled) yielded %d profiles, want 1", len(got))
-	}
+	requireProfileCount(t, "default-on disabled", got, 1)
 	if got[0].Key != "kcef=off" || got[0].KCEFEnabled || !reflect.DeepEqual(got[0].SourceIDs, []int64{2, 3}) {
 		t.Fatalf("Derive(default-on disabled) = %+v, want grouped KCEF-off profile", got[0])
 	}
 
 	required := engineroute.BindingInput{SourceID: 4, FlareMode: engineroute.FlareModeGlobal, KCEFEnabled: true}
 	got = engineroute.Derive(false, []engineroute.BindingInput{required})
-	if len(got) != 1 || got[0].Key != "kcef=on" || !got[0].KCEFEnabled {
+	if got[0].Key != "kcef=on" || !got[0].KCEFEnabled {
 		t.Fatalf("Derive(default-off enabled) = %+v, want KCEF-on profile", got)
 	}
 
@@ -65,8 +61,16 @@ func TestDerive_KCEFDefaultEquivalence(t *testing.T) {
 		SourceID: 5, FlareMode: engineroute.FlareModeEndpoint,
 		Flare: &engineroute.FlareEndpoint{ID: "flare"}, KCEFEnabled: true,
 	}})
-	if len(requiredEndpoint) != 1 || requiredEndpoint[0].Key != "|endpoint|flare|kcef=on" {
+	requireProfileCount(t, "required endpoint", requiredEndpoint, 1)
+	if requiredEndpoint[0].Key != "|endpoint|flare|kcef=on" {
 		t.Fatalf("Derive(required endpoint) = %+v, want KCEF-on divergence key", requiredEndpoint)
+	}
+}
+
+func requireProfileCount(t *testing.T, scenario string, profiles []engineroute.Profile, want int) {
+	t.Helper()
+	if len(profiles) != want {
+		t.Fatalf("Derive(%s) yielded %d profiles, want %d", scenario, len(profiles), want)
 	}
 }
 

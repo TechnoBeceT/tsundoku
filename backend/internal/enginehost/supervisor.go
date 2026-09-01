@@ -182,43 +182,50 @@ func (s *Supervisor) runPass(ctx context.Context, now time.Time) {
 func (s *Supervisor) superviseOnce(ctx context.Context, now time.Time) {
 	targets := s.launcher.supervisedSnapshot()
 	for _, t := range targets {
-		if ctx.Err() != nil {
+		if s.superviseTargetOnce(ctx, t, now) {
 			s.launcher.invalidateExhaustionEvidence(targets)
 			return
 		}
-		healthy := alive(t.proc) && s.launcher.prober(ctx, t.baseURL) == nil
-		if ctx.Err() != nil {
-			s.launcher.invalidateExhaustionEvidence(targets)
-			return
-		}
-		if !healthy {
-			s.launcher.superviseInstance(ctx, s, t, false, now)
-			continue
-		}
-
-		status, statusErr := s.launcher.statusProber(ctx, t.baseURL)
-		if ctx.Err() != nil {
-			s.launcher.invalidateExhaustionEvidence(targets)
-			return
-		}
-		if statusErr == nil && t.kcefEnabled && status.KCEF.State != KCEFStateReady {
-			// A process can keep answering /health after its browser capability has
-			// failed. Treat that as down only for this profile; the existing bounded
-			// restart path owns its sources and leaves every other route untouched.
-			s.launcher.superviseInstance(ctx, s, t, false, now)
-			continue
-		}
-		diagnostic := s.launcher.observeHealthyStatus(ctx, t, status, statusErr, now)
-		if diagnostic == nil {
-			continue
-		}
-		s.launcher.exhaustionDiagnostics(ctx, *diagnostic)
-		if ctx.Err() != nil {
-			s.launcher.invalidateExhaustionEvidence(targets)
-			return
-		}
-		s.launcher.restartExhausted(ctx, t, *diagnostic, now)
 	}
+}
+
+func (s *Supervisor) superviseTargetOnce(ctx context.Context, target superviseTarget, now time.Time) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	healthy := alive(target.proc) && s.launcher.prober(ctx, target.baseURL) == nil
+	if ctx.Err() != nil {
+		return true
+	}
+	if !healthy {
+		s.launcher.superviseInstance(ctx, s, target, false, now)
+		return false
+	}
+	status, statusErr := s.launcher.statusProber(ctx, target.baseURL)
+	if ctx.Err() != nil {
+		return true
+	}
+	if kcefCapabilityLost(target, status, statusErr) {
+		// A process can keep answering /health after its browser capability has
+		// failed. Treat that as down only for this profile; the existing bounded
+		// restart path owns its sources and leaves every other route untouched.
+		s.launcher.superviseInstance(ctx, s, target, false, now)
+		return false
+	}
+	diagnostic := s.launcher.observeHealthyStatus(ctx, target, status, statusErr, now)
+	if diagnostic == nil {
+		return false
+	}
+	s.launcher.exhaustionDiagnostics(ctx, *diagnostic)
+	if ctx.Err() != nil {
+		return true
+	}
+	s.launcher.restartExhausted(ctx, target, *diagnostic, now)
+	return false
+}
+
+func kcefCapabilityLost(target superviseTarget, status EngineStatus, statusErr error) bool {
+	return statusErr == nil && target.kcefEnabled && status.KCEF.State != KCEFStateReady
 }
 
 // invalidateExhaustionEvidence clears bounded proof for snapshot targets whose

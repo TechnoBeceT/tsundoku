@@ -99,7 +99,7 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 		// caller cancellation cannot orphan the process, while an unconfirmed group
 		// remains charged to capacity for a later reap attempt.
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), l.stopGrace)
-		gone := killProcessGroup(cleanupCtx, proc, l.stopGrace)
+		gone := killOwnedProcessGroup(cleanupCtx, group, l.stopGrace)
 		cancelCleanup()
 		group.retiring = true
 		if gone {
@@ -178,7 +178,7 @@ func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error
 
 // awaitReady gates a spawn on the instance being healthy, capability-compatible,
 // and stable: it polls /health, requires the profile's KCEF state from /status,
-// then re-probes health after a short settle window. The settle recheck exists
+// then re-probes both after a short settle window. The settle recheck exists
 // because an engine-host JVM can pass /health (its HTTP server is up) and then
 // die moments later — the GAP-094 failure mode, where the extra Chromium init
 // crashed the process right after it reported healthy, so the FIRST reconcile
@@ -192,7 +192,7 @@ func (l *Launcher) awaitReady(ctx context.Context, proc RunningProcess, baseURL 
 	if err := l.pollKCEF(ctx, proc, baseURL, kcefEnabled, deadline); err != nil {
 		return err
 	}
-	return l.settle(ctx, proc, baseURL, deadline)
+	return l.settle(ctx, proc, baseURL, kcefEnabled, deadline)
 }
 
 // pollKCEF waits for the capability that the profile was explicitly launched
@@ -210,16 +210,15 @@ func (l *Launcher) pollKCEF(ctx context.Context, proc RunningProcess, baseURL st
 	defer ticker.Stop()
 
 	for {
-		status, err := l.statusProber(ctx, baseURL)
+		ready, terminalErr := l.probeKCEF(ctx, baseURL, enabled)
 		if err := l.readinessElapsed(deadline); err != nil {
 			return err
 		}
-		if err == nil {
-			if ready, terminalErr := kcefStatusReady(status.KCEF, enabled); terminalErr != nil {
-				return terminalErr
-			} else if ready {
-				return nil
-			}
+		if terminalErr != nil {
+			return terminalErr
+		}
+		if ready {
+			return nil
 		}
 		select {
 		case <-proc.Done():
@@ -231,6 +230,14 @@ func (l *Launcher) pollKCEF(ctx context.Context, proc RunningProcess, baseURL st
 		case <-ticker.C():
 		}
 	}
+}
+
+func (l *Launcher) probeKCEF(ctx context.Context, baseURL string, enabled bool) (bool, error) {
+	status, err := l.statusProber(ctx, baseURL)
+	if err != nil {
+		return false, nil
+	}
+	return kcefStatusReady(status.KCEF, enabled)
 }
 
 func kcefStatusReady(status KCEFStatus, enabled bool) (bool, error) {
@@ -287,16 +294,24 @@ func (l *Launcher) pollHealthy(ctx context.Context, proc RunningProcess, baseURL
 	}
 }
 
-// settle waits settleDelay after the first healthy probe, then re-probes once, so
-// a JVM that reports healthy and immediately crashes is caught as not-ready
-// rather than handed back as a live instance (see awaitReady + GAP-094). A
+// settle waits settleDelay after initial health and capability readiness, then
+// re-probes both. A JVM that stays healthy while its browser fails, or reports
+// healthy and immediately crashes, is caught as not-ready rather than handed
+// back as a live instance (see awaitReady + GAP-094). A
 // non-positive settleDelay skips the recheck (used by tests that pin the
 // poll-only semantics). During the wait it also watches for an early process
 // exit / ctx cancel so a crash or shutdown returns promptly.
-func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL string, deadline time.Time) error {
+func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL string, kcefEnabled bool, deadline time.Time) error {
 	if l.settleDelay <= 0 {
 		return l.readinessElapsed(deadline)
 	}
+	if err := l.waitForSettle(ctx, proc, deadline); err != nil {
+		return err
+	}
+	return l.probeSettledReadiness(ctx, baseURL, kcefEnabled, deadline)
+}
+
+func (l *Launcher) waitForSettle(ctx context.Context, proc RunningProcess, deadline time.Time) error {
 	remaining := deadline.Sub(l.readinessClock.Now())
 	if remaining <= 0 {
 		return l.readinessTimeoutError()
@@ -314,8 +329,23 @@ func (l *Launcher) settle(ctx context.Context, proc RunningProcess, baseURL stri
 			return l.readinessTimeoutError()
 		}
 	}
+	return nil
+}
+
+func (l *Launcher) probeSettledReadiness(ctx context.Context, baseURL string, kcefEnabled bool, deadline time.Time) error {
 	if err := l.prober(ctx, baseURL); err != nil {
 		return fmt.Errorf("instance unhealthy after settle: %w", err)
+	}
+	status, err := l.statusProber(ctx, baseURL)
+	if err != nil {
+		return fmt.Errorf("instance capability unavailable after settle: %w", err)
+	}
+	ready, err := kcefStatusReady(status.KCEF, kcefEnabled)
+	if err != nil {
+		return fmt.Errorf("instance capability incompatible after settle: %w", err)
+	}
+	if !ready {
+		return fmt.Errorf("instance capability not ready after settle")
 	}
 	return l.readinessElapsed(deadline)
 }
