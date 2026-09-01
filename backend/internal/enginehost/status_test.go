@@ -41,6 +41,32 @@ func TestHTTPStatusProber_ReturnsTypedApprovedStatus(t *testing.T) {
 	}
 }
 
+func TestHTTPStatusProber_AcceptsApprovedKCEFStatusPairings(t *testing.T) {
+	tests := []struct {
+		name string
+		kcef string
+	}{
+		{name: "disabled", kcef: `{"state":"disabled","errorCode":null}`},
+		{name: "initializing", kcef: `{"state":"initializing","errorCode":null}`},
+		{name: "ready", kcef: `{"state":"ready","errorCode":null}`},
+		{name: "failed init timeout", kcef: `{"state":"failed","errorCode":"init_timeout"}`},
+		{name: "failed init failed", kcef: `{"state":"failed","errorCode":"init_failed"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Replace(validStatusJSON, `{"state":"ready","errorCode":null}`, tt.kcef, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+
+			if _, err := enginehost.HTTPStatusProber(time.Second)(context.Background(), srv.URL); err != nil {
+				t.Fatalf("probe: %v", err)
+			}
+		})
+	}
+}
+
 func TestHTTPStatusProber_FailsClosedOnUnapprovedMalformedAndOversizedBodies(t *testing.T) {
 	tests := []struct {
 		name string

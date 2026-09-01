@@ -56,6 +56,12 @@ func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
 	if _, err := l.EnsureProfile(context.Background(), p2); err != nil {
 		t.Fatalf("EnsureProfile p2: %v", err)
 	}
+	rerouter.resetEvents()
+	starter.proc(0).setOnSignal(func() {
+		if !rerouter.isDegraded(11) {
+			t.Error("failed profile was stopped before its sources were degraded")
+		}
+	})
 	lossAvailable.Store(true)
 
 	enginehost.SuperviseOnce(s, context.Background(), time.Now())
@@ -71,6 +77,9 @@ func TestSupervise_KCEFCapabilityLossRestartsOnlyAffectedProfile(t *testing.T) {
 	}
 	if rerouter.isDegraded(11) || rerouter.isDegraded(22) {
 		t.Fatal("successful restart must restore only the affected profile without degrading peers")
+	}
+	if got := rerouter.recordedEventsFor(11); len(got) < 2 || got[0] != "degrade" || got[len(got)-1] != "restore" {
+		t.Fatalf("reroute events = %v, want degrade before restart restoration", got)
 	}
 }
 

@@ -38,10 +38,20 @@ func WithPortAllocator(a PortAllocator) Option { return func(l *Launcher) { l.al
 // are no-ops. Tests pass a fake Rerouter to assert the route transitions.
 func WithRerouter(r Rerouter) Option { return func(l *Launcher) { l.rerouter = r } }
 
-// WithStartTimeout sets how long a spawn waits for its first healthy /health
-// response or an initializing KCEF capability before killing the process and
-// failing (default 60s). Tests shrink it to keep timeout paths fast.
-func WithStartTimeout(d time.Duration) Option { return func(l *Launcher) { l.startTimeout = d } }
+// WithLaunchReadinessTimeout sets the single spawn-to-settle readiness budget.
+// It starts when the child process is created and covers /health, KCEF status,
+// and the settle recheck without any phase receiving a fresh timeout. Production
+// defaults to 135 seconds: the 120-second KCEF producer plus fifteen seconds of
+// bounded RPC/settle overhead, still below the 150-second source deadline.
+func WithLaunchReadinessTimeout(d time.Duration) Option {
+	return func(l *Launcher) { l.readinessTimeout = d }
+}
+
+// WithReadinessClock replaces the coordinated readiness clock. It exists for
+// deterministic lifecycle tests; production uses the system monotonic clock.
+func WithReadinessClock(clock ReadinessClock) Option {
+	return func(l *Launcher) { l.readinessClock = clock }
+}
 
 // WithPollInterval sets the gap between health polls during a spawn (default
 // 500ms). Tests shrink it.

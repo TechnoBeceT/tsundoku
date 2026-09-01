@@ -124,10 +124,11 @@ type Launcher struct {
 	rerouter Rerouter
 
 	// Tunables (production defaults set by New; overridden in tests).
-	startTimeout time.Duration // max wait for /health and an initializing KCEF capability
-	pollInterval time.Duration // gap between health polls during a spawn
-	settleDelay  time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
-	stopGrace    time.Duration // SIGTERM→SIGKILL grace on stop
+	readinessTimeout time.Duration // one spawn-to-settle budget across health, KCEF, and settle
+	readinessClock   ReadinessClock
+	pollInterval     time.Duration // gap between health polls during a spawn
+	settleDelay      time.Duration // post-healthy re-probe delay (catches healthy-then-dead; 0 disables)
+	stopGrace        time.Duration // SIGTERM→SIGKILL grace on stop
 
 	mu        sync.Mutex
 	instances map[string]*managedInstance
@@ -138,11 +139,13 @@ type Launcher struct {
 // can swap it for the placeholder engineroute.DisabledLauncher.
 var _ engineroute.Launcher = (*Launcher)(nil)
 
-// Default lifecycle tunables. startTimeout mirrors the entrypoint's own bounded
-// /health wait (60 polls × ~2s ≈ 60s); the others are conservative.
+// Default lifecycle tunables. defaultLaunchReadinessTimeout gives KCEF's
+// 120-second producer fifteen seconds for the health/status/settle hand-off,
+// while staying below the 150-second source deadline. It is ONE budget measured
+// from process spawn: no readiness phase may reset it.
 const (
-	defaultStartTimeout = 60 * time.Second
-	defaultPollInterval = 500 * time.Millisecond
+	defaultLaunchReadinessTimeout = 135 * time.Second
+	defaultPollInterval           = 500 * time.Millisecond
 	// defaultSettleDelay is the post-healthy re-probe window: long enough for a
 	// crash-after-health (e.g. a failed Chromium init — GAP-094) to manifest,
 	// short enough to add negligible latency to a rare profile spawn.
@@ -165,7 +168,8 @@ func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts .
 		statusProber:          newHTTPStatusProber(defaultProbeTimeout),
 		exhaustionDiagnostics: logExhaustionDiagnostic,
 		allocPort:             allocFreePort,
-		startTimeout:          defaultStartTimeout,
+		readinessTimeout:      defaultLaunchReadinessTimeout,
+		readinessClock:        systemReadinessClock{},
 		pollInterval:          defaultPollInterval,
 		settleDelay:           defaultSettleDelay,
 		stopGrace:             defaultStopGrace,
@@ -195,7 +199,7 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 	}
 
 	if mi, ok := l.instances[p.Key]; ok {
-		if l.reusable(mi) {
+		if l.reusable(ctx, mi) {
 			// A confirmed-healthy instance: clear any stale degrade overlay left by
 			// the supervisor from a prior down episode, so its sources resume using
 			// their base route.
@@ -203,9 +207,12 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 			l.markHealthyLocked(mi)
 			return mi.instance(), nil
 		}
-		// Dead or wedged: tear it down and fall through to a fresh spawn.
+		// Dead, wedged, or capability-incompatible: keep this profile's sources
+		// on the default engine while the existing process-control path replaces
+		// it. A health-only cache hit must never clear a degradation overlay.
 		slog.WarnContext(ctx, "enginehost: cached instance is not reusable, respawning",
 			"profile", p.Key, "pid", mi.proc.Pid())
+		l.degradeLocked(mi)
 		l.stopInstance(mi)
 		delete(l.instances, p.Key)
 	}
@@ -214,11 +221,20 @@ func (l *Launcher) EnsureProfile(ctx context.Context, p engineroute.Profile) (en
 }
 
 // reusable reports whether a cached instance can be handed back as-is: its
-// process must still be running AND its /health must answer. An alive-but-wedged
-// JVM (health failing) is treated as NOT reusable so EnsureProfile restarts it,
-// rather than routing a source at a dead engine.
-func (l *Launcher) reusable(mi *managedInstance) bool {
-	return alive(mi.proc) && l.prober(mi.baseURL) == nil
+// process must be running, /health must answer, and the strict status capability
+// must still match the profile's explicit KCEF intent. An alive-but-wedged or
+// health-only JVM is treated as NOT reusable so EnsureProfile keeps its sources
+// degraded while replacing it rather than routing WebView calls at a dead browser.
+func (l *Launcher) reusable(ctx context.Context, mi *managedInstance) bool {
+	if !alive(mi.proc) || l.prober(mi.baseURL) != nil {
+		return false
+	}
+	status, err := l.statusProber(ctx, mi.baseURL)
+	if err != nil {
+		return false
+	}
+	ready, err := kcefStatusReady(status.KCEF, mi.profile.KCEFEnabled)
+	return err == nil && ready
 }
 
 // Retire stops every running instance whose key is NOT in keep and removes it

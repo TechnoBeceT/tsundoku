@@ -31,7 +31,7 @@ func newTestLauncher(t *testing.T, cfg enginehost.EngineHostLauncherConfig, star
 			return readyKCEFStatus(), nil
 		}),
 		enginehost.WithPortAllocator(fixedPortAllocator(41001)),
-		enginehost.WithStartTimeout(50 * time.Millisecond),
+		enginehost.WithLaunchReadinessTimeout(50 * time.Millisecond),
 		enginehost.WithPollInterval(2 * time.Millisecond),
 		// Default the settle recheck OFF so a test's scripted prober sequence maps
 		// 1:1 to poll calls; the settle-specific tests re-enable it with an
@@ -102,7 +102,13 @@ func TestEnsureProfile_UsesProfileKCEFIntent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			starter := &fakeStarter{closeOnSignal: true}
-			launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber)
+			launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+				enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+					if tt.kcefEnabled {
+						return readyKCEFStatus(), nil
+					}
+					return disabledKCEFStatus(), nil
+				}))
 			if _, err := launcher.EnsureProfile(context.Background(), engineroute.Profile{
 				Key: "profile-" + tt.name, FlareMode: tt.flareMode, KCEFEnabled: tt.kcefEnabled,
 			}); err != nil {
@@ -234,7 +240,7 @@ func TestEnsureProfile_ProcessExitsBeforeReady(t *testing.T) {
 	prober := func(string) error { return errors.New("not up") }
 	// A long start timeout so the test can only pass via the early-exit branch.
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
-		enginehost.WithStartTimeout(10*time.Second))
+		enginehost.WithLaunchReadinessTimeout(10*time.Second))
 
 	// Kill the process right after it is created so awaitReady observes the exit.
 	go func() {
@@ -260,7 +266,7 @@ func TestEnsureProfile_CtxCancelDuringWait(t *testing.T) {
 	starter := &fakeStarter{}
 	prober := func(string) error { return errors.New("not up") }
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, prober,
-		enginehost.WithStartTimeout(10*time.Second))
+		enginehost.WithLaunchReadinessTimeout(10*time.Second))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -514,6 +520,7 @@ func TestEnsureProfile_KCEFReadinessGatesHealthyHost(t *testing.T) {
 		{name: "enabled requires ready", profile: profile("enabled"), status: disabledKCEFStatus()},
 		{name: "enabled accepts ready", profile: profile("enabled-ready"), status: readyKCEFStatus(), wantSuccess: true},
 		{name: "disabled accepts disabled", profile: engineroute.Profile{Key: "disabled", KCEFEnabled: false}, status: disabledKCEFStatus(), wantSuccess: true},
+		{name: "disabled rejects ready", profile: engineroute.Profile{Key: "disabled-ready", KCEFEnabled: false}, status: readyKCEFStatus()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -545,7 +552,7 @@ func TestEnsureProfile_KCEFFailedRejectsImmediately(t *testing.T) {
 	failed := readyKCEFStatus()
 	failed.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed)}
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-		enginehost.WithStartTimeout(time.Second),
+		enginehost.WithLaunchReadinessTimeout(time.Second),
 		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return failed, nil }))
 
 	started := time.Now()
@@ -561,7 +568,7 @@ func TestEnsureProfile_KCEFInitializingUsesStartTimeout(t *testing.T) {
 	initializing := readyKCEFStatus()
 	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
 	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
-		enginehost.WithStartTimeout(30*time.Millisecond),
+		enginehost.WithLaunchReadinessTimeout(30*time.Millisecond),
 		enginehost.WithPollInterval(time.Millisecond),
 		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) { return initializing, nil }))
 
@@ -570,5 +577,103 @@ func TestEnsureProfile_KCEFInitializingUsesStartTimeout(t *testing.T) {
 	}
 	if !starter.proc(0).wasKilled() {
 		t.Fatal("initializing KCEF process was not killed after launch timeout")
+	}
+}
+
+func TestEnsureProfile_CachedKCEFReadinessMatrix(t *testing.T) {
+	failed := readyKCEFStatus()
+	failed.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateFailed, ErrorCode: kcefError(enginehost.KCEFErrorInitFailed)}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+
+	tests := []struct {
+		name          string
+		profile       engineroute.Profile
+		statuses      []enginehost.EngineStatus
+		wantStarts    int
+		wantRecreated bool
+	}{
+		{name: "enabled ready reuses", profile: profile("enabled-ready"), statuses: []enginehost.EngineStatus{readyKCEFStatus()}, wantStarts: 1},
+		{name: "disabled disabled reuses", profile: engineroute.Profile{Key: "disabled", KCEFEnabled: false}, statuses: []enginehost.EngineStatus{disabledKCEFStatus()}, wantStarts: 1},
+		{name: "enabled failed recreates", profile: engineroute.Profile{Key: "enabled-failed", SourceIDs: []int64{1}, KCEFEnabled: true}, statuses: []enginehost.EngineStatus{readyKCEFStatus(), failed, readyKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+		{name: "enabled initializing recreates", profile: engineroute.Profile{Key: "enabled-initializing", SourceIDs: []int64{1}, KCEFEnabled: true}, statuses: []enginehost.EngineStatus{readyKCEFStatus(), initializing, readyKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+		{name: "disabled ready recreates", profile: engineroute.Profile{Key: "disabled-ready", SourceIDs: []int64{1}, KCEFEnabled: false}, statuses: []enginehost.EngineStatus{disabledKCEFStatus(), readyKCEFStatus(), disabledKCEFStatus()}, wantStarts: 2, wantRecreated: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			starter := &fakeStarter{closeOnSignal: true}
+			rerouter := newFakeRerouter()
+			l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+				enginehost.WithRerouter(rerouter), enginehost.WithStatusProber(sequenceStatus(tt.statuses...)),
+				enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+			if _, err := l.EnsureProfile(context.Background(), tt.profile); err != nil {
+				t.Fatalf("initial EnsureProfile: %v", err)
+			}
+			rerouter.resetEvents()
+			if _, err := l.EnsureProfile(context.Background(), tt.profile); err != nil {
+				t.Fatalf("cached EnsureProfile: %v", err)
+			}
+			if got := starter.callCount(); got != tt.wantStarts {
+				t.Fatalf("starts = %d, want %d", got, tt.wantStarts)
+			}
+			if tt.wantRecreated {
+				if !starter.proc(0).wasSignalled() {
+					t.Fatal("non-ready cached host was not stopped")
+				}
+				if got := rerouter.recordedEvents(); len(got) < 2 || got[0] != "degrade" || got[len(got)-1] != "restore" {
+					t.Fatalf("reroute events = %v, want degrade before restoration", got)
+				}
+			}
+		})
+	}
+}
+
+func TestEnsureProfile_CoordinatedReadinessBudgetAllowsLateKCEFReady(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	clock := newFakeReadinessClock(time.Unix(1_700_000_000, 0))
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithReadinessClock(clock),
+		enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithPollInterval(time.Second),
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			if clock.Now().Before(time.Unix(1_700_000_070, 0)) {
+				status := readyKCEFStatus()
+				status.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+				return status, nil
+			}
+			return readyKCEFStatus(), nil
+		}))
+
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(context.Background(), profile("late-kcef")); done <- err }()
+	clock.waitForTicker(t)
+	clock.Advance(61 * time.Second)
+	clock.Advance(9 * time.Second)
+	if err := <-done; err != nil {
+		t.Fatalf("EnsureProfile: %v", err)
+	}
+}
+
+func TestEnsureProfile_CoordinatedReadinessBudgetDoesNotResetPerPhase(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	clock := newFakeReadinessClock(time.Unix(1_700_000_000, 0))
+	health := func(string) error {
+		clock.Advance(20 * time.Second)
+		return nil
+	}
+	initializing := readyKCEFStatus()
+	initializing.KCEF = enginehost.KCEFStatus{State: enginehost.KCEFStateInitializing}
+	l, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, health,
+		enginehost.WithReadinessClock(clock),
+		enginehost.WithLaunchReadinessTimeout(135*time.Second),
+		enginehost.WithPollInterval(time.Second),
+		enginehost.WithStatusProber(sequenceStatus(initializing)))
+
+	done := make(chan error, 1)
+	go func() { _, err := l.EnsureProfile(context.Background(), profile("budget")); done <- err }()
+	clock.waitForTicker(t)
+	clock.Advance(115 * time.Second)
+	if err := <-done; err == nil {
+		t.Fatal("EnsureProfile succeeded after shared readiness budget elapsed")
 	}
 }
