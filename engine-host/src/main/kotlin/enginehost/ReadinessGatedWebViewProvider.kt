@@ -7,8 +7,8 @@ import xyz.nulldev.androidcompat.webkit.KcefWebViewProvider
 import kotlin.time.Duration
 
 /**
- * Gates AndroidCompat's concrete provider on the engine-owned lifecycle while delegating its full
- * pinned `WebViewProvider` contract unchanged.
+ * [ReadinessGatedWebViewProvider] gates AndroidCompat's concrete provider on the engine-owned
+ * lifecycle while delegating its full pinned [WebViewProvider] contract unchanged.
  */
 class ReadinessGatedWebViewProvider(
     private val delegate: WebViewProvider,
@@ -24,7 +24,7 @@ class ReadinessGatedWebViewProvider(
     }
 }
 
-/** Replaces AndroidCompat's factory with the engine-owned readiness gate over its pinned provider. */
+/** [installReadinessGatedWebViewProvider] installs the readiness gate over the pinned provider. */
 internal fun installReadinessGatedWebViewProvider(lifecycle: KcefLifecycle) {
     WebView.setProviderFactory { view ->
         ReadinessGatedWebViewProvider(KcefWebViewProvider(view), lifecycle)

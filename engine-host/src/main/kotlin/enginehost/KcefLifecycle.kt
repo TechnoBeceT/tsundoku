@@ -5,9 +5,12 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -18,10 +21,10 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
-/** Maximum time the shared producer may spend initializing embedded Chromium. */
+/** [KCEFInitializationTimeout] is the maximum time the shared producer may initialize Chromium. */
 val KCEFInitializationTimeout: Duration = 120.seconds
 
-/** Maximum time one WebView caller may wait for the shared producer. */
+/** [KCEFCallerTimeout] is the maximum time one WebView caller may wait for the shared producer. */
 val KCEFCallerTimeout: Duration = 30.seconds
 
 private val kcefMonitorInterval: Duration = 1.seconds
@@ -29,7 +32,7 @@ private val kcefMonitorProbeTimeout: Duration = 5.seconds
 private const val KCEF_INIT_TIMEOUT_ERROR_CODE = "init_timeout"
 private const val KCEF_INIT_FAILED_ERROR_CODE = "init_failed"
 
-/** Finite embedded-browser capability states for one engine-host process generation. */
+/** [KcefState] enumerates the finite capability states for one engine-host process generation. */
 enum class KcefState(
     @get:JsonValue val wireValue: String,
 ) {
@@ -39,21 +42,24 @@ enum class KcefState(
     FAILED("failed"),
 }
 
-/** Sanitized embedded-browser capability evidence returned by the status endpoint. */
+/** [KcefStatus] is the sanitized embedded-browser evidence returned by the status endpoint. */
 data class KcefStatus(
     val state: KcefState,
     val errorCode: String?,
 )
 
-/** Reports a bounded WebView-readiness failure without exposing initialization details. */
+/** [WebViewUnavailableException] reports bounded readiness failure without initialization details. */
 class WebViewUnavailableException : IllegalStateException("embedded browser unavailable")
 
 /**
- * Owns the one embedded-browser producer and its terminal state for this process generation.
+ * [KcefLifecycle] owns one embedded-browser producer and its terminal process-generation state.
  * Caller timeouts only stop that caller's wait; they never cancel the shared producer or settlement.
+ * [cleanup] must be idempotent: terminal abandonment runs it immediately and again after any
+ * non-cooperative physical initializer eventually exits.
  */
 class KcefLifecycle(
     private val initialize: suspend () -> Unit,
+    private val cleanup: () -> Unit = {},
     private val capabilityProbe: (suspend () -> Boolean)? = null,
     private val initializationTimeout: Duration = KCEFInitializationTimeout,
     private val callerTimeout: Duration = KCEFCallerTimeout,
@@ -67,6 +73,7 @@ class KcefLifecycle(
     private val initialSettlement = CompletableDeferred<KcefStatus>()
     private var started = false
     private var status = KcefStatus(KcefState.DISABLED, null)
+    private var initializationJob: Deferred<Unit>? = null
 
     init {
         require(initializationTimeout.isPositive()) { "initializationTimeout must be positive" }
@@ -105,27 +112,59 @@ class KcefLifecycle(
             } catch (_: TimeoutCancellationException) {
                 throw WebViewUnavailableException()
             }
-        if (settled.state != KcefState.READY) throw WebViewUnavailableException()
+        if (settled.state != KcefState.READY || snapshot().state != KcefState.READY) {
+            throw WebViewUnavailableException()
+        }
     }
 
     /** Returns the current payload-safe capability state without waiting or probing. */
     fun snapshot(): KcefStatus = synchronized(lock) { status }
 
     override fun close() {
-        synchronized(lock) {
-            if (status.state == KcefState.INITIALIZING) {
-                settleInitialLocked(KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE))
+        val (cleanupTarget, shouldCleanup) =
+            synchronized(lock) {
+                val active = status.state == KcefState.INITIALIZING || status.state == KcefState.READY
+                val initializer = initializationJob
+                initializationJob = null
+                started = true
+                if (status.state == KcefState.INITIALIZING) {
+                    settleInitialLocked(KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE))
+                } else if (status.state == KcefState.READY) {
+                    status = KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE)
+                }
+                Pair(if (active) initializer else null, active)
             }
+        if (cleanupTarget != null) {
+            abandonInitializer(cleanupTarget)
+        } else if (shouldCleanup) {
+            cleanupSafely()
         }
         scope.cancel()
     }
 
     private suspend fun runProducer() {
+        // Register the owned child before it can enter native code, so close cannot miss cleanup.
+        val initializer = scope.async(start = CoroutineStart.LAZY) { initialize() }
+        val accepted =
+            synchronized(lock) {
+                if (status.state == KcefState.INITIALIZING) {
+                    initializationJob = initializer
+                    true
+                } else {
+                    false
+                }
+            }
+        if (!accepted) {
+            initializer.cancel()
+            return
+        }
+        initializer.start()
         val failure =
             try {
-                withTimeout(initializationTimeout) { initialize() }
+                withTimeout(initializationTimeout) { initializer.await() }
                 null
             } catch (_: TimeoutCancellationException) {
+                abandonInitializer(initializer)
                 KCEF_INIT_TIMEOUT_ERROR_CODE
             } catch (e: CancellationException) {
                 if (!currentCoroutineContext().isActive) throw e
@@ -136,11 +175,19 @@ class KcefLifecycle(
                 KCEF_INIT_FAILED_ERROR_CODE
             }
 
+        synchronized(lock) {
+            if (initializationJob === initializer) initializationJob = null
+        }
+
         if (failure != null) {
             settleInitial(KcefStatus(KcefState.FAILED, failure))
+            if (failure != KCEF_INIT_TIMEOUT_ERROR_CODE) cleanupSafely()
             return
         }
-        if (!settleInitial(KcefStatus(KcefState.READY, null))) return
+        if (!settleInitial(KcefStatus(KcefState.READY, null))) {
+            cleanupSafely()
+            return
+        }
         monitorCapability()
     }
 
@@ -162,11 +209,16 @@ class KcefLifecycle(
                     false
                 }
             if (!healthy) {
-                synchronized(lock) {
-                    if (status.state == KcefState.READY) {
-                        status = KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE)
+                val transitioned =
+                    synchronized(lock) {
+                        if (status.state == KcefState.READY) {
+                            status = KcefStatus(KcefState.FAILED, KCEF_INIT_FAILED_ERROR_CODE)
+                            true
+                        } else {
+                            false
+                        }
                     }
-                }
+                if (transitioned) cleanupSafely()
                 return
             }
         }
@@ -182,5 +234,15 @@ class KcefLifecycle(
     private fun settleInitialLocked(next: KcefStatus) {
         status = next
         initialSettlement.complete(next)
+    }
+
+    private fun cleanupSafely() {
+        runCatching(cleanup).onFailure { logger.error(it) { "Embedded browser cleanup failed" } }
+    }
+
+    private fun abandonInitializer(initializer: Deferred<Unit>) {
+        initializer.invokeOnCompletion { cleanupSafely() }
+        initializer.cancel()
+        cleanupSafely()
     }
 }
