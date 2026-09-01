@@ -115,8 +115,9 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 	// capacity-reap obsolete KCEF groups without leaving a base route aimed at a
 	// terminating process. This is the zero-disruption fast path.
 	if len(profiles) == 0 {
+		preparation := deps.Launcher.PrepareProfiles(ctx, profiles)
 		deps.Router.SetRoutes(nil)
-		deps.Launcher.PrepareProfiles(ctx, profiles)
+		preparation.CompletePublication()
 		deps.Launcher.Retire(ctx, map[string]bool{})
 		return res, nil
 	}
@@ -124,7 +125,7 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 	// Freeze stable KCEF admission before any spawn. The process launcher uses
 	// the complete desired set to retain ready profiles and fully reap obsolete
 	// browser groups before replacements can reserve capacity.
-	deps.Launcher.PrepareProfiles(ctx, profiles)
+	preparation := deps.Launcher.PrepareProfiles(ctx, profiles)
 
 	routes := make(map[int64]sourceengine.Client)
 	keep := make(map[string]bool, len(profiles))
@@ -150,6 +151,7 @@ func ReconcileNetwork(ctx context.Context, deps NetworkReconcileDeps) (NetworkRe
 	// A cancelled or slow retirement can therefore only leave an unreferenced
 	// process lingering, never a route aimed at a terminating process.
 	deps.Router.SetRoutes(routes)
+	preparation.CompletePublication()
 	deps.Launcher.Retire(ctx, keep)
 	return res, nil
 }

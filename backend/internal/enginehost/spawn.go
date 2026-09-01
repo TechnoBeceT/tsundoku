@@ -28,14 +28,14 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 	}
 
 	mi := &managedInstance{
-		key:       p.Key,
-		port:      port,
-		dataDir:   dataDir,
-		baseURL:   baseURL,
-		proc:      proc,
-		client:    client,
-		kcefGroup: group,
-		profile:   p,
+		key:          p.Key,
+		port:         port,
+		dataDir:      dataDir,
+		baseURL:      baseURL,
+		proc:         proc,
+		client:       client,
+		processGroup: group,
+		profile:      p,
 	}
 	l.instances[p.Key] = mi
 	// A freshly-healthy instance: clear any stale degrade overlay for its sources
@@ -49,13 +49,14 @@ func (l *Launcher) spawn(ctx context.Context, p engineroute.Profile) (enginerout
 // startProcess seeds KCEF, links the shared extensions dir, launches the
 // engine-host process for p on the given port + data dir, and waits for it to
 // become healthy-and-stable. On success it returns the running process, a
-// factory-built client aimed at the instance, its base URL, and any KCEF group
-// reservation. On any failure the (possibly-started) process is killed and
-// reaped; an unconfirmed group remains charged to capacity. It is the SHARED
+// factory-built client aimed at the instance, its base URL, and its owned group
+// record. On any failure the (possibly-started) process is killed and reaped; an
+// unconfirmed group remains tracked, and consumes capacity only when KCEF is on.
+// It is the SHARED
 // core of both the initial spawn (fresh allocated port) and a supervisor restart
 // (existing port + data dir), so the KCEF/extensions/health-gate logic lives in
 // one place (§2 DRY). Called with mu held.
-func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, *kcefProcessGroup, error) {
+func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port int, dataDir string) (RunningProcess, sourceengine.Client, string, *ownedProcessGroup, error) {
 	// Profile derivation owns this decision. Route mode is insufficient: Required
 	// can keep an endpoint profile on, and Disabled can turn a global profile off.
 	kcefEnabled := p.KCEFEnabled
@@ -78,22 +79,16 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 	}
 
 	spawnedAt := l.readinessClock.Now()
-	var group *kcefProcessGroup
-	if kcefEnabled {
-		var reserveErr error
-		group, reserveErr = l.reserveKCEFGroupLocked(p.Key)
-		if reserveErr != nil {
-			return nil, nil, "", nil, reserveErr
-		}
+	group, reserveErr := l.reserveProcessGroupLocked(p.Key, kcefEnabled)
+	if reserveErr != nil {
+		return nil, nil, "", nil, reserveErr
 	}
 	proc, err := l.starter.Start(port, dataDir, kcefEnabled)
 	if err != nil {
-		l.cancelStartingKCEFGroupLocked(group)
+		l.cancelStartingProcessGroupLocked(group)
 		return nil, nil, "", nil, fmt.Errorf("enginehost: start profile %q: %w", p.Key, err)
 	}
-	if group != nil {
-		group.proc = proc
-	}
+	group.proc = proc
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	readinessDeadline := spawnedAt.Add(l.readinessTimeout)
@@ -106,11 +101,9 @@ func (l *Launcher) startProcess(ctx context.Context, p engineroute.Profile, port
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), l.stopGrace)
 		gone := killProcessGroup(cleanupCtx, proc, l.stopGrace)
 		cancelCleanup()
-		if group != nil {
-			group.retiring = true
-			if gone {
-				delete(l.kcefGroups, group)
-			}
+		group.retiring = true
+		if gone {
+			delete(l.processGroups, group)
 		}
 		return nil, nil, "", nil, fmt.Errorf("enginehost: profile %q not ready: %w", p.Key, err)
 	}
@@ -177,7 +170,7 @@ func (l *Launcher) restartLocked(ctx context.Context, mi *managedInstance) error
 	}
 	mi.proc = proc
 	mi.client = client
-	mi.kcefGroup = group
+	mi.processGroup = group
 	resetExhaustionEvidence(mi)
 	return nil
 }

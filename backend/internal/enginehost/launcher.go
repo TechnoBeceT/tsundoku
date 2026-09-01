@@ -49,9 +49,10 @@ type managedInstance struct {
 	baseURL string
 	proc    RunningProcess
 	client  sourceengine.Client
-	// kcefGroup is non-nil for a KCEF-enabled generation. Its reservation can
-	// outlive the JVM/instance while Chromium descendants remain in the group.
-	kcefGroup *kcefProcessGroup
+	// processGroup owns this generation's non-recyclable OS group identity. Its
+	// ledger entry can outlive the JVM/instance while descendants or probe
+	// uncertainty remain; only KCEF-enabled entries consume browser capacity.
+	processGroup *ownedProcessGroup
 	// profile is the full profile this instance serves — retained so a supervisor
 	// restart reuses the same port/data dir + KCEF mode, and so degrade/restore
 	// know which source ids to move (profile.SourceIDs).
@@ -111,8 +112,9 @@ func (m *managedInstance) instance() engineroute.Instance {
 // EnsureProfile does, so a supervisor restart and a concurrent reconcile
 // EnsureProfile serialise on mu and can never double-spawn one profile.
 // Route degrade/restore go through the optional Rerouter (a disjoint overlay on
-// engineroute.Router), never the base routing table, so supervision never clobbers
-// ReconcileNetwork's routing.
+// engineroute.Router), never the base routing table. Launcher-side ownership
+// keeps retirement degradation live until its explicit publication completion,
+// while supervision ownership keeps a currently-down instance degraded.
 type Launcher struct {
 	cfg     EngineHostLauncherConfig
 	factory engineroute.ClientFactory
@@ -124,11 +126,10 @@ type Launcher struct {
 	exhaustionDiagnostics ExhaustionDiagnosticSink
 	allocPort             PortAllocator
 
-	// rerouter degrades a down profile's sources to the default engine and
-	// restores them on recovery (GAP-114). Optional: nil in deployments/tests
-	// without per-source routing, in which case degrade/restore are pure no-ops
-	// and the launcher behaves exactly as before. Set via WithRerouter;
-	// *engineroute.Router satisfies it.
+	// rerouter degrades profile sources to the default engine during down episodes
+	// and retirement publication windows. Optional: nil in deployments/tests
+	// without per-source routing, in which case degrade/restore are pure no-ops.
+	// Set via WithRerouter; *engineroute.Router satisfies it.
 	rerouter Rerouter
 
 	// Tunables (production defaults set by New; overridden in tests).
@@ -140,16 +141,19 @@ type Launcher struct {
 
 	mu        sync.Mutex
 	instances map[string]*managedInstance
-	// kcefGroups contains starting, running, and retiring owned KCEF groups. The
-	// static default reservation is derived from cfg and never appears here.
-	kcefGroups map[*kcefProcessGroup]struct{}
+	// processGroups contains every starting, running, and retiring managed group,
+	// including uncertain KCEF-off teardown. The static default KCEF reservation
+	// is derived from cfg and never appears here.
+	processGroups map[*ownedProcessGroup]struct{}
 	// preparedKCEF is nil before the first PrepareProfiles call. Afterwards it is
 	// the stable admitted key set for the current desired topology.
 	preparedKCEF map[string]bool
-	// preparedRetiredSources remain degraded until ReconcileNetwork publishes its
-	// final base table and calls Retire, which safely clears their overlay.
-	preparedRetiredSources []int64
-	closed                 bool
+	// activePreparation owns retirement degradation until the matching reconcile
+	// publishes its replacement base routes. A later preparation absorbs an
+	// unfinished predecessor so a stale completion cannot reopen old routes.
+	prepareGeneration uint64
+	activePreparation *profilePreparation
+	closed            bool
 }
 
 // Compile-time assertion: *Launcher is a drop-in engineroute.Launcher, so main
@@ -191,7 +195,7 @@ func New(cfg EngineHostLauncherConfig, factory engineroute.ClientFactory, opts .
 		settleDelay:           defaultSettleDelay,
 		stopGrace:             defaultStopGrace,
 		instances:             map[string]*managedInstance{},
-		kcefGroups:            map[*kcefProcessGroup]struct{}{},
+		processGroups:         map[*ownedProcessGroup]struct{}{},
 	}
 	for _, opt := range opts {
 		opt(l)
@@ -291,16 +295,9 @@ func (l *Launcher) Retire(ctx context.Context, keep map[string]bool) {
 	doomed := l.detach(func(mi *managedInstance) bool { return !keep[mi.key] })
 	for _, mi := range doomed {
 		l.stopDetachedInstance(ctx, mi)
-		if l.rerouter != nil {
-			l.rerouter.Restore(mi.profile.SourceIDs)
-		}
-	}
-	l.mu.Lock()
-	preparedRetiredSources := append([]int64(nil), l.preparedRetiredSources...)
-	l.preparedRetiredSources = nil
-	l.mu.Unlock()
-	if l.rerouter != nil && len(preparedRetiredSources) > 0 {
-		l.rerouter.Restore(preparedRetiredSources)
+		l.mu.Lock()
+		l.restoreEligibleSourcesLocked(mi.profile.SourceIDs)
+		l.mu.Unlock()
 	}
 }
 
@@ -318,9 +315,7 @@ func (l *Launcher) markHealthyLocked(mi *managedInstance) {
 	mi.degraded = false
 	mi.restartFailures = 0
 	mi.nextRestartAt = time.Time{}
-	if l.rerouter != nil {
-		l.rerouter.Restore(mi.profile.SourceIDs)
-	}
+	l.restoreEligibleSourcesLocked(mi.profile.SourceIDs)
 }
 
 // degradeLocked marks mi down and force-routes its sources to the default engine
@@ -331,6 +326,40 @@ func (l *Launcher) degradeLocked(mi *managedInstance) {
 	if l.rerouter != nil {
 		l.rerouter.Degrade(mi.profile.SourceIDs)
 	}
+}
+
+func (l *Launcher) restoreEligibleSourcesLocked(sourceIDs []int64) {
+	if l.rerouter == nil || len(sourceIDs) == 0 {
+		return
+	}
+	eligible := make([]int64, 0, len(sourceIDs))
+	seen := make(map[int64]bool, len(sourceIDs))
+	for _, sourceID := range sourceIDs {
+		if seen[sourceID] || l.preparationProtectsSourceLocked(sourceID) || l.degradedInstanceOwnsSourceLocked(sourceID) {
+			continue
+		}
+		seen[sourceID] = true
+		eligible = append(eligible, sourceID)
+	}
+	l.rerouter.Restore(eligible)
+}
+
+func (l *Launcher) preparationProtectsSourceLocked(sourceID int64) bool {
+	return l.activePreparation != nil && l.activePreparation.protected[sourceID]
+}
+
+func (l *Launcher) degradedInstanceOwnsSourceLocked(sourceID int64) bool {
+	for _, instance := range l.instances {
+		if !instance.degraded {
+			continue
+		}
+		for _, candidate := range instance.profile.SourceIDs {
+			if candidate == sourceID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Close stops ALL instances and marks the launcher closed so no further profile

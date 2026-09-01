@@ -123,8 +123,10 @@ type startCall struct {
 // back a fresh fakeProcess (closeOnSignal governs whether those procs exit on
 // SIGTERM). Set err to make Start fail.
 type fakeStarter struct {
-	closeOnSignal bool
-	err           error
+	closeOnSignal   bool
+	keepGroupOnKill bool
+	groupProbeErr   error
+	err             error
 
 	mu       sync.Mutex
 	attempts int // every Start call, including ones that fail (err set)
@@ -141,6 +143,8 @@ func (s *fakeStarter) Start(port int, dataDir string, kcefEnabled bool) (engineh
 	}
 	s.calls = append(s.calls, startCall{port: port, dataDir: dataDir, kcefEnabled: kcefEnabled})
 	p := newFakeProcess(len(s.procs)+1, s.closeOnSignal)
+	p.keepGroupOnKill = s.keepGroupOnKill
+	p.groupProbeErr = s.groupProbeErr
 	s.procs = append(s.procs, p)
 	return p, nil
 }

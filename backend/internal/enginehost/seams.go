@@ -65,8 +65,10 @@ type ProcessStarter interface {
 // RunningProcess is a handle to a spawned engine-host process. The launcher uses
 // it to detect an unexpected JVM exit (Done), to stop the entire owned process
 // group gracefully (Signal SIGTERM), and to force-kill that group (Kill) when it
-// ignores the term signal or its health-poll times out. GroupExists keeps a KCEF
-// reservation live after the JVM exits while owned Chromium descendants remain.
+// ignores the term signal or its health-poll times out. Every group operation
+// revalidates the non-recyclable leader identity captured at spawn, so a reused
+// numeric PGID is never signalled as owned. GroupExists keeps lifecycle ownership
+// after the JVM exits while original descendants or probe uncertainty remain.
 // The production implementation is execProcess (exec_process.go); tests provide
 // a fully in-memory fake.
 type RunningProcess interface {
@@ -74,14 +76,16 @@ type RunningProcess interface {
 	Pid() int
 	// GroupID is the dedicated process-group id assigned at spawn.
 	GroupID() int
-	// Signal delivers sig to the entire process group (SIGTERM for a graceful
-	// stop).
+	// Signal delivers sig to the entire owned process group (SIGTERM for a
+	// graceful stop) and MUST refuse a recycled group identity.
 	Signal(sig os.Signal) error
-	// Kill force-terminates the entire process group (SIGKILL).
+	// Kill force-terminates the entire owned process group (SIGKILL) and MUST
+	// refuse a recycled group identity.
 	Kill() error
-	// GroupExists reports whether any process remains in the owned group. A false,
-	// nil result is produced only when the OS probe returns ESRCH; every other
-	// result retains capacity fail-closed.
+	// GroupExists reports whether any process remains in the original owned group.
+	// False means either the OS returned ESRCH or the numeric PGID now names a
+	// different leader identity; every uncertain result retains ownership
+	// fail-closed.
 	GroupExists() (bool, error)
 	// Done is closed once the process has exited and been reaped. The launcher
 	// selects on it to notice a crash during startup and to wait out a graceful

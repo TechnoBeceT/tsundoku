@@ -97,6 +97,39 @@ func TestPrepareProfiles_DeadDesiredProfileDoesNotDisplaceCanonicalCandidate(t *
 	}
 }
 
+func TestPrepareProfiles_RetirementDegradeSurvivesReplacementHealthUntilPublication(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: true}
+	rerouter := newFakeRerouter()
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter, okProber,
+		enginehost.WithRerouter(rerouter),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	oldProfile := engineroute.Profile{Key: "old-key", SourceIDs: []int64{10}, KCEFEnabled: true}
+	initial := launcher.PrepareProfiles(context.Background(), []engineroute.Profile{oldProfile})
+	if _, err := launcher.EnsureProfile(context.Background(), oldProfile); err != nil {
+		t.Fatalf("EnsureProfile(old): %v", err)
+	}
+	initial.CompletePublication()
+
+	newProfile := engineroute.Profile{Key: "new-key", SourceIDs: []int64{10}, KCEFEnabled: true}
+	publication := launcher.PrepareProfiles(context.Background(), []engineroute.Profile{newProfile})
+	if _, err := launcher.EnsureProfile(context.Background(), newProfile); err != nil {
+		t.Fatalf("EnsureProfile(new): %v", err)
+	}
+	if !rerouter.isDegraded(10) {
+		t.Fatal("replacement health reopened source before new base routes were published")
+	}
+
+	successor := launcher.PrepareProfiles(context.Background(), []engineroute.Profile{newProfile})
+	publication.CompletePublication()
+	if !rerouter.isDegraded(10) {
+		t.Fatal("stale preparation completion released a newer publication lease")
+	}
+	successor.CompletePublication()
+	if rerouter.isDegraded(10) {
+		t.Fatal("publication completion did not release retirement degradation")
+	}
+}
+
 func TestPrepareProfiles_ReapsObsoleteGroupBeforeReplacementStart(t *testing.T) {
 	starter := &fakeStarter{closeOnSignal: false}
 	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter, okProber,
@@ -145,6 +178,34 @@ func TestPrepareProfiles_ExitedJVMDescendantsKeepCapacityUntilGroupAbsent(t *tes
 	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{profile("new")})
 	if _, err := launcher.EnsureProfile(context.Background(), profile("new")); err != nil {
 		t.Fatalf("EnsureProfile(new) after confirmed absence: %v", err)
+	}
+}
+
+func TestPrepareProfiles_LingeringObsoleteGroupBlocksAllReplacementAdmission(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: false}
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)),
+		enginehost.WithStopGrace(2*time.Millisecond))
+	oldProfile := profile("old")
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{oldProfile})
+	if _, err := launcher.EnsureProfile(context.Background(), oldProfile); err != nil {
+		t.Fatalf("EnsureProfile(old): %v", err)
+	}
+	old := starter.proc(0)
+	old.keepGroupOnKill = true
+
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{profile("new-a"), profile("new-b")})
+	if _, err := launcher.EnsureProfile(context.Background(), profile("new-a")); !errors.Is(err, enginehost.ErrKCEFCapacity) {
+		t.Fatalf("EnsureProfile(new-a) with obsolete group = %v, want ErrKCEFCapacity", err)
+	}
+	if got := starter.callCount(); got != 1 {
+		t.Fatalf("starts while any obsolete group remains = %d, want 1", got)
+	}
+
+	old.setGroupState(false, nil)
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{profile("new-a"), profile("new-b")})
+	if _, err := launcher.EnsureProfile(context.Background(), profile("new-a")); err != nil {
+		t.Fatalf("EnsureProfile(new-a) after obsolete reap: %v", err)
 	}
 }
 
@@ -306,5 +367,70 @@ func TestRetire_CanceledContextStillKillsNonKCEFGroupPromptly(t *testing.T) {
 	}
 	if !starter.proc(0).wasKilled() {
 		t.Fatal("canceled retirement left non-KCEF process group running")
+	}
+}
+
+func TestPrepareProfiles_ReapsUncertainNonKCEFReadinessFailureWithoutChargingCapacity(t *testing.T) {
+	starter := &fakeStarter{
+		closeOnSignal: false, keepGroupOnKill: true, groupProbeErr: errors.New("probe uncertain"),
+	}
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{DefaultKCEFEnabled: true}, starter,
+		func(_ context.Context, baseURL string) error {
+			if baseURL == "http://127.0.0.1:41001" {
+				return errors.New("not ready")
+			}
+			return nil
+		},
+		enginehost.WithLaunchReadinessTimeout(2*time.Millisecond),
+		enginehost.WithStopGrace(2*time.Millisecond),
+		enginehost.WithPortAllocator(fixedPortAllocator(41001, 41002)))
+	off := engineroute.Profile{Key: "off-failed"}
+	if _, err := launcher.EnsureProfile(context.Background(), off); err == nil {
+		t.Fatal("EnsureProfile(off) succeeded, want readiness failure")
+	}
+	failed := starter.proc(0)
+	if exists, _ := failed.GroupExists(); !exists {
+		t.Fatal("test setup lost uncertain non-KCEF group")
+	}
+
+	// The uncertain non-KCEF group remains owned but must not consume the one
+	// managed KCEF slot left by the default reservation.
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{profile("on")})
+	if _, err := launcher.EnsureProfile(context.Background(), profile("on")); err != nil {
+		t.Fatalf("EnsureProfile(on) with lingering non-KCEF group: %v", err)
+	}
+
+	failed.keepGroupOnKill = false
+	failed.setGroupState(true, nil)
+	launcher.PrepareProfiles(context.Background(), []engineroute.Profile{profile("on")})
+	if exists, _ := failed.GroupExists(); exists {
+		t.Fatal("later preparation did not reap uncertain non-KCEF readiness group")
+	}
+}
+
+func TestPrepareProfiles_ReapsUncertainDetachedNonKCEFGroup(t *testing.T) {
+	starter := &fakeStarter{closeOnSignal: false}
+	launcher, _ := newTestLauncher(t, enginehost.EngineHostLauncherConfig{}, starter, okProber,
+		enginehost.WithStatusProber(func(context.Context, string) (enginehost.EngineStatus, error) {
+			return disabledKCEFStatus(), nil
+		}),
+		enginehost.WithStopGrace(2*time.Millisecond))
+	off := engineroute.Profile{Key: "off-detached"}
+	if _, err := launcher.EnsureProfile(context.Background(), off); err != nil {
+		t.Fatalf("EnsureProfile(off): %v", err)
+	}
+	retired := starter.proc(0)
+	retired.keepGroupOnKill = true
+	retired.setGroupState(true, errors.New("probe uncertain"))
+	launcher.Retire(context.Background(), map[string]bool{})
+	if exists, _ := retired.GroupExists(); !exists {
+		t.Fatal("test setup lost uncertain detached non-KCEF group")
+	}
+
+	retired.keepGroupOnKill = false
+	retired.setGroupState(true, nil)
+	launcher.PrepareProfiles(context.Background(), nil)
+	if exists, _ := retired.GroupExists(); exists {
+		t.Fatal("later preparation did not reap uncertain detached non-KCEF group")
 	}
 }

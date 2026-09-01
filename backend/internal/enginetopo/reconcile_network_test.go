@@ -61,6 +61,7 @@ func (f fakeSnapshotter) RoutingSnapshot(context.Context) ([]network.ResolvedBin
 type fakeLauncher struct {
 	instance     *sourceenginefake.Client
 	fail         bool
+	onComplete   func()
 	prepareCalls int
 	prepared     [][]engineroute.Profile
 	ensureCalls  int
@@ -87,7 +88,21 @@ func (c *preferenceReadClient) Preferences(ctx context.Context, sourceID int64) 
 
 type preferenceLauncher struct{ instance sourceengine.Client }
 
-func (preferenceLauncher) PrepareProfiles(context.Context, []engineroute.Profile) {}
+type noopProfilePreparation struct{}
+
+func (noopProfilePreparation) CompletePublication() {}
+
+type callbackProfilePreparation struct{ complete func() }
+
+func (p callbackProfilePreparation) CompletePublication() {
+	if p.complete != nil {
+		p.complete()
+	}
+}
+
+func (preferenceLauncher) PrepareProfiles(context.Context, []engineroute.Profile) engineroute.ProfilePreparation {
+	return noopProfilePreparation{}
+}
 
 func (l preferenceLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
@@ -182,7 +197,9 @@ type blockingRetireLauncher struct {
 	release  chan struct{}
 }
 
-func (l *blockingRetireLauncher) PrepareProfiles(context.Context, []engineroute.Profile) {}
+func (l *blockingRetireLauncher) PrepareProfiles(context.Context, []engineroute.Profile) engineroute.ProfilePreparation {
+	return noopProfilePreparation{}
+}
 
 func (l *blockingRetireLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (engineroute.Instance, error) {
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: l.instance}, nil
@@ -264,8 +281,9 @@ func (l *lifecycleLauncher) EnsureProfile(_ context.Context, p engineroute.Profi
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: client}, nil
 }
 
-func (l *lifecycleLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) {
+func (l *lifecycleLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) engineroute.ProfilePreparation {
 	l.prepared = append(l.prepared, append([]engineroute.Profile(nil), desired...))
+	return noopProfilePreparation{}
 }
 
 func (l *lifecycleLauncher) Retire(_ context.Context, keep map[string]bool) {
@@ -287,9 +305,10 @@ func (f *fakeLauncher) EnsureProfile(_ context.Context, p engineroute.Profile) (
 	return engineroute.Instance{Key: p.Key, BaseURL: "http://instance/" + p.Key, Client: f.instance}, nil
 }
 
-func (f *fakeLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) {
+func (f *fakeLauncher) PrepareProfiles(_ context.Context, desired []engineroute.Profile) engineroute.ProfilePreparation {
 	f.prepareCalls++
 	f.prepared = append(f.prepared, append([]engineroute.Profile(nil), desired...))
+	return callbackProfilePreparation{complete: f.onComplete}
 }
 
 // TestReconcileNetwork_RuntimeSnapshotUnionsSessionOffSources proves profile
@@ -428,6 +447,42 @@ func TestReconcileNetwork_PreparesCanonicalDesiredProfilesBeforeEnsure(t *testin
 	got := launcher.prepared[0]
 	if len(got) != 2 || got[0].Key > got[1].Key {
 		t.Fatalf("prepared profiles = %+v, want canonical key order", got)
+	}
+}
+
+func TestReconcileNetwork_CompletesPreparationAfterFailedProfileRoutePublication(t *testing.T) {
+	defaultClient := sourceenginefake.New(sourceenginefake.WithSearchResult(1, sourceengine.SearchResult{
+		Manga: []sourceengine.MangaEntry{{URL: "default"}},
+	}))
+	staleClient := sourceenginefake.New(sourceenginefake.WithSearchResult(1, sourceengine.SearchResult{
+		Manga: []sourceengine.MangaEntry{{URL: "stale-old-profile"}},
+	}))
+	router := engineroute.NewRouter(defaultClient)
+	router.SetRoutes(map[int64]sourceengine.Client{1: staleClient})
+	launcher := &fakeLauncher{fail: true}
+	completed := false
+	launcher.onComplete = func() {
+		completed = true
+		got, err := router.Search(context.Background(), 1, "q", 1)
+		if err != nil {
+			t.Fatalf("Search during publication completion: %v", err)
+		}
+		if len(got.Manga) != 1 || got.Manga[0].URL != "default" {
+			t.Fatalf("route at publication completion = %+v, want failed profile removed before degradation release", got)
+		}
+	}
+
+	result := mustReconcileNetwork(t, enginetopo.NetworkReconcileDeps{
+		Snapshot: fakeSnapshotter{bindings: []network.ResolvedBinding{{
+			SourceID: 1, FlareMode: network.FlareModeEndpoint, Flare: &network.ResolvedFlare{ID: "new"},
+		}}},
+		Router: router, Launcher: launcher, BaseConfig: baseConfig(), DefaultKCEFEnabled: true,
+	})
+	if len(result.Gaps) != 1 {
+		t.Fatalf("gaps = %v, want failed replacement gap", result.Gaps)
+	}
+	if !completed {
+		t.Fatal("preparation was not completed after route publication")
 	}
 }
 
