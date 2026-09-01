@@ -282,7 +282,9 @@ fun main(args: Array<String>) {
     Runtime.getRuntime().addShutdownHook(
         Thread {
             server.stop()
-            kcefLifecycle.close()
+            if (!kcefLifecycle.shutdownAndAwaitCleanup()) {
+                logger.warn { "KCEF cleanup exceeded the $KCEFShutdownCleanupTimeout JVM shutdown bound" }
+            }
             extensions.close()
         },
     )
