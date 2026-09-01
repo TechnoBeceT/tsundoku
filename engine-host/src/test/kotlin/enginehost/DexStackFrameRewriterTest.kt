@@ -29,6 +29,7 @@ import org.objectweb.asm.Label
 import org.objectweb.asm.MethodVisitor
 import org.objectweb.asm.Opcodes
 import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.tree.MethodInsnNode
 import org.objectweb.asm.tree.TypeInsnNode
 import java.nio.file.Files
 import java.nio.file.Path
@@ -37,6 +38,7 @@ import java.util.jar.JarOutputStream
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -820,6 +822,491 @@ class DexStackFrameRewriterTest {
         mv.visitEnd()
         cw.visitEnd()
         return cw.toByteArray()
+    }
+
+    /** A final direct subclass whose constructor was dropped from dex2jar's JVM output. */
+    private fun ctorlessDirectSubclass(
+        internalName: String,
+        superName: String,
+        access: Int = Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, access, internalName, null, superName, null)
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /**
+     * The Comix-shaped JVM defect: `new X` remains on the operand stack while a duplicate is parked in a
+     * local and the constructor argument is prepared, then the uninitialized X is incorrectly passed to
+     * `X`'s direct superclass constructor. Android accepts this R8 output; the JVM requires X.<init>.
+     */
+    private fun wrongDirectSuperCtorUser(
+        internalName: String,
+        allocationType: String,
+        constructorOwner: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv =
+            cw.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                "make",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                null,
+                null,
+            )
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitVarInsn(Opcodes.ASTORE, 1)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitMethodInsn(
+            Opcodes.INVOKESPECIAL,
+            constructorOwner,
+            "<init>",
+            "(Ljava/lang/String;)V",
+            false,
+        )
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A direct subclass with a real same-descriptor constructor, either trivial or observably non-trivial. */
+    private fun directSubclassWithStringCtor(
+        internalName: String,
+        superName: String,
+        trivial: Boolean,
+        constructorAccess: Int = Opcodes.ACC_PUBLIC,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, internalName, null, superName, null)
+        if (!trivial) cw.visitField(Opcodes.ACC_PUBLIC, "touched", "Z", null, null).visitEnd()
+        val mv = cw.visitMethod(constructorAccess, "<init>", "(Ljava/lang/String;)V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, "<init>", "(Ljava/lang/String;)V", false)
+        if (!trivial) {
+            mv.visitVarInsn(Opcodes.ALOAD, 0)
+            mv.visitInsn(Opcodes.ICONST_1)
+            mv.visitFieldInsn(Opcodes.PUTFIELD, internalName, "touched", "Z")
+        }
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A constructor whose valid direct-super call uses uninitialized `this`; the later NEW forces analysis. */
+    private fun constructorChainingClass(internalName: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, internalName, null, "java/lang/Exception", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/String;)V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(
+            Opcodes.INVOKESPECIAL,
+            "java/lang/Exception",
+            "<init>",
+            "(Ljava/lang/String;)V",
+            false,
+        )
+        mv.visitTypeInsn(Opcodes.NEW, "java/lang/Object")
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false)
+        mv.visitInsn(Opcodes.POP)
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** Two control-flow branches initialize the same allocation; there is no unique initializer to retarget. */
+    private fun multipleInitializerUser(
+        internalName: String,
+        allocationType: String,
+        constructorOwner: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv =
+            cw.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                "make",
+                "(ZLjava/lang/String;)Ljava/lang/Object;",
+                null,
+                null,
+            )
+        mv.visitCode()
+        val second = Label()
+        val done = Label()
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitVarInsn(Opcodes.ASTORE, 2)
+        mv.visitVarInsn(Opcodes.ILOAD, 0)
+        mv.visitJumpInsn(Opcodes.IFEQ, second)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        mv.visitJumpInsn(Opcodes.GOTO, done)
+        mv.visitLabel(second)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        mv.visitLabel(done)
+        mv.visitVarInsn(Opcodes.ALOAD, 2)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(2, 3)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** Two allocations merge into one constructor receiver; neither NEW has exact, unmerged provenance. */
+    private fun mergedNewUser(
+        internalName: String,
+        allocationType: String,
+        constructorOwner: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv =
+            cw.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                "make",
+                "(ZLjava/lang/String;)Ljava/lang/Object;",
+                null,
+                null,
+            )
+        mv.visitCode()
+        val second = Label()
+        val merged = Label()
+        mv.visitVarInsn(Opcodes.ILOAD, 0)
+        mv.visitJumpInsn(Opcodes.IFEQ, second)
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitVarInsn(Opcodes.ASTORE, 2)
+        mv.visitJumpInsn(Opcodes.GOTO, merged)
+        mv.visitLabel(second)
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitVarInsn(Opcodes.ASTORE, 2)
+        mv.visitLabel(merged)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        mv.visitVarInsn(Opcodes.ALOAD, 2)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(2, 3)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A NEW without any constructor receiver; the repair must not invent an initializer. */
+    private fun noInitializerUser(
+        internalName: String,
+        allocationType: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "make", "()V", null, null)
+        mv.visitCode()
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.POP)
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(1, 0)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A malformed method whose stack underflow makes ASM dataflow fail before a tempting wrong-owner pair. */
+    private fun analyzerFailureUser(
+        internalName: String,
+        allocationType: String,
+        constructorOwner: String,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        val mv =
+            cw.visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                "make",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                null,
+                null,
+            )
+        mv.visitCode()
+        mv.visitInsn(Opcodes.POP)
+        mv.visitTypeInsn(Opcodes.NEW, allocationType)
+        mv.visitInsn(Opcodes.DUP)
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(2, 1)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** Invoke only the constructor-owner stage and prove every named class remained byte-for-byte unchanged. */
+    private fun assertConstructorOwnerRepairSkipsByteExactly(
+        jar: Path,
+        vararg internalNames: String,
+    ) {
+        val before = internalNames.associateWith { classBytesFromJar(jar, it) }
+        DexStackFrameRewriter.repairInvalidConstructorOwners(jar, javaClass.classLoader)
+        for (name in internalNames) {
+            assertContentEquals(before.getValue(name), classBytesFromJar(jar, name), "$name must remain byte-identical")
+        }
+    }
+
+    /** The owners named by every constructor invocation in [methodName]. */
+    private fun constructorOwners(
+        jar: Path,
+        internalName: String,
+        methodName: String,
+    ): List<String> {
+        val node = ClassNode()
+        ClassReader(classBytesFromJar(jar, internalName)).accept(node, 0)
+        return node.methods
+            .single { it.name == methodName }
+            .instructions
+            .toArray()
+            .filterIsInstance<MethodInsnNode>()
+            .filter { it.opcode == Opcodes.INVOKESPECIAL && it.name == "<init>" }
+            .map { it.owner }
+    }
+
+    @Test
+    fun `repairStackFrames retargets a non-adjacent direct-super constructor call and makes it load`() {
+        val allocationType = "CtorOwnerChild"
+        val caller = "CtorOwnerCaller"
+        val rawChild = ctorlessDirectSubclass(allocationType, "java/lang/Exception")
+        val rawCaller = wrongDirectSuperCtorUser(caller, allocationType, "java/lang/Exception")
+        val rawLoader = BytesLoader()
+        rawLoader.define(allocationType, rawChild)
+        val rawError =
+            assertFailsWith<VerifyError> {
+                rawLoader.define(caller, rawCaller).getDeclaredMethod("make", String::class.java)
+            }
+        assertTrue(
+            rawError.message!!.contains("wrong <init>") || rawError.message!!.contains("not assignable"),
+            "the fixture must reproduce the constructor-owner verifier failure, got: ${rawError.message}",
+        )
+
+        val jar = jarWithClasses(allocationType to rawChild, caller to rawCaller)
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(
+            listOf(allocationType),
+            constructorOwners(jar, caller, "make"),
+            "the initializer must target the exact class allocated by NEW",
+        )
+        val loader = BytesLoader()
+        loader.define(allocationType, classBytesFromJar(jar, allocationType))
+        val repairedCaller = loader.define(caller, classBytesFromJar(jar, caller))
+        val made = repairedCaller.getDeclaredMethod("make", String::class.java).invoke(null, "comix") as Exception
+        assertEquals(allocationType, made.javaClass.name, "the repaired bytecode must construct the allocated subclass")
+        assertEquals("comix", made.message, "the synthesized same-descriptor constructor must forward its argument")
+    }
+
+    @Test
+    fun `constructor-owner repair accepts an existing trivial same-descriptor forwarder`() {
+        val child = "ExistingTrivialChild"
+        val caller = "ExistingTrivialCaller"
+        val childBytes = directSubclassWithStringCtor(child, "java/lang/Exception", trivial = true)
+        val jar = jarWithClasses(child to childBytes, caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"))
+
+        DexStackFrameRewriter.repairInvalidConstructorOwners(jar, javaClass.classLoader)
+
+        assertEquals(listOf(child), constructorOwners(jar, caller, "make"))
+        assertContentEquals(
+            childBytes,
+            classBytesFromJar(jar, child),
+            "an already-safe target constructor must not be rewritten",
+        )
+    }
+
+    @Test
+    fun `constructor-owner repair skips a nontrivial existing constructor byte-for-byte`() {
+        val child = "ExistingNontrivialChild"
+        val caller = "ExistingNontrivialCaller"
+        val jar =
+            jarWithClasses(
+                child to directSubclassWithStringCtor(child, "java/lang/Exception", trivial = false),
+                caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair skips an inaccessible existing constructor byte-for-byte`() {
+        val child = "PrivateCtorChild"
+        val caller = "PrivateCtorCaller"
+        val jar =
+            jarWithClasses(
+                child to
+                    directSubclassWithStringCtor(
+                        child,
+                        "java/lang/Exception",
+                        trivial = true,
+                        constructorAccess = Opcodes.ACC_PRIVATE,
+                    ),
+                caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair skips merged two-NEW provenance byte-for-byte`() {
+        val child = "MergedCtorChild"
+        val caller = "MergedCtorCaller"
+        val jar =
+            jarWithClasses(
+                child to ctorlessDirectSubclass(child, "java/lang/Exception"),
+                caller to mergedNewUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair skips multiple and missing initializers byte-for-byte`() {
+        val child = "InitCountChild"
+        val multiple = "MultipleInitCaller"
+        val missing = "MissingInitCaller"
+        val jar =
+            jarWithClasses(
+                child to ctorlessDirectSubclass(child, "java/lang/Exception"),
+                multiple to multipleInitializerUser(multiple, child, "java/lang/Exception"),
+                missing to noInitializerUser(missing, child),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, multiple, missing)
+    }
+
+    @Test
+    fun `constructor-owner repair skips an indirect ancestor owner byte-for-byte`() {
+        val middle = "IndirectCtorMiddle"
+        val child = "IndirectCtorChild"
+        val caller = "IndirectCtorCaller"
+        val jar =
+            jarWithClasses(
+                middle to directSubclassWithStringCtor(middle, "java/lang/Exception", trivial = true),
+                child to ctorlessDirectSubclass(child, middle),
+                caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, middle, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair skips a missing same-descriptor super constructor byte-for-byte`() {
+        val parent = "MissingSuperCtorParent"
+        val child = "MissingSuperCtorChild"
+        val caller = "MissingSuperCtorCaller"
+        val jar =
+            jarWithClasses(
+                parent to ctorlessDirectSubclass(parent, "java/lang/Object"),
+                child to ctorlessDirectSubclass(child, parent),
+                caller to wrongDirectSuperCtorUser(caller, child, parent),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, parent, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair skips an out-of-jar allocation type byte-for-byte`() {
+        val caller = "ExternalCtorCaller"
+        val jar = jarWith(caller, wrongDirectSuperCtorUser(caller, "java/io/IOException", "java/lang/Exception"))
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair leaves valid NEW X and X init byte-for-byte unchanged`() {
+        val child = "ValidCtorChild"
+        val caller = "ValidCtorCaller"
+        val jar =
+            jarWithClasses(
+                child to directSubclassWithStringCtor(child, "java/lang/Exception", trivial = true),
+                caller to wrongDirectSuperCtorUser(caller, child, child),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair leaves constructor uninitialized-this chaining byte-for-byte unchanged`() {
+        val child = "UninitializedThisChild"
+        val jar = jarWith(child, constructorChainingClass(child))
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child)
+        assertEquals(
+            listOf("java/lang/Exception", "java/lang/Object"),
+            constructorOwners(jar, child, "<init>"),
+            "the uninitialized-this chain and independent valid allocation must both remain unchanged",
+        )
+    }
+
+    @Test
+    fun `constructor-owner repair skips non-instantiable allocation targets byte-for-byte`() {
+        val child = "AbstractCtorChild"
+        val caller = "AbstractCtorCaller"
+        val jar =
+            jarWithClasses(
+                child to
+                    ctorlessDirectSubclass(
+                        child,
+                        "java/lang/Exception",
+                        Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT,
+                    ),
+                caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair keeps analyzer failures byte-for-byte unchanged`() {
+        val child = "AnalyzerFailureChild"
+        val caller = "AnalyzerFailureCaller"
+        val jar =
+            jarWithClasses(
+                child to ctorlessDirectSubclass(child, "java/lang/Exception"),
+                caller to analyzerFailureUser(caller, child, "java/lang/Exception"),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, child, caller)
+    }
+
+    @Test
+    fun `constructor-owner repair is idempotent`() {
+        val child = "IdempotentCtorChild"
+        val caller = "IdempotentCtorCaller"
+        val jar =
+            jarWithClasses(
+                child to ctorlessDirectSubclass(child, "java/lang/Exception"),
+                caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+            )
+
+        DexStackFrameRewriter.repairInvalidConstructorOwners(jar, javaClass.classLoader)
+        val first = listOf(child, caller).associateWith { classBytesFromJar(jar, it) }
+        DexStackFrameRewriter.repairInvalidConstructorOwners(jar, javaClass.classLoader)
+
+        for (name in listOf(child, caller)) {
+            assertContentEquals(first.getValue(name), classBytesFromJar(jar, name), "$name must be stable on pass two")
+        }
     }
 
     /**

@@ -81,3 +81,16 @@ javap -p -c /tmp/NewTransformer.class | grep -B1 nInvokeNew
 
 Both `Exprs.nInvokeNew` callsites must be fed by `getfield … NewExpr.type` — **zero** `getOwner`
 calls preceding an `nInvokeNew`.
+
+## Boundary: non-adjacent direct-super constructor calls
+
+This vendored transformer repairs only the adjacent allocation/constructor merge it owns. Some R8
+output instead preserves `new X` while a later, non-adjacent initializer still names
+`X.super.<init>(d)`. The allocation type is already correct in that shape, and the source DEX carries
+the same pairing, so changing `NewTransformer` cannot repair it safely.
+
+`DexStackFrameRewriter.repairInvalidConstructorOwners` handles that separate whole-jar case before
+frame recomputation. It retargets only when dataflow proves one unmerged `NEW X` reaches exactly one
+initializer, X is an instantiable in-jar direct subclass of the named owner, and X already has—or can
+safely receive—a trivial same-descriptor forwarding constructor. Ambiguity leaves the original bytes
+untouched. Keep these two repairs separate: they recover different evidence at different stages.
