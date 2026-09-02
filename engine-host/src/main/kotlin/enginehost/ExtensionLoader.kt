@@ -24,8 +24,13 @@ import suwayomi.tachidesk.manga.impl.util.PackageTools.getPackageInfo
 import suwayomi.tachidesk.manga.impl.util.PackageTools.loadExtensionSources
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.ref.Cleaner
+import java.net.URLClassLoader
 import java.nio.file.Path
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -175,8 +180,37 @@ class ExtensionLoader internal constructor(
         try {
             instantiatePrepared(prepared).sources.map { it.id }
         } finally {
-            PackageTools.jarLoaderMap.remove(prepared.jarFile.toString())?.close()
+            evictAndClose(prepared.jarFile)
         }
+
+    /** Remove and close a loader whose sources were never committed to the active registry. */
+    internal fun evictAndClose(jarFile: Path) {
+        PackageTools.jarLoaderMap.remove(jarFile.toString())?.close()
+    }
+
+    /**
+     * Stop future reuse of a superseded loader immediately, but keep its jar and loader available
+     * until every replaced source instance becomes unreachable. In-flight calls may load helper
+     * classes lazily, so closing the loader at registry replacement time is not safe.
+     */
+    internal fun retire(
+        jarFile: Path,
+        replacedSources: Collection<Source>,
+    ) {
+        val classLoader = PackageTools.jarLoaderMap.remove(jarFile.toString())
+        if (classLoader == null) {
+            jarFile.toFile().delete()
+            return
+        }
+        val distinctSources = Collections.newSetFromMap(IdentityHashMap<Source, Boolean>()).apply { addAll(replacedSources) }
+        if (distinctSources.isEmpty()) {
+            classLoader.close()
+            jarFile.toFile().delete()
+            return
+        }
+        val retirement = LoaderRetirement(classLoader, jarFile, distinctSources.size)
+        distinctSources.forEach { source -> retiredLoaderCleaner.register(source, retirement::release) }
+    }
 
     /** Expose a complete replacement source set after every fallible preparation step has passed. */
     internal fun registerReplacement(
@@ -289,5 +323,23 @@ class ExtensionLoader internal constructor(
             tempJar.delete()
             assetsFolder.deleteRecursively()
         }
+    }
+
+    private class LoaderRetirement(
+        private val classLoader: URLClassLoader,
+        private val jarFile: Path,
+        sourceCount: Int,
+    ) {
+        private val remaining = AtomicInteger(sourceCount)
+
+        fun release() {
+            if (remaining.decrementAndGet() != 0) return
+            runCatching { classLoader.close() }
+            runCatching { jarFile.toFile().delete() }
+        }
+    }
+
+    companion object {
+        private val retiredLoaderCleaner: Cleaner = Cleaner.create()
     }
 }

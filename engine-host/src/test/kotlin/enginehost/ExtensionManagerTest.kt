@@ -13,8 +13,10 @@ import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import suwayomi.tachidesk.manga.impl.util.PackageTools
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.readBytes
 import kotlin.io.path.writeBytes
@@ -27,6 +29,35 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ExtensionManagerTest {
+    @Test
+    fun `catalogue and candidate signer change reject until explicit persisted trust rotation`() {
+        val approvedSigner = SignedApkFixture()
+        val changedSigner = SignedApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                oldApkBytes = changedSigner.signedApk.readBytes(),
+                candidateApkBytes = changedSigner.signedApk.readBytes(),
+                repositorySigningKey = changedSigner.fingerprint,
+                candidateSignerFingerprints = setOf(changedSigner.fingerprint),
+                signatureVerifier = ApkSignerVerifier,
+                configuredSignerFingerprint = approvedSigner.fingerprint,
+            )
+
+        fixture.assertTrustPersisted(approvedSigner.fingerprint)
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("does not match the configured repository signer"))
+        fixture.assertUnchanged()
+
+        fixture.manager.setRepoTrust(REPO_URL, changedSigner.fingerprint)
+        val updated = fixture.manager.update(TARGET_PACKAGE).single { it.pkgName == TARGET_PACKAGE }
+
+        assertEquals(2, updated.versionCode)
+    }
+
     @Test
     fun `direct URL install rejects an invalid APK signature without mutation`() {
         val unsigned = SignedApkFixture()
@@ -121,6 +152,107 @@ class ExtensionManagerTest {
 
         assertTrue(failure.message.orEmpty().contains("is already owned by '$UNRELATED_PACKAGE'"))
         fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `repository update rejects a source ID also claimed by a foreign manifest record`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                unrelatedPackage = "foreign0.extension",
+                unrelatedRecordSourceIds = listOf(TARGET_SOURCE_ID, UNRELATED_SOURCE_ID),
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("foreign0.extension"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `failed final activation evicts its loader before a same-name retry`() {
+        val root = Files.createTempDirectory("extension-manager-loader-retry")
+        val manifest = Files.createDirectory(root.resolve("installed.json"))
+        val prepareCount = AtomicInteger()
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val downloader = localApkDownloader("candidate apk".toByteArray())
+        val preparer =
+            ExtensionPreparer { apk ->
+                val jar = root.resolve(".prepared-retry.jar")
+                if (prepareCount.getAndIncrement() == 0) {
+                    writeRenamedClassJar(jar, RetrySourceOne::class.java, RETRY_CLASS_NAME)
+                } else {
+                    writeRenamedClassJar(jar, RetrySourceTwo::class.java, RETRY_CLASS_NAME)
+                }
+                PreparedExtension(
+                    pkgName = "retry.extension",
+                    versionName = "1.2.1",
+                    versionCode = 1,
+                    mainClass = RETRY_CLASS_NAME,
+                    apkFile = apk,
+                    jarFile = jar,
+                    signerFingerprints = setOf(TEST_SIGNER),
+                )
+            }
+        val manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
+        val finalJar = root.resolve("retry.jar")
+
+        assertFails { manager.install(apkUrl = "https://cdn.example.test/retry.apk") }
+
+        assertTrue(finalJar.toString() !in PackageTools.jarLoaderMap, "failed final loader remained cached")
+        Files.delete(manifest)
+        manager.install(apkUrl = "https://cdn.example.test/retry.apk")
+        assertEquals("Second Retry Source", loader.source(RETRY_SOURCE_ID)?.name)
+    }
+
+    @Test
+    fun `successful replacement retires the old loader without closing an in-flight source`() {
+        val root = Files.createTempDirectory("extension-manager-loader-retirement")
+        val oldApk = root.resolve("old.apk").also { it.writeBytes("old apk".toByteArray()) }
+        val oldJar = root.resolve("old.jar").also { writeRenamedClassJar(it, RetrySourceOne::class.java, RETRY_CLASS_NAME) }
+        val oldRecord =
+            installedRecord(TARGET_PACKAGE, oldApk.fileName.toString(), listOf(RETRY_SOURCE_ID)).copy(
+                mainClass = RETRY_CLASS_NAME,
+            )
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(oldRecord)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val oldSource = loader.reinstantiate(oldJar.toString(), RETRY_CLASS_NAME).single()
+        val downloader =
+            object : ExtensionDownloadClient {
+                override fun downloadRepoIndex(url: String): ByteArray =
+                    """{"signingKey":"$TEST_SIGNER","extensionList":{"extensions":[{"name":"Target","packageName":"$TARGET_PACKAGE","resources":{"apkUrl":"https://cdn.example.test/replacement.apk"},"versionCode":"2","versionName":"1.2.2","sources":[]}]}}""".toByteArray()
+
+                override fun downloadApk(
+                    url: String,
+                    targetDir: Path,
+                ): Path = Files.createTempFile(targetDir, ".test-download-", ".apk.tmp").also { it.writeBytes("new apk".toByteArray()) }
+            }
+        val preparer =
+            ExtensionPreparer { apk ->
+                val jar = root.resolve(".prepared-replacement.jar")
+                writeRenamedClassJar(jar, RetrySourceTwo::class.java, RETRY_CLASS_NAME)
+                PreparedExtension(
+                    pkgName = TARGET_PACKAGE,
+                    versionName = "1.2.2",
+                    versionCode = 2,
+                    mainClass = RETRY_CLASS_NAME,
+                    apkFile = apk,
+                    jarFile = jar,
+                    signerFingerprints = setOf(TEST_SIGNER),
+                )
+            }
+        val manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
+        manager.setRepos(listOf(REPO_URL))
+        manager.setRepoTrust(REPO_URL, TEST_SIGNER)
+
+        manager.update(TARGET_PACKAGE)
+
+        assertTrue(oldJar.toString() !in PackageTools.jarLoaderMap, "superseded loader remained cached")
+        assertTrue(Files.exists(oldJar), "superseded jar was deleted while an old source remained reachable")
+        assertEquals("First Retry Source", oldSource.name)
+        assertEquals("Second Retry Source", loader.source(RETRY_SOURCE_ID)?.name)
     }
 
     @Test
@@ -277,8 +409,11 @@ class ExtensionManagerTest {
         candidateApkBytes: ByteArray = "candidate apk".toByteArray(),
         repositorySigningKey: String? = TEST_SIGNER,
         candidateSignerFingerprints: Set<String> = setOf(TEST_SIGNER),
-        signatureVerifier: ApkSignatureVerifier = ApkSignatureVerifier { setOf(TEST_SIGNER) },
+        private val signatureVerifier: ApkSignatureVerifier = ApkSignatureVerifier { setOf(TEST_SIGNER) },
         useRealPreparer: Boolean = false,
+        configuredSignerFingerprint: String? = repositorySigningKey,
+        unrelatedPackage: String = UNRELATED_PACKAGE,
+        unrelatedRecordSourceIds: List<Long> = listOf(UNRELATED_SOURCE_ID),
     ) {
         private val root = Files.createTempDirectory("extension-manager-identity")
         private val oldApk = root.resolve("target.apk")
@@ -287,11 +422,12 @@ class ExtensionManagerTest {
         private val unrelatedJar = root.resolve("unrelated.jar")
         private val manifest = root.resolve("installed.json")
         private val targetRecord = installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID))
-        private val unrelatedRecord = installedRecord(UNRELATED_PACKAGE, "unrelated.apk", listOf(UNRELATED_SOURCE_ID))
+        private val unrelatedRecord = installedRecord(unrelatedPackage, "unrelated.apk", unrelatedRecordSourceIds)
         private val oldSource = TestSource(TARGET_SOURCE_ID)
         private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
         private val loader = ExtensionLoader(root.toFile(), signatureVerifier)
         private val directoryBefore: Map<String, ByteArray>
+        private val installedBefore: Map<String, InstalledExtension>
         val manager: ExtensionManager
 
         init {
@@ -343,16 +479,23 @@ class ExtensionManagerTest {
                 } else {
                     ExtensionManager(loader, root.toFile(), downloader, preparer)
                 }
-            manager.setRepos(listOf("https://repo.example.test"))
+            manager.setRepos(listOf(REPO_URL))
+            configuredSignerFingerprint?.let { manager.setRepoTrust(REPO_URL, it) }
+            installedBefore = installedSnapshot(manager)
             directoryBefore = snapshotDirectory(root)
+        }
+
+        fun assertTrustPersisted(expected: String) {
+            val reloaded = ExtensionManager(ExtensionLoader(root.toFile(), signatureVerifier), root.toFile())
+            assertEquals(expected, reloaded.getRepoTrust().getValue(REPO_URL))
+            reloaded.close()
         }
 
         fun assertUnchanged() {
             assertDirectoryEquals(directoryBefore, snapshotDirectory(root))
             assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
             assertSame(unrelatedSource, loader.source(UNRELATED_SOURCE_ID))
-            assertEquals(targetRecord, manager.recordForSource(TARGET_SOURCE_ID))
-            assertEquals(unrelatedRecord, manager.recordForSource(UNRELATED_SOURCE_ID))
+            assertEquals(installedBefore, installedSnapshot(manager))
         }
     }
 
@@ -361,7 +504,16 @@ class ExtensionManagerTest {
         private const val UNRELATED_PACKAGE = "unrelated.extension"
         private const val TARGET_SOURCE_ID = 7L
         private const val UNRELATED_SOURCE_ID = 9L
+        private const val RETRY_SOURCE_ID = 11L
+        private const val RETRY_CLASS_NAME = "enginehost.RetrySourceNew"
         private const val TEST_SIGNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        private const val REPO_URL = "https://repo.example.test"
+
+        @Suppress("UNCHECKED_CAST")
+        private fun installedSnapshot(manager: ExtensionManager): Map<String, InstalledExtension> {
+            val field = ExtensionManager::class.java.getDeclaredField("installed").apply { isAccessible = true }
+            return HashMap(field.get(manager) as Map<String, InstalledExtension>)
+        }
 
         private fun installedRecord(
             pkgName: String,
@@ -416,6 +568,41 @@ class ExtensionManagerTest {
                 jar.closeEntry()
             }
         }
+
+        private fun writeRenamedClassJar(
+            target: Path,
+            sourceClass: Class<*>,
+            targetClassName: String,
+        ) {
+            val sourceName = sourceClass.name.replace('.', '/').toByteArray()
+            val targetName = targetClassName.replace('.', '/').toByteArray()
+            require(sourceName.size == targetName.size)
+            val entryName = sourceClass.name.replace('.', '/') + ".class"
+            val classBytes = requireNotNull(sourceClass.classLoader.getResourceAsStream(entryName)) { "missing $entryName" }.use { it.readBytes() }
+            var replacementCount = 0
+            for (index in 0..classBytes.size - sourceName.size) {
+                if (classBytes.copyOfRange(index, index + sourceName.size).contentEquals(sourceName)) {
+                    targetName.copyInto(classBytes, index)
+                    replacementCount++
+                }
+            }
+            require(replacementCount > 0) { "class name was not found in $entryName" }
+            ZipOutputStream(Files.newOutputStream(target)).use { jar ->
+                jar.putNextEntry(ZipEntry(targetClassName.replace('.', '/') + ".class"))
+                jar.write(classBytes)
+                jar.closeEntry()
+            }
+        }
+
+        private fun localApkDownloader(bytes: ByteArray): ExtensionDownloadClient =
+            object : ExtensionDownloadClient {
+                override fun downloadRepoIndex(url: String): ByteArray = error("unused")
+
+                override fun downloadApk(
+                    url: String,
+                    targetDir: Path,
+                ): Path = Files.createTempFile(targetDir, ".test-download-", ".apk.tmp").also { it.writeBytes(bytes) }
+            }
     }
 
 }
@@ -497,4 +684,37 @@ internal class CandidateOwnedSource : Source {
     ): MangasPage = error("unused")
 
     override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal abstract class RetrySourceBase : Source {
+    override val id: Long = 11L
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = error("unused")
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal class RetrySourceOne : RetrySourceBase() {
+    override val name: String = "First Retry Source"
+}
+
+internal class RetrySourceTwo : RetrySourceBase() {
+    override val name: String = "Second Retry Source"
 }
