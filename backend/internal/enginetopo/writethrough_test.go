@@ -1,8 +1,10 @@
 package enginetopo_test
 
 import (
+	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
@@ -33,6 +35,73 @@ func TestOnExtensionInstalled(t *testing.T) {
 	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName("pkg.one")).OnlyX(ctx)
 	assertCachedExtension(t, row, hexSHA(apkBytes), 4, []int64{7})
 	assertCachedBytes(t, cache, "pkg.one", 4, apkBytes)
+}
+
+// TestRecordInstalledExtension_RejectsRepositoryVersionDifferentFromInstalled
+// protects the distinction between the repository's current candidate and the
+// version the engine actually committed. If the index advances between those
+// two operations, write-through must not cache candidate bytes under a claim
+// that they recover the installed extension; the previous durable generation
+// stays intact for a later retry.
+func TestRecordInstalledExtension_RejectsRepositoryVersionDifferentFromInstalled(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	const (
+		pkg              = "pkg.one"
+		repo             = "https://repo.test/index.min.json"
+		previousVersion  = 1
+		installedVersion = 2
+		candidateVersion = 3
+	)
+
+	previousAt := time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC)
+	if _, _, err := cache.Put(pkg, previousVersion, bytes.NewReader([]byte("APK-V1"))); err != nil {
+		t.Fatalf("cache previous version: %v", err)
+	}
+	if err := db.HarvestedExtension.Create().
+		SetPkgName(pkg).
+		SetRepoURL(repo).
+		SetVersionCode(previousVersion).
+		SetInstalledVersionCode(previousVersion).
+		SetVersionName("1.0.1").
+		SetApkCached(true).
+		SetCachedVersions([]apkcache.CachedVersion{{
+			VersionCode: previousVersion,
+			VersionName: "1.0.1",
+			CachedAt:    previousAt,
+		}}).
+		Exec(ctx); err != nil {
+		t.Fatalf("seed previous capture: %v", err)
+	}
+
+	stub := &stubHTTP{routes: map[string]stubResp{
+		repo:                                   {status: 200, body: []byte(`[{"pkg":"pkg.one","apk":"pkg.one-v3.apk","code":3}]`)},
+		"https://repo.test/apk/pkg.one-v3.apk": {status: 200, body: []byte("APK-V3")},
+	}}
+	err := enginetopo.RecordInstalledExtension(
+		ctx,
+		db,
+		cache,
+		stub.get,
+		installedExt(pkg, repo, installedVersion, sourceengine.Source{ID: 7}),
+		3,
+	)
+	if err == nil {
+		t.Fatal("RecordInstalledExtension error = nil, want repository/installed version mismatch")
+	}
+
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(pkg)).OnlyX(ctx)
+	if row.VersionCode != previousVersion || row.InstalledVersionCode != previousVersion {
+		t.Errorf("durable row changed to {bytes:%d installed:%d}, want prior {%d %d}",
+			row.VersionCode, row.InstalledVersionCode, previousVersion, previousVersion)
+	}
+	if cache.Exists(pkg, candidateVersion) {
+		t.Error("candidate bytes cached despite differing from installed version")
+	}
+	if !cache.Exists(pkg, previousVersion) {
+		t.Error("previous rollback bytes were removed after rejected capture")
+	}
 }
 
 // TestOnExtensionUninstalled proves the write-through removes a just-uninstalled

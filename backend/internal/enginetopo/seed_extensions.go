@@ -1,13 +1,17 @@
 package enginetopo
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
@@ -40,8 +44,9 @@ type Result struct {
 // Flow:
 //  1. client.Repos → upsert one HarvestedRepo row per URL.
 //  2. client.Extensions → for each INSTALLED extension: resolve its .apk download
-//     URL AND version from its repo's index.min.json (fetched via httpGet),
-//     download the .apk bytes (httpGet), cache.Put them, and upsert a
+//     URL AND version from its configured repository index (wrapper JSON, legacy
+//     array JSON, or protobuf, fetched via httpGet), download the .apk bytes,
+//     cache.Put them, and upsert a
 //     HarvestedExtension row whose version_code + apk_sha256 describe the cached
 //     bytes (the index entry's own version, not the possibly-older installed
 //     version) with apk_cached=true. The extension's source ids come straight
@@ -146,7 +151,7 @@ func seedOneExtension(
 	} else if already {
 		return false, nil
 	}
-	if err := recordInstalledExtension(ctx, db, cache, indexes, httpGet, ext, retained); err != nil {
+	if err := recordInstalledExtension(ctx, db, cache, indexes, httpGet, ext, retained, false); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -165,13 +170,12 @@ func seedOneExtension(
 // the write-through logs and continues). Re-capturing an unchanged extension is a
 // wasted download but never wrong.
 //
-// The version_code + apk_sha256 recorded describe the BYTES actually cached: the
-// apk is resolved from the repo index (which advertises the latest known-good
-// version), so the index entry's OWN version code — not the installed
-// ext.VersionCode, which may lag the repo — is cached, named, and recorded;
-// installed_version_code stores ext.VersionCode as the seed's change-detector.
-// (Installing the latest known-good apk is safe: source ids are stable across
-// versions.)
+// The live write-through is stricter than the boot seed: the repository entry's
+// version MUST equal ext.VersionCode, the post-mutation version the engine says
+// it actually installed. A repository refresh racing ahead to a newer candidate
+// therefore fails capture without downloading or disturbing the prior held
+// generation; candidate bytes are never misrepresented as recovery bytes for
+// the running version.
 func RecordInstalledExtension(
 	ctx context.Context,
 	db *ent.Client,
@@ -180,7 +184,7 @@ func RecordInstalledExtension(
 	ext sourceengine.Extension,
 	retained int,
 ) error {
-	return recordInstalledExtension(ctx, db, cache, newIndexResolver(ctx, httpGet), httpGet, ext, retained)
+	return recordInstalledExtension(ctx, db, cache, newIndexResolver(ctx, httpGet), httpGet, ext, retained, true)
 }
 
 // recordInstalledExtension is the resolver-injected caching core shared by the
@@ -190,6 +194,10 @@ func RecordInstalledExtension(
 // one-shot resolver for its single extension). Keeping the resolver a parameter
 // is what lets both callers share this one body without the seed losing its
 // per-pass index memoisation.
+//
+// requireInstalledVersion is true only for live write-through, where the
+// post-mutation installed version is an exact witness. The boot seed keeps its
+// established latest-index capture behavior for an older installed build.
 func recordInstalledExtension(
 	ctx context.Context,
 	db *ent.Client,
@@ -198,11 +206,18 @@ func recordInstalledExtension(
 	httpGet func(context.Context, string) (*http.Response, error),
 	ext sourceengine.Extension,
 	retained int,
+	requireInstalledVersion bool,
 ) error {
 	repoURL := repoURLOf(ext)
 	apkURL, indexVersion, err := indexes.resolve(repoURL, ext.PkgName)
 	if err != nil {
 		return err
+	}
+	if requireInstalledVersion && indexVersion != int(ext.VersionCode) {
+		return fmt.Errorf(
+			"extension %q repository version %d does not match installed version %d",
+			ext.PkgName, indexVersion, ext.VersionCode,
+		)
 	}
 
 	sha, err := downloadAndCache(ctx, cache, httpGet, apkURL, ext.PkgName, indexVersion, maxAPKBytes)
@@ -448,23 +463,63 @@ func upsertRepo(ctx context.Context, db *ent.Client, url string) error {
 
 // --- Mihon repo index resolution --------------------------------------------
 
-// maxIndexBytes bounds how much of a repo's index.min.json is read into memory.
-// 16 MiB is far above any real index (the largest community repos are a few MiB)
-// yet cheap insurance against a hostile or corrupt endpoint streaming forever.
+// maxIndexBytes bounds how much of a repository index is read into memory. 16
+// MiB is far above any real JSON/protobuf index yet cheap insurance against a
+// hostile or corrupt endpoint streaming forever.
 const maxIndexBytes = 16 << 20
 
-// repoIndexEntry is one extension entry from a repo's index.min.json (only the
-// fields we need; unknown fields are ignored). It mirrors engine-host's
-// RepoIndexEntry.
+// repoIndexEntry is the format-neutral subset of one repository entry that the
+// durable capture needs. APKURL is normalized to absolute while parsing: wrapper
+// JSON/protobuf carry it directly; legacy arrays resolve their relative `apk`
+// filename against the repository base.
 type repoIndexEntry struct {
-	// Pkg is the extension's Android package name (matches Extension.PkgName).
-	Pkg string `json:"pkg"`
-	// Apk is the .apk file name, resolved against "<repoBase>/apk/<apk>".
-	Apk string `json:"apk"`
-	// Code is the entry's own numeric version code — the version of the BYTES
-	// this entry points at, recorded so the stored version_code describes the
-	// cached apk rather than the (possibly older) installed version.
-	Code int `json:"code"`
+	Pkg    string
+	APKURL string
+	Code   int
+}
+
+type legacyRepoIndexEntry struct {
+	Pkg  string `json:"pkg"`
+	Apk  string `json:"apk"`
+	Code int    `json:"code"`
+}
+
+type wrappedRepoIndex struct {
+	ExtensionList struct {
+		Extensions []wrappedRepoIndexEntry `json:"extensions"`
+	} `json:"extensionList"`
+}
+
+type wrappedRepoIndexEntry struct {
+	PackageName string            `json:"packageName"`
+	VersionCode repoVersionCode   `json:"versionCode"`
+	Resources   repoIndexResource `json:"resources"`
+}
+
+type repoIndexResource struct {
+	APKURL string `json:"apkUrl"`
+}
+
+// repoVersionCode accepts both the current wrapper's quoted decimal and a JSON
+// number, so a repository changing only its scalar encoding cannot erase the
+// catalogue from the capture path.
+type repoVersionCode int
+
+func (c *repoVersionCode) UnmarshalJSON(data []byte) error {
+	var raw string
+	if len(data) > 0 && data[0] == '"' {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return err
+		}
+	} else {
+		raw = string(data)
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fmt.Errorf("invalid repository version code %q: %w", raw, err)
+	}
+	*c = repoVersionCode(value)
+	return nil
 }
 
 // indexResult memoises one repo's index fetch (entries or the failure), so a
@@ -474,9 +529,8 @@ type indexResult struct {
 	err     error
 }
 
-// indexResolver fetches + caches repo index.min.json documents and resolves an
-// extension's .apk download URL + version from them, mirroring engine-host's URL
-// scheme.
+// indexResolver fetches + caches configured repository index documents and
+// resolves an extension's absolute .apk download URL + version from them.
 type indexResolver struct {
 	ctx     context.Context
 	httpGet func(context.Context, string) (*http.Response, error)
@@ -503,13 +557,16 @@ func (r *indexResolver) resolve(repoURL, pkgName string) (apkURL string, version
 	}
 	for _, e := range entries {
 		if e.Pkg == pkgName {
-			return apkURLFor(repoURL, e.Apk), e.Code, nil
+			if strings.TrimSpace(e.APKURL) == "" {
+				return "", 0, fmt.Errorf("extension %q has no apk url in repo index %q", pkgName, repoURL)
+			}
+			return e.APKURL, e.Code, nil
 		}
 	}
 	return "", 0, fmt.Errorf("extension %q not found in repo index %q", pkgName, repoURL)
 }
 
-// entriesFor fetches and parses repoURL's index.min.json, memoising the result
+// entriesFor fetches and parses repoURL's configured index, memoising the result
 // (success or failure) for the pass.
 func (r *indexResolver) entriesFor(repoURL string) ([]repoIndexEntry, error) {
 	if cached, ok := r.byRepo[repoURL]; ok {
@@ -520,7 +577,9 @@ func (r *indexResolver) entriesFor(repoURL string) ([]repoIndexEntry, error) {
 	return entries, err
 }
 
-// fetchIndex GETs and decodes a repo's index.min.json.
+// fetchIndex GETs the repository's configured index URL and decodes every format
+// the engine host accepts: current wrapper JSON, legacy top-level JSON arrays,
+// and (optionally gzip-compressed) protobuf.
 func fetchIndex(ctx context.Context, httpGet func(context.Context, string) (*http.Response, error), repoURL string) ([]repoIndexEntry, error) {
 	indexURL := indexURLFor(repoURL)
 	resp, err := httpGet(ctx, indexURL)
@@ -537,11 +596,174 @@ func fetchIndex(ctx context.Context, httpGet func(context.Context, string) (*htt
 	if err != nil {
 		return nil, fmt.Errorf("read repo index %q: %w", indexURL, err)
 	}
-	var entries []repoIndexEntry
-	if err := json.Unmarshal(body, &entries); err != nil {
+	entries, err := parseRepoIndex(body, indexURL, repoURL)
+	if err != nil {
 		return nil, fmt.Errorf("parse repo index %q: %w", indexURL, err)
 	}
 	return entries, nil
+}
+
+func parseRepoIndex(body []byte, indexURL, repoURL string) ([]repoIndexEntry, error) {
+	if isProtobufIndex(indexURL, body) {
+		return parseProtoRepoIndex(body)
+	}
+
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return nil, errors.New("empty repository index")
+	}
+	switch trimmed[0] {
+	case '[':
+		var legacy []legacyRepoIndexEntry
+		if err := json.Unmarshal(trimmed, &legacy); err != nil {
+			return nil, err
+		}
+		entries := make([]repoIndexEntry, 0, len(legacy))
+		for _, entry := range legacy {
+			entries = append(entries, repoIndexEntry{
+				Pkg: entry.Pkg, APKURL: apkURLFor(repoURL, entry.Apk), Code: entry.Code,
+			})
+		}
+		return entries, nil
+	case '{':
+		var wrapped wrappedRepoIndex
+		if err := json.Unmarshal(trimmed, &wrapped); err != nil {
+			return nil, err
+		}
+		entries := make([]repoIndexEntry, 0, len(wrapped.ExtensionList.Extensions))
+		for _, entry := range wrapped.ExtensionList.Extensions {
+			entries = append(entries, repoIndexEntry{
+				Pkg: entry.PackageName, APKURL: entry.Resources.APKURL, Code: int(entry.VersionCode),
+			})
+		}
+		return entries, nil
+	default:
+		return nil, fmt.Errorf("unsupported repository index prefix 0x%02x", trimmed[0])
+	}
+}
+
+func isProtobufIndex(indexURL string, body []byte) bool {
+	return strings.HasSuffix(strings.ToLower(indexURL), ".pb") ||
+		(len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b)
+}
+
+func parseProtoRepoIndex(body []byte) ([]repoIndexEntry, error) {
+	raw := body
+	if len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
+		reader, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		decompressed, readErr := io.ReadAll(io.LimitReader(reader, maxIndexBytes+1))
+		closeErr := reader.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		if len(decompressed) > maxIndexBytes {
+			return nil, errors.New("decompressed repository index exceeds maximum size")
+		}
+		raw = decompressed
+	}
+
+	var entries []repoIndexEntry
+	err := walkProtoFields(raw, func(number int, wireType uint64, value []byte, _ uint64) error {
+		if number != 101 || wireType != 2 {
+			return nil
+		}
+		return walkProtoFields(value, func(number int, wireType uint64, value []byte, _ uint64) error {
+			if number != 1 || wireType != 2 {
+				return nil
+			}
+			entry, err := parseProtoRepoEntry(value)
+			if err != nil {
+				return err
+			}
+			entries = append(entries, entry)
+			return nil
+		})
+	})
+	return entries, err
+}
+
+func parseProtoRepoEntry(data []byte) (repoIndexEntry, error) {
+	var entry repoIndexEntry
+	err := walkProtoFields(data, func(number int, wireType uint64, value []byte, varint uint64) error {
+		switch {
+		case number == 2 && wireType == 2:
+			entry.Pkg = string(value)
+		case number == 3 && wireType == 2:
+			return walkProtoFields(value, func(number int, wireType uint64, value []byte, _ uint64) error {
+				if number == 1 && wireType == 2 {
+					entry.APKURL = string(value)
+				}
+				return nil
+			})
+		case number == 5 && wireType == 0:
+			if uint64(int(varint)) != varint {
+				return fmt.Errorf("repository version code %d overflows int", varint)
+			}
+			entry.Code = int(varint)
+		}
+		return nil
+	})
+	return entry, err
+}
+
+// walkProtoFields is the small wire-format reader needed by the repository
+// schema. It accepts and skips every non-group protobuf wire type, so unknown
+// fields remain forward-compatible without generated Go bindings.
+func walkProtoFields(data []byte, visit func(number int, wireType uint64, value []byte, varint uint64) error) error {
+	for len(data) > 0 {
+		key, n := binary.Uvarint(data)
+		if n <= 0 {
+			return errors.New("invalid protobuf field key")
+		}
+		data = data[n:]
+		number, wireType := int(key>>3), key&7
+		if number < 1 {
+			return errors.New("invalid protobuf field number")
+		}
+
+		var value []byte
+		var scalar uint64
+		switch wireType {
+		case 0:
+			scalar, n = binary.Uvarint(data)
+			if n <= 0 {
+				return errors.New("invalid protobuf varint")
+			}
+			data = data[n:]
+		case 1:
+			if len(data) < 8 {
+				return errors.New("truncated protobuf fixed64")
+			}
+			value, data = data[:8], data[8:]
+		case 2:
+			length, width := binary.Uvarint(data)
+			if width <= 0 {
+				return errors.New("invalid protobuf length")
+			}
+			data = data[width:]
+			if length > uint64(len(data)) {
+				return errors.New("truncated protobuf bytes")
+			}
+			value, data = data[:int(length)], data[int(length):]
+		case 5:
+			if len(data) < 4 {
+				return errors.New("truncated protobuf fixed32")
+			}
+			value, data = data[:4], data[4:]
+		default:
+			return fmt.Errorf("unsupported protobuf wire type %d", wireType)
+		}
+		if err := visit(number, wireType, value, scalar); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // repoBaseURL normalises a stored repo URL to its base DIRECTORY — the parent the
@@ -560,36 +782,33 @@ func fetchIndex(ctx context.Context, httpGet func(context.Context, string) (*htt
 // otherwise the URL is already a base directory and is returned unchanged. A last
 // segment with no such extension (a bare ".../repo") is never stripped, so a
 // directory URL is preserved.
-//
-// This is the fix for the prod 404: the old code special-cased only a ".json"
-// suffix, so a ".pb" index URL was treated as a directory and got "/index.min.json"
-// appended onto the FILE name, producing ".../repo/index.pb/index.min.json" → 404
-// for every extension. Deriving the base first makes both the index and apk URLs
-// correct for either stored shape.
-//
-// NOTE: engine-host's ExtensionManager (the Kotlin Phase-2 side this Go path
-// mirrors) carries the SAME index-file-vs-directory bug and needs the same fix —
-// its indexUrlFor/repoBaseFor only special-case ".json" too.
 func repoBaseURL(repoURL string) string {
 	trimmed := strings.TrimRight(repoURL, "/")
 	slash := strings.LastIndex(trimmed, "/")
 	if slash < 0 {
 		return trimmed
 	}
-	last := strings.ToLower(trimmed[slash+1:])
-	if strings.HasSuffix(last, ".json") || strings.HasSuffix(last, ".pb") {
+	if namesIndexFile(trimmed) {
 		return trimmed[:slash]
 	}
 	return trimmed
 }
 
-// indexURLFor builds a repo's index.min.json URL from its base directory, so an
-// index-FILE repo URL (index.pb / index.min.json / index.json) and a bare repo
-// directory both resolve to "<base>/index.min.json". Mirrors engine-host
-// ExtensionManager.indexUrlFor (see repoBaseURL's NOTE — the engine-host side needs
-// the same fix).
+// indexURLFor preserves a configured index-file URL verbatim; changing its file
+// name can change both schema and catalogue. A bare directory keeps the legacy
+// default of "<base>/index.min.json".
 func indexURLFor(repoURL string) string {
-	return repoBaseURL(repoURL) + "/index.min.json"
+	trimmed := strings.TrimRight(repoURL, "/")
+	if namesIndexFile(trimmed) {
+		return trimmed
+	}
+	return trimmed + "/index.min.json"
+}
+
+func namesIndexFile(repoURL string) bool {
+	slash := strings.LastIndex(repoURL, "/")
+	last := strings.ToLower(repoURL[slash+1:])
+	return strings.HasSuffix(last, ".json") || strings.HasSuffix(last, ".pb")
 }
 
 // repoBaseFor resolves the base URL an APK is relative to — the repo's base

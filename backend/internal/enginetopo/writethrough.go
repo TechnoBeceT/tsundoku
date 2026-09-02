@@ -38,7 +38,10 @@ import (
 
 // OnExtensionInstalled captures a just-installed-or-updated extension into the
 // durable topology store: it upserts the HarvestedExtension row and caches the
-// .apk bytes via the shared RecordInstalledExtension core.
+// .apk bytes via the shared RecordInstalledExtension core. The resolved
+// repository version must exactly equal the post-mutation version in ext; if a
+// newer candidate races into the index, capture leaves the prior durable state
+// untouched rather than storing the wrong bytes as the running generation.
 //
 // ext is the extension AS OBSERVED IN THE HANDLER'S POST-MUTATION RE-READ (§16),
 // passed in so this issues no redundant client.Extensions() call — ext.Sources

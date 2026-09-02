@@ -1,13 +1,16 @@
 package extensions_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -46,6 +49,7 @@ func newDurableEnv(t *testing.T, fc *sourceenginefake.Client, httpGet func(strin
 	e.HTTPErrorHandler = middleware.ErrorHandler
 	authed := e.Group("/api", middleware.RequireOwner(authSvc, false))
 	authed.POST("/suwayomi/extensions/:pkgName/install", h.Install)
+	authed.POST("/suwayomi/extensions/:pkgName/update", h.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", h.Uninstall)
 
 	token, err := authSvc.Issue(uuid.New())
@@ -87,11 +91,107 @@ func installableFake() *sourceenginefake.Client {
 	return sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{
 		{
 			PkgName:     "pkg.test.one",
+			VersionName: "1.0.9",
+			VersionCode: 9,
 			RepoURL:     &repo,
 			IsInstalled: false,
 			Sources:     []sourceengine.Source{{ID: 5}},
 		},
 	}))
+}
+
+// TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion is the
+// repository-index capture regression guard. The configured URL names the current
+// index.json wrapper, while the sibling legacy index.min.json deliberately does
+// not advertise the package. A successful engine update must therefore fetch
+// the configured file verbatim, cache bytes for the exact post-update installed
+// version, and return both that version and the prior held version for rollback.
+func TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion(t *testing.T) {
+	ctx := context.Background()
+	const (
+		pkg        = "pkg.test.one"
+		repo       = "https://repo.test/index.json"
+		newAPKURL  = "https://cdn.test/pkg.test.one-v2.apk"
+		oldVersion = 1
+		newVersion = 2
+	)
+
+	repoURL := repo
+	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{{
+		PkgName:     pkg,
+		VersionName: "1.0.2",
+		VersionCode: newVersion,
+		RepoURL:     &repoURL,
+		IsInstalled: true,
+		Sources:     []sourceengine.Source{{ID: 5}},
+	}}))
+	routes := map[string]string{
+		repo: `{"extensionList":{"extensions":[{"packageName":"pkg.test.one","versionName":"1.0.2","versionCode":"2","resources":{"apkUrl":"https://cdn.test/pkg.test.one-v2.apk"}}]}}`,
+		// This is a valid legacy index, but it intentionally lacks the target.
+		"https://repo.test/index.min.json": `[{"pkg":"pkg.someone.else","apk":"else.apk","code":9}]`,
+		newAPKURL:                          "APK-V2",
+	}
+	env := newDurableEnv(t, fc, serveRoutes(routes))
+
+	oldAt := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
+	if _, _, err := env.cache.Put(pkg, oldVersion, bytes.NewReader([]byte("APK-V1"))); err != nil {
+		t.Fatalf("cache old version: %v", err)
+	}
+	if err := env.db.HarvestedExtension.Create().
+		SetPkgName(pkg).
+		SetRepoURL(repo).
+		SetVersionCode(oldVersion).
+		SetInstalledVersionCode(oldVersion).
+		SetVersionName("1.0.1").
+		SetApkCached(true).
+		SetCachedVersions([]apkcache.CachedVersion{{VersionCode: oldVersion, VersionName: "1.0.1", CachedAt: oldAt}}).
+		Exec(ctx); err != nil {
+		t.Fatalf("seed prior extension capture: %v", err)
+	}
+
+	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/"+pkg+"/update")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	row := env.db.HarvestedExtension.Query().
+		Where(entharvestedextension.PkgName(pkg)).
+		OnlyX(ctx)
+	if row.VersionCode != newVersion || row.InstalledVersionCode != newVersion {
+		t.Fatalf("captured versions = {bytes:%d installed:%d}, want {%d %d}",
+			row.VersionCode, row.InstalledVersionCode, newVersion, newVersion)
+	}
+	if !env.cache.Exists(pkg, newVersion) || !env.cache.Exists(pkg, oldVersion) {
+		t.Fatalf("cache presence = {new:%v old:%v}, want both true",
+			env.cache.Exists(pkg, newVersion), env.cache.Exists(pkg, oldVersion))
+	}
+	cached, err := env.cache.Open(pkg, newVersion)
+	if err != nil {
+		t.Fatalf("open cached current version: %v", err)
+	}
+	cachedBytes, readErr := io.ReadAll(cached)
+	closeErr := cached.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read cached current version: read=%v close=%v", readErr, closeErr)
+	}
+	if !bytes.Equal(cachedBytes, []byte("APK-V2")) {
+		t.Errorf("cached current bytes = %q, want %q", cachedBytes, "APK-V2")
+	}
+
+	var got []handler.ExtensionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got) != 1 || len(got[0].CachedVersions) != 2 {
+		t.Fatalf("response cachedVersions = %+v, want current and prior versions", got)
+	}
+	byVersion := make(map[int]bool, len(got[0].CachedVersions))
+	for _, held := range got[0].CachedVersions {
+		byVersion[held.VersionCode] = true
+	}
+	if !byVersion[newVersion] || !byVersion[oldVersion] {
+		t.Errorf("response held versions = %v, want {%d,%d}", byVersion, newVersion, oldVersion)
+	}
 }
 
 // TestInstall_WritesThroughToDurableStore proves a successful install captures the
