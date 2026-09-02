@@ -390,17 +390,33 @@ class RpcServer(
         response: ResponseGuard,
     ) {
         try {
-            when (exchange.requestMethod) {
-                "GET" -> response.respondJson(200, ReposDto(extensions.getRepos()))
-                "PUT" -> {
+            val path = exchange.requestURI.path
+            when {
+                path == "/repos" && exchange.requestMethod == "GET" ->
+                    response.respondJson(200, ReposDto(extensions.getRepos()))
+
+                path == "/repos" && exchange.requestMethod == "PUT" -> {
                     val request: ReposDto = mapper.readValue(exchange.requestBody.readBytes())
                     extensions.setRepos(request.repos)
                     response.respondJson(200, ReposDto(extensions.getRepos()))
                 }
-                else -> response.respondJson(405, ErrorResponse("GET or PUT only"))
+
+                path == "/repos/trust" && exchange.requestMethod == "PUT" -> {
+                    val request: RepoTrustRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    extensions.setRepoTrust(request.repoUrl, request.signerFingerprint)
+                    response.respondJson(
+                        200,
+                        RepoTrustDto(request.repoUrl.trim(), extensions.getRepoTrust().getValue(request.repoUrl.trim())),
+                    )
+                }
+
+                path == "/repos" || path == "/repos/trust" -> response.respondJson(405, ErrorResponse("method not allowed"))
+                else -> response.respondJson(404, ErrorResponse("no route for ${exchange.requestMethod} $path"))
             }
         } catch (e: JacksonException) {
             response.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
+        } catch (e: IllegalArgumentException) {
+            response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: Throwable) {
             logger.warn(e) { "repos request failed" }
             response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
