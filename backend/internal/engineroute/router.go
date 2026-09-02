@@ -61,6 +61,7 @@ type Router struct {
 // Compile-time assertion: *Router must satisfy sourceengine.Client so it is a
 // drop-in for the raw client everywhere.
 var _ sourceengine.Client = (*Router)(nil)
+var _ sourceengine.InstalledAPKClient = (*Router)(nil)
 
 // NewRouter constructs a Router that delegates everything to defaultClient until
 // SetRoutes installs per-source overrides.
@@ -223,6 +224,11 @@ func (r *Router) Sources(ctx context.Context) ([]sourceengine.Source, error) {
 // Extensions lists the default instance's extensions.
 func (r *Router) Extensions(ctx context.Context) ([]sourceengine.Extension, error) {
 	return r.defaultClient.Extensions(ctx)
+}
+
+// InstalledAPK exports exact installed bytes from the authoritative default instance.
+func (r *Router) InstalledAPK(ctx context.Context, pkgName string) (sourceengine.InstalledAPK, error) {
+	return sourceengine.InstalledAPKFor(ctx, r.defaultClient, pkgName)
 }
 
 // InstallExtension installs on the default instance. ReconcileNetwork mirrors the

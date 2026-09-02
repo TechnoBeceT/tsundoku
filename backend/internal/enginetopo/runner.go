@@ -35,6 +35,8 @@ import (
 // into RunSeed's single background call without a long positional argument
 // list.
 type SeedDeps struct {
+	// Archive is the shared exact-generation serializer also used by live updates.
+	Archive *ExtensionArchive
 	// Client is the live engine client every pass reads from.
 	Client sourceengine.Client
 	// DB is the shared Ent client every pass writes its captured topology into.
@@ -123,7 +125,11 @@ func RunSeed(ctx context.Context, deps SeedDeps) SeedReport {
 // runSeedExtensions runs the extension/repo/apk-cache seed, logging an
 // enumerating-call failure and reporting zeroes in that case.
 func runSeedExtensions(ctx context.Context, deps SeedDeps) (repos, cached, gaps int) {
-	res, err := SeedExtensions(ctx, deps.Client, deps.DB, deps.Cache, deps.HTTPGet, deps.Retained)
+	archive := deps.Archive
+	if archive == nil {
+		archive = NewExtensionArchive(deps.Client, deps.DB, deps.Cache, deps.Retained)
+	}
+	res, err := SeedExtensionsExact(ctx, deps.Client, deps.DB, deps.Cache, archive)
 	if err != nil {
 		slog.ErrorContext(ctx, "enginetopo: seed extensions failed", "err", err)
 		return 0, 0, 0

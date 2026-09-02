@@ -25,7 +25,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 // HTTPDoer is the minimal interface the client needs to send a request. A
@@ -194,6 +197,32 @@ type AddressClient interface {
 	PagesRef(ctx context.Context, ref ProviderRef, chapterURL string) (PagesResult, error)
 }
 
+// InstalledAPK is one exact installed extension generation streamed by the
+// engine host. Body remains owned by the caller and must be closed.
+type InstalledAPK struct {
+	PkgName       string
+	VersionCode   int
+	VersionName   string
+	ContentLength int64
+	Body          io.ReadCloser
+}
+
+// InstalledAPKClient is the additive exact-generation export capability. It is
+// separate from Client so narrow legacy test doubles remain source compatible.
+type InstalledAPKClient interface {
+	InstalledAPK(ctx context.Context, pkgName string) (InstalledAPK, error)
+}
+
+// InstalledAPKFor requests an exact installed generation when client supports
+// the additive export contract.
+func InstalledAPKFor(ctx context.Context, client Client, pkgName string) (InstalledAPK, error) {
+	exporter, ok := client.(InstalledAPKClient)
+	if !ok {
+		return InstalledAPK{}, fmt.Errorf("sourceengine: installed APK export unsupported")
+	}
+	return exporter.InstalledAPK(ctx, pkgName)
+}
+
 // MangaDetailsFor uses the address-aware extension when available and falls
 // back to the legacy unknown-mode call otherwise.
 func MangaDetailsFor(ctx context.Context, client Client, ref ProviderRef) (MangaDetails, error) {
@@ -353,10 +382,70 @@ func (c *httpClient) newRequest(ctx context.Context, method, path string, body a
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if path == "/repos/trust" && c.controlToken != "" {
+	if isControlPath(path) && c.controlToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.controlToken)
 	}
 	return req, nil
+}
+
+// isControlPath is the explicit credential allowlist. Keeping this narrower
+// than a prefix check prevents a future content RPC from receiving the control
+// bearer merely because it happens to live below /extensions.
+func isControlPath(path string) bool {
+	if path == "/repos/trust" {
+		return true
+	}
+	const prefix, suffix = "/extensions/", "/installed-apk"
+	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	middle := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
+	return middle != "" && !strings.Contains(strings.TrimSuffix(middle, "/"), "/")
+}
+
+const installedAPKContentType = "application/vnd.android.package-archive"
+const maxInstalledAPKBytes int64 = 256 << 20
+
+// InstalledAPK streams the authenticated exact installed APK response after
+// validating every identity and size header before exposing its body.
+func (c *httpClient) InstalledAPK(ctx context.Context, pkgName string) (InstalledAPK, error) {
+	var zero InstalledAPK
+	if c.controlToken == "" {
+		return zero, fmt.Errorf("sourceengine: installed APK export requires a control token")
+	}
+	path := extensionPath(pkgName) + "/installed-apk"
+	resp, err := c.send(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return zero, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		defer func() { _ = resp.Body.Close() }()
+		return zero, newStatusError(resp)
+	}
+	fail := func(format string, args ...any) (InstalledAPK, error) {
+		_ = resp.Body.Close()
+		return zero, fmt.Errorf("sourceengine: invalid installed APK response: "+format, args...)
+	}
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mediaType != installedAPKContentType {
+		return fail("content type %q", resp.Header.Get("Content-Type"))
+	}
+	if got := resp.Header.Get("X-Tsundoku-Extension-Package"); got != pkgName {
+		return fail("package %q does not match requested %q", got, pkgName)
+	}
+	version, err := strconv.Atoi(resp.Header.Get("X-Tsundoku-Extension-Version-Code"))
+	if err != nil || version <= 0 {
+		return fail("invalid version code")
+	}
+	length, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	if err != nil || length <= 0 || length > maxInstalledAPKBytes {
+		return fail("invalid content length")
+	}
+	return InstalledAPK{
+		PkgName: pkgName, VersionCode: version,
+		VersionName:   resp.Header.Get("X-Tsundoku-Extension-Version-Name"),
+		ContentLength: length, Body: resp.Body,
+	}, nil
 }
 
 // send builds and executes method+path against c.baseURL, returning the raw

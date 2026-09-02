@@ -12,6 +12,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/disabledsource"
 	"github.com/technobecet/tsundoku/internal/downloads"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	categoryh "github.com/technobecet/tsundoku/internal/handler/category"
@@ -226,6 +227,7 @@ func registerRoutes(
 	cycleSchedule engineh.ScheduleSnapshotter,
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
+	extensionArchive *enginetopo.ExtensionArchive,
 	onNetworkChange func(),
 	registerProviderHealer func(job.ProviderHealer),
 ) {
@@ -489,6 +491,7 @@ func registerRoutes(
 	// attached to the shared ingest below so adopt/attach honour it.
 	ignoreScanlatorSvc := ignorescanlator.NewService(client)
 	extensionsH := extensionsh.NewHandler(engineClient, client, apkStore, http.Get, disabledSrcSvc, ignoreScanlatorSvc, settingsSvc.RetainedVersions).
+		WithArchive(extensionArchive).
 		WithPurge(purgeSvc)
 	authed.GET("/suwayomi/extensions", extensionsH.List)
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)

@@ -1,14 +1,81 @@
 package sourceengine_test
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
+
+func TestInstalledAPK_StreamsExactAuthenticatedGeneration(t *testing.T) {
+	const pkg = "eu.kanade.tachiyomi.extension.en.mangadex"
+	want := []byte("exact-installed-apk")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/extensions/"+pkg+"/installed-apk" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer control-secret" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+		w.Header().Set("Content-Length", strconv.Itoa(len(want)))
+		w.Header().Set("X-Tsundoku-Extension-Package", pkg)
+		w.Header().Set("X-Tsundoku-Extension-Version-Code", "57")
+		w.Header().Set("X-Tsundoku-Extension-Version-Name", "1.2.3")
+		_, _ = w.Write(want)
+	}))
+	defer srv.Close()
+
+	client := sourceengine.New(srv.URL, srv.Client(), "control-secret")
+	apk, err := sourceengine.InstalledAPKFor(context.Background(), client, pkg)
+	if err != nil {
+		t.Fatalf("InstalledAPKFor: %v", err)
+	}
+	defer func() { _ = apk.Body.Close() }()
+	got, err := io.ReadAll(apk.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if apk.PkgName != pkg || apk.VersionCode != 57 || apk.VersionName != "1.2.3" || apk.ContentLength != int64(len(want)) || !bytes.Equal(got, want) {
+		t.Fatalf("apk = %+v bytes=%q", apk, got)
+	}
+}
+
+func TestInstalledAPK_RejectsMismatchedIdentityAndClosesBody(t *testing.T) {
+	closed := false
+	doer := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{
+			"Content-Type":                      []string{"application/vnd.android.package-archive"},
+			"Content-Length":                    []string{"3"},
+			"X-Tsundoku-Extension-Package":      []string{"pkg.other"},
+			"X-Tsundoku-Extension-Version-Code": []string{"1"},
+		}, Body: &closeTrackingReader{Reader: bytes.NewReader([]byte("apk")), closed: &closed}}, nil
+	})
+	client := sourceengine.New("http://engine", doer, "secret")
+	if _, err := sourceengine.InstalledAPKFor(context.Background(), client, "pkg.requested"); err == nil {
+		t.Fatal("want identity error")
+	}
+	if !closed {
+		t.Fatal("response body not closed after validation failure")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
+type closeTrackingReader struct {
+	io.Reader
+	closed *bool
+}
+
+func (r *closeTrackingReader) Close() error { *r.closed = true; return nil }
 
 // extensionsResponseBody is the canned plain-array body every
 // extension-listing endpoint returns.

@@ -7,7 +7,10 @@
 package fake
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"sync"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -52,6 +55,7 @@ type Client struct {
 	imageTransport sourceengine.ImageTransportConfig
 
 	lastInstallApkURL string
+	installedAPKs     map[string]sourceengine.InstalledAPK
 
 	errors map[string]error
 	calls  map[string]int
@@ -73,11 +77,22 @@ func New(opts ...Option) *Client {
 		repoTrust:     map[string]string{},
 		errors:        map[string]error{},
 		calls:         map[string]int{},
+		installedAPKs: map[string]sourceengine.InstalledAPK{},
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	return c
+}
+
+// WithInstalledAPK seeds exact installed bytes and identity metadata for pkg.
+func WithInstalledAPK(pkg string, version int, versionName string, data []byte) Option {
+	return func(c *Client) {
+		c.installedAPKs[pkg] = sourceengine.InstalledAPK{
+			PkgName: pkg, VersionCode: version, VersionName: versionName,
+			ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data)),
+		}
+	}
 }
 
 // WithSources seeds the source registry returned by Sources and folded into
@@ -387,6 +402,30 @@ func (c *Client) Extensions(_ context.Context) ([]sourceengine.Extension, error)
 		return nil, err
 	}
 	return c.extensionsCopy(), nil
+}
+
+// InstalledAPK returns a fresh reader over the configured exact bytes.
+func (c *Client) InstalledAPK(_ context.Context, pkgName string) (sourceengine.InstalledAPK, error) {
+	c.record("InstalledAPK")
+	if err := c.errFor("InstalledAPK"); err != nil {
+		return sourceengine.InstalledAPK{}, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	apk, ok := c.installedAPKs[pkgName]
+	if !ok {
+		return sourceengine.InstalledAPK{}, errors.New("installed APK not configured")
+	}
+	data, err := io.ReadAll(apk.Body)
+	if err != nil {
+		return sourceengine.InstalledAPK{}, err
+	}
+	apk.Body = io.NopCloser(bytes.NewReader(data))
+	c.installedAPKs[pkgName] = sourceengine.InstalledAPK{
+		PkgName: apk.PkgName, VersionCode: apk.VersionCode, VersionName: apk.VersionName,
+		ContentLength: apk.ContentLength, Body: io.NopCloser(bytes.NewReader(data)),
+	}
+	return apk, nil
 }
 
 // InstallExtension marks the extension identified by pkgName installed and

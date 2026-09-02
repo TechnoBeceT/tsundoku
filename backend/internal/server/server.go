@@ -8,6 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
 	"github.com/technobecet/tsundoku/internal/config"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	entpkg "github.com/technobecet/tsundoku/internal/ent"
 	engineh "github.com/technobecet/tsundoku/internal/handler/engine"
@@ -115,6 +116,7 @@ func New(
 	cycleSchedule engineh.ScheduleSnapshotter,
 	seriesSync *seriessync.Orchestrator,
 	apkStore *apkcache.Store,
+	extensionArchive *enginetopo.ExtensionArchive,
 	onNetworkChange func(),
 	registerProviderHealer func(job.ProviderHealer),
 ) *echo.Echo {
@@ -139,6 +141,6 @@ func New(
 	}))
 	e.Use(echomiddleware.Logger())
 
-	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, onNetworkChange, registerProviderHealer)
+	registerRoutes(e, cfg, client, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gate, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublicKey, trigger, cycleSchedule, seriesSync, apkStore, extensionArchive, onNetworkChange, registerProviderHealer)
 	return e
 }

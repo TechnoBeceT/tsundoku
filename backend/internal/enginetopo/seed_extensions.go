@@ -37,6 +37,49 @@ type Result struct {
 	Gaps int
 }
 
+// SeedExtensionsExact captures installed generations from the engine itself.
+// Repository URLs are retained as topology metadata only; they are never used
+// as a substitute for the currently installed bytes.
+func SeedExtensionsExact(ctx context.Context, client sourceengine.Client, db *ent.Client, cache *apkcache.Store, archive *ExtensionArchive) (Result, error) {
+	var res Result
+	repoURLs, err := client.Repos(ctx)
+	if err != nil {
+		return res, fmt.Errorf("enginetopo.SeedExtensionsExact: list repos: %w", err)
+	}
+	for _, repoURL := range repoURLs {
+		if err := upsertRepo(ctx, db, repoURL); err != nil {
+			return res, fmt.Errorf("enginetopo.SeedExtensionsExact: upsert repo %q: %w", repoURL, err)
+		}
+		res.Repos++
+	}
+	exts, err := client.Extensions(ctx)
+	if err != nil {
+		return res, fmt.Errorf("enginetopo.SeedExtensionsExact: list extensions: %w", err)
+	}
+	for _, ext := range exts {
+		if !ext.IsInstalled {
+			continue
+		}
+		if exactExtensionCached(ctx, db, cache, ext) {
+			continue
+		}
+		if err := archive.Capture(ctx, ext); err != nil {
+			slog.WarnContext(ctx, "enginetopo: could not archive exact installed extension", "pkg_name", ext.PkgName, "version_code", ext.VersionCode, "err", err)
+			recordGap(ctx, db, ext)
+			res.Gaps++
+			continue
+		}
+		res.Cached++
+	}
+	return res, nil
+}
+
+func exactExtensionCached(ctx context.Context, db *ent.Client, cache *apkcache.Store, ext sourceengine.Extension) bool {
+	row, err := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(ext.PkgName)).Only(ctx)
+	return err == nil && row.ApkCached && row.VersionCode == int(ext.VersionCode) &&
+		row.InstalledVersionCode == int(ext.VersionCode) && cache.Exists(ext.PkgName, int(ext.VersionCode))
+}
+
 // SeedExtensions reads the live engine's repos + installed extensions into
 // Tsundoku's own durable engine-topology store (HarvestedRepo / HarvestedExtension)
 // and caches each installed extension's .apk bytes, so the extension set can be

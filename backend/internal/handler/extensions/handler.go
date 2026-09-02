@@ -120,6 +120,16 @@ type Handler struct {
 	// sources — keeping every CBZ (never-auto-delete). Nil ⇒ uninstall does NOT
 	// auto-cascade (pure passthrough; focused proxy tests). Attach with WithPurge.
 	purge extensionPurger
+	// archive is the shared exact-generation capture service. When wired, Update
+	// must archive both the pre-mutation and returned post-mutation generations.
+	archive *enginetopo.ExtensionArchive
+}
+
+// WithArchive attaches the shared exact installed-generation archive used by
+// boot seeding and fail-closed extension updates.
+func (h *Handler) WithArchive(archive *enginetopo.ExtensionArchive) *Handler {
+	h.archive = archive
+	return h
 }
 
 // extensionPurger is the narrow surface the uninstall auto-cascade needs — the
@@ -250,7 +260,37 @@ func (h *Handler) Install(c echo.Context) error {
 
 // Update handles POST /api/suwayomi/extensions/:pkgName/update.
 func (h *Handler) Update(c echo.Context) error {
-	return h.mutate(c, h.sw.UpdateExtension)
+	if h.archive == nil {
+		return h.mutate(c, h.sw.UpdateExtension)
+	}
+	pkgName, err := validatePkgName(c.Param("pkgName"))
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	before, err := h.sw.Extensions(ctx)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	installed, ok := findExtension(before, pkgName)
+	if !ok || !installed.IsInstalled {
+		return echo.NewHTTPError(http.StatusNotFound, "installed extension not found")
+	}
+	if err := h.archive.Capture(ctx, installed); err != nil {
+		return httperr.Upstream(err)
+	}
+	exts, err := h.sw.UpdateExtension(ctx, pkgName)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	updated, ok := findExtension(exts, pkgName)
+	if !ok || !updated.IsInstalled {
+		return httperr.Upstream(errors.New("updated extension missing from engine response"))
+	}
+	if err := h.archive.Capture(ctx, updated); err != nil {
+		return httperr.Upstream(err)
+	}
+	return h.respondExtensions(c, exts)
 }
 
 // Uninstall handles DELETE /api/suwayomi/extensions/:pkgName. It skips the

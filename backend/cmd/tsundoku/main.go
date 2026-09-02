@@ -361,6 +361,7 @@ func main() {
 	// (which caches extension apks into it) and server.New's engine handler (which
 	// serves those bytes back for offline recovery) — construct-once, one store.
 	apkStore := apkcache.New(filepath.Join(cfg.Engine.RuntimeDir, "apkcache"))
+	extensionArchive := enginetopo.NewExtensionArchive(engineClient, entClient, apkStore, settingsSvc.RetainedVersions)
 
 	// Owner-paused sources (QCAT-513 / GAP-146). The DisabledSource store is a
 	// stateless wrapper over the Ent client, so a second instance alongside
@@ -536,7 +537,7 @@ func main() {
 	// launched by the container entrypoint, not this process, so there is no
 	// process manager to start or stop here. netReconcile runs in that same
 	// boot goroutine, right after the default-instance reconcile.
-	bootDone := startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, httpc, runtimeApplier, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
+	bootDone := startEngine(ctx, settingsSvc, runner, refreshSvc, healthSvc.UnhealthyCount, engineClient, warmupSvc, entClient, apkStore, extensionArchive, httpc, runtimeApplier, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 
 	// Engine-host instance supervisor (GAP-114): probes each non-default profile
 	// instance the launcher spawned and auto-restarts (or degrades its sources to
@@ -558,7 +559,7 @@ func main() {
 	// async + single-flight per series. It does NOT alter the whole-library cadence.
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, onNetworkChange, runner.SetProviderHealer)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, extensionArchive, onNetworkChange, runner.SetProviderHealer)
 
 	addr := ":" + cfg.Server.Port
 
@@ -817,6 +818,7 @@ func startEngine(
 	warmupSvc *warmup.Service,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	extensionArchive *enginetopo.ExtensionArchive,
 	httpClient *http.Client,
 	runtimeLifecycle runtimeConvergenceSerializer,
 	netReconcile func(context.Context),
@@ -835,7 +837,7 @@ func startEngine(
 	runner.StartRefresh(ctx, refreshSvc, unhealthyCount)
 	runner.StartExtensionCheck(ctx, engineClient)
 	runner.StartWarmup(ctx, warmupSvc)
-	return startEngineTopo(ctx, engineClient, entClient, apkStore, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
+	return startEngineTopo(ctx, engineClient, entClient, apkStore, extensionArchive, settingsSvc, httpClient, runtimeLifecycle, netReconcile, runtimeReconcile, pendingRuntimeReconcile)
 }
 
 // startEngineTopo launches the one-shot engine-topology boot pass — RECONCILE
@@ -881,6 +883,7 @@ func startEngineTopo(
 	engineClient sourceengine.Client,
 	entClient *ent.Client,
 	apkStore *apkcache.Store,
+	extensionArchive *enginetopo.ExtensionArchive,
 	settingsSvc *settings.Service,
 	httpClient *http.Client,
 	runtimeLifecycle runtimeConvergenceSerializer,
@@ -905,9 +908,10 @@ func startEngineTopo(
 			pending: pendingRuntimeReconcile,
 			seed: func(ctx context.Context) {
 				enginetopo.RunSeed(ctx, enginetopo.SeedDeps{
-					Client: engineClient,
-					DB:     entClient,
-					Cache:  apkStore,
+					Archive: extensionArchive,
+					Client:  engineClient,
+					DB:      entClient,
+					Cache:   apkStore,
 					HTTPGet: func(ctx context.Context, url string) (*http.Response, error) {
 						req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 						if err != nil {

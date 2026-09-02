@@ -16,6 +16,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entharvestedextension "github.com/technobecet/tsundoku/internal/ent/harvestedextension"
@@ -117,6 +118,71 @@ func TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion(t *tes
 	}
 	assertWrappedIndexCapture(t, ctx, env)
 	assertRetainedVersionsResponse(t, rec)
+}
+
+func TestUpdate_ArchiveFailurePreventsEngineMutation(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	repo := "https://repo.test/index.json"
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", RepoURL: &repo, IsInstalled: true}
+	fc := sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
+		sourceenginefake.WithError("InstalledAPK", errors.New("export unavailable")),
+	)
+	archive := enginetopo.NewExtensionArchive(fc, db, cache, nil)
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(archive)
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := fc.CallCount("UpdateExtension"); got != 0 {
+		t.Fatalf("UpdateExtension calls=%d, want 0", got)
+	}
+	if got := fc.CallCount("InstalledAPK"); got != 1 {
+		t.Fatalf("InstalledAPK calls=%d, want 1", got)
+	}
+}
+
+func TestUpdate_ArchivesBeforeAndAfterSuccessfulMutation(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	repo := "https://repo.test/index.json"
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", RepoURL: &repo, IsInstalled: true}
+	fc := sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
+		sourceenginefake.WithInstalledAPK(ext.PkgName, 57, "1.57", []byte("EXACT-57")),
+	)
+	archive := enginetopo.NewExtensionArchive(fc, db, cache, nil)
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(archive)
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := fc.CallCount("InstalledAPK"); got != 2 {
+		t.Fatalf("InstalledAPK calls=%d, want 2", got)
+	}
+	if got := fc.CallCount("UpdateExtension"); got != 1 {
+		t.Fatalf("UpdateExtension calls=%d, want 1", got)
+	}
+	if !cache.Exists(ext.PkgName, 57) {
+		t.Fatal("exact post-update generation not cached")
+	}
 }
 
 const (
