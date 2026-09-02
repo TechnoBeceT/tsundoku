@@ -14,12 +14,16 @@ package enginehost
  */
 
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import eu.kanade.tachiyomi.source.online.HttpSource
+import okhttp3.Headers
+import okhttp3.OkHttpClient
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -113,7 +117,70 @@ private class FakePagesSource(
 /** A plain url-only [SChapter], as the series-scoped warm fetch would return it. */
 private fun chapterAt(chapterUrl: String): SChapter = SChapter.create().apply { url = chapterUrl }
 
+/** Models a source whose default filter carries request-critical search state. */
+private class RequiredDefaultFiltersSource : HttpSource() {
+    private val requiredFilter = Filter.Header("required default")
+
+    override val id: Long = 2L
+    override val name: String = "Required default filters fixture"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+    override val baseUrl: String = "https://filters.fixture"
+    override val client: OkHttpClient = OkHttpClient()
+
+    val receivedQueries = mutableListOf<String>()
+
+    override fun headersBuilder(): Headers.Builder = Headers.Builder()
+
+    override fun getFilterList(): FilterList = FilterList(requiredFilter)
+
+    override fun getMangaUrl(manga: SManga): String = "$baseUrl${manga.url}"
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage {
+        check(filters.singleOrNull() === requiredFilter) { "source default filters required" }
+        receivedQueries += query
+        return MangasPage(
+            listOf(SManga.create().apply { url = "/series/default"; title = "Default-filter result" }),
+            false,
+        )
+    }
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = SMangaUpdate(manga, emptyList())
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
 class SourceCallsTest {
+    @Test
+    fun `search passes the source default filters`() {
+        val source = RequiredDefaultFiltersSource()
+
+        val response = SourceCalls.search(source, "wanted", 3)
+
+        assertEquals("Default-filter result", response.manga.single().title)
+        assertEquals(listOf("wanted"), source.receivedQueries)
+    }
+
+    @Test
+    fun `URL hydration passes the source default filters`() {
+        val source = RequiredDefaultFiltersSource()
+        val webUrl = "${source.baseUrl}/series/default"
+
+        val response = SourceCalls.mangaDetails(source, "opaque", AddressMode.URL_SEARCH, webUrl)
+
+        assertEquals("opaque", response.url)
+        assertEquals(listOf(webUrl), source.receivedQueries)
+    }
+
     /**
      * A details parser that sets `title` but omits the lateinit `url`: mangaDetails must NOT throw
      * and must fall the identity url back to the requested url (the Flame Comics / Manhuascan.us case).

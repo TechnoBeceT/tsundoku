@@ -19,7 +19,6 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
@@ -135,7 +134,7 @@ object SourceCalls {
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): SearchResponse =
         cancellation.run {
-            val result = source.getSearchManga(page, query, FilterList())
+            val result = source.getSearchManga(page, query, source.getFilterList())
             SearchResponse(
                 manga = result.mangas.map { it.toEntryDto(source) },
                 hasNextPage = result.hasNextPage,
@@ -595,7 +594,7 @@ object SourceCalls {
         val absoluteAddress = absoluteAddress(webUrl ?: address) ?: return null
         if (!force && realMangaUrl(this, bare) == absoluteAddress) return null
         val hydrated =
-            getSearchManga(1, absoluteAddress, FilterList()).mangas
+            getSearchManga(1, absoluteAddress, getFilterList()).mangas
                 .firstOrNull { realMangaUrl(this, it) == absoluteAddress }
                 ?: throw NoSuchElementException("source candidate not found for address: $address")
         hydrated.title = title
