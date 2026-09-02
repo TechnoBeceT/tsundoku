@@ -2481,6 +2481,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/suwayomi/extensions/repos/trust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read independent extension-repository signer pins
+         * @description Returns the complete repository URL to SHA-256 signer-fingerprint map.
+         */
+        get: operations["getExtensionRepoTrust"];
+        /**
+         * Approve or rotate an extension-repository signer pin
+         * @description Explicitly approves or rotates the independent signer pin for one
+         *     configured repository. The engine host persists the complete map before
+         *     publishing the new pin and returns that map read back.
+         */
+        put: operations["setExtensionRepoTrust"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/suwayomi/extensions/{pkgName}/install": {
         parameters: {
             query?: never;
@@ -5042,6 +5068,26 @@ export interface components {
              *     ]
              */
             repos: string[];
+        };
+        /** @description Independently approved extension-repository signer pins, keyed by repository URL. */
+        ExtensionRepoTrust: {
+            /** @description Complete repository URL to normalized SHA-256 certificate-fingerprint map. */
+            trust: {
+                [key: string]: string;
+            };
+        };
+        /** @description Explicitly approve or rotate the signer pin for one configured extension repository. */
+        ExtensionRepoTrustUpdate: {
+            /**
+             * Format: uri
+             * @description Absolute http(s) URL of an already-configured extension repository.
+             */
+            repoUrl: string;
+            /**
+             * @description SHA-256 signer certificate fingerprint, plain or colon-delimited hexadecimal.
+             * @example 9add655a78e96c4ec7a53ef89dccb557cb5d767489fac5e785d671a5a75d4da2
+             */
+            signerFingerprint: string;
         };
         /**
          * @description One configurable preference of a source (a Tachiyomi/Mihon source
@@ -10660,6 +10706,95 @@ export interface operations {
                 };
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    getExtensionRepoTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The complete independently configured signer-pin map. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionRepoTrust"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host rejected or could not complete the request. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    setExtensionRepoTrust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtensionRepoTrustUpdate"];
+            };
+        };
+        responses: {
+            /** @description Pin persisted. Returns the complete signer-pin map. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExtensionRepoTrust"];
+                };
+            };
+            /** @description Invalid URL/fingerprint or the repository is not configured. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The engine host could not complete the request. */
             502: {
                 headers: {
                     [name: string]: unknown;
