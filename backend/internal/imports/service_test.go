@@ -171,6 +171,10 @@ func (f *fakeClient) Repos(_ context.Context) ([]string, error) { return nil, ni
 func (f *fakeClient) SetRepos(_ context.Context, _ []string) ([]string, error) {
 	return nil, nil
 }
+func (f *fakeClient) RepoTrust(_ context.Context) (map[string]string, error) { return nil, nil }
+func (f *fakeClient) SetRepoTrust(_ context.Context, _, _ string) (map[string]string, error) {
+	return nil, nil
+}
 func (f *fakeClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
 	return sourceengine.FlareSolverrConfig{}, nil
 }

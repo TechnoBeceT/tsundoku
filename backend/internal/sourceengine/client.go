@@ -47,7 +47,8 @@ type HTTPDoer interface {
 //   - Sources/Preferences/SetPreferences: the loaded-source registry + each
 //     source's configurable preferences.
 //   - Extensions/InstallExtension/RefreshExtensions/UpdateExtension/
-//     UninstallExtension/Repos/SetRepos: extension package management.
+//     UninstallExtension/Repos/SetRepos/RepoTrust/SetRepoTrust: extension
+//     package management and independent repository signer pins.
 //   - SetFlareSolverr/SetSocks/SetImpersonate/SetImageTransport: the
 //     FlareSolverr + SOCKS-proxy + impersonate-gateway + image-connection
 //     policy config passthrough (replaces the retired Suwayomi settings-proxy).
@@ -62,8 +63,9 @@ type HTTPDoer interface {
 //	TEST        imports.fakeClient        (imports/service_test.go)
 //	TEST        library.fakeAddProviderClient (library/provider_test.go)
 //	TEST        server.nullEngineClient   (server/static_test.go)
+//	TEST        handler/imports.fakeEngineClient (handler/imports/handler_test.go)
 //
-// The four test doubles live in _test.go files, so `go build` stays green while
+// The five test doubles live in _test.go files, so `go build` stays green while
 // those packages fail to COMPILE THEIR TESTS. Run `go vet ./...` (which type-checks
 // test files) or `go test ./...` before believing an interface change is complete.
 // Prefer extending sourceengine/fake.Client over hand-rolling a new bespoke double —
@@ -154,6 +156,14 @@ type Client interface {
 	// returns it read back. An empty slice clears every repo.
 	SetRepos(ctx context.Context, repos []string) ([]string, error)
 
+	// RepoTrust reads the independently configured signer pins keyed by
+	// extension-repository URL.
+	RepoTrust(ctx context.Context) (map[string]string, error)
+
+	// SetRepoTrust explicitly approves or rotates one configured repository's
+	// SHA-256 signer pin and returns the complete pin map read back.
+	SetRepoTrust(ctx context.Context, repoURL, signerFingerprint string) (map[string]string, error)
+
 	// SetFlareSolverr applies a PARTIAL update of the FlareSolverr
 	// (Cloudflare-bypass) config — only patch's non-nil fields are sent, so
 	// unset fields are never clobbered — and returns the config read back.
@@ -216,9 +226,10 @@ func PagesFor(ctx context.Context, client Client, ref ProviderRef, chapterURL st
 // New constructs a Client that talks to the engine host at baseURL (e.g.
 // "http://127.0.0.1:8181", no trailing slash required) using doer to send
 // requests. doer is typically a *http.Client in production or an
-// httptest.Server's own client in tests.
-func New(baseURL string, doer HTTPDoer) Client {
-	return &httpClient{baseURL: trimTrailingSlash(baseURL), doer: doer}
+// httptest.Server's own client in tests. controlToken authenticates the narrow
+// repository-trust control RPC; an empty value leaves that operation fail-closed.
+func New(baseURL string, doer HTTPDoer, controlToken string) Client {
+	return &httpClient{baseURL: trimTrailingSlash(baseURL), doer: doer, controlToken: controlToken}
 }
 
 // trimTrailingSlash removes one trailing "/" from s, if present, so
@@ -232,8 +243,9 @@ func trimTrailingSlash(s string) string {
 
 // httpClient is the unexported concrete implementation of Client.
 type httpClient struct {
-	baseURL string
-	doer    HTTPDoer
+	baseURL      string
+	doer         HTTPDoer
+	controlToken string
 }
 
 // Health calls GET /health.
@@ -340,6 +352,9 @@ func (c *httpClient) newRequest(ctx context.Context, method, path string, body a
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if path == "/repos/trust" && c.controlToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.controlToken)
 	}
 	return req, nil
 }

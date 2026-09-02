@@ -68,7 +68,7 @@ func TestDispatcher_StaleOfferFromEngineHTTPIsChapterSpecific(t *testing.T) {
 		SourcesCooldownIv:    time.Hour,
 	}
 	gate := sourcegate.NewService(client, runtime)
-	engine := sourceengine.New(server.URL, server.Client())
+	engine := sourceengine.New(server.URL, server.Client(), "test-engine-control-token")
 	dispatcher := download.New(
 		client,
 		sourceengine.NewFetcher(engine, t.TempDir()),
@@ -147,7 +147,7 @@ func TestDispatcher_SourceWidePagesErrorsFromEngineHTTPDoNotSpendAttempts(t *tes
 			gate := sourcegate.NewService(client, runtime)
 			dispatcher := download.New(
 				client,
-				sourceengine.NewFetcher(sourceengine.New(server.URL, server.Client()), t.TempDir()),
+				sourceengine.NewFetcher(sourceengine.New(server.URL, server.Client(), "test-engine-control-token"), t.TempDir()),
 				sse.NewHub(),
 				download.Config{Storage: mustTempDir(t)},
 				runtime,

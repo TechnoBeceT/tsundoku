@@ -17,7 +17,7 @@ import (
 // mirrors the newTestClient idiom in internal/suwayomi/*_test.go.
 func newTestClient(t *testing.T, srv *httptest.Server) sourceengine.Client {
 	t.Helper()
-	return sourceengine.New(srv.URL, srv.Client())
+	return sourceengine.New(srv.URL, srv.Client(), "test-engine-control-token")
 }
 
 // writeJSON is a small test helper that marshals body and writes it as the
@@ -203,7 +203,7 @@ func TestNew_TrimsTrailingBaseURLSlash(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := sourceengine.New(srv.URL+"/", srv.Client())
+	c := sourceengine.New(srv.URL+"/", srv.Client(), "test-engine-control-token")
 	if _, err := c.Health(context.Background()); err != nil {
 		t.Fatalf("Health: %v", err)
 	}
@@ -223,7 +223,7 @@ func (failingDoer) Do(_ *http.Request) (*http.Response, error) {
 // doer itself erroring, e.g. a DNS failure or refused connection) is
 // wrapped and returned, never panics or hangs.
 func TestClient_NetworkFailure_IsWrapped(t *testing.T) {
-	c := sourceengine.New("http://engine-host.invalid", failingDoer{})
+	c := sourceengine.New("http://engine-host.invalid", failingDoer{}, "test-engine-control-token")
 	if _, err := c.Health(context.Background()); err == nil {
 		t.Fatal("Health: want error from a failing doer, got nil")
 	}

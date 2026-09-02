@@ -315,7 +315,7 @@ func main() {
 	// (the entrypoint-managed engine-host at cfg.Engine.URL): it is the Router's
 	// fallback and the boot-reconcile target. With NO non-default bindings the
 	// Router delegates 100% to it — byte-for-byte the single-instance client.
-	defaultEngineClient := sourceengine.New(cfg.Engine.URL, httpc)
+	defaultEngineClient := sourceengine.New(cfg.Engine.URL, httpc, cfg.Auth.Secret)
 	engineRouter := engineroute.NewRouter(defaultEngineClient)
 	// The per-profile engine-host launcher: spawns one engine-host JVM per
 	// non-default network profile (its own port + data dir under
@@ -326,7 +326,7 @@ func main() {
 	// exactly like the default one. Close() is wired into the shutdown path below.
 	engineHostLauncher := enginehost.New(
 		engineHostLauncherConfig(cfg.Engine),
-		func(u string) sourceengine.Client { return sourceengine.New(u, httpc) },
+		func(u string) sourceengine.Client { return sourceengine.New(u, httpc, cfg.Auth.Secret) },
 		// The routing seam the launcher + supervisor use to degrade a down
 		// profile's sources to the default engine and restore them on recovery
 		// (GAP-114). The Router's degrade overlay is disjoint from its base table,

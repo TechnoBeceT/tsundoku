@@ -20,6 +20,14 @@ type ReposUpdateRequest struct {
 	Repos []string `json:"repos"`
 }
 
+// RepoTrustUpdateRequest is the PUT /api/suwayomi/extensions/repos/trust body.
+type RepoTrustUpdateRequest struct {
+	// RepoURL identifies one already-configured extension repository.
+	RepoURL string `json:"repoUrl"`
+	// SignerFingerprint is the independently approved SHA-256 certificate pin.
+	SignerFingerprint string `json:"signerFingerprint"`
+}
+
 // validatePkgName trims and requires a non-empty pkgName path param. A blank
 // value is a 400; the trimmed value is returned for use as the extension identity.
 func validatePkgName(raw string) (string, error) {
@@ -203,4 +211,23 @@ func validateRepos(req ReposUpdateRequest) ([]string, error) {
 		out = append(out, repo)
 	}
 	return out, nil
+}
+
+// validateRepoTrust trims the repository URL and normalizes a colon-delimited
+// or plain SHA-256 certificate fingerprint to lowercase hexadecimal.
+func validateRepoTrust(req RepoTrustUpdateRequest) (string, string, error) {
+	repoURL := strings.TrimSpace(req.RepoURL)
+	if !urlx.IsAbsoluteHTTP(repoURL) {
+		return "", "", httperr.BadRequest("repoUrl must be an absolute http(s) URL")
+	}
+	fingerprint := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(req.SignerFingerprint), ":", ""))
+	if len(fingerprint) != 64 {
+		return "", "", httperr.BadRequest("signerFingerprint must be a SHA-256 hexadecimal value")
+	}
+	for _, character := range fingerprint {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return "", "", httperr.BadRequest("signerFingerprint must be a SHA-256 hexadecimal value")
+		}
+	}
+	return repoURL, fingerprint, nil
 }

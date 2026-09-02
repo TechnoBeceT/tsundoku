@@ -186,11 +186,8 @@ data class RepoTrustRequest(
     val signerFingerprint: String,
 )
 
-/** The signer fingerprint currently pinned for one repository. */
-data class RepoTrustDto(
-    val repoUrl: String,
-    val signerFingerprint: String,
-)
+/** Independently configured repository signer pins, keyed by repository URL. */
+data class RepoTrustDto(val trust: Map<String, String>)
 
 // ---- Per-source preferences ----
 

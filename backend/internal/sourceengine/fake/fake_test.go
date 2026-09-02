@@ -265,6 +265,21 @@ func TestSetRepos_ReplacesTheWholeList(t *testing.T) {
 	}
 }
 
+func TestSetRepoTrust_UpdatesAndDefensivelyCopies(t *testing.T) {
+	const repoURL = "https://repo.test/index.json"
+	c := fake.New(fake.WithRepoTrust(map[string]string{"https://old.test": "old"}))
+
+	fresh, err := c.SetRepoTrust(context.Background(), repoURL, "new")
+	if err != nil || fresh[repoURL] != "new" {
+		t.Fatalf("SetRepoTrust = %+v, %v", fresh, err)
+	}
+	fresh[repoURL] = "mutated"
+	again, err := c.RepoTrust(context.Background())
+	if err != nil || again[repoURL] != "new" {
+		t.Fatalf("RepoTrust after mutating prior result = %+v, %v", again, err)
+	}
+}
+
 // TestSetFlareSolverr_And_SetSocks_ApplyPartial proves the config setters
 // apply only the patch's non-nil fields, leaving the rest of the stored
 // config untouched.
@@ -400,6 +415,8 @@ func TestWithError_CoversEveryMethod(t *testing.T) {
 		"UninstallExtension": func(c *fake.Client) error { _, err := c.UninstallExtension(ctx, "pkg"); return err },
 		"Repos":              func(c *fake.Client) error { _, err := c.Repos(ctx); return err },
 		"SetRepos":           func(c *fake.Client) error { _, err := c.SetRepos(ctx, nil); return err },
+		"RepoTrust":          func(c *fake.Client) error { _, err := c.RepoTrust(ctx); return err },
+		"SetRepoTrust":       func(c *fake.Client) error { _, err := c.SetRepoTrust(ctx, "repo", "fingerprint"); return err },
 		"SetFlareSolverr": func(c *fake.Client) error {
 			_, err := c.SetFlareSolverr(ctx, sourceengine.FlareSolverrPatch{})
 			return err

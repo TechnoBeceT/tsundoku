@@ -138,6 +138,12 @@ func (f *fakeAddProviderClient) Repos(ctx context.Context) ([]string, error) {
 func (f *fakeAddProviderClient) SetRepos(ctx context.Context, repos []string) ([]string, error) {
 	return nil, nil
 }
+func (f *fakeAddProviderClient) RepoTrust(ctx context.Context) (map[string]string, error) {
+	return nil, nil
+}
+func (f *fakeAddProviderClient) SetRepoTrust(ctx context.Context, repoURL, signerFingerprint string) (map[string]string, error) {
+	return nil, nil
+}
 func (f *fakeAddProviderClient) SetFlareSolverr(ctx context.Context, patch sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
 	return sourceengine.FlareSolverrConfig{}, nil
 }

@@ -1,8 +1,8 @@
 // Package extensions holds the thin HTTP handlers for the engine host's
 // "Sources & Extensions management" proxy. It lets the owner list, install,
 // update, uninstall, and refresh extensions (the Tachiyomi/Mihon source
-// plugins) and manage the extension repo URL list — all from Tsundoku, so
-// they never need direct access to the engine host.
+// plugins), manage the extension repo URL list, and explicitly approve repository
+// signer pins — all from Tsundoku, so they never need direct access to the engine host.
 //
 // Like the settings proxy it is a PURE passthrough: no Tsundoku schema, no
 // disk, no SSE, no deletion of Tsundoku rows — the extensions live entirely on
@@ -21,6 +21,7 @@ package extensions
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -451,4 +452,37 @@ func (h *Handler) SetRepos(c echo.Context) error {
 		enginetopo.OnReposSet(ctx, h.db, current)
 	}
 	return c.JSON(http.StatusOK, toReposDTO(current))
+}
+
+// GetRepoTrust handles GET /api/suwayomi/extensions/repos/trust. The route is
+// owner-only and returns the complete independently configured signer-pin map.
+func (h *Handler) GetRepoTrust(c echo.Context) error {
+	trust, err := h.sw.RepoTrust(c.Request().Context())
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, toRepoTrustDTO(trust))
+}
+
+// SetRepoTrust handles PUT /api/suwayomi/extensions/repos/trust. It validates
+// the independent signer pin, asks the engine host to persist it atomically,
+// and returns the complete map read back.
+func (h *Handler) SetRepoTrust(c echo.Context) error {
+	var req RepoTrustUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.BadRequest("invalid request body")
+	}
+	repoURL, fingerprint, err := validateRepoTrust(req)
+	if err != nil {
+		return err
+	}
+	trust, err := h.sw.SetRepoTrust(c.Request().Context(), repoURL, fingerprint)
+	if err != nil {
+		var badRequest *sourceengine.BadRequestError
+		if errors.As(err, &badRequest) {
+			return httperr.BadRequest(badRequest.Msg)
+		}
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, toRepoTrustDTO(trust))
 }
