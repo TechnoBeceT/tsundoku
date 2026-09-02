@@ -21,6 +21,7 @@ package extensions
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -125,6 +126,9 @@ type Handler struct {
 	// archive is the shared exact-generation capture service. When wired, Update
 	// must archive both the pre-mutation and returned post-mutation generations.
 	archive *enginetopo.ExtensionArchive
+	// beforeUpdateCommit is a deterministic commit-failure seam used by the
+	// package's real-PostgreSQL transaction test. Nil in production.
+	beforeUpdateCommit func(*ent.Tx)
 }
 
 // WithArchive attaches the shared exact installed-generation archive used by
@@ -274,10 +278,10 @@ func (h *Handler) Update(c echo.Context) error {
 	if err != nil {
 		return httperr.Upstream(err)
 	}
-	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() ([]sourceengine.Extension, error) {
+	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() enginetopo.ExtensionUpdateOutcome {
 		prepared, err := updater.PrepareExtensionUpdate(ctx, pkgName)
 		if err != nil {
-			return nil, err
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
 		}
 		succeeded := false
 		defer func() {
@@ -291,26 +295,30 @@ func (h *Handler) Update(c echo.Context) error {
 		}()
 		tx, err := h.db.Tx(ctx)
 		if err != nil {
-			return nil, err
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
 		}
 		defer func() { _ = tx.Rollback() }()
 		protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
 		if err != nil {
-			return nil, err
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
 		}
 		result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
 		if err != nil {
 			var conflict *sourceengine.SourceRetirementConflictError
 			if errors.As(err, &conflict) {
-				return nil, &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}
+				return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
 			}
-			return nil, err
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+		}
+		// Activation consumes the token and crosses the irreversible boundary.
+		succeeded = true
+		if h.beforeUpdateCommit != nil {
+			h.beforeUpdateCommit(tx)
 		}
 		if err := tx.Commit(); err != nil {
-			return nil, err
+			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: fmt.Errorf("provider-reference coordination commit after successful activation: %w", err)}
 		}
-		succeeded = true
-		return result, nil
+		return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true}
 	})
 	if err != nil && !mutated {
 		var conflict *retirementConflict
@@ -320,7 +328,7 @@ func (h *Handler) Update(c echo.Context) error {
 		return httperr.Upstream(err)
 	}
 	if err != nil {
-		slog.ErrorContext(ctx, "extensions: update succeeded but exact post-update archive degraded", "pkg_name", pkgName, "err", err)
+		slog.ErrorContext(ctx, "extensions: update succeeded with local coordination or archive degradation; do not retry", "pkg_name", pkgName, "err", err)
 	}
 	return h.respondExtensions(c, exts)
 }
