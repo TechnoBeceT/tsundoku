@@ -1,6 +1,8 @@
 package enginehost
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
+import com.sun.net.httpserver.HttpServer
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.model.FilterList
@@ -11,6 +13,11 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import java.nio.file.Files
 import java.nio.file.Path
+import java.net.InetSocketAddress
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
@@ -32,6 +39,184 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ExtensionManagerTest {
+    @Test
+    fun `prepared update reports source retirement without mutating active state`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateSource::class.java,
+                unrelatedRecordSourceIds = emptyList(),
+                injectUnrelatedSource = false,
+            )
+
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        assertEquals(TARGET_PACKAGE, prepared.pkgName)
+        assertEquals(1, prepared.installedVersionCode)
+        assertEquals(2, prepared.candidateVersionCode)
+        assertEquals(listOf(TARGET_SOURCE_ID), prepared.installedSourceIds)
+        assertEquals(listOf(UNRELATED_SOURCE_ID), prepared.candidateSourceIds)
+        assertEquals(listOf(TARGET_SOURCE_ID), prepared.removedSourceIds)
+        assertSame(fixture.oldTargetSource(), fixture.targetSource())
+        fixture.manager.discardPreparedUpdate(prepared.token, TARGET_PACKAGE)
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `activation rejects protected retired source with structured conflict and no mutation`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateSource::class.java,
+                unrelatedRecordSourceIds = emptyList(),
+                injectUnrelatedSource = false,
+            )
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        val failure =
+            assertFailsWith<SourceRetirementConflict> {
+                fixture.manager.activatePreparedUpdate(
+                    prepared.toActivationRequest(protectedSourceIds = listOf(TARGET_SOURCE_ID)),
+                )
+            }
+
+        assertEquals(TARGET_PACKAGE, failure.pkgName)
+        assertEquals(listOf(TARGET_SOURCE_ID), failure.sourceIds)
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `activation accepts exact prepared witness and publishes candidate`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        fixture.manager.activatePreparedUpdate(prepared.toActivationRequest(emptyList()))
+
+        assertEquals("Owned Candidate Source", fixture.targetSource()?.name)
+        fixture.assertUnrelatedPreserved()
+    }
+
+    @Test
+    fun `prepared activation rejects runtime source ID drift and releases candidate`() {
+        ActivationDuplicateProbe.reset()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = ActivationDuplicateFactory::class.java,
+            )
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            fixture.manager.activatePreparedUpdate(prepared.toActivationRequest(emptyList()))
+        }
+
+        assertTrue(failure.message.orEmpty().contains("duplicate source IDs"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `rejected prepared witness is released and cannot be retried`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+        val mismatched = prepared.toActivationRequest(emptyList()).copy(candidateVersionCode = 3)
+
+        assertFailsWith<IllegalArgumentException> { fixture.manager.activatePreparedUpdate(mismatched) }
+        assertFailsWith<IllegalArgumentException> {
+            fixture.manager.activatePreparedUpdate(prepared.toActivationRequest(emptyList()))
+        }
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `expired prepared update is rejected and cleaned`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                preparedUpdateTtlNanos = 0,
+            )
+        val prepared = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        assertFailsWith<IllegalArgumentException> {
+            fixture.manager.activatePreparedUpdate(prepared.toActivationRequest(emptyList()))
+        }
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `prepared update RPC is private and returns structured retirement conflict`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateSource::class.java,
+                unrelatedRecordSourceIds = emptyList(),
+                injectUnrelatedSource = false,
+            )
+        val server = fixture.rpcServer(CONTROL_TOKEN)
+        server.start()
+        try {
+            val port = boundAddress(server).port
+            val prepareUri = URI("http://127.0.0.1:$port/extensions/$TARGET_PACKAGE/prepare-update")
+            val unauthorized = HttpRequest.newBuilder(prepareUri).POST(HttpRequest.BodyPublishers.noBody()).build()
+            assertEquals(401, HttpClient.newHttpClient().send(unauthorized, HttpResponse.BodyHandlers.ofString()).statusCode())
+
+            val prepare =
+                HttpRequest.newBuilder(prepareUri)
+                    .header("Authorization", "Bearer $CONTROL_TOKEN")
+                    .POST(HttpRequest.BodyPublishers.noBody())
+                    .build()
+            val preparedResponse = HttpClient.newHttpClient().send(prepare, HttpResponse.BodyHandlers.ofString())
+            assertEquals(200, preparedResponse.statusCode())
+            val prepared: PreparedUpdateDto = jacksonObjectMapper().readValue(preparedResponse.body())
+            val activation = prepared.toActivationRequest(listOf(TARGET_SOURCE_ID))
+            val activateRequest =
+                HttpRequest.newBuilder(URI("http://127.0.0.1:$port/extensions/$TARGET_PACKAGE/activate-prepared-update"))
+                    .header("Authorization", "Bearer $CONTROL_TOKEN")
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(jacksonObjectMapper().writeValueAsBytes(activation)))
+                    .build()
+            val conflict = HttpClient.newHttpClient().send(activateRequest, HttpResponse.BodyHandlers.ofString())
+
+            assertEquals(409, conflict.statusCode())
+            val body: SourceRetirementConflictResponse = jacksonObjectMapper().readValue(conflict.body())
+            assertEquals("source_retirement_conflict", body.code)
+            assertEquals(TARGET_PACKAGE, body.pkgName)
+            assertEquals(listOf(TARGET_SOURCE_ID), body.sourceIds)
+            fixture.assertUnchanged()
+        } finally {
+            server.stop()
+            fixture.manager.close()
+        }
+    }
+
+    private fun PreparedUpdateDto.toActivationRequest(protectedSourceIds: List<Long>) =
+        ActivatePreparedUpdateRequest(
+            token = token,
+            pkgName = pkgName,
+            installedVersionCode = installedVersionCode,
+            candidateVersionCode = candidateVersionCode,
+            installedSourceIds = installedSourceIds,
+            candidateSourceIds = candidateSourceIds,
+            removedSourceIds = removedSourceIds,
+            mutationSequence = mutationSequence,
+            protectedSourceIds = protectedSourceIds,
+        )
+
     @Test
     fun `failed trust persistence leaves authorization cache and mutation state unchanged`() {
         val approvedSigner = SignedApkFixture()
@@ -847,6 +1032,7 @@ class ExtensionManagerTest {
         unrelatedRecordSourceIds: List<Long> = listOf(UNRELATED_SOURCE_ID),
         targetRecordSourceIds: List<Long> = listOf(TARGET_SOURCE_ID),
         injectUnrelatedSource: Boolean = true,
+        preparedUpdateTtlNanos: Long? = null,
     ) {
         private val root = Files.createTempDirectory("extension-manager-identity")
         private val oldApk = root.resolve("target.apk")
@@ -920,7 +1106,11 @@ class ExtensionManagerTest {
                 if (useRealPreparer) {
                     ExtensionManager(loader, root.toFile(), downloader)
                 } else {
-                    ExtensionManager(loader, root.toFile(), downloader, preparer)
+                    if (preparedUpdateTtlNanos == null) {
+                        ExtensionManager(loader, root.toFile(), downloader, preparer)
+                    } else {
+                        ExtensionManager(loader, root.toFile(), downloader, preparer, preparedUpdateTtlNanos)
+                    }
                 }
             manager.setRepos(listOf(REPO_URL))
             configuredSignerFingerprint?.let { manager.setRepoTrust(REPO_URL, it) }
@@ -984,6 +1174,8 @@ class ExtensionManagerTest {
         fun targetSource(): Source? = loader.source(TARGET_SOURCE_ID)
 
         fun oldTargetSource(): Source = oldSource
+
+        fun rpcServer(controlToken: String): RpcServer = RpcServer(loader, manager, port = 0, controlToken = controlToken)
     }
 
     companion object {
@@ -997,6 +1189,12 @@ class ExtensionManagerTest {
         private const val TEST_SIGNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         private const val TEST_SIGNER_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         private const val REPO_URL = "https://repo.example.test"
+        private const val CONTROL_TOKEN = "prepared-update-control-token"
+
+        private fun boundAddress(rpc: RpcServer): InetSocketAddress {
+            val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }
+            return (field.get(rpc) as HttpServer).address
+        }
 
         private data class TrustMutationState(
             val trust: Map<String, String>,

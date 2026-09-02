@@ -177,6 +177,41 @@ data class InstallRequest(
     val apkUrl: String? = null,
 )
 
+/** A non-mutating, exact candidate witness returned before an extension update is activated. */
+data class PreparedUpdateDto(
+    val token: String,
+    val pkgName: String,
+    val installedVersionCode: Long,
+    val candidateVersionCode: Long,
+    val installedSourceIds: List<Long>,
+    val candidateSourceIds: List<Long>,
+    val removedSourceIds: List<Long>,
+    val mutationSequence: Long,
+)
+
+/** Echoes the prepared witness and adds the source IDs that library state still depends on. */
+data class ActivatePreparedUpdateRequest(
+    val token: String,
+    val pkgName: String,
+    val installedVersionCode: Long,
+    val candidateVersionCode: Long,
+    val installedSourceIds: List<Long>,
+    val candidateSourceIds: List<Long>,
+    val removedSourceIds: List<Long>,
+    val mutationSequence: Long,
+    val protectedSourceIds: List<Long> = emptyList(),
+)
+
+data class DiscardPreparedUpdateRequest(val token: String)
+
+/** Machine-readable 409 body for an update that would retire a source still used by the library. */
+data class SourceRetirementConflictResponse(
+    val error: String,
+    val code: String = "source_retirement_conflict",
+    val pkgName: String,
+    val sourceIds: List<Long>,
+)
+
 /** The configured extension-repo index URLs (each an `index.min.json` or its base). */
 data class ReposDto(val repos: List<String>)
 

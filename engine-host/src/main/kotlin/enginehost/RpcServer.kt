@@ -34,8 +34,8 @@ import java.util.concurrent.atomic.AtomicReference
  * HTTP/JSON. It owns no library state; source content is resolved per request by (sourceId, url).
  * When [executors] is omitted, the server owns and closes its default execution domains. Injected
  * executors remain caller-owned, while the server still completes every exchange it accepted.
- * Repository trust reads/writes and installed-APK export additionally require [controlToken] and
- * fail closed when it is absent.
+ * Repository trust reads/writes, installed-APK export, and prepared updates additionally require
+ * [controlToken] and fail closed when it is absent.
  */
 class RpcServer(
     private val loader: ExtensionLoader,
@@ -162,6 +162,7 @@ class RpcServer(
             (path == "/extensions" && exchange.requestMethod == "GET") ||
                 (path == "/extensions/install" && exchange.requestMethod == "POST") ||
                 (path == "/extensions/refresh" && exchange.requestMethod == "POST") ||
+                (path.endsWith("/prepare-update") && exchange.requestMethod == "POST") ||
                 (path.endsWith("/update") && exchange.requestMethod == "POST") ||
                 exchange.requestMethod == "DELETE"
         return if (needsNetwork) rpcExecutors.extensionNetworkExecutor else rpcExecutors.extensionExecutor
@@ -360,6 +361,15 @@ class RpcServer(
     ) {
         val path = exchange.requestURI.path
         try {
+            if (
+                (path.endsWith("/prepare-update") ||
+                    path.endsWith("/activate-prepared-update") ||
+                    path.endsWith("/prepared-update")) &&
+                !isControlAuthorized(exchange)
+            ) {
+                response.respondJson(401, ErrorResponse("unauthorized"))
+                return
+            }
             when {
                 path == "/extensions" && exchange.requestMethod == "GET" ->
                     response.respondJson(200, extensions.list())
@@ -377,6 +387,22 @@ class RpcServer(
                 path.endsWith("/installed-apk") ->
                     handleInstalledApk(exchange, response, pkgNameFromPath(path, "/installed-apk"))
 
+                path.endsWith("/prepare-update") && exchange.requestMethod == "POST" ->
+                    response.respondJson(200, extensions.prepareUpdate(pkgNameFromPath(path, "/prepare-update")))
+
+                path.endsWith("/activate-prepared-update") && exchange.requestMethod == "POST" -> {
+                    val request: ActivatePreparedUpdateRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    val pkgName = pkgNameFromPath(path, "/activate-prepared-update")
+                    require(request.pkgName == pkgName) { "prepared update package does not match request path" }
+                    response.respondJson(200, extensions.activatePreparedUpdate(request))
+                }
+
+                path.endsWith("/prepared-update") && exchange.requestMethod == "DELETE" -> {
+                    val request: DiscardPreparedUpdateRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    extensions.discardPreparedUpdate(request.token, pkgNameFromPath(path, "/prepared-update"))
+                    response.respondJson(200, OkResponse())
+                }
+
                 path.endsWith("/update") && exchange.requestMethod == "POST" ->
                     response.respondJson(200, extensions.update(pkgNameFromPath(path, "/update")))
 
@@ -387,6 +413,15 @@ class RpcServer(
             }
         } catch (e: JacksonException) {
             response.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
+        } catch (e: SourceRetirementConflict) {
+            response.respondJson(
+                409,
+                SourceRetirementConflictResponse(
+                    error = e.message ?: "prepared update would retire protected sources",
+                    pkgName = e.pkgName,
+                    sourceIds = e.sourceIds,
+                ),
+            )
         } catch (e: IllegalArgumentException) {
             response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: BadRequest) {

@@ -15,6 +15,31 @@ The success response is bounded to 256 MiB, uses a fixed `Content-Length`, and h
 `X-Tsundoku-Extension-Version-Name`. The host holds its extension mutation lock until streaming
 finishes, so the bytes and identity headers describe one installed generation.
 
+## Prepared extension updates
+
+The three loopback-only routes below require `Authorization: Bearer <control-token>` and return 401
+when it is absent or wrong.
+
+`POST /extensions/{pkgName}/prepare-update` downloads, verifies, converts, and instantiates the next
+repository candidate without changing installed files, the manifest, or the live source registry. It
+returns an opaque `token` plus `pkgName`, installed/candidate version codes, `installedSourceIds`,
+`candidateSourceIds`, `removedSourceIds`, and `mutationSequence`. One candidate is retained per
+package for five minutes; replacement, expiry, discard, activation, rejection, or host shutdown
+removes its temporary APK/JAR and classloader.
+
+`POST /extensions/{pkgName}/activate-prepared-update` accepts the complete prepared response echoed
+unchanged plus `protectedSourceIds`. The host rejects token, package, version, mutation-sequence, and
+source-ID mismatches before filesystem, manifest, or registry mutation. It also re-instantiates the
+retained candidate and verifies its source IDs again during activation. If any removed source is
+protected, it returns HTTP 409:
+
+```json
+{"error":"...","code":"source_retirement_conflict","pkgName":"...","sourceIds":[123]}
+```
+
+`DELETE /extensions/{pkgName}/prepared-update` accepts `{"token":"..."}` and explicitly releases a
+candidate. Discard is idempotent when that package has no candidate; a token mismatch is HTTP 400.
+
 ## `PUT /config/image-transport`
 
 Applies a partial image connection-policy update and returns the normalized

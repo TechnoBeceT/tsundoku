@@ -30,6 +30,8 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -62,6 +64,11 @@ data class InstalledApkExport(
 )
 
 internal class InstalledApkUnavailableException(cause: Throwable) : IOException("installed APK is unavailable", cause)
+
+class SourceRetirementConflict(
+    val pkgName: String,
+    val sourceIds: List<Long>,
+) : IllegalStateException("update for '$pkgName' would retire protected source IDs: ${sourceIds.joinToString()}")
 
 /** Repository identity that a prepared APK must match exactly before it can replace active state. */
 private data class ExpectedArtifact(
@@ -99,6 +106,7 @@ class ExtensionManager internal constructor(
     private val downloadClient: ExtensionDownloadClient,
     private val preparer: ExtensionPreparer,
     private val artifactInspector: ExtensionArtifactInspector,
+    private val preparedUpdateTtlNanos: Long = PREPARED_UPDATE_TTL_NANOS,
 ) : AutoCloseable {
     constructor(loader: ExtensionLoader, extensionsRoot: File) :
         this(
@@ -126,7 +134,15 @@ class ExtensionManager internal constructor(
         extensionsRoot: File,
         downloadClient: ExtensionDownloadClient,
         preparer: ExtensionPreparer,
-    ) : this(loader, extensionsRoot, downloadClient, preparer, ExtensionArtifactInspector { loader.inspectApk(it) })
+        preparedUpdateTtlNanos: Long = PREPARED_UPDATE_TTL_NANOS,
+    ) : this(
+        loader,
+        extensionsRoot,
+        downloadClient,
+        preparer,
+        ExtensionArtifactInspector { loader.inspectApk(it) },
+        preparedUpdateTtlNanos,
+    )
 
     private val logger = KotlinLogging.logger {}
     private val mapper: ObjectMapper = jacksonObjectMapper()
@@ -148,6 +164,13 @@ class ExtensionManager internal constructor(
      */
     private val mutationLock = ReentrantLock()
     private var mutationSequence = 0L
+    private val preparedUpdates = HashMap<String, PreparedUpdate>()
+    private val preparedCleanup =
+        Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "extension-prepared-cleanup").apply { isDaemon = true }
+        }
+    @Volatile
+    private var closed = false
 
     /** Run [block] under the mutation lock — used by the RPC layer for the preference write+reload path. */
     fun <T> underLock(block: () -> T): T =
@@ -180,7 +203,16 @@ class ExtensionManager internal constructor(
         manifestRecords = loadManifestFromDisk()
     }
 
-    override fun close() = downloadClient.close()
+    override fun close() {
+        mutationLock.withLock {
+            if (closed) return
+            closed = true
+            preparedUpdates.values.forEach(::cleanupPrepared)
+            preparedUpdates.clear()
+        }
+        preparedCleanup.shutdownNow()
+        downloadClient.close()
+    }
 
     // ---- boot ----
 
@@ -463,6 +495,127 @@ class ExtensionManager internal constructor(
         )
     }
 
+    /** Download, verify, and inspect the next repo candidate without changing active files or registry state. */
+    fun prepareUpdate(pkgName: String): PreparedUpdateDto {
+        val stateSnapshot =
+            mutationLock.withLock {
+                InstallState(
+                    mutationSequence = mutationSequence,
+                    repos = repos,
+                    repoTrust = repoTrust,
+                    installed = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed"),
+                )
+            }
+        val record = requireNotNull(stateSnapshot.installed)
+        val (repoUrl, entry) =
+            findInRepos(pkgName, stateSnapshot.repos) ?: throw IllegalArgumentException("no repo advertises '$pkgName'")
+        require(entry.code > record.versionCode) {
+            "'$pkgName' is already up to date (installed ${record.versionCode}, repo ${entry.code})"
+        }
+        val expectedArtifact = ExpectedArtifact.from(entry, stateSnapshot.repoTrust[repoUrl])
+        val stagedApk = stageApk(entry.apkUrl)
+        var prepared: PreparedExtension? = null
+        try {
+            prepared = preparer.prepare(stagedApk)
+            validatePreparedIdentity(prepared, expectedArtifact, record)
+            val candidateSourceIds = loader.inspectPreparedSourceIds(prepared)
+            require(candidateSourceIds.size == candidateSourceIds.toSet().size) {
+                "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
+            }
+            val candidateIds = candidateSourceIds.sorted()
+            val installedIds = record.sourceIds.sorted()
+            val token = UUID.randomUUID().toString()
+            val held =
+                PreparedUpdate(
+                    token = token,
+                    pkgName = pkgName,
+                    installedVersionCode = record.versionCode,
+                    installedSourceIds = installedIds,
+                    candidateSourceIds = candidateIds,
+                    removedSourceIds = (installedIds.toSet() - candidateIds.toSet()).sorted(),
+                    mutationSequence = stateSnapshot.mutationSequence,
+                    expectedRepos = stateSnapshot.repos,
+                    repoUrl = repoUrl,
+                    repoEntry = entry,
+                    expectedArtifact = expectedArtifact,
+                    requestedApkFileName = apkFileNameFor(entry.apkUrl),
+                    prepared = prepared,
+                    expiresAtNanos = System.nanoTime() + preparedUpdateTtlNanos,
+                )
+            mutationLock.withLock {
+                require(!closed) { "extension manager is closed" }
+                require(mutationSequence == stateSnapshot.mutationSequence && repos == stateSnapshot.repos) {
+                    "extension state changed while preparing the update"
+                }
+                val current = installed[pkgName]
+                require(current?.versionCode == record.versionCode && current.sourceIds.sorted() == installedIds) {
+                    "installed extension changed while preparing the update"
+                }
+                preparedUpdates.put(pkgName, held)?.let(::cleanupPrepared)
+                preparedCleanup.schedule(
+                    { expirePreparedUpdate(pkgName, token) },
+                    preparedUpdateTtlNanos,
+                    TimeUnit.NANOSECONDS,
+                )
+            }
+            return held.dto()
+        } catch (failure: Throwable) {
+            runCatching { Files.deleteIfExists(prepared?.jarFile) }
+            runCatching { Files.deleteIfExists(stagedApk) }
+            throw failure
+        }
+    }
+
+    /** Activate only the exact candidate witness returned by [prepareUpdate]. */
+    fun activatePreparedUpdate(request: ActivatePreparedUpdateRequest): List<ExtensionDto> {
+        mutationLock.withLock {
+            val held = preparedUpdates[request.pkgName] ?: throw IllegalArgumentException("prepared update not found")
+            try {
+                require(System.nanoTime() < held.expiresAtNanos) { "prepared update expired" }
+                require(request.token == held.token) { "prepared update token does not match" }
+                require(request.pkgName == held.pkgName) { "prepared update package does not match" }
+                require(request.installedVersionCode == held.installedVersionCode) { "prepared installed version does not match" }
+                require(request.candidateVersionCode == held.prepared.versionCode) { "prepared candidate version does not match" }
+                require(request.installedSourceIds.sorted() == held.installedSourceIds) { "prepared installed source IDs do not match" }
+                require(request.candidateSourceIds.sorted() == held.candidateSourceIds) { "prepared candidate source IDs do not match" }
+                require(request.removedSourceIds.sorted() == held.removedSourceIds) { "prepared removed source IDs do not match" }
+                require(request.mutationSequence == held.mutationSequence) { "prepared mutation sequence does not match" }
+                require(mutationSequence == held.mutationSequence && repos == held.expectedRepos) {
+                    "extension state changed after preparing the update"
+                }
+                val current = installed[held.pkgName]
+                require(current?.versionCode == held.installedVersionCode && current.sourceIds.sorted() == held.installedSourceIds) {
+                    "installed extension changed after preparing the update"
+                }
+                val conflicts = (held.removedSourceIds.toSet() intersect request.protectedSourceIds.toSet()).sorted()
+                if (conflicts.isNotEmpty()) throw SourceRetirementConflict(held.pkgName, conflicts)
+                applyPrepared(
+                    held.prepared,
+                    held.requestedApkFileName,
+                    held.repoUrl,
+                    held.repoEntry,
+                    held.expectedArtifact,
+                    held.candidateSourceIds,
+                )
+                mutationSequence++
+            } finally {
+                preparedUpdates.remove(request.pkgName)?.let(::cleanupPrepared)
+            }
+        }
+        return list()
+    }
+
+    /** Explicitly release a prepared candidate without changing installed state. */
+    fun discardPreparedUpdate(
+        token: String,
+        pkgName: String,
+    ) = mutationLock.withLock {
+        val held = preparedUpdates[pkgName] ?: return@withLock
+        require(held.token == token) { "prepared update token does not match" }
+        preparedUpdates.remove(pkgName)
+        cleanupPrepared(held)
+    }
+
     // ---- internals ----
 
     private fun removeUninstalledFiles(record: InstalledExtension) {
@@ -526,6 +679,7 @@ class ExtensionManager internal constructor(
         repoUrl: String?,
         repoEntry: RepoIndexEntry?,
         expectedArtifact: ExpectedArtifact?,
+        expectedCandidateSourceIds: List<Long>? = null,
     ) {
         expectedArtifact?.let { expected ->
             require(prepared.pkgName == expected.pkgName) {
@@ -565,6 +719,9 @@ class ExtensionManager internal constructor(
         val candidateSourceIds = loader.inspectPreparedSourceIds(prepared)
         require(candidateSourceIds.size == candidateSourceIds.toSet().size) {
             "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
+        }
+        require(expectedCandidateSourceIds == null || candidateSourceIds.sorted() == expectedCandidateSourceIds.sorted()) {
+            "prepared APK '${prepared.pkgName}' source IDs changed after inspection"
         }
         candidateSourceIds.forEach { sourceId ->
             val owners = previous.installed.values.filter { sourceId in it.sourceIds }.map { it.pkgName }.toSet()
@@ -631,6 +788,75 @@ class ExtensionManager internal constructor(
             if (!published && apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
             throw failure
         }
+    }
+
+    private fun validatePreparedIdentity(
+        prepared: PreparedExtension,
+        expected: ExpectedArtifact,
+        installedRecord: InstalledExtension,
+    ) {
+        require(prepared.pkgName == expected.pkgName) {
+            "prepared APK package '${prepared.pkgName}' does not match requested package '${expected.pkgName}'"
+        }
+        require(prepared.versionCode == expected.versionCode) {
+            "prepared APK version ${prepared.versionCode} does not match repository version ${expected.versionCode}"
+        }
+        require(prepared.versionCode > installedRecord.versionCode) {
+            "prepared APK version ${prepared.versionCode} is not newer than installed version ${installedRecord.versionCode}"
+        }
+        require(prepared.signerFingerprints.isNotEmpty() && expected.trustedSignerFingerprint in prepared.signerFingerprints) {
+            "prepared APK signer is not trusted by the repository"
+        }
+        val installedSignature = loader.verifyApkSignature(installedApkPath(installedRecord))
+        require(VerifiedApkSignature(prepared.signerFingerprints, prepared.signingCertificateLineage).continuesFrom(installedSignature)) {
+            "prepared APK signer does not preserve installed signer continuity"
+        }
+    }
+
+    private fun expirePreparedUpdate(
+        pkgName: String,
+        token: String,
+    ) = mutationLock.withLock {
+        val held = preparedUpdates[pkgName] ?: return@withLock
+        if (held.token == token && System.nanoTime() >= held.expiresAtNanos) {
+            preparedUpdates.remove(pkgName)
+            cleanupPrepared(held)
+        }
+    }
+
+    private fun cleanupPrepared(held: PreparedUpdate) {
+        runCatching { loader.evictAndClose(held.prepared.jarFile) }
+        runCatching { Files.deleteIfExists(held.prepared.jarFile) }
+        runCatching { Files.deleteIfExists(held.prepared.apkFile) }
+    }
+
+    private data class PreparedUpdate(
+        val token: String,
+        val pkgName: String,
+        val installedVersionCode: Long,
+        val installedSourceIds: List<Long>,
+        val candidateSourceIds: List<Long>,
+        val removedSourceIds: List<Long>,
+        val mutationSequence: Long,
+        val expectedRepos: List<String>,
+        val repoUrl: String,
+        val repoEntry: RepoIndexEntry,
+        val expectedArtifact: ExpectedArtifact,
+        val requestedApkFileName: String,
+        val prepared: PreparedExtension,
+        val expiresAtNanos: Long,
+    ) {
+        fun dto() =
+            PreparedUpdateDto(
+                token,
+                pkgName,
+                installedVersionCode,
+                prepared.versionCode,
+                installedSourceIds,
+                candidateSourceIds,
+                removedSourceIds,
+                mutationSequence,
+            )
     }
 
     private data class MaterializedExtension(
@@ -937,6 +1163,8 @@ class ExtensionManager internal constructor(
 
     companion object {
         private const val MAX_EXPORTED_APK_BYTES: Long = 256L * 1024 * 1024
+        private const val PREPARED_UPDATE_TTL_SECONDS = 5 * 60L
+        private val PREPARED_UPDATE_TTL_NANOS = TimeUnit.SECONDS.toNanos(PREPARED_UPDATE_TTL_SECONDS)
 
         /**
          * The standard community repo, pre-configured so a fresh host is usable immediately. Points at
