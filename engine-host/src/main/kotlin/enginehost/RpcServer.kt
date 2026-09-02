@@ -363,6 +363,7 @@ class RpcServer(
         try {
             if (
                 (path.endsWith("/prepare-update") ||
+                    path.endsWith("/prepare-reinstall") ||
                     path.endsWith("/activate-prepared-update") ||
                     path.endsWith("/prepared-update-outcome") ||
                     path.endsWith("/prepared-update")) &&
@@ -390,6 +391,13 @@ class RpcServer(
 
                 path.endsWith("/prepare-update") && exchange.requestMethod == "POST" ->
                     response.respondJson(200, extensions.prepareUpdate(pkgNameFromPath(path, "/prepare-update")))
+
+                path.endsWith("/prepare-reinstall") && exchange.requestMethod == "POST" -> {
+                    val request: PrepareReinstallRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    val pkgName = pkgNameFromPath(path, "/prepare-reinstall")
+                    require(request.pkgName == pkgName) { "prepared reinstall package does not match request path" }
+                    response.respondJson(200, extensions.prepareReinstall(request))
+                }
 
                 path.endsWith("/activate-prepared-update") && exchange.requestMethod == "POST" -> {
                     val request: ActivatePreparedUpdateRequest = mapper.readValue(exchange.requestBody.readBytes())

@@ -256,6 +256,14 @@ func (r *Router) PrepareExtensionUpdate(ctx context.Context, pkgName string) (so
 	return u.PrepareExtensionUpdate(ctx, pkgName)
 }
 
+func (r *Router) PrepareExtensionReinstall(ctx context.Context, request sourceengine.PrepareExtensionReinstall) (sourceengine.PreparedExtensionUpdate, error) {
+	u, err := sourceengine.ProtectedUpdaterFor(r.defaultClient)
+	if err != nil {
+		return sourceengine.PreparedExtensionUpdate{}, err
+	}
+	return u.PrepareExtensionReinstall(ctx, request)
+}
+
 func (r *Router) ActivatePreparedExtensionUpdate(ctx context.Context, request sourceengine.ActivatePreparedExtensionUpdate) ([]sourceengine.Extension, error) {
 	u, err := sourceengine.ProtectedUpdaterFor(r.defaultClient)
 	if err != nil {

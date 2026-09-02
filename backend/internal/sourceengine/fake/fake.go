@@ -54,13 +54,16 @@ type Client struct {
 	impersonate    sourceengine.ImpersonateConfig
 	imageTransport sourceengine.ImageTransportConfig
 
-	lastInstallApkURL string
-	installedAPKs     map[string]map[int]sourceengine.InstalledAPK
+	lastInstallApkURL   string
+	lastReinstallAPKURL string
+	installedAPKs       map[string]map[int]sourceengine.InstalledAPK
 
-	errors           map[string]error
-	errorSequences   map[string][]error
-	calls            map[string]int
-	updateExtensions []sourceengine.Extension
+	errors                 map[string]error
+	errorSequences         map[string][]error
+	calls                  map[string]int
+	updateExtensions       []sourceengine.Extension
+	preparedReinstall      map[string]int64
+	activationResponseLoss error
 }
 
 func (c *Client) PrepareExtensionUpdate(_ context.Context, pkgName string) (sourceengine.PreparedExtensionUpdate, error) {
@@ -100,6 +103,51 @@ func (c *Client) PrepareExtensionUpdate(_ context.Context, pkgName string) (sour
 	return sourceengine.PreparedExtensionUpdate{Token: "fake-token", PkgName: pkgName, InstalledVersionCode: before.VersionCode, CandidateVersionCode: after.VersionCode, InstalledSourceIDs: installed, CandidateSourceIDs: candidate, RemovedSourceIDs: removed, MutationSequence: 1}, nil
 }
 
+func (c *Client) PrepareExtensionReinstall(_ context.Context, request sourceengine.PrepareExtensionReinstall) (sourceengine.PreparedExtensionUpdate, error) {
+	c.record("PrepareExtensionReinstall")
+	if err := c.errFor("PrepareExtensionReinstall"); err != nil {
+		return sourceengine.PreparedExtensionUpdate{}, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastReinstallAPKURL = request.APKURL
+	var before sourceengine.Extension
+	for _, e := range c.extensions {
+		if e.PkgName == request.PkgName {
+			before = e
+		}
+	}
+	candidate := before
+	for _, e := range c.updateExtensions {
+		if e.PkgName == request.PkgName {
+			candidate = e
+		}
+	}
+	ids := sourceIDsOf(before.Sources)
+	candidateIDs := sourceIDsOf(candidate.Sources)
+	seen := map[int64]bool{}
+	for _, id := range candidateIDs {
+		seen[id] = true
+	}
+	removed := []int64{}
+	for _, id := range ids {
+		if !seen[id] {
+			removed = append(removed, id)
+		}
+	}
+	if c.preparedReinstall == nil {
+		c.preparedReinstall = map[string]int64{}
+	}
+	c.preparedReinstall[request.PkgName] = request.CandidateVersionCode
+	return sourceengine.PreparedExtensionUpdate{Token: "fake-reinstall-token", PkgName: request.PkgName, InstalledVersionCode: before.VersionCode, CandidateVersionCode: request.CandidateVersionCode, InstalledSourceIDs: ids, CandidateSourceIDs: candidateIDs, RemovedSourceIDs: removed, MutationSequence: 1}, nil
+}
+
+func (c *Client) LastReinstallAPKURL() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastReinstallAPKURL
+}
+
 func (c *Client) ActivatePreparedExtensionUpdate(_ context.Context, req sourceengine.ActivatePreparedExtensionUpdate) ([]sourceengine.Extension, error) {
 	c.record("ActivatePreparedExtensionUpdate")
 	if err := c.errFor("ActivatePreparedExtensionUpdate"); err != nil {
@@ -121,9 +169,20 @@ func (c *Client) ActivatePreparedExtensionUpdate(_ context.Context, req sourceen
 	c.mu.Lock()
 	if c.updateExtensions != nil {
 		c.extensions = append([]sourceengine.Extension(nil), c.updateExtensions...)
+	} else if version, ok := c.preparedReinstall[req.PkgName]; ok {
+		for i := range c.extensions {
+			if c.extensions[i].PkgName == req.PkgName {
+				c.extensions[i].VersionCode = version
+			}
+		}
+		delete(c.preparedReinstall, req.PkgName)
 	}
 	c.mu.Unlock()
-	return c.extensionsCopy(), nil
+	result := c.extensionsCopy()
+	if c.activationResponseLoss != nil {
+		return nil, c.activationResponseLoss
+	}
+	return result, nil
 }
 
 func (c *Client) DiscardPreparedExtensionUpdate(_ context.Context, _, _ string) error {
@@ -182,6 +241,22 @@ func WithUpdateExtensions(exts []sourceengine.Extension) Option {
 	return func(c *Client) { c.updateExtensions = append(make([]sourceengine.Extension, 0, len(exts)), exts...) }
 }
 
+func (c *Client) SetUpdateExtensions(exts []sourceengine.Extension) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.updateExtensions = append([]sourceengine.Extension(nil), exts...)
+}
+
+func WithActivationResponseLoss(err error) Option {
+	return func(c *Client) { c.activationResponseLoss = err }
+}
+
+func (c *Client) SetActivationResponseLoss(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activationResponseLoss = err
+}
+
 // WithInstalledAPK seeds exact installed bytes and identity metadata for pkg.
 func WithInstalledAPK(pkg string, version int, versionName string, data []byte) Option {
 	return func(c *Client) {
@@ -193,6 +268,15 @@ func WithInstalledAPK(pkg string, version int, versionName string, data []byte) 
 			ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data)),
 		}
 	}
+}
+
+func (c *Client) SetInstalledAPK(pkg string, version int, versionName string, data []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.installedAPKs[pkg] == nil {
+		c.installedAPKs[pkg] = map[int]sourceengine.InstalledAPK{}
+	}
+	c.installedAPKs[pkg][version] = sourceengine.InstalledAPK{PkgName: pkg, VersionCode: version, VersionName: versionName, ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data))}
 }
 
 // WithSources seeds the source registry returned by Sources and folded into

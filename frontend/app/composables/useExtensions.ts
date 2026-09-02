@@ -179,6 +179,9 @@ export function useExtensions() {
         body: { versionCode },
       })
       if (res.error) throw new Error(res.error.message)
+      if (!Array.isArray(res.data)) {
+        throw new Error(res.data.message)
+      }
       return res.data
     })
   }

@@ -27,6 +27,12 @@ returns an opaque `token` plus `pkgName`, installed/candidate version codes, `in
 package for five minutes; replacement, expiry, discard, activation, rejection, or host shutdown
 removes its temporary APK/JAR and classloader.
 
+`POST /extensions/{pkgName}/prepare-reinstall` accepts an exact local `apkUrl`, `pkgName`, and
+`candidateVersionCode`. It verifies package/version identity and signer continuity, then returns the
+same source-ID witness and token as prepare-update. Direct `/extensions/install` cannot replace a
+package discovered to be installed after APK preparation; held-version replacement must use this
+protected activation path.
+
 `POST /extensions/{pkgName}/activate-prepared-update` accepts the complete prepared response echoed
 unchanged plus `protectedSourceIds`. The host rejects token, package, version, mutation-sequence, and
 source-ID mismatches before filesystem, manifest, or registry mutation. It also re-instantiates the

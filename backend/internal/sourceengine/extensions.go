@@ -51,6 +51,10 @@ func (c *httpClient) PrepareExtensionUpdate(ctx context.Context, pkgName string)
 	return post[PreparedExtensionUpdate](ctx, c, extensionPath(pkgName)+"/prepare-update", nil)
 }
 
+func (c *httpClient) PrepareExtensionReinstall(ctx context.Context, request PrepareExtensionReinstall) (PreparedExtensionUpdate, error) {
+	return post[PreparedExtensionUpdate](ctx, c, extensionPath(request.PkgName)+"/prepare-reinstall", request)
+}
+
 func (c *httpClient) ActivatePreparedExtensionUpdate(ctx context.Context, request ActivatePreparedExtensionUpdate) ([]Extension, error) {
 	return post[[]Extension](ctx, c, extensionPath(request.PkgName)+"/activate-prepared-update", request)
 }

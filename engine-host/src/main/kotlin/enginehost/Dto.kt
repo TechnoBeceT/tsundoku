@@ -206,6 +206,12 @@ data class DiscardPreparedUpdateRequest(val token: String)
 
 data class PreparedUpdateOutcomeRequest(val token: String)
 
+data class PrepareReinstallRequest(
+    val pkgName: String,
+    val apkUrl: String,
+    val candidateVersionCode: Long,
+)
+
 data class PreparedUpdateOutcomeDto(
     val status: String,
     val pkgName: String,

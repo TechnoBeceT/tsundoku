@@ -475,7 +475,7 @@ func (h *Handler) Uninstall(c echo.Context) error {
 // reversible-update rollback path. It reinstalls a HELD (older) .apk version
 // from Tsundoku's own apk cache, addressed by (pkgName, versionCode) in the body.
 //
-// The engine host installs it BY LOCAL FILESYSTEM PATH: the engine host and the
+// The engine host prepares it BY LOCAL FILESYSTEM PATH: the engine host and the
 // Go server run in the SAME container sharing the /config volume the apk cache
 // lives on, and the engine host's install(apkUrl) treats a NON-http apkUrl as a
 // local file it copies onto its own volume — an EXISTING engine capability
@@ -487,10 +487,11 @@ func (h *Handler) Uninstall(c echo.Context) error {
 // single-container topology; a remote/external engine that does not share the
 // filesystem is a documented follow-up.)
 //
-// Flow: validate → the version must be HELD (in cached_versions) AND its bytes
-// present on disk (else 404) → InstallExtension(ctx, "", <cache path>) →
-// best-effort durable write-through pinning installed_version_code → return the
-// refreshed list (§16). A validation failure is a 400; an upstream failure a 502.
+// Flow: validate → require HELD metadata and bytes → exact pre-capture → prepare
+// the cached APK once → hold the provider table against concurrent references →
+// activate the source-ID witness → reconcile any lost response → exact
+// post-capture. A protected retired source is 409; an ambiguous activation is
+// explicit 202 and must not be retried.
 func (h *Handler) Reinstall(c echo.Context) error {
 	pkgName, err := validatePkgName(c.Param("pkgName"))
 	if err != nil {
@@ -515,13 +516,86 @@ func (h *Handler) Reinstall(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "no cached apk for that extension version")
 	}
 
-	exts, err := h.sw.InstallExtension(ctx, "", h.cache.Path(pkgName, versionCode))
+	if h.archive == nil {
+		return httperr.Upstream(errors.New("protected extension reinstall unavailable"))
+	}
+	updater, err := sourceengine.ProtectedUpdaterFor(h.sw)
 	if err != nil {
 		return httperr.Upstream(err)
 	}
-	// Best-effort durable write-through: pin installed_version_code to the
-	// reinstalled version + re-prune (logged-and-swallowed inside the helper).
-	enginetopo.OnExtensionReinstalled(ctx, h.db, h.cache, pkgName, versionCode, h.retainedCount(ctx))
+	return h.runProtectedReinstall(c, updater, pkgName, versionCode, h.cache.Path(pkgName, versionCode))
+}
+
+func (h *Handler) runProtectedReinstall(c echo.Context, updater sourceengine.ProtectedExtensionUpdater, pkgName string, versionCode int, apkPath string) error {
+	ctx := c.Request().Context()
+	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() enginetopo.ExtensionUpdateOutcome {
+		prepared, err := updater.PrepareExtensionReinstall(ctx, sourceengine.PrepareExtensionReinstall{PkgName: pkgName, APKURL: apkPath, CandidateVersionCode: int64(versionCode)})
+		if err != nil {
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+		}
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				if discardErr := updater.DiscardPreparedExtensionUpdate(discardCtx, pkgName, prepared.Token); discardErr != nil {
+					slog.WarnContext(ctx, "extensions: discard prepared reinstall failed", "pkg_name", pkgName, "err", discardErr)
+				}
+			}
+		}()
+		tx, err := h.db.Tx(ctx)
+		if err != nil {
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+		}
+		defer func() { _ = tx.Rollback() }()
+		protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
+		if err != nil {
+			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+		}
+		result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
+		if err != nil {
+			var conflict *sourceengine.SourceRetirementConflictError
+			if errors.As(err, &conflict) {
+				return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
+			}
+			reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			outcome, outcomeErr := updater.PreparedExtensionUpdateOutcome(reconcileCtx, pkgName, prepared.Token)
+			if outcomeErr == nil && outcome.Status == "rejected" {
+				return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+			}
+			result, listErr := h.sw.Extensions(reconcileCtx)
+			if outcomeErr == nil && outcome.Status == "committed" {
+				succeeded = true
+				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, listErr)}
+			}
+			if current, ok := findExtension(result, pkgName); ok && current.IsInstalled && current.VersionCode == prepared.CandidateVersionCode {
+				succeeded = true
+				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, outcomeErr, listErr)}
+			}
+			succeeded = true
+			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: &activationAmbiguous{pkgName: pkgName, candidateVersion: prepared.CandidateVersionCode, cause: errors.Join(err, outcomeErr, listErr)}}
+		}
+		succeeded = true
+		if err := tx.Commit(); err != nil {
+			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: fmt.Errorf("provider-reference coordination commit after successful reinstall: %w", err)}
+		}
+		return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true}
+	})
+	if err != nil && !mutated {
+		var conflict *retirementConflict
+		if errors.As(err, &conflict) {
+			return c.JSON(http.StatusConflict, map[string]any{"message": "extension reinstall would retire sources used by the library", "code": "source_retirement_conflict", "pkgName": pkgName, "sourceIds": sourceIDStrings(conflict.sourceIDs), "affectedProviderCount": conflict.providerCount, "affectedSeriesCount": conflict.seriesCount})
+		}
+		return httperr.Upstream(err)
+	}
+	if err != nil {
+		var ambiguous *activationAmbiguous
+		if errors.As(err, &ambiguous) {
+			return c.JSON(http.StatusAccepted, map[string]any{"message": "extension activation outcome is ambiguous; do not retry", "code": "activation_outcome_ambiguous", "pkgName": pkgName, "candidateVersionCode": ambiguous.candidateVersion})
+		}
+		slog.ErrorContext(ctx, "extensions: reinstall succeeded with archive degradation; do not retry", "pkg_name", pkgName, "err", err)
+	}
 	return h.respondExtensions(c, exts)
 }
 

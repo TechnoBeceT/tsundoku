@@ -3,6 +3,7 @@ package extensions_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	handler "github.com/technobecet/tsundoku/internal/handler/extensions"
@@ -42,6 +44,11 @@ func newReinstallEnv(t *testing.T, exts []sourceengine.Extension) *reinstallEnv 
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 	fake := sourceenginefake.New(sourceenginefake.WithExtensions(exts))
+	for _, ext := range exts {
+		if ext.IsInstalled {
+			fake.SetInstalledAPK(ext.PkgName, int(ext.VersionCode), ext.VersionName, []byte("CURRENT-APK"))
+		}
+	}
 
 	queries := 0
 	db.Intercept(ent.InterceptFunc(func(next ent.Querier) ent.Querier {
@@ -53,7 +60,7 @@ func newReinstallEnv(t *testing.T, exts []sourceengine.Extension) *reinstallEnv 
 
 	authSvc := auth.NewService("reinstall-test-secret")
 	// retained resolver returns 3 (the default depth).
-	h := handler.NewHandler(fake, db, cache, http.Get, nil, nil, func(context.Context) int { return 3 })
+	h := handler.NewHandler(fake, db, cache, http.Get, nil, nil, func(context.Context) int { return 3 }).WithArchive(enginetopo.NewExtensionArchive(fake, db, cache, nil))
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -94,6 +101,7 @@ func (env *reinstallEnv) seedHeldVersion(t *testing.T, pkg string, installedVers
 		if _, _, err := env.cache.Put(pkg, v, strings.NewReader("apk")); err != nil {
 			t.Fatalf("cache.Put v%d: %v", v, err)
 		}
+		env.fake.SetInstalledAPK(pkg, v, "held", []byte("apk"))
 	}
 	if err := env.db.HarvestedExtension.Create().
 		SetPkgName(pkg).
@@ -123,14 +131,14 @@ func TestReinstall_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("Reinstall: want 200, got %d (%s)", rec.Code, rec.Body.String())
 	}
-	if env.fake.CallCount("InstallExtension") != 1 {
-		t.Fatalf("InstallExtension called %d times, want 1", env.fake.CallCount("InstallExtension"))
+	if env.fake.CallCount("PrepareExtensionReinstall") != 1 || env.fake.CallCount("ActivatePreparedExtensionUpdate") != 1 || env.fake.CallCount("InstallExtension") != 0 {
+		t.Fatalf("prepare=%d activate=%d unsafeInstall=%d", env.fake.CallCount("PrepareExtensionReinstall"), env.fake.CallCount("ActivatePreparedExtensionUpdate"), env.fake.CallCount("InstallExtension"))
+	}
+	if got, want := env.fake.LastReinstallAPKURL(), env.cache.Path(reinstallPkg, 41); got != want {
+		t.Fatalf("prepared apkURL = %q, want exact cache path %q", got, want)
 	}
 	// The apkURL MUST be the cached apk's local path for (pkg, 41) — the engine
 	// installs the held bytes, never a repo re-download of the latest.
-	if got, want := env.fake.LastInstallApkURL(), env.cache.Path(reinstallPkg, 41); got != want {
-		t.Fatalf("install apkURL = %q, want cache path %q", got, want)
-	}
 	var got []handler.ExtensionDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -145,6 +153,42 @@ func TestReinstall_HappyPath(t *testing.T) {
 	}
 	if row.InstalledVersionCode != 41 {
 		t.Errorf("installed_version_code = %d, want 41", row.InstalledVersionCode)
+	}
+}
+
+func TestReinstall_SourceRetirementConflictDoesNotReplace(t *testing.T) {
+	ctx := context.Background()
+	before := installedExt(reinstallPkg, 42)
+	before.Sources = []sourceengine.Source{{ID: 11}, {ID: 22}}
+	after := installedExt(reinstallPkg, 41)
+	after.Sources = []sourceengine.Source{{ID: 22}}
+	env := newReinstallEnv(t, []sourceengine.Extension{before})
+	env.fake.SetUpdateExtensions([]sourceengine.Extension{after})
+	env.seedHeldVersion(t, reinstallPkg, 42, 41, 42)
+	series := env.db.Series.Create().SetTitle("Protected").SetSlug("protected").SaveX(ctx)
+	env.db.SeriesProvider.Create().SetSeries(series).SetProvider("11").SaveX(ctx)
+	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/"+reinstallPkg+"/reinstall", `{"versionCode":41}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "source_retirement_conflict") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if env.fake.CallCount("DiscardPreparedExtensionUpdate") != 1 {
+		t.Fatal("rejected reinstall candidate was not discarded")
+	}
+}
+
+func TestReinstall_ResponseLossAfterPublicationReconcilesWithoutRetry(t *testing.T) {
+	before := installedExt(reinstallPkg, 42)
+	after := installedExt(reinstallPkg, 41)
+	env := newReinstallEnv(t, []sourceengine.Extension{before})
+	env.fake.SetUpdateExtensions([]sourceengine.Extension{after})
+	env.fake.SetActivationResponseLoss(errors.New("response lost after publication"))
+	env.seedHeldVersion(t, reinstallPkg, 42, 41, 42)
+	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/"+reinstallPkg+"/reinstall", `{"versionCode":41}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if env.fake.CallCount("ActivatePreparedExtensionUpdate") != 1 || env.fake.CallCount("PreparedExtensionUpdateOutcome") != 1 || env.fake.CallCount("DiscardPreparedExtensionUpdate") != 0 {
+		t.Fatalf("activate=%d outcome=%d discard=%d", env.fake.CallCount("ActivatePreparedExtensionUpdate"), env.fake.CallCount("PreparedExtensionUpdateOutcome"), env.fake.CallCount("DiscardPreparedExtensionUpdate"))
 	}
 }
 

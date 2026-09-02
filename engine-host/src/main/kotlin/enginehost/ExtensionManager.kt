@@ -574,6 +574,37 @@ class ExtensionManager internal constructor(
         }
     }
 
+    /** Prepare an exact local rollback candidate without permitting direct-install replacement. */
+    fun prepareReinstall(request: PrepareReinstallRequest): PreparedUpdateDto {
+        val snapshot = mutationLock.withLock { InstallState(mutationSequence, repos, repoTrust, installed[request.pkgName] ?: error("extension '${request.pkgName}' is not installed")) }
+        val record = requireNotNull(snapshot.installed)
+        val stagedApk = stageApk(request.apkUrl)
+        var prepared: PreparedExtension? = null
+        try {
+            prepared = preparer.prepare(stagedApk)
+            require(prepared.pkgName == request.pkgName) { "prepared APK package '${prepared.pkgName}' does not match requested package '${request.pkgName}'" }
+            require(prepared.versionCode == request.candidateVersionCode) { "prepared APK version ${prepared.versionCode} does not match requested version ${request.candidateVersionCode}" }
+            require(VerifiedApkSignature(prepared.signerFingerprints, prepared.signingCertificateLineage).continuesFrom(loader.verifyApkSignature(installedApkPath(record)))) {
+                "prepared APK signer does not preserve installed signer continuity"
+            }
+            val candidateIds = loader.inspectPreparedSourceIds(prepared).sorted()
+            require(candidateIds.size == candidateIds.toSet().size) { "prepared APK '${prepared.pkgName}' declares duplicate source IDs" }
+            val installedIds = record.sourceIds.sorted()
+            val held = PreparedUpdate(UUID.randomUUID().toString(), request.pkgName, record.versionCode, installedIds, candidateIds, (installedIds.toSet() - candidateIds.toSet()).sorted(), snapshot.mutationSequence, snapshot.repos, record.repoUrl, null, null, apkFileNameFor(request.apkUrl), prepared, System.nanoTime() + preparedUpdateTtlNanos)
+            mutationLock.withLock {
+                require(mutationSequence == snapshot.mutationSequence && installed[request.pkgName]?.versionCode == record.versionCode) { "extension state changed while preparing reinstall" }
+                persistUpdateOutcome(held, "pending")
+                preparedUpdates.put(request.pkgName, held)?.let(::cleanupPrepared)
+                preparedCleanup.schedule({ expirePreparedUpdate(request.pkgName, held.token) }, preparedUpdateTtlNanos, TimeUnit.NANOSECONDS)
+            }
+            return held.dto()
+        } catch (failure: Throwable) {
+            runCatching { Files.deleteIfExists(prepared?.jarFile) }
+            runCatching { Files.deleteIfExists(stagedApk) }
+            throw failure
+        }
+    }
+
     /** Activate only the exact candidate witness returned by [prepareUpdate]. */
     fun activatePreparedUpdate(request: ActivatePreparedUpdateRequest): List<ExtensionDto> {
         mutationLock.withLock {
@@ -604,6 +635,7 @@ class ExtensionManager internal constructor(
                     held.repoEntry,
                     held.expectedArtifact,
                     held.candidateSourceIds,
+                    true,
                 )
                 mutationSequence++
                 persistUpdateOutcome(held, "committed")
@@ -736,6 +768,7 @@ class ExtensionManager internal constructor(
         repoEntry: RepoIndexEntry?,
         expectedArtifact: ExpectedArtifact?,
         expectedCandidateSourceIds: List<Long>? = null,
+        allowInstalledReplacement: Boolean = false,
     ) {
         expectedArtifact?.let { expected ->
             require(prepared.pkgName == expected.pkgName) {
@@ -749,6 +782,9 @@ class ExtensionManager internal constructor(
         val replacementPackage = expectedArtifact?.pkgName ?: prepared.pkgName
         val previous = loader.snapshotRegistry()
         val old = previous.installed[replacementPackage]
+        require(old == null || allowInstalledReplacement || expectedArtifact != null) {
+            "extension '$replacementPackage' is already installed; use prepared activation"
+        }
         if (expectedArtifact != null && old != null) {
             require(prepared.versionCode > old.versionCode) {
                 "prepared APK version ${prepared.versionCode} is not newer than installed version ${old.versionCode}"
@@ -901,9 +937,9 @@ class ExtensionManager internal constructor(
         val removedSourceIds: List<Long>,
         val mutationSequence: Long,
         val expectedRepos: List<String>,
-        val repoUrl: String,
-        val repoEntry: RepoIndexEntry,
-        val expectedArtifact: ExpectedArtifact,
+        val repoUrl: String?,
+        val repoEntry: RepoIndexEntry?,
+        val expectedArtifact: ExpectedArtifact?,
         val requestedApkFileName: String,
         val prepared: PreparedExtension,
         val expiresAtNanos: Long,

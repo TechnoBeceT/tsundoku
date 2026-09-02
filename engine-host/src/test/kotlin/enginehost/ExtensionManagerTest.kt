@@ -124,6 +124,22 @@ class ExtensionManagerTest {
     }
 
     @Test
+    fun `generic direct install rejects a valid prepared APK whose package is installed`() {
+        val fixture = UpdateFixture(candidatePackage = TARGET_PACKAGE, candidateVersionCode = 2, candidateJarSource = CandidateOwnedSource::class.java)
+        assertFailsWith<IllegalArgumentException> { fixture.installCandidateDirectly() }
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `protected reinstall prepares and activates an exact direct APK`() {
+        val fixture = UpdateFixture(candidatePackage = TARGET_PACKAGE, candidateVersionCode = 2, candidateJarSource = CandidateOwnedSource::class.java)
+        val prepared = fixture.manager.prepareReinstall(PrepareReinstallRequest(TARGET_PACKAGE, "https://cdn.example.test/exact.apk", 2))
+        fixture.manager.activatePreparedUpdate(prepared.toActivationRequest(emptyList()))
+        assertEquals("Owned Candidate Source", fixture.targetSource()?.name)
+        assertEquals("committed", fixture.manager.preparedUpdateOutcome(TARGET_PACKAGE, prepared.token).status)
+    }
+
+    @Test
     fun `prepared activation rejects runtime source ID drift and releases candidate`() {
         ActivationDuplicateProbe.reset()
         val fixture =
@@ -454,7 +470,7 @@ class ExtensionManagerTest {
             fixture.manager.install(apkUrl = "https://cdn.example.test/replacement.apk")
         }
 
-        assertTrue(failure.message.orEmpty().contains("is already owned by '$UNRELATED_PACKAGE'"))
+        assertTrue(failure.message.orEmpty().contains("is already installed"))
         fixture.assertUnchanged()
     }
 
@@ -1237,6 +1253,8 @@ class ExtensionManagerTest {
         fun oldTargetSource(): Source = oldSource
 
         fun rpcServer(controlToken: String): RpcServer = RpcServer(loader, manager, port = 0, controlToken = controlToken)
+
+        fun installCandidateDirectly() = manager.install(null, "https://cdn.example.test/direct.apk")
 
         fun outcomeAfterRestart(token: String): PreparedUpdateOutcomeDto {
             val reloaded = ExtensionManager(ExtensionLoader(root.toFile(), signatureVerifier), root.toFile())

@@ -10158,10 +10158,11 @@ paths:
         Reinstalls a HELD (older) cached .apk version of the extension — the
         reversible-update rollback path. The version must be present in the
         extension's cachedVersions AND still on disk (else a 404). The engine
-        host installs it from Tsundoku's own apk cache (no upstream re-download),
-        then the durable store pins it as the installed version. RE-READS and
-        returns the full extension list (§16). A missing/invalid versionCode is a
-        400; an upstream engine failure is a 502.
+        host prepares it once from Tsundoku's own apk cache (no upstream
+        re-download), validates its source-ID witness under the provider-table
+        lock, then activates and archives it through the protected replacement
+        protocol. Returns 409 for protected source retirement and 202 when the
+        activation outcome is ambiguous and must not be retried.
       tags:
         - suwayomi
       security:
@@ -10188,6 +10189,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Extension"
+        "202":
+          description: Activation may have crossed the publication boundary; do not retry until reconciled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, code, pkgName, candidateVersionCode]
+                properties:
+                  message: { type: string }
+                  code: { type: string, const: activation_outcome_ambiguous }
+                  pkgName: { type: string }
+                  candidateVersionCode: { type: integer, format: int64 }
         "400":
           description: A blank pkgName or a missing/invalid versionCode.
           content:
@@ -10206,6 +10219,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Held candidate removes source identities used by the library.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRetirementConflict"
         "502":
           description: The engine host was unreachable or returned an error.
           content:

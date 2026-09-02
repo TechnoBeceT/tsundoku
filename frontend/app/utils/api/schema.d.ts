@@ -2566,10 +2566,11 @@ export interface paths {
          * @description Reinstalls a HELD (older) cached .apk version of the extension — the
          *     reversible-update rollback path. The version must be present in the
          *     extension's cachedVersions AND still on disk (else a 404). The engine
-         *     host installs it from Tsundoku's own apk cache (no upstream re-download),
-         *     then the durable store pins it as the installed version. RE-READS and
-         *     returns the full extension list (§16). A missing/invalid versionCode is a
-         *     400; an upstream engine failure is a 502.
+         *     host prepares it once from Tsundoku's own apk cache (no upstream
+         *     re-download), validates its source-ID witness under the provider-table
+         *     lock, then activates and archives it through the protected replacement
+         *     protocol. Returns 409 for protected source retirement and 202 when the
+         *     activation outcome is ambiguous and must not be retried.
          */
         post: operations["reinstallExtension"];
         delete?: never;
@@ -10966,6 +10967,22 @@ export interface operations {
                     "application/json": components["schemas"]["Extension"][];
                 };
             };
+            /** @description Activation may have crossed the publication boundary; do not retry until reconciled. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                        /** @constant */
+                        code: "activation_outcome_ambiguous";
+                        pkgName: string;
+                        /** Format: int64 */
+                        candidateVersionCode: number;
+                    };
+                };
+            };
             /** @description A blank pkgName or a missing/invalid versionCode. */
             400: {
                 headers: {
@@ -10991,6 +11008,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Held candidate removes source identities used by the library. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRetirementConflict"];
                 };
             };
             /** @description The engine host was unreachable or returned an error. */
