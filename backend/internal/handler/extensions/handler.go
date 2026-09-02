@@ -4,11 +4,10 @@
 // plugins), manage the extension repo URL list, and explicitly approve repository
 // signer pins — all from Tsundoku, so they never need direct access to the engine host.
 //
-// Like the settings proxy it is a PURE passthrough: no Tsundoku schema, no
-// disk, no SSE, no deletion of Tsundoku rows — the extensions live entirely on
-// the engine host. The handler owns a sourceengine.Client directly and does
-// bind → validate → client → DTO. Validation is extracted to validate.go; the
-// DTO mapping to dto.go.
+// Most operations are passthroughs, but update is deliberately coordinated
+// with Tsundoku's durable extension archive and provider references. It locks
+// the provider table while the prepared candidate is activated, preventing a
+// source identity still used by the library from disappearing mid-decision.
 //
 // Engine-host prepares and validates a complete prospective source/installed
 // generation while readers continue using the previous generation. It persists
@@ -24,6 +23,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -32,6 +33,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcepurge"
 )
@@ -260,22 +262,117 @@ func (h *Handler) Install(c echo.Context) error {
 
 // Update handles POST /api/suwayomi/extensions/:pkgName/update.
 func (h *Handler) Update(c echo.Context) error {
-	if h.archive == nil {
-		return h.mutate(c, h.sw.UpdateExtension)
-	}
 	pkgName, err := validatePkgName(c.Param("pkgName"))
 	if err != nil {
 		return err
 	}
+	if h.archive == nil {
+		return httperr.Upstream(errors.New("protected extension update unavailable"))
+	}
 	ctx := c.Request().Context()
-	exts, mutated, err := h.archive.Update(ctx, pkgName)
+	updater, err := sourceengine.ProtectedUpdaterFor(h.sw)
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() ([]sourceengine.Extension, error) {
+		prepared, err := updater.PrepareExtensionUpdate(ctx, pkgName)
+		if err != nil {
+			return nil, err
+		}
+		succeeded := false
+		defer func() {
+			if !succeeded {
+				discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				if discardErr := updater.DiscardPreparedExtensionUpdate(discardCtx, pkgName, prepared.Token); discardErr != nil {
+					slog.WarnContext(ctx, "extensions: discard prepared update failed", "pkg_name", pkgName, "err", discardErr)
+				}
+			}
+		}()
+		tx, err := h.db.Tx(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
+		if err != nil {
+			return nil, err
+		}
+		result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
+		if err != nil {
+			var conflict *sourceengine.SourceRetirementConflictError
+			if errors.As(err, &conflict) {
+				return nil, &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}
+			}
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		succeeded = true
+		return result, nil
+	})
 	if err != nil && !mutated {
+		var conflict *retirementConflict
+		if errors.As(err, &conflict) {
+			return c.JSON(http.StatusConflict, map[string]any{"message": "extension update would retire sources used by the library", "code": "source_retirement_conflict", "pkgName": pkgName, "sourceIds": sourceIDStrings(conflict.sourceIDs), "affectedProviderCount": conflict.providerCount, "affectedSeriesCount": conflict.seriesCount})
+		}
 		return httperr.Upstream(err)
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "extensions: update succeeded but exact post-update archive degraded", "pkg_name", pkgName, "err", err)
 	}
 	return h.respondExtensions(c, exts)
+}
+
+func sourceIDStrings(ids []int64) []string {
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = strconv.FormatInt(id, 10)
+	}
+	return out
+}
+
+type retirementConflict struct {
+	sourceIDs                  []int64
+	providerCount, seriesCount int
+}
+
+func (e *retirementConflict) Error() string { return "extension update would retire protected sources" }
+
+func referencedRemovedSources(ctx context.Context, tx *ent.Tx, removed []int64) ([]int64, int, int, error) {
+	removedSet := make(map[int64]struct{}, len(removed))
+	for _, id := range removed {
+		removedSet[id] = struct{}{}
+	}
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE series_providers IN SHARE MODE`); err != nil {
+		return nil, 0, 0, err
+	}
+	rows, err := tx.SeriesProvider.Query().All(ctx)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	ids := map[int64]struct{}{}
+	series := map[string]struct{}{}
+	providers := 0
+	for _, row := range rows {
+		id, live := providerid.SourceID(row.Provider)
+		if !live {
+			continue
+		}
+		if _, retiring := removedSet[id]; !retiring {
+			continue
+		}
+		ids[id] = struct{}{}
+		providers++
+		series[row.SeriesID.String()] = struct{}{}
+	}
+	protected := make([]int64, 0, len(ids))
+	for id := range ids {
+		protected = append(protected, id)
+	}
+	sort.Slice(protected, func(i, j int) bool { return protected[i] < protected[j] })
+	return protected, providers, len(series), nil
 }
 
 // Uninstall handles DELETE /api/suwayomi/extensions/:pkgName. It skips the

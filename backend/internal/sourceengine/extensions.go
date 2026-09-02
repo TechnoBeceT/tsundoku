@@ -47,6 +47,23 @@ func (c *httpClient) UpdateExtension(ctx context.Context, pkgName string) ([]Ext
 	return post[[]Extension](ctx, c, extensionPath(pkgName)+"/update", nil)
 }
 
+func (c *httpClient) PrepareExtensionUpdate(ctx context.Context, pkgName string) (PreparedExtensionUpdate, error) {
+	return post[PreparedExtensionUpdate](ctx, c, extensionPath(pkgName)+"/prepare-update", nil)
+}
+
+func (c *httpClient) ActivatePreparedExtensionUpdate(ctx context.Context, request ActivatePreparedExtensionUpdate) ([]Extension, error) {
+	return post[[]Extension](ctx, c, extensionPath(request.PkgName)+"/activate-prepared-update", request)
+}
+
+func (c *httpClient) DiscardPreparedExtensionUpdate(ctx context.Context, pkgName, token string) error {
+	_, err := doJSON[struct {
+		OK bool `json:"ok"`
+	}](ctx, c, http.MethodDelete, extensionPath(pkgName)+"/prepared-update", struct {
+		Token string `json:"token"`
+	}{Token: token})
+	return err
+}
+
 // UninstallExtension calls DELETE /extensions/{pkgName} to remove an
 // installed extension and returns the refreshed extension list.
 func (c *httpClient) UninstallExtension(ctx context.Context, pkgName string) ([]Extension, error) {

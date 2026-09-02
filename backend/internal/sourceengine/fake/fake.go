@@ -63,6 +63,82 @@ type Client struct {
 	updateExtensions []sourceengine.Extension
 }
 
+func (c *Client) PrepareExtensionUpdate(_ context.Context, pkgName string) (sourceengine.PreparedExtensionUpdate, error) {
+	c.record("PrepareExtensionUpdate")
+	if err := c.errFor("PrepareExtensionUpdate"); err != nil {
+		return sourceengine.PreparedExtensionUpdate{}, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var before, after sourceengine.Extension
+	for _, e := range c.extensions {
+		if e.PkgName == pkgName {
+			before = e
+		}
+	}
+	for _, e := range c.updateExtensions {
+		if e.PkgName == pkgName {
+			after = e
+		}
+	}
+	installed := sourceIDsOf(before.Sources)
+	candidate := sourceIDsOf(after.Sources)
+	if after.PkgName == "" {
+		after = before
+		candidate = installed
+	}
+	set := map[int64]bool{}
+	for _, id := range candidate {
+		set[id] = true
+	}
+	removed := []int64{}
+	for _, id := range installed {
+		if !set[id] {
+			removed = append(removed, id)
+		}
+	}
+	return sourceengine.PreparedExtensionUpdate{Token: "fake-token", PkgName: pkgName, InstalledVersionCode: before.VersionCode, CandidateVersionCode: after.VersionCode, InstalledSourceIDs: installed, CandidateSourceIDs: candidate, RemovedSourceIDs: removed, MutationSequence: 1}, nil
+}
+
+func (c *Client) ActivatePreparedExtensionUpdate(_ context.Context, req sourceengine.ActivatePreparedExtensionUpdate) ([]sourceengine.Extension, error) {
+	c.record("ActivatePreparedExtensionUpdate")
+	if err := c.errFor("ActivatePreparedExtensionUpdate"); err != nil {
+		return nil, err
+	}
+	removed := map[int64]bool{}
+	for _, id := range req.RemovedSourceIDs {
+		removed[id] = true
+	}
+	conflicts := []int64{}
+	for _, id := range req.ProtectedSourceIDs {
+		if removed[id] {
+			conflicts = append(conflicts, id)
+		}
+	}
+	if len(conflicts) > 0 {
+		return nil, &sourceengine.SourceRetirementConflictError{Msg: "protected", Code: "source_retirement_conflict", PkgName: req.PkgName, SourceIDs: conflicts}
+	}
+	c.mu.Lock()
+	if c.updateExtensions != nil {
+		c.extensions = append([]sourceengine.Extension(nil), c.updateExtensions...)
+	}
+	c.mu.Unlock()
+	return c.extensionsCopy(), nil
+}
+
+func (c *Client) DiscardPreparedExtensionUpdate(_ context.Context, _, _ string) error {
+	c.record("DiscardPreparedExtensionUpdate")
+	return c.errFor("DiscardPreparedExtensionUpdate")
+}
+
+func sourceIDsOf(sources []sourceengine.Source) []int64 {
+	out := make([]int64, len(sources))
+	for i, s := range sources {
+		out[i] = s.ID
+	}
+	return out
+}
+
 // Option configures a Client at construction time.
 type Option func(*Client)
 

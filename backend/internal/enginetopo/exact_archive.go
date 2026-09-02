@@ -73,6 +73,12 @@ func (a *ExtensionArchive) captureLocked(ctx context.Context, ext sourceengine.E
 // true only after UpdateExtension returned success; callers must preserve that
 // success even if the post-mutation archive reports degradation.
 func (a *ExtensionArchive) Update(ctx context.Context, pkgName string) (exts []sourceengine.Extension, mutated bool, err error) {
+	return a.UpdateWith(ctx, pkgName, func() ([]sourceengine.Extension, error) { return a.client.UpdateExtension(ctx, pkgName) })
+}
+
+// UpdateWith wraps an alternate update activation in the same exact pre/post
+// archive lifecycle as the legacy mutation.
+func (a *ExtensionArchive) UpdateWith(ctx context.Context, pkgName string, activate func() ([]sourceengine.Extension, error)) (exts []sourceengine.Extension, mutated bool, err error) {
 	if a == nil || a.client == nil || a.db == nil || a.cache == nil {
 		return nil, false, fmt.Errorf("enginetopo: exact extension archive unavailable")
 	}
@@ -89,7 +95,7 @@ func (a *ExtensionArchive) Update(ctx context.Context, pkgName string) (exts []s
 	if err := a.captureLocked(ctx, installed); err != nil {
 		return nil, false, err
 	}
-	exts, err = a.client.UpdateExtension(ctx, pkgName)
+	exts, err = activate()
 	if err != nil {
 		return nil, false, err
 	}

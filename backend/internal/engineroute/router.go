@@ -62,6 +62,7 @@ type Router struct {
 // drop-in for the raw client everywhere.
 var _ sourceengine.Client = (*Router)(nil)
 var _ sourceengine.InstalledAPKClient = (*Router)(nil)
+var _ sourceengine.ProtectedExtensionUpdater = (*Router)(nil)
 
 // NewRouter constructs a Router that delegates everything to defaultClient until
 // SetRoutes installs per-source overrides.
@@ -245,6 +246,30 @@ func (r *Router) RefreshExtensions(ctx context.Context) ([]sourceengine.Extensio
 // UpdateExtension updates on the default instance.
 func (r *Router) UpdateExtension(ctx context.Context, pkgName string) ([]sourceengine.Extension, error) {
 	return r.defaultClient.UpdateExtension(ctx, pkgName)
+}
+
+func (r *Router) PrepareExtensionUpdate(ctx context.Context, pkgName string) (sourceengine.PreparedExtensionUpdate, error) {
+	u, err := sourceengine.ProtectedUpdaterFor(r.defaultClient)
+	if err != nil {
+		return sourceengine.PreparedExtensionUpdate{}, err
+	}
+	return u.PrepareExtensionUpdate(ctx, pkgName)
+}
+
+func (r *Router) ActivatePreparedExtensionUpdate(ctx context.Context, request sourceengine.ActivatePreparedExtensionUpdate) ([]sourceengine.Extension, error) {
+	u, err := sourceengine.ProtectedUpdaterFor(r.defaultClient)
+	if err != nil {
+		return nil, err
+	}
+	return u.ActivatePreparedExtensionUpdate(ctx, request)
+}
+
+func (r *Router) DiscardPreparedExtensionUpdate(ctx context.Context, pkgName, token string) error {
+	u, err := sourceengine.ProtectedUpdaterFor(r.defaultClient)
+	if err != nil {
+		return err
+	}
+	return u.DiscardPreparedExtensionUpdate(ctx, pkgName, token)
 }
 
 // UninstallExtension uninstalls on the default instance.

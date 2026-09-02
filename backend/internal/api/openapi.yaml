@@ -130,6 +130,29 @@ components:
           description: Human-readable error description.
           example: owner already exists
 
+    SourceRetirementConflict:
+      type: object
+      required: [message, code, pkgName, sourceIds, affectedProviderCount, affectedSeriesCount]
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+          const: source_retirement_conflict
+        pkgName:
+          type: string
+        sourceIds:
+          type: array
+          items:
+            type: string
+          description: Retired 64-bit source IDs encoded as decimal strings.
+        affectedProviderCount:
+          type: integer
+          minimum: 1
+        affectedSeriesCount:
+          type: integer
+          minimum: 1
+
     ChapterCounts:
       type: object
       required:
@@ -10061,9 +10084,10 @@ paths:
       operationId: updateExtension
       summary: Update an extension
       description: |
-        Updates the installed extension identified by pkgName, then RE-READS and
-        returns the full extension list (§16). A blank pkgName is a 400; an
-        upstream Suwayomi failure is a 502.
+        Archives the exact installed generation, prepares and validates the
+        candidate, then activates it only when no persisted live provider uses
+        a source identity the candidate removes. Returns 409 without mutation
+        when library references protect a retired source ID.
       tags:
         - suwayomi
       security:
@@ -10096,6 +10120,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Candidate removes source identities used by the library.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRetirementConflict"
         "502":
           description: Suwayomi was unreachable or returned a GraphQL error.
           content:

@@ -37,14 +37,33 @@ type durableEnv struct {
 	token string
 }
 
+type blockingProtectedClient struct {
+	*sourceenginefake.Client
+	activationEntered chan struct{}
+	releaseActivation chan struct{}
+}
+
+func (c *blockingProtectedClient) ActivatePreparedExtensionUpdate(ctx context.Context, req sourceengine.ActivatePreparedExtensionUpdate) ([]sourceengine.Extension, error) {
+	close(c.activationEntered)
+	select {
+	case <-c.releaseActivation:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return c.Client.ActivatePreparedExtensionUpdate(ctx, req)
+}
+
 // newDurableEnv builds a durableEnv over fc with a real testdb + a temp-dir apk
 // cache and the given httpGet, registering the mutating extension routes.
-func newDurableEnv(t *testing.T, fc *sourceenginefake.Client, httpGet func(string) (*http.Response, error)) *durableEnv {
+func newDurableEnv(t *testing.T, fc *sourceenginefake.Client, httpGet func(string) (*http.Response, error), exact bool) *durableEnv {
 	t.Helper()
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
 	authSvc := auth.NewService(testSecret)
 	h := handler.NewHandler(fc, db, cache, httpGet, nil, nil, nil)
+	if exact {
+		h.WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	}
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -151,6 +170,121 @@ func TestUpdate_ArchiveFailurePreventsEngineMutation(t *testing.T) {
 	}
 }
 
+func TestUpdate_MissingProtectedCapabilityFailsClosed(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 1, IsInstalled: true}
+	base := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{ext}))
+	narrow := struct{ sourceengine.Client }{Client: base}
+	h := handler.NewHandler(narrow, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(narrow, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if base.CallCount("UpdateExtension") != 0 || base.CallCount("PrepareExtensionUpdate") != 0 {
+		t.Fatal("missing capability must not mutate or prepare")
+	}
+}
+
+func TestUpdate_SourceRetirementConflictIsStableAndCountsOnlyLiveReferences(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	before := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", IsInstalled: true, Sources: []sourceengine.Source{{ID: 11}, {ID: 22}}}
+	after := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 58, VersionName: "1.58", IsInstalled: true, Sources: []sourceengine.Source{{ID: 22}}}
+	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{before}), sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{after}), sourceenginefake.WithInstalledAPK(before.PkgName, 57, before.VersionName, []byte("EXACT-57")))
+	seriesA := db.Series.Create().SetTitle("A").SetSlug("retire-a").SaveX(ctx)
+	seriesB := db.Series.Create().SetTitle("B").SetSlug("retire-b").SaveX(ctx)
+	db.SeriesProvider.Create().SetSeries(seriesA).SetProvider("11").SaveX(ctx)
+	db.SeriesProvider.Create().SetSeries(seriesA).SetProvider(" 11 ").SaveX(ctx)
+	db.SeriesProvider.Create().SetSeries(seriesB).SetProvider("Disk Source").SaveX(ctx)
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Code, PkgName         string
+		SourceIDs             []string `json:"sourceIds"`
+		AffectedProviderCount int      `json:"affectedProviderCount"`
+		AffectedSeriesCount   int      `json:"affectedSeriesCount"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != "source_retirement_conflict" || body.PkgName != before.PkgName || len(body.SourceIDs) != 1 || body.SourceIDs[0] != "11" || body.AffectedProviderCount != 2 || body.AffectedSeriesCount != 1 {
+		t.Fatalf("body=%+v", body)
+	}
+	if fc.CallCount("ActivatePreparedExtensionUpdate") != 1 || fc.CallCount("DiscardPreparedExtensionUpdate") != 1 {
+		t.Fatalf("activate=%d discard=%d", fc.CallCount("ActivatePreparedExtensionUpdate"), fc.CallCount("DiscardPreparedExtensionUpdate"))
+	}
+}
+
+func TestUpdate_ProviderMutationCannotEnterEnumerationToActivationWindow(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	before := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", IsInstalled: true, Sources: []sourceengine.Source{{ID: 11}}}
+	after := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 58, VersionName: "1.58", IsInstalled: true, Sources: []sourceengine.Source{{ID: 11}}}
+	base := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{before}), sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{after}), sourceenginefake.WithInstalledAPK(before.PkgName, 57, before.VersionName, []byte("EXACT-57")), sourceenginefake.WithInstalledAPK(after.PkgName, 58, after.VersionName, []byte("EXACT-58")))
+	client := &blockingProtectedClient{Client: base, activationEntered: make(chan struct{}), releaseActivation: make(chan struct{})}
+	target := db.Series.Create().SetTitle("Target").SetSlug("lock-target").SaveX(ctx)
+	h := handler.NewHandler(client, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(client, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	requestDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, r)
+		requestDone <- rec
+	}()
+	<-client.activationEntered
+	mutationDone := make(chan error, 1)
+	go func() {
+		_, err := db.SeriesProvider.Create().SetSeries(target).SetProvider("11").Save(ctx)
+		mutationDone <- err
+	}()
+	select {
+	case err := <-mutationDone:
+		t.Fatalf("provider mutation entered protected window: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(client.releaseActivation)
+	rec := <-requestDone
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case err := <-mutationDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider mutation remained blocked after commit")
+	}
+}
+
 func TestUpdate_ArchivesBeforeAndAfterSuccessfulMutation(t *testing.T) {
 	db := testdb.New(t)
 	cache := apkcache.New(t.TempDir())
@@ -181,8 +315,8 @@ func TestUpdate_ArchivesBeforeAndAfterSuccessfulMutation(t *testing.T) {
 	if got := fc.CallCount("InstalledAPK"); got != 2 {
 		t.Fatalf("InstalledAPK calls=%d, want 2", got)
 	}
-	if got := fc.CallCount("UpdateExtension"); got != 1 {
-		t.Fatalf("UpdateExtension calls=%d, want 1", got)
+	if got := fc.CallCount("ActivatePreparedExtensionUpdate"); got != 1 {
+		t.Fatalf("ActivatePreparedExtensionUpdate calls=%d, want 1", got)
 	}
 	if !cache.Exists(ext.PkgName, 57) || !cache.Exists(ext.PkgName, 58) {
 		t.Fatal("old and new exact generations must both be cached")
@@ -215,7 +349,7 @@ func TestUpdate_PostCaptureFailurePreservesSuccessfulResponse(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if fc.CallCount("UpdateExtension") != 1 {
+	if fc.CallCount("ActivatePreparedExtensionUpdate") != 1 {
 		t.Fatal("successful mutation was not retained")
 	}
 }
@@ -242,7 +376,7 @@ func TestUpdate_MissingPostMutationMetadataPreservesSuccessfulResponse(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if fc.CallCount("UpdateExtension") != 1 {
+	if fc.CallCount("ActivatePreparedExtensionUpdate") != 1 {
 		t.Fatal("successful mutation was not retained")
 	}
 }
@@ -289,21 +423,22 @@ const (
 func newWrappedIndexUpdateEnv(t *testing.T) *durableEnv {
 	t.Helper()
 	repoURL := wrappedIndexRepo
-	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{{
+	ext := sourceengine.Extension{
 		PkgName:     wrappedIndexPkg,
 		VersionName: "1.0.2",
 		VersionCode: wrappedIndexNewVersion,
 		RepoURL:     &repoURL,
 		IsInstalled: true,
 		Sources:     []sourceengine.Source{{ID: 5}},
-	}}))
+	}
+	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{ext}), sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{ext}), sourceenginefake.WithInstalledAPK(wrappedIndexPkg, wrappedIndexNewVersion, "1.0.2", []byte("APK-V2")))
 	routes := map[string]string{
 		wrappedIndexRepo: `{"extensionList":{"extensions":[{"packageName":"pkg.test.one","versionName":"1.0.2","versionCode":"2","resources":{"apkUrl":"https://cdn.test/pkg.test.one-v2.apk"}}]}}`,
 		// This valid legacy index intentionally lacks the target package.
 		"https://repo.test/index.min.json": `[{"pkg":"pkg.someone.else","apk":"else.apk","code":9}]`,
 		wrappedIndexNewAPKURL:              "APK-V2",
 	}
-	return newDurableEnv(t, fc, serveRoutes(routes))
+	return newDurableEnv(t, fc, serveRoutes(routes), true)
 }
 
 func seedPriorExtensionCapture(t *testing.T, ctx context.Context, env *durableEnv) {
@@ -380,7 +515,7 @@ func TestInstall_WritesThroughToDurableStore(t *testing.T) {
 		"https://repo.test/index.min.json": `[{"pkg":"pkg.test.one","apk":"one.apk","code":9}]`,
 		"https://repo.test/apk/one.apk":    "APK-BYTES",
 	}
-	env := newDurableEnv(t, installableFake(), serveRoutes(routes))
+	env := newDurableEnv(t, installableFake(), serveRoutes(routes), false)
 
 	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install")
 	if rec.Code != http.StatusOK {
@@ -407,7 +542,7 @@ func TestInstall_WritesThroughToDurableStore(t *testing.T) {
 func TestInstall_WriteThroughFailureStillReturns200(t *testing.T) {
 	ctx := context.Background()
 	failingGet := func(string) (*http.Response, error) { return nil, errors.New("repo unreachable") }
-	env := newDurableEnv(t, installableFake(), failingGet)
+	env := newDurableEnv(t, installableFake(), failingGet, false)
 
 	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install")
 	if rec.Code != http.StatusOK {
@@ -428,7 +563,7 @@ func TestUninstall_RemovesFromDurableStore(t *testing.T) {
 		"https://repo.test/index.min.json": `[{"pkg":"pkg.test.one","apk":"one.apk","code":9}]`,
 		"https://repo.test/apk/one.apk":    "APK-BYTES",
 	}
-	env := newDurableEnv(t, installableFake(), serveRoutes(routes))
+	env := newDurableEnv(t, installableFake(), serveRoutes(routes), false)
 
 	// Seed the durable store via a real install.
 	if rec := env.do(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install"); rec.Code != http.StatusOK {

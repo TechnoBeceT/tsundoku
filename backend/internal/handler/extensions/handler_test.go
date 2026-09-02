@@ -363,7 +363,6 @@ func TestActions_RoundTrip(t *testing.T) {
 		wantInstalled bool
 	}{
 		{"install", http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install", "InstallExtension", true},
-		{"update", http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", "UpdateExtension", false},
 		{"uninstall", http.MethodDelete, "/api/suwayomi/extensions/pkg.test.one", "UninstallExtension", false},
 	}
 	for _, tc := range cases {

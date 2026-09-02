@@ -213,6 +213,41 @@ type InstalledAPKClient interface {
 	InstalledAPK(ctx context.Context, pkgName string) (InstalledAPK, error)
 }
 
+// PreparedExtensionUpdate is the immutable witness returned for a prospective
+// extension generation. Every field is echoed unchanged at activation.
+type PreparedExtensionUpdate struct {
+	Token                string  `json:"token"`
+	PkgName              string  `json:"pkgName"`
+	InstalledVersionCode int64   `json:"installedVersionCode"`
+	CandidateVersionCode int64   `json:"candidateVersionCode"`
+	InstalledSourceIDs   []int64 `json:"installedSourceIds"`
+	CandidateSourceIDs   []int64 `json:"candidateSourceIds"`
+	RemovedSourceIDs     []int64 `json:"removedSourceIds"`
+	MutationSequence     int64   `json:"mutationSequence"`
+}
+
+// ActivatePreparedExtensionUpdate echoes a witness and adds the live source
+// identities Tsundoku currently protects.
+type ActivatePreparedExtensionUpdate struct {
+	PreparedExtensionUpdate
+	ProtectedSourceIDs []int64 `json:"protectedSourceIds"`
+}
+
+// ProtectedExtensionUpdater is the additive, fail-closed extension update capability.
+type ProtectedExtensionUpdater interface {
+	PrepareExtensionUpdate(context.Context, string) (PreparedExtensionUpdate, error)
+	ActivatePreparedExtensionUpdate(context.Context, ActivatePreparedExtensionUpdate) ([]Extension, error)
+	DiscardPreparedExtensionUpdate(context.Context, string, string) error
+}
+
+func ProtectedUpdaterFor(client Client) (ProtectedExtensionUpdater, error) {
+	updater, ok := client.(ProtectedExtensionUpdater)
+	if !ok {
+		return nil, fmt.Errorf("sourceengine: protected extension update unsupported")
+	}
+	return updater, nil
+}
+
 // InstalledAPKFor requests an exact installed generation when client supports
 // the additive export contract.
 func InstalledAPKFor(ctx context.Context, client Client, pkgName string) (InstalledAPK, error) {
@@ -288,8 +323,11 @@ func (c *httpClient) Health(ctx context.Context) (Health, error) {
 // responses' {"message":"..."} body. It is decoded once, inside newStatusError,
 // and never exposed directly to callers.
 type errorResponse struct {
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error     string  `json:"error"`
+	Message   string  `json:"message"`
+	Code      string  `json:"code"`
+	PkgName   string  `json:"pkgName"`
+	SourceIDs []int64 `json:"sourceIds"`
 }
 
 // BadRequestError reports a 400 response from the engine host: a malformed
@@ -317,6 +355,17 @@ type UpstreamError struct {
 	// Msg is the engine host's own error message.
 	Msg string
 }
+
+// SourceRetirementConflictError is the structured 409 returned when activation
+// would remove source identities protected by library references.
+type SourceRetirementConflictError struct {
+	Msg       string
+	Code      string
+	PkgName   string
+	SourceIDs []int64
+}
+
+func (e *SourceRetirementConflictError) Error() string { return "sourceengine: " + e.Msg }
 
 // Error implements the error interface for UpstreamError.
 func (e *UpstreamError) Error() string {
@@ -348,6 +397,9 @@ func newStatusError(resp *http.Response) error {
 	}
 	if resp.StatusCode == http.StatusBadRequest {
 		return &BadRequestError{Msg: msg}
+	}
+	if resp.StatusCode == http.StatusConflict && parsed.Code == "source_retirement_conflict" {
+		return &SourceRetirementConflictError{Msg: msg, Code: parsed.Code, PkgName: parsed.PkgName, SourceIDs: parsed.SourceIDs}
 	}
 	return &UpstreamError{Status: resp.StatusCode, Msg: msg}
 }
@@ -395,8 +447,18 @@ func isControlPath(path string) bool {
 	if path == "/repos/trust" {
 		return true
 	}
-	const prefix, suffix = "/extensions/", "/installed-apk"
-	if !strings.HasPrefix(path, prefix) || !strings.HasSuffix(path, suffix) {
+	const prefix = "/extensions/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	suffix := ""
+	for _, candidate := range []string{"/installed-apk", "/prepare-update", "/activate-prepared-update", "/prepared-update"} {
+		if strings.HasSuffix(path, candidate) {
+			suffix = candidate
+			break
+		}
+	}
+	if suffix == "" {
 		return false
 	}
 	middle := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)

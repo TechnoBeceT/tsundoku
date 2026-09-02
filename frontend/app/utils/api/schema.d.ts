@@ -2540,9 +2540,10 @@ export interface paths {
         put?: never;
         /**
          * Update an extension
-         * @description Updates the installed extension identified by pkgName, then RE-READS and
-         *     returns the full extension list (§16). A blank pkgName is a 400; an
-         *     upstream Suwayomi failure is a 502.
+         * @description Archives the exact installed generation, prepares and validates the
+         *     candidate, then activates it only when no persisted live provider uses
+         *     a source identity the candidate removes. Returns 409 without mutation
+         *     when library references protect a retired source ID.
          */
         post: operations["updateExtension"];
         delete?: never;
@@ -3046,6 +3047,16 @@ export interface components {
              * @example owner already exists
              */
             message: string;
+        };
+        SourceRetirementConflict: {
+            message: string;
+            /** @constant */
+            code: "source_retirement_conflict";
+            pkgName: string;
+            /** @description Retired 64-bit source IDs encoded as decimal strings. */
+            sourceIds: string[];
+            affectedProviderCount: number;
+            affectedSeriesCount: number;
         };
         ChapterCounts: {
             /** @description Total number of chapters in the series. */
@@ -10892,6 +10903,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Candidate removes source identities used by the library. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRetirementConflict"];
                 };
             };
             /** @description Suwayomi was unreachable or returned a GraphQL error. */

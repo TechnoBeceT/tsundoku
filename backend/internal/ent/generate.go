@@ -7,4 +7,4 @@
 // change right up until someone touches an unrelated schema.
 package ent
 
-//go:generate go run -mod=mod entgo.io/ent/cmd/ent generate --feature sql/upsert ./schema
+//go:generate go run -mod=mod entgo.io/ent/cmd/ent generate --feature sql/upsert,sql/execquery ./schema
