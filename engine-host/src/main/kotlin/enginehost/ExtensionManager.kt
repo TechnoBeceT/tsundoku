@@ -46,6 +46,7 @@ data class InstalledExtension(
     val sourceIds: List<Long>,
     val sources: List<ExtensionSourceDto>,
     val signerFingerprints: Set<String> = emptySet(),
+    val signingCertificateLineage: List<String> = emptyList(),
 )
 
 /** Repository identity that a prepared APK must match exactly before it can replace active state. */
@@ -419,9 +420,11 @@ class ExtensionManager internal constructor(
             }
         }
         old?.let { installedRecord ->
-            val installedSigners =
-                loader.verifyApkSigners(File(extensionsRoot, installedRecord.apkFileName).toPath())
-            require(prepared.signerFingerprints == installedSigners) {
+            val installedSignature =
+                loader.verifyApkSignature(File(extensionsRoot, installedRecord.apkFileName).toPath())
+            val candidateSignature =
+                VerifiedApkSignature(prepared.signerFingerprints, prepared.signingCertificateLineage)
+            require(candidateSignature.continuesFrom(installedSignature)) {
                 "prepared APK signer does not preserve installed signer continuity"
             }
         }
@@ -468,6 +471,7 @@ class ExtensionManager internal constructor(
                     sourceIds = ext.sources.map { it.id },
                     sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
                     signerFingerprints = prepared.signerFingerprints,
+                    signingCertificateLineage = prepared.signingCertificateLineage,
                 )
             val nextSources = loader.replacementSources(previous.sources, old?.sourceIds.orEmpty(), ext.sources)
             val nextInstalled = previous.installed.toMutableMap().apply { put(record.pkgName, record) }

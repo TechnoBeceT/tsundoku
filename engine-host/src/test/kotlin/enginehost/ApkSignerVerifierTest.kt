@@ -1,6 +1,8 @@
 package enginehost
 
 import com.android.apksig.ApkSigner
+import com.android.apksig.KeyConfig
+import com.android.apksig.SigningCertificateLineage
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.KeyStore
@@ -25,6 +27,19 @@ class ApkSignerVerifierTest {
         val fingerprints = ApkSignerVerifier.verify(fixture.signedApk)
 
         assertEquals(setOf(fixture.fingerprint), fingerprints)
+    }
+
+    @Test
+    fun `proof-of-rotation exposes the current signer and ordered verified lineage`() {
+        val fixture = SigningRotationApkFixture()
+
+        val signature = ApkSignerVerifier.verifyIdentity(fixture.descendantApk.signedApk)
+
+        assertEquals(setOf(fixture.descendantFingerprint), signature.currentSignerFingerprints)
+        assertEquals(
+            listOf(fixture.originalFingerprint, fixture.descendantFingerprint),
+            signature.signingCertificateLineage,
+        )
     }
 
     @Test
@@ -60,11 +75,15 @@ class ApkSignerVerifierTest {
     }
 }
 
-internal class SignedApkFixture {
+internal class SignedApkFixture(
+    private val signingKey: EphemeralApkSigningKey = EphemeralApkSigningKey(),
+    private val signingLineage: SigningCertificateLineage? = null,
+    private val compatibleSigningKeys: List<EphemeralApkSigningKey> = listOf(signingKey),
+) {
     private val root = Files.createTempDirectory("apk-signer-verifier")
     val unsignedApk: Path = root.resolve("unsigned.apk")
     val signedApk: Path = root.resolve("signed.apk")
-    val fingerprint: String
+    val fingerprint: String = signingKey.fingerprint
 
     init {
         ZipOutputStream(Files.newOutputStream(unsignedApk)).use { apk ->
@@ -76,8 +95,58 @@ internal class SignedApkFixture {
             apk.closeEntry()
         }
 
+        @Suppress("DEPRECATION")
+        val signerConfigs =
+            compatibleSigningKeys.mapIndexed { index, key ->
+                ApkSigner.SignerConfig
+                    .Builder("test-$index", key.privateKey, listOf(key.certificate))
+                    .build()
+            }
+        val signer =
+            ApkSigner.Builder(signerConfigs)
+            .setInputApk(unsignedApk.toFile())
+            .setOutputApk(signedApk.toFile())
+            .setMinSdkVersion(24)
+            .setV1SigningEnabled(false)
+            .setV2SigningEnabled(true)
+            .setV3SigningEnabled(true)
+            .setV4SigningEnabled(false)
+        signingLineage?.let(signer::setSigningCertificateLineage)
+        signer.build().sign()
+    }
+
+    companion object {
+        // Minimal aapt2-compiled manifest for package test.extension, minSdk 24.
+        private const val BINARY_MANIFEST =
+            "AwAIAJADAAABABwAGAIAAA0AAAAAAAAAAAAAAFAAAAAAAAAAAAAAAB4AAABEAAAAegAAAIIAAACUAAAArgAAAAYBAAAaAQAALAEAAGABAACUAQAAtAEAAA0AbQBpAG4AUwBkAGsAVgBlAHIAcwBpAG8AbgAAABEAYwBvAG0AcABpAGwAZQBTAGQAawBWAGUAcgBzAGkAbwBuAAAAGQBjAG8AbQBwAGkAbABlAFMAZABrAFYAZQByAHMAaQBvAG4AQwBvAGQAZQBuAGEAbQBlAAAAAgAxADEAAAAHAGEAbgBkAHIAbwBpAGQAAAALAGEAcABwAGwAaQBjAGEAdABpAG8AbgAAACoAaAB0AHQAcAA6AC8ALwBzAGMAaABlAG0AYQBzAC4AYQBuAGQAcgBvAGkAZAAuAGMAbwBtAC8AYQBwAGsALwByAGUAcwAvAGEAbgBkAHIAbwBpAGQAAAAIAG0AYQBuAGkAZgBlAHMAdAAAAAcAcABhAGMAawBhAGcAZQAAABgAcABsAGEAdABmAG8AcgBtAEIAdQBpAGwAZABWAGUAcgBzAGkAbwBuAEMAbwBkAGUAAAAYAHAAbABhAHQAZgBvAHIAbQBCAHUAaQBsAGQAVgBlAHIAcwBpAG8AbgBOAGEAbQBlAAAADgB0AGUAcwB0AC4AZQB4AHQAZQBuAHMAaQBvAG4AAAAIAHUAcwBlAHMALQBzAGQAawAAAIABCAAUAAAADAIBAXIFAQFzBQEBAAEQABgAAAABAAAA/////wQAAAAGAAAAAgEQAIgAAAABAAAA//////////8HAAAAFAAUAAUAAAAAAAAABgAAAAEAAAD/////CAAAEB4AAAAGAAAAAgAAAAMAAAAIAAADAwAAAP////8IAAAACwAAAAgAAAMLAAAA/////wkAAAD/////CAAAEB4AAAD/////CgAAAP////8IAAAQCwAAAAIBEAA4AAAAAgAAAP//////////DAAAABQAFAABAAAAAAAAAAYAAAAAAAAA/////wgAABAYAAAAAwEQABgAAAACAAAA//////////8MAAAAAgEQACQAAAADAAAA//////////8FAAAAFAAUAAAAAAAAAAAAAwEQABgAAAADAAAA//////////8FAAAAAwEQABgAAAABAAAA//////////8HAAAAAQEQABgAAAABAAAA/////wQAAAAGAAAA"
+    }
+}
+
+internal class SigningRotationApkFixture {
+    private val originalKey = EphemeralApkSigningKey("Original")
+    private val descendantKey = EphemeralApkSigningKey("Descendant")
+    private val lineage =
+        SigningCertificateLineage
+            .Builder(originalKey.lineageConfig(), descendantKey.lineageConfig())
+            .setMinSdkVersion(28)
+            .build()
+
+    val originalApk = SignedApkFixture(originalKey)
+    val descendantApk = SignedApkFixture(descendantKey, lineage, listOf(originalKey, descendantKey))
+    val unrelatedApk = SignedApkFixture(descendantKey)
+    val originalFingerprint: String = originalKey.fingerprint
+    val descendantFingerprint: String = descendantKey.fingerprint
+}
+
+internal class EphemeralApkSigningKey(label: String = "Test") {
+    private val root = Files.createTempDirectory("apk-signing-key")
+    private val password = "test-password".toCharArray()
+    val privateKey: PrivateKey
+    val certificate: X509Certificate
+    val fingerprint: String
+
+    init {
         val keyStorePath = root.resolve("signing.p12")
-        val password = "test-password".toCharArray()
         val keytool = Path.of(System.getProperty("java.home"), "bin", "keytool").toString()
         val process =
             ProcessBuilder(
@@ -100,7 +169,7 @@ internal class SignedApkFixture {
                 "-validity",
                 "1",
                 "-dname",
-                "CN=Ephemeral Test Signer",
+                "CN=Ephemeral $label Signer",
                 "-noprompt",
             ).redirectErrorStream(true)
                 .start()
@@ -109,29 +178,13 @@ internal class SignedApkFixture {
 
         val keyStore = KeyStore.getInstance("PKCS12")
         Files.newInputStream(keyStorePath).use { keyStore.load(it, password) }
-        val privateKey = keyStore.getKey("test", password) as PrivateKey
-        val certificate = keyStore.getCertificate("test") as X509Certificate
+        privateKey = keyStore.getKey("test", password) as PrivateKey
+        certificate = keyStore.getCertificate("test") as X509Certificate
         fingerprint = MessageDigest.getInstance("SHA-256").digest(certificate.encoded).toHex()
-
-        @Suppress("DEPRECATION")
-        val signerConfig = ApkSigner.SignerConfig.Builder("test", privateKey, listOf(certificate)).build()
-        ApkSigner.Builder(listOf(signerConfig))
-            .setInputApk(unsignedApk.toFile())
-            .setOutputApk(signedApk.toFile())
-            .setMinSdkVersion(24)
-            .setV1SigningEnabled(false)
-            .setV2SigningEnabled(true)
-            .setV3SigningEnabled(false)
-            .setV4SigningEnabled(false)
-            .build()
-            .sign()
     }
+
+    fun lineageConfig(): SigningCertificateLineage.SignerConfig =
+        SigningCertificateLineage.SignerConfig.Builder(KeyConfig.Jca(privateKey), certificate).build()
 
     private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
-
-    companion object {
-        // Minimal aapt2-compiled manifest for package test.extension, minSdk 24.
-        private const val BINARY_MANIFEST =
-            "AwAIAJADAAABABwAGAIAAA0AAAAAAAAAAAAAAFAAAAAAAAAAAAAAAB4AAABEAAAAegAAAIIAAACUAAAArgAAAAYBAAAaAQAALAEAAGABAACUAQAAtAEAAA0AbQBpAG4AUwBkAGsAVgBlAHIAcwBpAG8AbgAAABEAYwBvAG0AcABpAGwAZQBTAGQAawBWAGUAcgBzAGkAbwBuAAAAGQBjAG8AbQBwAGkAbABlAFMAZABrAFYAZQByAHMAaQBvAG4AQwBvAGQAZQBuAGEAbQBlAAAAAgAxADEAAAAHAGEAbgBkAHIAbwBpAGQAAAALAGEAcABwAGwAaQBjAGEAdABpAG8AbgAAACoAaAB0AHQAcAA6AC8ALwBzAGMAaABlAG0AYQBzAC4AYQBuAGQAcgBvAGkAZAAuAGMAbwBtAC8AYQBwAGsALwByAGUAcwAvAGEAbgBkAHIAbwBpAGQAAAAIAG0AYQBuAGkAZgBlAHMAdAAAAAcAcABhAGMAawBhAGcAZQAAABgAcABsAGEAdABmAG8AcgBtAEIAdQBpAGwAZABWAGUAcgBzAGkAbwBuAEMAbwBkAGUAAAAYAHAAbABhAHQAZgBvAHIAbQBCAHUAaQBsAGQAVgBlAHIAcwBpAG8AbgBOAGEAbQBlAAAADgB0AGUAcwB0AC4AZQB4AHQAZQBuAHMAaQBvAG4AAAAIAHUAcwBlAHMALQBzAGQAawAAAIABCAAUAAAADAIBAXIFAQFzBQEBAAEQABgAAAABAAAA/////wQAAAAGAAAAAgEQAIgAAAABAAAA//////////8HAAAAFAAUAAUAAAAAAAAABgAAAAEAAAD/////CAAAEB4AAAAGAAAAAgAAAAMAAAAIAAADAwAAAP////8IAAAACwAAAAgAAAMLAAAA/////wkAAAD/////CAAAEB4AAAD/////CgAAAP////8IAAAQCwAAAAIBEAA4AAAAAgAAAP//////////DAAAABQAFAABAAAAAAAAAAYAAAAAAAAA/////wgAABAYAAAAAwEQABgAAAACAAAA//////////8MAAAAAgEQACQAAAADAAAA//////////8FAAAAFAAUAAAAAAAAAAAAAwEQABgAAAADAAAA//////////8FAAAAAwEQABgAAAABAAAA//////////8HAAAAAQEQABgAAAABAAAA/////wQAAAAGAAAA"
-    }
 }

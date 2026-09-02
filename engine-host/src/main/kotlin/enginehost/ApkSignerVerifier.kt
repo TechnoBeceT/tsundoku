@@ -7,11 +7,37 @@ import java.util.Locale
 
 internal fun interface ApkSignatureVerifier {
     fun verify(apk: Path): Set<String>
+
+    fun verifyIdentity(apk: Path): VerifiedApkSignature = VerifiedApkSignature(verify(apk), emptyList())
 }
 
-/** Cryptographically verify an APK and return its signer certificate SHA-256 fingerprints. */
+/** Current signer identity plus an oldest-to-newest cryptographically verified proof-of-rotation lineage. */
+internal data class VerifiedApkSignature(
+    val currentSignerFingerprints: Set<String>,
+    val signingCertificateLineage: List<String>,
+) {
+    /**
+     * Preserve installed continuity without letting lineage grant repository trust. Exact current
+     * signer sets remain compatible; a changed signer is accepted only for a single-signer APK when
+     * the installed current signer is an ancestor of the candidate current signer in the verified
+     * lineage. The independent repository pin still authorizes the candidate current signer.
+     */
+    fun continuesFrom(installed: VerifiedApkSignature): Boolean {
+        if (currentSignerFingerprints == installed.currentSignerFingerprints) return true
+        if (currentSignerFingerprints.size != 1 || installed.currentSignerFingerprints.size != 1) return false
+        val current = currentSignerFingerprints.single()
+        val ancestor = installed.currentSignerFingerprints.single()
+        val currentIndex = signingCertificateLineage.lastIndexOf(current)
+        val ancestorIndex = signingCertificateLineage.indexOf(ancestor)
+        return currentIndex == signingCertificateLineage.lastIndex && ancestorIndex in 0 until currentIndex
+    }
+}
+
+/** Cryptographically verify an APK and return its current signer plus verified signing lineage. */
 internal object ApkSignerVerifier : ApkSignatureVerifier {
-    override fun verify(apk: Path): Set<String> {
+    override fun verify(apk: Path): Set<String> = verifyIdentity(apk).currentSignerFingerprints
+
+    override fun verifyIdentity(apk: Path): VerifiedApkSignature {
         val result =
             try {
                 ApkVerifier.Builder(apk.toFile())
@@ -27,12 +53,18 @@ internal object ApkSignerVerifier : ApkSignatureVerifier {
         }
         val fingerprints =
             result.signerCertificates
-                .mapTo(linkedSetOf()) { certificate ->
-                    MessageDigest.getInstance("SHA-256").digest(certificate.encoded).toHex()
-                }
+                .mapTo(linkedSetOf()) { certificate -> certificate.fingerprint() }
         require(fingerprints.isNotEmpty()) { "APK signature verification returned no signer certificates for $apk" }
-        return fingerprints
+        val lineage =
+            result.signingCertificateLineage
+                ?.certificatesInLineage
+                ?.map { certificate -> certificate.fingerprint() }
+                .orEmpty()
+        return VerifiedApkSignature(fingerprints, lineage)
     }
+
+    private fun java.security.cert.Certificate.fingerprint(): String =
+        MessageDigest.getInstance("SHA-256").digest(encoded).toHex()
 
     private fun ByteArray.toHex(): String = joinToString("") { byte -> "%02x".format(byte) }
 

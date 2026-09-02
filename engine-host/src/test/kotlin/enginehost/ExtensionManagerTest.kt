@@ -94,6 +94,29 @@ class ExtensionManagerTest {
     }
 
     @Test
+    fun `repository update accepts a verified descendant signer after trust rotation`() {
+        val rotation = SigningRotationApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                oldApkBytes = rotation.originalApk.signedApk.readBytes(),
+                candidateApkBytes = rotation.descendantApk.signedApk.readBytes(),
+                repositorySigningKey = rotation.descendantFingerprint,
+                candidateSignerFingerprints = setOf(rotation.descendantFingerprint),
+                signatureVerifier = ApkSignerVerifier,
+                configuredSignerFingerprint = rotation.descendantFingerprint,
+                verifyCandidateSignature = true,
+            )
+
+        val updated = fixture.manager.update(TARGET_PACKAGE).single { it.pkgName == TARGET_PACKAGE }
+
+        assertEquals(2, updated.versionCode)
+        fixture.assertUnrelatedPreserved()
+    }
+
+    @Test
     fun `direct URL install rejects an invalid APK signature without mutation`() {
         val unsigned = SignedApkFixture()
         val fixture =
@@ -137,18 +160,18 @@ class ExtensionManagerTest {
 
     @Test
     fun `repository update rejects installed signer continuity mismatch without mutation`() {
-        val installedSigner = SignedApkFixture()
-        val candidateSigner = SignedApkFixture()
+        val rotation = SigningRotationApkFixture()
         val fixture =
             UpdateFixture(
                 candidatePackage = TARGET_PACKAGE,
                 candidateVersionCode = 2,
                 candidateJarSource = CandidateOwnedSource::class.java,
-                oldApkBytes = installedSigner.signedApk.readBytes(),
-                candidateApkBytes = candidateSigner.signedApk.readBytes(),
-                repositorySigningKey = candidateSigner.fingerprint,
-                candidateSignerFingerprints = setOf(candidateSigner.fingerprint),
+                oldApkBytes = rotation.originalApk.signedApk.readBytes(),
+                candidateApkBytes = rotation.unrelatedApk.signedApk.readBytes(),
+                repositorySigningKey = rotation.descendantFingerprint,
+                candidateSignerFingerprints = setOf(rotation.descendantFingerprint),
                 signatureVerifier = ApkSignerVerifier,
+                verifyCandidateSignature = true,
             )
 
         val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
@@ -540,6 +563,7 @@ class ExtensionManagerTest {
         candidateSignerFingerprints: Set<String> = setOf(TEST_SIGNER),
         private val signatureVerifier: ApkSignatureVerifier = ApkSignatureVerifier { setOf(TEST_SIGNER) },
         useRealPreparer: Boolean = false,
+        verifyCandidateSignature: Boolean = false,
         configuredSignerFingerprint: String? = repositorySigningKey,
         unrelatedPackage: String = UNRELATED_PACKAGE,
         unrelatedRecordSourceIds: List<Long> = listOf(UNRELATED_SOURCE_ID),
@@ -596,6 +620,12 @@ class ExtensionManagerTest {
                 ExtensionPreparer { apk ->
                     val jar = root.resolve(".prepared-candidate.jar")
                     writeClassJar(jar, candidateJarSource)
+                    val verifiedSignature =
+                        if (verifyCandidateSignature) {
+                            signatureVerifier.verifyIdentity(apk)
+                        } else {
+                            VerifiedApkSignature(candidateSignerFingerprints, emptyList())
+                        }
                     PreparedExtension(
                         pkgName = candidatePackage,
                         versionName = "1.2.$candidateVersionCode",
@@ -603,7 +633,8 @@ class ExtensionManagerTest {
                         mainClass = candidateJarSource.name,
                         apkFile = apk,
                         jarFile = jar,
-                        signerFingerprints = candidateSignerFingerprints,
+                        signerFingerprints = verifiedSignature.currentSignerFingerprints,
+                        signingCertificateLineage = verifiedSignature.signingCertificateLineage,
                     )
                 }
             manager =

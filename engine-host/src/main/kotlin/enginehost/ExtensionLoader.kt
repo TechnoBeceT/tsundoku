@@ -53,6 +53,7 @@ internal data class PreparedExtension(
     val apkFile: Path,
     val jarFile: Path,
     val signerFingerprints: Set<String>,
+    val signingCertificateLineage: List<String> = emptyList(),
 )
 
 internal fun interface ExtensionPreparer {
@@ -125,7 +126,7 @@ class ExtensionLoader internal constructor(
     internal fun prepareFromApk(apkPath: Path): PreparedExtension {
         val apkFile = apkPath.toFile()
         require(apkFile.exists()) { "APK not found: $apkPath" }
-        val signerFingerprints = signatureVerifier.verify(apkPath)
+        val verifiedSignature = signatureVerifier.verifyIdentity(apkPath)
         val fileNameWithoutType = apkFile.name.substringBefore(".apk")
         val jarFile = File(workDir, "$fileNameWithoutType.jar")
 
@@ -163,7 +164,8 @@ class ExtensionLoader internal constructor(
                 mainClass = className,
                 apkFile = apkFile.toPath(),
                 jarFile = jarFile.toPath(),
-                signerFingerprints = signerFingerprints,
+                signerFingerprints = verifiedSignature.currentSignerFingerprints,
+                signingCertificateLineage = verifiedSignature.signingCertificateLineage,
             )
         } catch (failure: Throwable) {
             jarFile.delete()
@@ -171,7 +173,7 @@ class ExtensionLoader internal constructor(
         }
     }
 
-    internal fun verifyApkSigners(apk: Path): Set<String> = signatureVerifier.verify(apk)
+    internal fun verifyApkSignature(apk: Path): VerifiedApkSignature = signatureVerifier.verifyIdentity(apk)
 
     /** Instantiate a prepared jar without changing the active registry. */
     internal fun instantiatePrepared(prepared: PreparedExtension): LoadedExtension {
