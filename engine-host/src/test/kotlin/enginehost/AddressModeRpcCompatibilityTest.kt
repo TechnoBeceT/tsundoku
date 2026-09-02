@@ -234,12 +234,7 @@ class AddressModeRpcCompatibilityTest {
     private fun injectSource(
         loader: ExtensionLoader,
         source: RpcAddressModeSource,
-    ) {
-        val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        val registry = field.get(loader) as MutableMap<Long, eu.kanade.tachiyomi.source.Source>
-        registry[source.id] = source
-    }
+    ) = loader.registerSources(listOf(source))
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }

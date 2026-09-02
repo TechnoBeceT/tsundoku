@@ -123,8 +123,9 @@ class ExtensionManager internal constructor(
             }
         }
 
-    /** pkgName -> installed record. */
-    private val installed = ConcurrentHashMap<String, InstalledExtension>()
+    /** The installed half of the same immutable generation source readers resolve against. */
+    private val installed: Map<String, InstalledExtension>
+        get() = loader.snapshotRegistry().installed
 
     @Volatile
     private var repos: List<String> = DEFAULT_REPOS
@@ -149,7 +150,8 @@ class ExtensionManager internal constructor(
 
     /** Re-instantiate every installed extension's sources from the volume APKs (called on boot). */
     fun reloadInstalled() = mutationLock.withLock {
-        installed.values.forEach { record ->
+        val installedSnapshot = installed
+        installedSnapshot.values.forEach { record ->
             val apk = File(extensionsRoot, record.apkFileName)
             if (!apk.exists()) {
                 logger.warn { "Installed APK missing on disk, skipping: ${record.apkFileName}" }
@@ -227,9 +229,10 @@ class ExtensionManager internal constructor(
     /** Merge the installed working-set with everything the repos advertise. */
     fun list(): List<ExtensionDto> {
         val available = availableByPkg()
-        val pkgs = (installed.keys + available.keys).toSortedSet()
+        val installedSnapshot = installed
+        val pkgs = (installedSnapshot.keys + available.keys).toSortedSet()
         return pkgs.map { pkg ->
-            val inst = installed[pkg]
+            val inst = installedSnapshot[pkg]
             val (repoUrl, avail) = available[pkg] ?: (null to null)
             val availCode = avail?.code
             val installedCode = inst?.versionCode
@@ -285,10 +288,15 @@ class ExtensionManager internal constructor(
 
     fun uninstall(pkgName: String): List<ExtensionDto> {
         mutationLock.withLock {
-            val record = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
-            uninstallRecord(record)
+            val previous = loader.snapshotRegistry()
+            val record = previous.installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
+            val nextInstalled = previous.installed - pkgName
+            val nextSources = previous.sources - record.sourceIds.toSet()
+            val next = loader.prepareRegistry(nextSources, nextInstalled)
+            persistManifest(next.installed.values)
+            loader.publishRegistry(next)
             mutationSequence++
-            persistManifest()
+            removeUninstalledFiles(record)
             logger.info { "Uninstalled $pkgName" }
         }
         return list()
@@ -322,9 +330,7 @@ class ExtensionManager internal constructor(
 
     // ---- internals ----
 
-    private fun uninstallRecord(record: InstalledExtension) {
-        loader.unload(record.sourceIds)
-        installed.remove(record.pkgName)
+    private fun removeUninstalledFiles(record: InstalledExtension) {
         // Remove the APK + its derived jar from the volume.
         File(extensionsRoot, record.apkFileName).delete()
         File(extensionsRoot, record.apkFileName.substringBefore(".apk") + ".jar").delete()
@@ -396,7 +402,8 @@ class ExtensionManager internal constructor(
         }
 
         val replacementPackage = expectedArtifact?.pkgName ?: prepared.pkgName
-        val old = installed[replacementPackage]
+        val previous = loader.snapshotRegistry()
+        val old = previous.installed[replacementPackage]
         if (expectedArtifact != null && old != null) {
             require(prepared.versionCode > old.versionCode) {
                 "prepared APK version ${prepared.versionCode} is not newer than installed version ${old.versionCode}"
@@ -424,16 +431,18 @@ class ExtensionManager internal constructor(
             "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
         }
         candidateSourceIds.forEach { sourceId ->
-            val owners = installed.values.filter { sourceId in it.sourceIds }.map { it.pkgName }.toSet()
+            val owners = previous.installed.values.filter { sourceId in it.sourceIds }.map { it.pkgName }.toSet()
             require(owners.isEmpty() || owners == setOf(replacementPackage)) {
                 "source ID $sourceId is already owned by ${owners.sorted().joinToString(prefix = "'", postfix = "'", separator = "', '")}"
             }
         }
+        requireInstalledRegistryComplete(replacementPackage, previous)
 
         val apkTarget = unusedTarget(requestedApkFileName)
         val jarTarget = apkTarget.resolveSibling(apkTarget.fileName.toString().substringBeforeLast('.') + ".jar")
         var apkMoved = false
         var jarMoved = false
+        var published = false
         try {
             moveIntoPlace(prepared.apkFile, apkTarget)
             apkMoved = true
@@ -460,62 +469,73 @@ class ExtensionManager internal constructor(
                     sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
                     signerFingerprints = prepared.signerFingerprints,
                 )
-            val installedSnapshot = HashMap(installed)
-            val nextInstalled = installed.toMutableMap().apply { put(record.pkgName, record) }
-            val sourceSnapshot = loader.snapshotSources()
-            val replacedSources = old?.sourceIds.orEmpty().mapNotNull(sourceSnapshot::get)
-            try {
-                loader.registerReplacement(old?.sourceIds.orEmpty(), ext.sources)
-                installed[record.pkgName] = record
-                requireRegistryIntegrity(
-                    replacementPackage = record.pkgName,
-                    candidateSources = ext.sources.associateBy { it.id },
-                    previousInstalled = installedSnapshot,
-                    nextInstalled = nextInstalled,
-                    previousSources = sourceSnapshot,
-                )
-                persistManifest(nextInstalled.values)
-            } catch (failure: Throwable) {
-                loader.restoreSources(sourceSnapshot)
-                installed.clear()
-                installed.putAll(installedSnapshot)
-                throw failure
+            val nextSources = loader.replacementSources(previous.sources, old?.sourceIds.orEmpty(), ext.sources)
+            val nextInstalled = previous.installed.toMutableMap().apply { put(record.pkgName, record) }
+            val next = loader.prepareRegistry(nextSources, nextInstalled)
+            val replacedSources = old?.sourceIds.orEmpty().mapNotNull(previous.sources::get)
+            requireRegistryIntegrity(
+                replacementPackage = record.pkgName,
+                candidateSources = ext.sources.associateBy { it.id },
+                previous = previous,
+                next = next,
+            )
+            persistManifest(next.installed.values)
+            loader.publishRegistry(next)
+            published = true
+            old?.let { oldRecord ->
+                runCatching { removeSupersededFiles(oldRecord, record, replacedSources) }
+                    .onFailure { logger.warn(it) { "Failed to retire superseded files for ${oldRecord.pkgName}" } }
             }
-            old?.let { removeSupersededFiles(it, record, replacedSources) }
             logger.info { "Installed ${ext.pkgName} v${ext.versionName} (${ext.sources.size} source(s))" }
         } catch (failure: Throwable) {
-            if (jarMoved) {
+            if (!published && jarMoved) {
                 runCatching { loader.evictAndClose(jarTarget) }
                 runCatching { Files.deleteIfExists(jarTarget) }
             }
-            if (apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
+            if (!published && apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
             throw failure
+        }
+    }
+
+    private fun requireInstalledRegistryComplete(
+        replacementPackage: String,
+        snapshot: ExtensionRegistrySnapshot,
+    ) {
+        val owners = sourceOwners(snapshot.installed.values)
+        snapshot.installed.filterKeys { it != replacementPackage }.forEach { (pkgName, record) ->
+            record.sourceIds.forEach { sourceId ->
+                require(owners[sourceId] == setOf(pkgName)) {
+                    "installed unrelated source ID $sourceId is not owned exclusively by '$pkgName'"
+                }
+                require(snapshot.sources[sourceId] != null) {
+                    "installed unrelated source ID $sourceId is missing from the runtime registry"
+                }
+            }
         }
     }
 
     private fun requireRegistryIntegrity(
         replacementPackage: String,
         candidateSources: Map<Long, eu.kanade.tachiyomi.source.Source>,
-        previousInstalled: Map<String, InstalledExtension>,
-        nextInstalled: Map<String, InstalledExtension>,
-        previousSources: Map<Long, eu.kanade.tachiyomi.source.Source>,
+        previous: ExtensionRegistrySnapshot,
+        next: ExtensionRegistrySnapshot,
     ) {
         val candidateSourceIds = candidateSources.keys
-        previousInstalled.filterKeys { it != replacementPackage }.forEach { (pkgName, previousRecord) ->
-            require(nextInstalled[pkgName] == previousRecord) {
+        previous.installed.filterKeys { it != replacementPackage }.forEach { (pkgName, previousRecord) ->
+            require(next.installed[pkgName] == previousRecord) {
                 "unrelated extension '$pkgName' changed during '$replacementPackage' replacement"
             }
         }
 
-        val replacement = requireNotNull(nextInstalled[replacementPackage]) {
+        val replacement = requireNotNull(next.installed[replacementPackage]) {
             "replacement record '$replacementPackage' disappeared during registration"
         }
         require(replacement.sourceIds.toSet() == candidateSourceIds) {
             "replacement record '$replacementPackage' does not match the prepared candidate source IDs"
         }
 
-        val previousOwners = sourceOwners(previousInstalled.values)
-        val nextOwners = sourceOwners(nextInstalled.values)
+        val previousOwners = sourceOwners(previous.installed.values)
+        val nextOwners = sourceOwners(next.installed.values)
         nextOwners.forEach { (sourceId, owners) ->
             require(owners.size == 1) {
                 "source ID $sourceId is owned by multiple installed packages: ${owners.sorted().joinToString()}"
@@ -525,24 +545,28 @@ class ExtensionManager internal constructor(
             require(nextOwners[sourceId] == setOf(replacementPackage)) {
                 "candidate source ID $sourceId is not owned exclusively by '$replacementPackage'"
             }
-            require(loader.source(sourceId) === candidateSources.getValue(sourceId)) {
+            require(next.sources[sourceId] === candidateSources.getValue(sourceId)) {
                 "candidate source ID $sourceId is not active after '$replacementPackage' registration"
             }
         }
 
-        previousSources.forEach { (sourceId, previousSource) ->
-            val previousUnrelatedOwners = previousOwners[sourceId].orEmpty() - replacementPackage
-            val belongedOnlyToReplacement = previousOwners[sourceId] == setOf(replacementPackage)
-            if (!belongedOnlyToReplacement) {
-                val currentSource = loader.source(sourceId)
-                require(currentSource != null) {
-                    "unrelated source ID $sourceId disappeared during '$replacementPackage' replacement"
-                }
-                require(currentSource === previousSource) {
+        previous.installed.filterKeys { it != replacementPackage }.forEach { (pkgName, record) ->
+            record.sourceIds.forEach { sourceId ->
+                require(next.sources[sourceId] === previous.sources.getValue(sourceId)) {
                     "unrelated source ID $sourceId changed runtime instance during '$replacementPackage' replacement"
                 }
-                require(nextOwners[sourceId].orEmpty() == previousUnrelatedOwners) {
+                require(nextOwners[sourceId] == setOf(pkgName)) {
                     "unrelated source ID $sourceId changed owning package during '$replacementPackage' replacement"
+                }
+            }
+        }
+        previous.sources.forEach { (sourceId, previousSource) ->
+            if (previousOwners[sourceId].isNullOrEmpty()) {
+                require(next.sources[sourceId] === previousSource) {
+                    "unowned source ID $sourceId changed during '$replacementPackage' replacement"
+                }
+                require(nextOwners[sourceId].isNullOrEmpty()) {
+                    "unowned source ID $sourceId gained an installed owner during '$replacementPackage' replacement"
                 }
             }
         }
@@ -635,7 +659,11 @@ class ExtensionManager internal constructor(
     private fun loadManifestFromDisk() {
         if (!manifestFile.exists()) return
         runCatching { mapper.readValue<List<InstalledExtension>>(manifestFile.readText()) }
-            .onSuccess { it.forEach { rec -> installed[rec.pkgName] = rec } }
+            .onSuccess { records ->
+                val current = loader.snapshotRegistry()
+                val installed = records.associateBy { it.pkgName }
+                loader.publishRegistry(loader.prepareRegistry(current.sources, installed))
+            }
             .onFailure { logger.warn(it) { "Corrupt install manifest, starting empty" } }
     }
 

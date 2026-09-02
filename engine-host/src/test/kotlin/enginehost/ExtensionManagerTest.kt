@@ -11,6 +11,7 @@ import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -217,7 +218,7 @@ class ExtensionManagerTest {
 
         val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
 
-        assertTrue(failure.message.orEmpty().contains("unrelated source ID $UNRELATED_SOURCE_ID disappeared"))
+        assertTrue(failure.message.orEmpty().contains("installed unrelated source ID $UNRELATED_SOURCE_ID"))
         fixture.assertUnchanged()
     }
 
@@ -249,6 +250,54 @@ class ExtensionManagerTest {
         assertFails { fixture.manager.update(TARGET_PACKAGE) }
 
         fixture.assertBlockedManifestRollback()
+    }
+
+    @Test
+    fun `manifest failure never publishes its candidate to concurrent source readers`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = PublicationObservedSource::class.java,
+            )
+        fixture.blockManifestPersistence()
+        val publication = fixture.armPublicationProbe()
+        val executor = Executors.newSingleThreadExecutor()
+        val update =
+            CompletableFuture.supplyAsync(
+                { runCatching { fixture.manager.update(TARGET_PACKAGE) }.exceptionOrNull() },
+                executor,
+            )
+
+        try {
+            CompletableFuture.anyOf(publication.published, update).get(5, TimeUnit.SECONDS)
+            val observedDuringCommit = fixture.targetSource()
+            publication.release.countDown()
+            val failure = update.get(5, TimeUnit.SECONDS)
+
+            assertSame(fixture.oldTargetSource(), observedDuringCommit)
+            assertTrue(failure != null, "manifest failure unexpectedly committed")
+            fixture.assertBlockedManifestRollback()
+        } finally {
+            publication.release.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `update rejects an unrelated manifest source missing from the boot registry`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                injectUnrelatedSource = false,
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("installed unrelated source ID $UNRELATED_SOURCE_ID is missing"))
+        fixture.assertUnchanged()
     }
 
     @Test
@@ -495,6 +544,7 @@ class ExtensionManagerTest {
         unrelatedPackage: String = UNRELATED_PACKAGE,
         unrelatedRecordSourceIds: List<Long> = listOf(UNRELATED_SOURCE_ID),
         targetRecordSourceIds: List<Long> = listOf(TARGET_SOURCE_ID),
+        injectUnrelatedSource: Boolean = true,
     ) {
         private val root = Files.createTempDirectory("extension-manager-identity")
         private val oldApk = root.resolve("target.apk")
@@ -506,6 +556,7 @@ class ExtensionManagerTest {
         private val unrelatedRecord = installedRecord(unrelatedPackage, "unrelated.apk", unrelatedRecordSourceIds)
         private val oldSource = TestSource(TARGET_SOURCE_ID)
         private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
+        private val expectedUnrelatedSource = unrelatedSource.takeIf { injectUnrelatedSource }
         private val loader = ExtensionLoader(root.toFile(), signatureVerifier)
         private val directoryBefore: Map<String, ByteArray>
         private val activeFilesBefore: Map<String, ByteArray>
@@ -519,7 +570,7 @@ class ExtensionManagerTest {
             unrelatedJar.writeBytes("unrelated jar".toByteArray())
             manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(targetRecord, unrelatedRecord)))
             injectSource(loader, oldSource)
-            injectSource(loader, unrelatedSource)
+            expectedUnrelatedSource?.let { injectSource(loader, it) }
 
             val downloader =
                 object : ExtensionDownloadClient {
@@ -563,7 +614,7 @@ class ExtensionManagerTest {
                 }
             manager.setRepos(listOf(REPO_URL))
             configuredSignerFingerprint?.let { manager.setRepoTrust(REPO_URL, it) }
-            installedBefore = installedSnapshot(manager)
+            installedBefore = installedSnapshot(loader)
             directoryBefore = snapshotDirectory(root)
             activeFilesBefore =
                 listOf(oldApk, oldJar, unrelatedApk, unrelatedJar).associate { it.fileName.toString() to it.readBytes() }
@@ -590,8 +641,8 @@ class ExtensionManagerTest {
         fun assertUnchanged() {
             assertDirectoryEquals(directoryBefore, snapshotDirectory(root))
             assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
-            assertSame(unrelatedSource, loader.source(UNRELATED_SOURCE_ID))
-            assertEquals(installedBefore, installedSnapshot(manager))
+            assertSame(expectedUnrelatedSource, loader.source(UNRELATED_SOURCE_ID))
+            assertEquals(installedBefore, installedSnapshot(loader))
         }
 
         fun assertUnrelatedPreserved() {
@@ -610,13 +661,19 @@ class ExtensionManagerTest {
             }
             assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
             assertUnrelatedPreserved()
-            assertEquals(installedBefore, installedSnapshot(manager))
+            assertEquals(installedBefore, installedSnapshot(loader))
             assertEquals(
                 directoryBefore.keys,
                 root.listDirectoryEntries().mapTo(sortedSetOf()) { it.fileName.toString() },
                 "manifest failure leaked a staged or replacement file",
             )
         }
+
+        fun armPublicationProbe(): RegistryPublicationProbe.Observation = RegistryPublicationProbe.arm(loader)
+
+        fun targetSource(): Source? = loader.source(TARGET_SOURCE_ID)
+
+        fun oldTargetSource(): Source = oldSource
     }
 
     companion object {
@@ -650,11 +707,8 @@ class ExtensionManagerTest {
             name: String,
         ): Any = ExtensionManager::class.java.getDeclaredField(name).apply { isAccessible = true }.get(manager)
 
-        @Suppress("UNCHECKED_CAST")
-        private fun installedSnapshot(manager: ExtensionManager): Map<String, InstalledExtension> {
-            val field = ExtensionManager::class.java.getDeclaredField("installed").apply { isAccessible = true }
-            return HashMap(field.get(manager) as Map<String, InstalledExtension>)
-        }
+        private fun installedSnapshot(loader: ExtensionLoader): Map<String, InstalledExtension> =
+            HashMap(loader.snapshotRegistry().installed)
 
         private fun installedRecord(
             pkgName: String,
@@ -690,12 +744,7 @@ class ExtensionManagerTest {
         private fun injectSource(
             loader: ExtensionLoader,
             source: Source,
-        ) {
-            val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
-            @Suppress("UNCHECKED_CAST")
-            val registry = field.get(loader) as MutableMap<Long, Source>
-            registry[source.id] = source
-        }
+        ) = loader.registerSources(listOf(source))
 
         private fun writeClassJar(
             target: Path,
@@ -825,6 +874,60 @@ internal class CandidateOwnedSource : Source {
     ): MangasPage = error("unused")
 
     override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal class PublicationObservedSource : Source {
+    override val id: Long
+        get() = RegistryPublicationProbe.observe(this)
+    override val name: String = "Publication Observed Source"
+    override val lang: String = "en"
+    override val supportsLatest: Boolean = false
+
+    override suspend fun getMangaUpdate(
+        manga: SManga,
+        chapters: List<SChapter>,
+        fetchDetails: Boolean,
+        fetchChapters: Boolean,
+    ): SMangaUpdate = error("unused")
+
+    override suspend fun getPopularManga(page: Int): MangasPage = error("unused")
+
+    override suspend fun getLatestUpdates(page: Int): MangasPage = error("unused")
+
+    override suspend fun getSearchManga(
+        page: Int,
+        query: String,
+        filters: FilterList,
+    ): MangasPage = error("unused")
+
+    override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal object RegistryPublicationProbe {
+    data class Observation(
+        val published: CompletableFuture<Unit>,
+        val release: CountDownLatch,
+    )
+
+    @Volatile
+    private var loader: ExtensionLoader? = null
+
+    @Volatile
+    private var observation = Observation(CompletableFuture(), CountDownLatch(0))
+
+    fun arm(loader: ExtensionLoader): Observation =
+        Observation(CompletableFuture(), CountDownLatch(1)).also {
+            this.loader = loader
+            observation = it
+        }
+
+    fun observe(source: Source): Long {
+        if (loader?.source(7L) === source) {
+            observation.published.complete(Unit)
+            observation.release.await()
+        }
+        return 7L
+    }
 }
 
 internal abstract class RetrySourceBase : Source {

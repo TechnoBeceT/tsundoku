@@ -29,7 +29,6 @@ import java.net.URLClassLoader
 import java.nio.file.Path
 import java.util.Collections
 import java.util.IdentityHashMap
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -60,6 +59,12 @@ internal fun interface ExtensionPreparer {
     fun prepare(apk: Path): PreparedExtension
 }
 
+/** One immutable generation published atomically to source and installed-state readers. */
+internal data class ExtensionRegistrySnapshot(
+    val sources: Map<Long, Source>,
+    val installed: Map<String, InstalledExtension>,
+)
+
 /**
  * ExtensionLoader installs a Mihon extension APK on a plain JVM and instantiates its
  * source(s), with NO Suwayomi server, NO database. Loaded sources are cached by their
@@ -73,23 +78,43 @@ class ExtensionLoader internal constructor(
     constructor(workDir: File) : this(workDir, ApkSignerVerifier)
 
     private val logger = KotlinLogging.logger {}
-    private val sources = ConcurrentHashMap<Long, Source>()
+    @Volatile
+    private var registry = ExtensionRegistrySnapshot(emptyMap(), emptyMap())
 
     /** All sources loaded so far, in load order. */
-    fun loaded(): List<Source> = sources.values.toList()
+    fun loaded(): List<Source> = registry.sources.values.toList()
 
     /** Resolve a previously-loaded source by its stable id (null if unknown). */
-    fun source(sourceId: Long): Source? = sources[sourceId]
+    fun source(sourceId: Long): Source? = registry.sources[sourceId]
 
-    /** Drop the given source ids from the in-memory registry (on uninstall). */
-    fun unload(sourceIds: Collection<Long>) {
-        sourceIds.forEach { sources.remove(it) }
+    internal fun snapshotRegistry(): ExtensionRegistrySnapshot = registry
+
+    internal fun prepareRegistry(
+        sources: Map<Long, Source>,
+        installed: Map<String, InstalledExtension>,
+    ): ExtensionRegistrySnapshot =
+        ExtensionRegistrySnapshot(
+            sources = Collections.unmodifiableMap(HashMap(sources)),
+            installed = Collections.unmodifiableMap(HashMap(installed)),
+        )
+
+    /** Publish a fully prepared source/installed generation with one volatile write. */
+    internal fun publishRegistry(snapshot: ExtensionRegistrySnapshot) {
+        registry = snapshot
+    }
+
+    /** Publish bootstrap or preference-reload sources without changing installed ownership. */
+    internal fun registerSources(replacement: Collection<Source>) {
+        val current = registry
+        val nextSources = HashMap(current.sources)
+        replacement.forEach { nextSources[it.id] = it }
+        publishRegistry(prepareRegistry(nextSources, current.installed))
     }
 
     /** Load and register an extension from an existing local APK. */
     fun loadFromApk(apkPath: String): LoadedExtension {
         val prepared = prepareFromApk(Path.of(apkPath))
-        return instantiatePrepared(prepared).also { registerReplacement(emptyList(), it.sources) }
+        return instantiatePrepared(prepared).also { registerSources(it.sources) }
     }
 
     /**
@@ -212,23 +237,17 @@ class ExtensionLoader internal constructor(
         distinctSources.forEach { source -> retiredLoaderCleaner.register(source, retirement::release) }
     }
 
-    /** Expose a complete replacement source set after every fallible preparation step has passed. */
-    internal fun registerReplacement(
+    /** Build a complete prospective source generation without changing the active registry. */
+    internal fun replacementSources(
+        current: Map<Long, Source>,
         previousSourceIds: Collection<Long>,
         replacement: List<Source>,
-    ) {
+    ): Map<Long, Source> {
+        val next = HashMap(current)
         val replacementIds = replacement.mapTo(HashSet()) { it.id }
-        replacement.forEach { sources[it.id] = it }
-        previousSourceIds.filterNot { it in replacementIds }.forEach { sources.remove(it) }
-    }
-
-    /** Capture the complete active registry so a failed replacement can restore every source. */
-    internal fun snapshotSources(): Map<Long, Source> = HashMap(sources)
-
-    /** Replace the complete active registry with a previously captured snapshot. */
-    internal fun restoreSources(snapshot: Map<Long, Source>) {
-        sources.clear()
-        sources.putAll(snapshot)
+        replacement.forEach { next[it.id] = it }
+        previousSourceIds.filterNot { it in replacementIds }.forEach { next.remove(it) }
+        return next
     }
 
     /**
@@ -250,7 +269,7 @@ class ExtensionLoader internal constructor(
                 is SourceFactory -> instance.createSources()
                 else -> error("Unknown source class type: ${instance.javaClass}")
             }
-        loaded.forEach { sources[it.id] = it }
+        registerSources(loaded)
         return loaded
     }
 

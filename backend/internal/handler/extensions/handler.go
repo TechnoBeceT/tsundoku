@@ -10,13 +10,13 @@
 // bind → validate → client → DTO. Validation is extracted to validate.go; the
 // DTO mapping to dto.go.
 //
-// Engine-host makes install and update atomic across active files, its installed
-// manifest, and the complete runtime source registry. Before retiring old files,
-// it verifies that every unrelated source instance and owning package survived
-// candidate registration and that the candidate owns exactly its declared IDs.
-// Any registration, invariant, or manifest failure restores the complete runtime
-// and installed snapshots. The handler therefore remains a pure passthrough; no
-// post-mutation reload RPC or topology reconciliation is needed here.
+// Engine-host prepares and validates a complete prospective source/installed
+// generation while readers continue using the previous generation. It persists
+// the replacement manifest before publishing that generation with one atomic
+// reference swap, and retires old files only afterward. A pre-publication
+// registration, invariant, or manifest failure removes the candidate and leaves
+// readers on the old generation. The handler therefore remains a pure
+// passthrough; no post-mutation reload RPC or topology reconciliation is needed.
 package extensions
 
 import (
