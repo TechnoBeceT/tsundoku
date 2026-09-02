@@ -196,11 +196,12 @@ class ExtensionManager internal constructor(
         val normalizedUrl = repoUrl.trim()
         require(normalizedUrl in repos) { "repository '$normalizedUrl' is not configured" }
         val normalizedSigner = normalizeSignerFingerprint(signerFingerprint)
-        repoTrust = repoTrust + (normalizedUrl to normalizedSigner)
+        val candidateTrust = repoTrust + (normalizedUrl to normalizedSigner)
+        persistRepoTrust(candidateTrust)
+        repoTrust = candidateTrust
         repoCache.clear()
         repoCacheGeneration++
         mutationSequence++
-        persistRepoTrust()
         logger.info { "Repository signer trust updated for $normalizedUrl" }
     }
 
@@ -533,10 +534,10 @@ class ExtensionManager internal constructor(
         val installed: InstalledExtension?,
     )
 
-    private fun persistRepoTrust() {
+    private fun persistRepoTrust(trust: Map<String, String>) {
         val temporary = Files.createTempFile(extensionsRoot.toPath(), ".repo-trust-", ".json.tmp")
         try {
-            Files.writeString(temporary, mapper.writeValueAsString(repoTrust))
+            Files.writeString(temporary, mapper.writeValueAsString(trust))
             try {
                 Files.move(temporary, repoTrustFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {

@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -29,6 +30,39 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class ExtensionManagerTest {
+    @Test
+    fun `failed trust persistence leaves authorization cache and mutation state unchanged`() {
+        val approvedSigner = SignedApkFixture()
+        val proposedSigner = SignedApkFixture()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                oldApkBytes = proposedSigner.signedApk.readBytes(),
+                candidateApkBytes = proposedSigner.signedApk.readBytes(),
+                repositorySigningKey = proposedSigner.fingerprint,
+                candidateSignerFingerprints = setOf(proposedSigner.fingerprint),
+                signatureVerifier = ApkSignerVerifier,
+                configuredSignerFingerprint = approvedSigner.fingerprint,
+            )
+        fixture.manager.list()
+        val stateBefore = trustMutationState(fixture.manager)
+        val trustFileBefore = fixture.trustFileBytes()
+
+        val rotation = fixture.withTrustPersistenceBlocked { fixture.manager.setRepoTrust(REPO_URL, proposedSigner.fingerprint) }
+        val stateAfterFailedRotation = trustMutationState(fixture.manager)
+        val trustFileAfter = fixture.trustFileBytes()
+        val update = runCatching { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(rotation.isFailure, "trust rotation unexpectedly reported success")
+        assertEquals(stateBefore, stateAfterFailedRotation)
+        assertContentEquals(trustFileBefore, trustFileAfter)
+        assertTrue(update.isFailure, "an unpersisted signer authorized a subsequent update")
+        assertTrue(update.exceptionOrNull()?.message.orEmpty().contains("does not match the configured repository signer"))
+        fixture.assertUnchanged()
+    }
+
     @Test
     fun `catalogue and candidate signer change reject until explicit persisted trust rotation`() {
         val approvedSigner = SignedApkFixture()
@@ -491,6 +525,18 @@ class ExtensionManagerTest {
             reloaded.close()
         }
 
+        fun trustFileBytes(): ByteArray = root.resolve("repo-trust.json").readBytes()
+
+        fun withTrustPersistenceBlocked(block: () -> Unit): Result<Unit> {
+            val permissions = Files.getPosixFilePermissions(root)
+            return try {
+                Files.setPosixFilePermissions(root, PosixFilePermissions.fromString("r-x------"))
+                runCatching(block)
+            } finally {
+                Files.setPosixFilePermissions(root, permissions)
+            }
+        }
+
         fun assertUnchanged() {
             assertDirectoryEquals(directoryBefore, snapshotDirectory(root))
             assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
@@ -508,6 +554,27 @@ class ExtensionManagerTest {
         private const val RETRY_CLASS_NAME = "enginehost.RetrySourceNew"
         private const val TEST_SIGNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         private const val REPO_URL = "https://repo.example.test"
+
+        private data class TrustMutationState(
+            val trust: Map<String, String>,
+            val repoCache: Map<String, List<RepoIndexEntry>>,
+            val repoCacheGeneration: Long,
+            val mutationSequence: Long,
+        )
+
+        @Suppress("UNCHECKED_CAST")
+        private fun trustMutationState(manager: ExtensionManager): TrustMutationState =
+            TrustMutationState(
+                trust = HashMap(manager.getRepoTrust()),
+                repoCache = HashMap(privateField(manager, "repoCache") as Map<String, List<RepoIndexEntry>>),
+                repoCacheGeneration = privateField(manager, "repoCacheGeneration") as Long,
+                mutationSequence = privateField(manager, "mutationSequence") as Long,
+            )
+
+        private fun privateField(
+            manager: ExtensionManager,
+            name: String,
+        ): Any = ExtensionManager::class.java.getDeclaredField(name).apply { isAccessible = true }.get(manager)
 
         @Suppress("UNCHECKED_CAST")
         private fun installedSnapshot(manager: ExtensionManager): Map<String, InstalledExtension> {
