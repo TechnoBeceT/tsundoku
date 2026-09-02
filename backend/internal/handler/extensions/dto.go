@@ -86,6 +86,12 @@ type ExtensionReposDTO struct {
 	Repos []string `json:"repos"`
 }
 
+// ExtensionRepoTrustDTO is the complete independent repository signer-pin map.
+type ExtensionRepoTrustDTO struct {
+	// Trust maps each configured repository URL to a normalized SHA-256 fingerprint.
+	Trust map[string]string `json:"trust"`
+}
+
 // toExtensionDTO maps one client Extension into the HTTP DTO, attaching the
 // package's held-version set (heldByPkg[e.PkgName]). It is the SINGLE mapper
 // every extension-returning endpoint routes through, so no field is ever dropped
@@ -169,4 +175,11 @@ func toReposDTO(repos []string) ExtensionReposDTO {
 		repos = []string{}
 	}
 	return ExtensionReposDTO{Repos: repos}
+}
+
+func toRepoTrustDTO(trust map[string]string) ExtensionRepoTrustDTO {
+	if trust == nil {
+		trust = map[string]string{}
+	}
+	return ExtensionRepoTrustDTO{Trust: trust}
 }

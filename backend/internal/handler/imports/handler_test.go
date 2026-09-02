@@ -215,6 +215,12 @@ func (f *fakeEngineClient) Repos(context.Context) ([]string, error) { return nil
 
 func (f *fakeEngineClient) SetRepos(context.Context, []string) ([]string, error) { return nil, nil }
 
+func (f *fakeEngineClient) RepoTrust(context.Context) (map[string]string, error) { return nil, nil }
+
+func (f *fakeEngineClient) SetRepoTrust(context.Context, string, string) (map[string]string, error) {
+	return nil, nil
+}
+
 func (f *fakeEngineClient) SetFlareSolverr(context.Context, sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
 	return sourceengine.FlareSolverrConfig{}, nil
 }

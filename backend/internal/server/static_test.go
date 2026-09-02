@@ -91,6 +91,12 @@ func (nullEngineClient) Repos(_ context.Context) ([]string, error) {
 func (nullEngineClient) SetRepos(_ context.Context, _ []string) ([]string, error) {
 	panic("nullEngineClient.SetRepos called in test")
 }
+func (nullEngineClient) RepoTrust(_ context.Context) (map[string]string, error) {
+	panic("nullEngineClient.RepoTrust called in test")
+}
+func (nullEngineClient) SetRepoTrust(_ context.Context, _, _ string) (map[string]string, error) {
+	panic("nullEngineClient.SetRepoTrust called in test")
+}
 func (nullEngineClient) SetFlareSolverr(_ context.Context, _ sourceengine.FlareSolverrPatch) (sourceengine.FlareSolverrConfig, error) {
 	panic("nullEngineClient.SetFlareSolverr called in test")
 }

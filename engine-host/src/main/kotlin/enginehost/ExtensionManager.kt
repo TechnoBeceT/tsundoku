@@ -18,6 +18,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
 import java.net.URI
@@ -45,7 +46,34 @@ data class InstalledExtension(
     val repoUrl: String?,
     val sourceIds: List<Long>,
     val sources: List<ExtensionSourceDto>,
+    val signerFingerprints: Set<String> = emptySet(),
+    val signingCertificateLineage: List<String> = emptyList(),
 )
+
+/** Repository identity that a prepared APK must match exactly before it can replace active state. */
+private data class ExpectedArtifact(
+    val pkgName: String,
+    val versionCode: Long,
+    val trustedSignerFingerprint: String,
+) {
+    companion object {
+        fun from(
+            entry: RepoIndexEntry,
+            configuredSignerFingerprint: String?,
+        ): ExpectedArtifact {
+            val trustedSigner =
+                requireNotNull(configuredSignerFingerprint) {
+                    "repository for '${entry.pkg}' has no configured signer"
+                }
+            entry.signingKeyFingerprint?.let { advertisedSigner ->
+                require(normalizeSignerFingerprint(advertisedSigner) == trustedSigner) {
+                    "repository signer for '${entry.pkg}' does not match the configured repository signer"
+                }
+            }
+            return ExpectedArtifact(entry.pkg, entry.code, normalizeSignerFingerprint(trustedSigner))
+        }
+    }
+}
 
 /**
  * ExtensionManager owns the extension working-set on the mounted volume — the configured repo
@@ -57,21 +85,43 @@ class ExtensionManager internal constructor(
     private val extensionsRoot: File,
     private val downloadClient: ExtensionDownloadClient,
     private val preparer: ExtensionPreparer,
+    private val artifactInspector: ExtensionArtifactInspector,
 ) : AutoCloseable {
     constructor(loader: ExtensionLoader, extensionsRoot: File) :
-        this(loader, extensionsRoot, BoundedDownloadClient(), ExtensionPreparer { loader.prepareFromApk(it) })
+        this(
+            loader,
+            extensionsRoot,
+            BoundedDownloadClient(),
+            ExtensionPreparer { loader.prepareFromApk(it) },
+            ExtensionArtifactInspector { loader.inspectApk(it) },
+        )
 
     internal constructor(
         loader: ExtensionLoader,
         extensionsRoot: File,
         downloadClient: ExtensionDownloadClient,
-    ) : this(loader, extensionsRoot, downloadClient, ExtensionPreparer { loader.prepareFromApk(it) })
+    ) : this(
+        loader,
+        extensionsRoot,
+        downloadClient,
+        ExtensionPreparer { loader.prepareFromApk(it) },
+        ExtensionArtifactInspector { loader.inspectApk(it) },
+    )
+
+    internal constructor(
+        loader: ExtensionLoader,
+        extensionsRoot: File,
+        downloadClient: ExtensionDownloadClient,
+        preparer: ExtensionPreparer,
+    ) : this(loader, extensionsRoot, downloadClient, preparer, ExtensionArtifactInspector { loader.inspectApk(it) })
 
     private val logger = KotlinLogging.logger {}
     private val mapper: ObjectMapper = jacksonObjectMapper()
 
     private val reposFile = File(extensionsRoot, "repos.json")
+    private val repoTrustFile = File(extensionsRoot, "repo-trust.json")
     private val manifestFile = File(extensionsRoot, "installed.json")
+    private var manifestRecords: List<InstalledExtension> = emptyList()
 
     // Per-source SharedPreferences files live at <dataRoot>/settings/source_<id>.xml, a sibling of
     // <dataRoot>/extensions (extensionsRoot). Deleted on uninstall so orphans don't accumulate.
@@ -96,11 +146,14 @@ class ExtensionManager internal constructor(
             }
         }
 
-    /** pkgName -> installed record. */
-    private val installed = ConcurrentHashMap<String, InstalledExtension>()
+    /** The installed half of the same immutable generation source readers resolve against. */
+    private val installed: Map<String, InstalledExtension>
+        get() = loader.snapshotRegistry().installed
 
     @Volatile
     private var repos: List<String> = DEFAULT_REPOS
+    @Volatile
+    private var repoTrust: Map<String, String> = DEFAULT_REPO_TRUST
     @Volatile
     private var repoCacheGeneration = 0L
 
@@ -110,26 +163,51 @@ class ExtensionManager internal constructor(
     init {
         extensionsRoot.mkdirs()
         loadReposFromDisk()
-        loadManifestFromDisk()
+        loadRepoTrustFromDisk()
+        manifestRecords = loadManifestFromDisk()
     }
 
     override fun close() = downloadClient.close()
 
     // ---- boot ----
 
-    /** Re-instantiate every installed extension's sources from the volume APKs (called on boot). */
+    /** Validate and publish every installed extension as one complete boot generation. */
     fun reloadInstalled() = mutationLock.withLock {
-        installed.values.forEach { record ->
-            val apk = File(extensionsRoot, record.apkFileName)
-            if (!apk.exists()) {
-                logger.warn { "Installed APK missing on disk, skipping: ${record.apkFileName}" }
-                return@forEach
+        val previous = loader.snapshotRegistry()
+        val newLoaderJars = ArrayList<Path>()
+        try {
+            require(manifestRecords.map { it.pkgName }.toSet().size == manifestRecords.size) {
+                "install manifest contains duplicate package records"
             }
-            runCatching { loader.loadFromApk(apk.absolutePath) }
-                .onFailure { logger.error(it) { "Failed to reload installed extension ${record.pkgName}" } }
-                .onSuccess { logger.info { "Reloaded ${record.pkgName} (${it.sources.size} source(s))" } }
+            val materialized =
+                manifestRecords.map { record ->
+                    val apk = installedApkPath(record)
+                    val jar = installedJarPath(record)
+                    require(Files.isRegularFile(apk)) { "installed APK missing on disk: ${record.apkFileName}" }
+                    require(Files.isRegularFile(jar)) { "installed jar missing on disk: ${jar.fileName}" }
+                    val inspected = artifactInspector.inspect(apk)
+                    val verifiedRecord = verifyBootIdentity(record, inspected)
+                    if (!loader.hasCachedLoader(jar)) newLoaderJars.add(jar)
+                    val sources = loader.reinstantiate(jar.toString(), verifiedRecord.mainClass)
+                    val actualIds = sources.map { it.id }
+                    require(actualIds.size == actualIds.toSet().size) {
+                        "installed extension '${record.pkgName}' declares duplicate source IDs"
+                    }
+                    require(record.sourceIds.size == record.sourceIds.toSet().size && actualIds.toSet() == record.sourceIds.toSet()) {
+                        "installed extension '${record.pkgName}' source IDs do not match its manifest record"
+                    }
+                    MaterializedExtension(verifiedRecord.withSources(sources), sources)
+                }
+            val next = buildRegistryGeneration(previous, materialized, replaceAllInstalled = true)
+            val diskInstalled = manifestRecords.associateBy { it.pkgName }
+            if (next.installed != diskInstalled) persistManifest(next.installed.values)
+            loader.publishRegistry(next)
+            mutationSequence++
+            materialized.forEach { logger.info { "Reloaded ${it.record.pkgName} (${it.sources.size} source(s))" } }
+        } catch (failure: Throwable) {
+            newLoaderJars.forEach { jar -> runCatching { loader.evictAndClose(jar) } }
+            throw failure
         }
-        mutationSequence++
     }
 
     /** The installed record owning a source id (null if the source came from the CLI bootstrap arg). */
@@ -143,17 +221,81 @@ class ExtensionManager internal constructor(
      * isn't owned by an installed extension (e.g. the bootstrap APK arg). MUST be called under the
      * mutation lock — the RPC preference handler wraps apply+reload in [underLock].
      */
-    fun reloadForSource(sourceId: Long): Boolean {
-        val record = recordForSource(sourceId) ?: return false
-        val jar = File(extensionsRoot, record.apkFileName.substringBefore(".apk") + ".jar")
-        if (!jar.exists()) return false
-        loader.reinstantiate(jar.absolutePath, record.mainClass)
-        return true
+    fun reloadForSource(sourceId: Long): Boolean =
+        reloadForSourceGeneration(sourceId) { _, _ -> Unit } != null
+
+    /**
+     * Build and validate a refreshed generation, then derive [prepareResponse] from the refreshed
+     * source before persisting or publishing it. The old source ID is preferred when it survives;
+     * otherwise exactly one newly introduced source ID must identify the response source.
+     */
+    internal fun <T : Any> reloadForSource(
+        sourceId: Long,
+        prepareResponse: (Source) -> T,
+    ): T? =
+        reloadForSourceGeneration(sourceId) { record, sources ->
+            prepareResponse(responseSource(record, sources, sourceId))
+        }
+
+    private fun <T : Any> reloadForSourceGeneration(
+        sourceId: Long,
+        prepareResponse: (InstalledExtension, List<Source>) -> T,
+    ): T? {
+        val record = recordForSource(sourceId) ?: return null
+        val jar = installedJarPath(record)
+        require(Files.isRegularFile(jar)) { "installed jar missing on disk: ${jar.fileName}" }
+        val previous = loader.snapshotRegistry()
+        val loaderWasCached = loader.hasCachedLoader(jar)
+        try {
+            val sources = loader.reinstantiate(jar.toString(), record.mainClass)
+            val next = buildRegistryGeneration(previous, listOf(MaterializedExtension(record.withSources(sources), sources)))
+            val response = prepareResponse(record, sources)
+            persistManifest(next.installed.values)
+            loader.publishRegistry(next)
+            return response
+        } catch (failure: Throwable) {
+            if (!loaderWasCached) runCatching { loader.evictAndClose(jar) }
+            throw failure
+        }
+    }
+
+    private fun responseSource(
+        previousRecord: InstalledExtension,
+        refreshedSources: List<Source>,
+        requestedSourceId: Long,
+    ): Source {
+        refreshedSources.singleOrNull { it.id == requestedSourceId }?.let { return it }
+        val introducedIds = refreshedSources.mapTo(HashSet()) { it.id } - previousRecord.sourceIds.toSet()
+        require(introducedIds.size == 1) {
+            "refreshed extension does not provide an unambiguous replacement for source ID $requestedSourceId"
+        }
+        val introducedId = introducedIds.single()
+        return refreshedSources.single { it.id == introducedId }
     }
 
     // ---- repos ----
 
     fun getRepos(): List<String> = repos
+
+    /** Independently configured repository signer pins, keyed by configured repository URL. */
+    fun getRepoTrust(): Map<String, String> = repoTrust
+
+    /** Explicitly approve or rotate the signer pin for one configured repository. */
+    fun setRepoTrust(
+        repoUrl: String,
+        signerFingerprint: String,
+    ) = mutationLock.withLock {
+        val normalizedUrl = repoUrl.trim()
+        require(normalizedUrl in repos) { "repository '$normalizedUrl' is not configured" }
+        val normalizedSigner = normalizeSignerFingerprint(signerFingerprint)
+        val candidateTrust = repoTrust + (normalizedUrl to normalizedSigner)
+        persistRepoTrust(candidateTrust)
+        repoTrust = candidateTrust
+        repoCache.clear()
+        repoCacheGeneration++
+        mutationSequence++
+        logger.info { "Repository signer trust updated for $normalizedUrl" }
+    }
 
     fun setRepos(newRepos: List<String>) = mutationLock.withLock {
         repos = newRepos.map { it.trim() }.filter { it.isNotBlank() }.distinct()
@@ -177,9 +319,10 @@ class ExtensionManager internal constructor(
     /** Merge the installed working-set with everything the repos advertise. */
     fun list(): List<ExtensionDto> {
         val available = availableByPkg()
-        val pkgs = (installed.keys + available.keys).toSortedSet()
+        val installedSnapshot = installed
+        val pkgs = (installedSnapshot.keys + available.keys).toSortedSet()
         return pkgs.map { pkg ->
-            val inst = installed[pkg]
+            val inst = installedSnapshot[pkg]
             val (repoUrl, avail) = available[pkg] ?: (null to null)
             val availCode = avail?.code
             val installedCode = inst?.versionCode
@@ -211,7 +354,7 @@ class ExtensionManager internal constructor(
     ): List<ExtensionDto> {
         require(pkgName != null || apkUrl != null) { "install requires pkgName or apkUrl" }
 
-        val stateSnapshot = mutationLock.withLock { InstallState(mutationSequence, repos, pkgName?.let { installed[it] }) }
+        val stateSnapshot = mutationLock.withLock { InstallState(mutationSequence, repos, repoTrust, pkgName?.let { installed[it] }) }
         val (url, repoUrl, repoEntry) =
             if (apkUrl != null) {
                 Triple(apkUrl, null, null)
@@ -227,6 +370,7 @@ class ExtensionManager internal constructor(
             url = url,
             repoUrl = repoUrl,
             repoEntry = repoEntry,
+            expectedArtifact = repoEntry?.let { ExpectedArtifact.from(it, stateSnapshot.repoTrust[repoUrl]) },
             expectedRepos = if (apkUrl == null) stateSnapshot.repos else null,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -234,10 +378,15 @@ class ExtensionManager internal constructor(
 
     fun uninstall(pkgName: String): List<ExtensionDto> {
         mutationLock.withLock {
-            val record = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
-            uninstallRecord(record)
+            val previous = loader.snapshotRegistry()
+            val record = previous.installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed")
+            val nextInstalled = previous.installed - pkgName
+            val nextSources = previous.sources - record.sourceIds.toSet()
+            val next = loader.prepareRegistry(nextSources, nextInstalled).also(::requireCompleteRegistry)
+            persistManifest(next.installed.values)
+            loader.publishRegistry(next)
             mutationSequence++
-            persistManifest()
+            removeUninstalledFiles(record)
             logger.info { "Uninstalled $pkgName" }
         }
         return list()
@@ -250,6 +399,7 @@ class ExtensionManager internal constructor(
                 InstallState(
                     mutationSequence = mutationSequence,
                     repos = repos,
+                    repoTrust = repoTrust,
                     installed = installed[pkgName] ?: throw IllegalArgumentException("extension '$pkgName' is not installed"),
                 )
             }
@@ -262,6 +412,7 @@ class ExtensionManager internal constructor(
             url = entry.apkUrl,
             repoUrl = repoUrl,
             repoEntry = entry,
+            expectedArtifact = ExpectedArtifact.from(entry, stateSnapshot.repoTrust[repoUrl]),
             expectedRepos = stateSnapshot.repos,
             expectedMutationSequence = stateSnapshot.mutationSequence,
         )
@@ -269,9 +420,7 @@ class ExtensionManager internal constructor(
 
     // ---- internals ----
 
-    private fun uninstallRecord(record: InstalledExtension) {
-        loader.unload(record.sourceIds)
-        installed.remove(record.pkgName)
+    private fun removeUninstalledFiles(record: InstalledExtension) {
         // Remove the APK + its derived jar from the volume.
         File(extensionsRoot, record.apkFileName).delete()
         File(extensionsRoot, record.apkFileName.substringBefore(".apk") + ".jar").delete()
@@ -285,6 +434,7 @@ class ExtensionManager internal constructor(
         url: String,
         repoUrl: String?,
         repoEntry: RepoIndexEntry?,
+        expectedArtifact: ExpectedArtifact?,
         expectedRepos: List<String>?,
         expectedMutationSequence: Long,
     ): List<ExtensionDto> {
@@ -299,7 +449,7 @@ class ExtensionManager internal constructor(
                 require(expectedRepos == null || repos == expectedRepos) {
                     "extension repositories changed while preparing the install"
                 }
-                applyPrepared(prepared, apkFileNameFor(url), repoUrl, repoEntry)
+                applyPrepared(prepared, apkFileNameFor(url), repoUrl, repoEntry, expectedArtifact)
                 mutationSequence++
             }
         } finally {
@@ -330,12 +480,63 @@ class ExtensionManager internal constructor(
         requestedApkFileName: String,
         repoUrl: String?,
         repoEntry: RepoIndexEntry?,
+        expectedArtifact: ExpectedArtifact?,
     ) {
-        val old = installed[prepared.pkgName]
+        expectedArtifact?.let { expected ->
+            require(prepared.pkgName == expected.pkgName) {
+                "prepared APK package '${prepared.pkgName}' does not match requested package '${expected.pkgName}'"
+            }
+            require(prepared.versionCode == expected.versionCode) {
+                "prepared APK version ${prepared.versionCode} does not match repository version ${expected.versionCode}"
+            }
+        }
+
+        val replacementPackage = expectedArtifact?.pkgName ?: prepared.pkgName
+        val previous = loader.snapshotRegistry()
+        val old = previous.installed[replacementPackage]
+        if (expectedArtifact != null && old != null) {
+            require(prepared.versionCode > old.versionCode) {
+                "prepared APK version ${prepared.versionCode} is not newer than installed version ${old.versionCode}"
+            }
+        }
+
+        require(prepared.signerFingerprints.isNotEmpty()) {
+            "prepared APK '${prepared.pkgName}' has no cryptographically verified signer"
+        }
+        expectedArtifact?.let { expected ->
+            require(expected.trustedSignerFingerprint in prepared.signerFingerprints) {
+                "prepared APK signer is not trusted by the repository"
+            }
+        }
+        old?.let { installedRecord ->
+            val installedSignature = loader.verifyApkSignature(installedApkPath(installedRecord))
+            val candidateSignature =
+                VerifiedApkSignature(prepared.signerFingerprints, prepared.signingCertificateLineage)
+            require(candidateSignature.continuesFrom(installedSignature)) {
+                "prepared APK signer does not preserve installed signer continuity"
+            }
+        }
+
+        val candidateSourceIds = loader.inspectPreparedSourceIds(prepared)
+        require(candidateSourceIds.size == candidateSourceIds.toSet().size) {
+            "prepared APK '${prepared.pkgName}' declares duplicate source IDs"
+        }
+        candidateSourceIds.forEach { sourceId ->
+            val owners = previous.installed.values.filter { sourceId in it.sourceIds }.map { it.pkgName }.toSet()
+            require(owners.isEmpty() || owners == setOf(replacementPackage)) {
+                "source ID $sourceId is already owned by ${owners.sorted().joinToString(prefix = "'", postfix = "'", separator = "', '")}"
+            }
+            require(previous.sources[sourceId] == null || owners == setOf(replacementPackage)) {
+                "source ID $sourceId is already active without ownership by '$replacementPackage'"
+            }
+        }
+        requireCompleteRegistry(previous)
+
         val apkTarget = unusedTarget(requestedApkFileName)
         val jarTarget = apkTarget.resolveSibling(apkTarget.fileName.toString().substringBeforeLast('.') + ".jar")
         var apkMoved = false
         var jarMoved = false
+        var published = false
         try {
             moveIntoPlace(prepared.apkFile, apkTarget)
             apkMoved = true
@@ -343,6 +544,13 @@ class ExtensionManager internal constructor(
             jarMoved = true
             val installedPrepared = prepared.copy(apkFile = apkTarget, jarFile = jarTarget)
             val ext = loader.instantiatePrepared(installedPrepared)
+            val activatedSourceIds = ext.sources.map { it.id }
+            require(activatedSourceIds.size == activatedSourceIds.toSet().size) {
+                "prepared APK '${prepared.pkgName}' declares duplicate source IDs during activation"
+            }
+            require(activatedSourceIds.toSet() == candidateSourceIds.toSet()) {
+                "prepared APK '${prepared.pkgName}' source IDs changed during activation"
+            }
             val record =
                 InstalledExtension(
                     pkgName = ext.pkgName,
@@ -351,41 +559,197 @@ class ExtensionManager internal constructor(
                     versionCode = ext.versionCode,
                     lang = repoEntry?.lang ?: (ext.sources.map { it.lang }.toSet().singleOrNull() ?: "all"),
                     apkFileName = apkTarget.fileName.toString(),
-                    mainClass = ext.mainClass,
+                    mainClass = installedPrepared.mainClass,
                     isNsfw = repoEntry?.nsfw == 1,
                     iconUrl = repoEntry?.iconUrl,
                     repoUrl = repoUrl,
                     sourceIds = ext.sources.map { it.id },
                     sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
+                    signerFingerprints = prepared.signerFingerprints,
+                    signingCertificateLineage = prepared.signingCertificateLineage,
                 )
-            val nextInstalled = installed.toMutableMap().apply { put(record.pkgName, record) }
-            val affectedSourceIds = (old?.sourceIds.orEmpty() + ext.sources.map { it.id }).toSet()
-            val sourceSnapshot = loader.snapshotSources(affectedSourceIds)
-            try {
-                loader.registerReplacement(old?.sourceIds.orEmpty(), ext.sources)
-                installed[record.pkgName] = record
-                persistManifest(nextInstalled.values)
-            } catch (failure: Throwable) {
-                loader.restoreSources(affectedSourceIds, sourceSnapshot)
-                if (old == null) installed.remove(record.pkgName) else installed[record.pkgName] = old
-                throw failure
+            val next = buildRegistryGeneration(previous, listOf(MaterializedExtension(record, ext.sources)))
+            val replacedSources = old?.sourceIds.orEmpty().mapNotNull(previous.sources::get)
+            persistManifest(next.installed.values)
+            loader.publishRegistry(next)
+            published = true
+            old?.let { oldRecord ->
+                runCatching { removeSupersededFiles(oldRecord, record, replacedSources) }
+                    .onFailure { logger.warn(it) { "Failed to retire superseded files for ${oldRecord.pkgName}" } }
             }
-            old?.let { removeSupersededFiles(it, record) }
             logger.info { "Installed ${ext.pkgName} v${ext.versionName} (${ext.sources.size} source(s))" }
         } catch (failure: Throwable) {
-            if (jarMoved) runCatching { Files.deleteIfExists(jarTarget) }
-            if (apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
+            if (!published && jarMoved) {
+                runCatching { loader.evictAndClose(jarTarget) }
+                runCatching { Files.deleteIfExists(jarTarget) }
+            }
+            if (!published && apkMoved) runCatching { Files.deleteIfExists(apkTarget) }
             throw failure
         }
+    }
+
+    private data class MaterializedExtension(
+        val record: InstalledExtension,
+        val sources: List<Source>,
+    )
+
+    private fun InstalledExtension.withSources(sources: List<Source>): InstalledExtension =
+        copy(
+            sourceIds = sources.map { it.id },
+            sources = sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
+        )
+
+    /** Build and validate one complete immutable registry generation without publishing it. */
+    private fun buildRegistryGeneration(
+        previous: ExtensionRegistrySnapshot,
+        materialized: Collection<MaterializedExtension>,
+        replaceAllInstalled: Boolean = false,
+    ): ExtensionRegistrySnapshot {
+        val replacementPackages = materialized.map { it.record.pkgName }
+        require(replacementPackages.size == replacementPackages.toSet().size) {
+            "registry generation contains duplicate package replacements"
+        }
+
+        val removedSourceIds =
+            if (replaceAllInstalled) {
+                previous.installed.values.flatMapTo(HashSet()) { it.sourceIds }
+            } else {
+                replacementPackages.flatMapTo(HashSet()) { previous.installed[it]?.sourceIds.orEmpty() }
+            }
+        val nextSources = HashMap(previous.sources).apply { removedSourceIds.forEach(::remove) }
+        val nextInstalled =
+            if (replaceAllInstalled) {
+                HashMap()
+            } else {
+                HashMap(previous.installed).apply { replacementPackages.forEach(::remove) }
+            }
+
+        materialized.forEach { extension ->
+            val record = extension.record
+            val sourceIds = extension.sources.map { it.id }
+            require(sourceIds.size == sourceIds.toSet().size) {
+                "installed extension '${record.pkgName}' declares duplicate source IDs"
+            }
+            require(record.sourceIds == sourceIds && record.sources.map { it.id } == sourceIds) {
+                "installed extension '${record.pkgName}' record does not match its materialized source IDs"
+            }
+            require(record.pkgName !in nextInstalled) { "installed package '${record.pkgName}' is duplicated" }
+            sourceIds.forEach { sourceId ->
+                val owner = nextInstalled.values.firstOrNull { sourceId in it.sourceIds }?.pkgName
+                require(nextSources[sourceId] == null) {
+                    if (owner == null) {
+                        "source ID $sourceId is already active without an installed owner"
+                    } else {
+                        "source ID $sourceId is already owned by '$owner'"
+                    }
+                }
+            }
+            extension.sources.forEach { source -> nextSources[source.id] = source }
+            nextInstalled[record.pkgName] = record
+        }
+
+        return loader.prepareRegistry(nextSources, nextInstalled).also(::requireCompleteRegistry)
+    }
+
+    private fun requireCompleteRegistry(snapshot: ExtensionRegistrySnapshot) {
+        snapshot.sources.forEach { (sourceId, source) ->
+            require(source.id == sourceId) { "runtime source key $sourceId does not match source ID ${source.id}" }
+        }
+        snapshot.installed.forEach { (pkgName, record) ->
+            require(record.pkgName == pkgName) { "installed package key '$pkgName' does not match its record" }
+            require(record.sourceIds.size == record.sourceIds.toSet().size) {
+                "installed package '$pkgName' declares duplicate source IDs"
+            }
+            require(record.sources.map { it.id } == record.sourceIds) {
+                "installed package '$pkgName' source descriptors do not match its source IDs"
+            }
+        }
+        val owners = sourceOwners(snapshot.installed.values)
+        owners.forEach { (sourceId, packages) ->
+            require(packages.size == 1) {
+                "installed unrelated source ID $sourceId is not owned exclusively by one package: " +
+                    packages.sorted().joinToString()
+            }
+            require(snapshot.sources[sourceId] != null) {
+                "installed unrelated source ID $sourceId is missing from the runtime registry"
+            }
+        }
+    }
+
+    private fun sourceOwners(records: Collection<InstalledExtension>): Map<Long, Set<String>> =
+        buildMap<Long, MutableSet<String>> {
+            records.forEach { record ->
+                record.sourceIds.forEach { sourceId -> getOrPut(sourceId) { mutableSetOf() }.add(record.pkgName) }
+            }
+        }
+
+    private fun verifyBootIdentity(
+        record: InstalledExtension,
+        inspected: InspectedExtensionArtifact,
+    ): InstalledExtension {
+        require(inspected.apkFile.toAbsolutePath().normalize() == installedApkPath(record)) {
+            "installed APK inspector returned the wrong file for '${record.pkgName}'"
+        }
+        require(inspected.pkgName == record.pkgName) {
+            "installed APK package '${inspected.pkgName}' does not match manifest package '${record.pkgName}'"
+        }
+        require(inspected.versionCode == record.versionCode && inspected.versionName == record.versionName) {
+            "installed APK version ${inspected.versionName} (${inspected.versionCode}) does not match manifest version " +
+                "${record.versionName} (${record.versionCode})"
+        }
+        require(inspected.mainClass == record.mainClass) {
+            "installed APK main class '${inspected.mainClass}' does not match manifest main class '${record.mainClass}'"
+        }
+
+        val currentSigners = inspected.signature.currentSignerFingerprints.mapTo(HashSet(), ::normalizeSignerFingerprint)
+        val currentLineage = inspected.signature.signingCertificateLineage.map(::normalizeSignerFingerprint)
+        require(currentSigners.isNotEmpty()) { "installed APK '${record.pkgName}' has no cryptographically verified signer" }
+        val recordedSigners = record.signerFingerprints.mapTo(HashSet(), ::normalizeSignerFingerprint)
+        val recordedLineage = record.signingCertificateLineage.map(::normalizeSignerFingerprint)
+        val exactSigner = recordedSigners.isNotEmpty() && currentSigners == recordedSigners
+        val approvedPin = record.repoUrl?.let(repoTrust::get)
+        val approvedDescendant =
+            recordedSigners.isNotEmpty() &&
+                approvedPin != null &&
+                approvedPin in currentSigners &&
+                VerifiedApkSignature(currentSigners, currentLineage).continuesFrom(
+                    VerifiedApkSignature(recordedSigners, recordedLineage),
+                )
+        require(recordedSigners.isEmpty() || exactSigner || approvedDescendant) {
+            "installed APK signer for '${record.pkgName}' does not match its manifest identity or an approved lineage"
+        }
+        return record.copy(
+            signerFingerprints = currentSigners,
+            signingCertificateLineage = currentLineage,
+        )
+    }
+
+    private fun installedApkPath(record: InstalledExtension): Path {
+        val root = extensionsRoot.toPath().toAbsolutePath().normalize()
+        val relative = Path.of(record.apkFileName)
+        require(relative.fileName?.toString() == record.apkFileName) {
+            "installed APK filename '${record.apkFileName}' is not a plain filename"
+        }
+        return root.resolve(relative).normalize().also { path ->
+            require(path.parent == root) { "installed APK path escapes the extensions directory" }
+        }
+    }
+
+    private fun installedJarPath(record: InstalledExtension): Path {
+        require(record.apkFileName.endsWith(".apk", ignoreCase = true)) {
+            "installed APK filename '${record.apkFileName}' does not end in .apk"
+        }
+        return installedApkPath(record).resolveSibling(record.apkFileName.dropLast(4) + ".jar")
     }
 
     private fun removeSupersededFiles(
         old: InstalledExtension,
         replacement: InstalledExtension,
+        replacedSources: Collection<Source>,
     ) {
         if (old.apkFileName == replacement.apkFileName) return
-        File(extensionsRoot, old.apkFileName).delete()
-        File(extensionsRoot, old.apkFileName.substringBefore(".apk") + ".jar").delete()
+        installedApkPath(old).toFile().delete()
+        loader.retire(installedJarPath(old), replacedSources)
     }
 
     private fun apkFileNameFor(url: String): String {
@@ -422,28 +786,47 @@ class ExtensionManager internal constructor(
     private data class InstallState(
         val mutationSequence: Long,
         val repos: List<String>,
+        val repoTrust: Map<String, String>,
         val installed: InstalledExtension?,
     )
 
-    private fun persistManifest(records: Collection<InstalledExtension> = installed.values) {
-        val temporary = Files.createTempFile(extensionsRoot.toPath(), ".installed-", ".json.tmp")
+    private fun persistRepoTrust(trust: Map<String, String>) {
+        val temporary = Files.createTempFile(extensionsRoot.toPath(), ".repo-trust-", ".json.tmp")
         try {
-            Files.writeString(temporary, mapper.writeValueAsString(records.toList()))
+            Files.writeString(temporary, mapper.writeValueAsString(trust))
             try {
-                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                Files.move(temporary, repoTrustFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } catch (_: AtomicMoveNotSupportedException) {
-                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                Files.move(temporary, repoTrustFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
             }
         } finally {
             Files.deleteIfExists(temporary)
         }
     }
 
-    private fun loadManifestFromDisk() {
-        if (!manifestFile.exists()) return
-        runCatching { mapper.readValue<List<InstalledExtension>>(manifestFile.readText()) }
-            .onSuccess { it.forEach { rec -> installed[rec.pkgName] = rec } }
-            .onFailure { logger.warn(it) { "Corrupt install manifest, starting empty" } }
+    private fun persistManifest(records: Collection<InstalledExtension> = installed.values) {
+        val persistedRecords = records.toList()
+        val temporary = Files.createTempFile(extensionsRoot.toPath(), ".installed-", ".json.tmp")
+        try {
+            Files.writeString(temporary, mapper.writeValueAsString(persistedRecords))
+            try {
+                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, manifestFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+            manifestRecords = persistedRecords
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+
+    private fun loadManifestFromDisk(): List<InstalledExtension> {
+        if (!manifestFile.exists()) return emptyList()
+        return try {
+            mapper.readValue(manifestFile.readText())
+        } catch (failure: Exception) {
+            throw IllegalArgumentException("install manifest is corrupt", failure)
+        }
     }
 
     private fun loadReposFromDisk() {
@@ -451,6 +834,16 @@ class ExtensionManager internal constructor(
         runCatching { mapper.readValue<List<String>>(reposFile.readText()) }
             .onSuccess { if (it.isNotEmpty()) repos = it }
             .onFailure { logger.warn(it) { "Corrupt repos.json, using defaults" } }
+    }
+
+    private fun loadRepoTrustFromDisk() {
+        if (!repoTrustFile.exists()) return
+        runCatching {
+            mapper.readValue<Map<String, String>>(repoTrustFile.readText()).mapKeys { it.key.trim() }.mapValues {
+                normalizeSignerFingerprint(it.value)
+            }
+        }.onSuccess { repoTrust = DEFAULT_REPO_TRUST + it }
+            .onFailure { logger.warn(it) { "Corrupt repo-trust.json, using default trust" } }
     }
 
     /** pkg -> (repoUrl, best repo entry across all repos). */
@@ -503,6 +896,9 @@ class ExtensionManager internal constructor(
          * the full `index.json` (the new wrapper schema): `index.min.json` was neutered to a 2-entry
          * deprecation stub, so a bare-base default would see no real extensions (GAP-145).
          */
-        val DEFAULT_REPOS = listOf("https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json")
+        private const val DEFAULT_REPO = "https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.json"
+        private const val DEFAULT_REPO_SIGNER = "9add655a78e96c4ec7a53ef89dccb557cb5d767489fac5e785d671a5a75d4da2"
+        val DEFAULT_REPOS = listOf(DEFAULT_REPO)
+        val DEFAULT_REPO_TRUST = mapOf(DEFAULT_REPO to DEFAULT_REPO_SIGNER)
     }
 }

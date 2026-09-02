@@ -45,6 +45,7 @@ type Client struct {
 	extensions     []sourceengine.Extension
 	preferences    map[int64][]sourceengine.Preference
 	repos          []string
+	repoTrust      map[string]string
 	flareSolverr   sourceengine.FlareSolverrConfig
 	socks          sourceengine.SocksConfig
 	impersonate    sourceengine.ImpersonateConfig
@@ -69,6 +70,7 @@ func New(opts ...Option) *Client {
 		images:        map[contentKey]imageEntry{},
 		coverImages:   map[contentKey]imageEntry{},
 		preferences:   map[int64][]sourceengine.Preference{},
+		repoTrust:     map[string]string{},
 		errors:        map[string]error{},
 		calls:         map[string]int{},
 	}
@@ -156,6 +158,11 @@ func WithPreferences(sourceID int64, prefs []sourceengine.Preference) Option {
 // WithRepos seeds the configured extension-repo index URL list.
 func WithRepos(repos []string) Option {
 	return func(c *Client) { c.repos = repos }
+}
+
+// WithRepoTrust seeds the independently configured repository signer pins.
+func WithRepoTrust(trust map[string]string) Option {
+	return func(c *Client) { c.repoTrust = cloneStringMap(trust) }
 }
 
 // WithImpersonate seeds the impersonate-gateway config the fake starts with, so
@@ -488,6 +495,37 @@ func (c *Client) SetRepos(_ context.Context, repos []string) ([]string, error) {
 	defer c.mu.Unlock()
 	c.repos = append([]string(nil), repos...)
 	return append([]string(nil), c.repos...), nil
+}
+
+// RepoTrust returns a defensive copy of the configured repository signer pins.
+func (c *Client) RepoTrust(_ context.Context) (map[string]string, error) {
+	c.record("RepoTrust")
+	if err := c.errFor("RepoTrust"); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cloneStringMap(c.repoTrust), nil
+}
+
+// SetRepoTrust writes one repository signer pin and returns the complete map.
+func (c *Client) SetRepoTrust(_ context.Context, repoURL, signerFingerprint string) (map[string]string, error) {
+	c.record("SetRepoTrust")
+	if err := c.errFor("SetRepoTrust"); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.repoTrust[repoURL] = signerFingerprint
+	return cloneStringMap(c.repoTrust), nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // --- config passthrough ------------------------------------------------------

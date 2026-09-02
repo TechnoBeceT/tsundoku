@@ -12,6 +12,7 @@ package enginehost
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
@@ -66,8 +67,46 @@ object Preferences {
     fun apply(
         source: Source,
         changes: Map<String, Any?>,
-    ): List<String> {
+    ): List<String> = apply(source, changes, rawPreferences(source).associateBy { it.key })
+
+    /**
+     * Apply [changes] and run [commit] as one recoverable preference transaction. Any failure while
+     * applying, materializing, validating, or describing the refreshed source restores every
+     * affected persisted value before the failure escapes to the RPC layer.
+     */
+    internal fun <T> applyRecoverably(
+        source: Source,
+        changes: Map<String, Any?>,
+        commit: () -> T,
+    ): T {
         val byKey = rawPreferences(source).associateBy { it.key }
+        val sharedPreferences = (source as? ConfigurableSource)?.sourcePreferences()
+        val snapshot =
+            if (sharedPreferences == null) {
+                emptyMap()
+            } else {
+                snapshotAffected(sharedPreferences, byKey, changes.keys)
+            }
+        try {
+            apply(source, changes, byKey)
+            return commit()
+        } catch (failure: Throwable) {
+            if (sharedPreferences != null) {
+                try {
+                    restore(sharedPreferences, snapshot)
+                } catch (restoreFailure: Throwable) {
+                    failure.addSuppressed(restoreFailure)
+                }
+            }
+            throw failure
+        }
+    }
+
+    private fun apply(
+        source: Source,
+        changes: Map<String, Any?>,
+        byKey: Map<String, Preference>,
+    ): List<String> {
         val written = mutableListOf<String>()
         changes.forEach { (key, raw) ->
             val pref = byKey[key] ?: throw IllegalArgumentException("unknown preference key '$key' for source ${source.name}")
@@ -81,6 +120,106 @@ object Preferences {
             written += key
         }
         return written
+    }
+
+    private sealed interface StoredPreference {
+        data object Missing : StoredPreference
+
+        data class StringValue(
+            val value: String,
+        ) : StoredPreference
+
+        data class BooleanValue(
+            val value: Boolean,
+        ) : StoredPreference
+
+        data class IntValue(
+            val value: Int,
+        ) : StoredPreference
+
+        data class FloatValue(
+            val value: Float,
+        ) : StoredPreference
+
+        data class LongValue(
+            val value: Long,
+        ) : StoredPreference
+
+        data class StringSetValue(
+            val value: Set<String>,
+        ) : StoredPreference
+    }
+
+    private fun snapshotAffected(
+        preferences: SharedPreferences,
+        byKey: Map<String, Preference>,
+        changedKeys: Set<String>,
+    ): Map<String, StoredPreference> {
+        return changedKeys
+            .filter { key -> byKey[key]?.isEnabled == true }
+            .associateWith { key -> snapshot(preferences, requireNotNull(byKey[key])) }
+    }
+
+    private fun snapshot(
+        preferences: SharedPreferences,
+        preference: Preference,
+    ): StoredPreference {
+        val key = preference.key
+        return when (preference.defaultValueType) {
+            "String" ->
+                preferences.getString(key, null)
+                    ?.let(StoredPreference::StringValue)
+                    ?: StoredPreference.Missing
+            "Boolean" ->
+                if (preferences.contains(key)) {
+                    StoredPreference.BooleanValue(preferences.getBoolean(key, false))
+                } else {
+                    StoredPreference.Missing
+                }
+            "Int", "Integer" ->
+                if (preferences.contains(key)) {
+                    StoredPreference.IntValue(preferences.getInt(key, 0))
+                } else {
+                    StoredPreference.Missing
+                }
+            "Float" ->
+                if (preferences.contains(key)) {
+                    StoredPreference.FloatValue(preferences.getFloat(key, 0F))
+                } else {
+                    StoredPreference.Missing
+                }
+            "Long" ->
+                if (preferences.contains(key)) {
+                    StoredPreference.LongValue(preferences.getLong(key, 0L))
+                } else {
+                    StoredPreference.Missing
+                }
+            "Set<String>" ->
+                preferences.getStringSet(key, null)
+                    ?.toSet()
+                    ?.let(StoredPreference::StringSetValue)
+                    ?: StoredPreference.Missing
+            else -> throw IllegalArgumentException("unsupported preference type ${preference.defaultValueType} for '$key'")
+        }
+    }
+
+    private fun restore(
+        preferences: SharedPreferences,
+        snapshot: Map<String, StoredPreference>,
+    ) {
+        val editor = preferences.edit()
+        snapshot.forEach { (key, stored) ->
+            when (stored) {
+                StoredPreference.Missing -> editor.remove(key)
+                is StoredPreference.StringValue -> editor.putString(key, stored.value)
+                is StoredPreference.BooleanValue -> editor.putBoolean(key, stored.value)
+                is StoredPreference.IntValue -> editor.putInt(key, stored.value)
+                is StoredPreference.FloatValue -> editor.putFloat(key, stored.value)
+                is StoredPreference.LongValue -> editor.putLong(key, stored.value)
+                is StoredPreference.StringSetValue -> editor.putStringSet(key, stored.value)
+            }
+        }
+        check(editor.commit()) { "failed to restore source preferences" }
     }
 
     /** Coerce a JSON-decoded value to the exact type the preference persists. */

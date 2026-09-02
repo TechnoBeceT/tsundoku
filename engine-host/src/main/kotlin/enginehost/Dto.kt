@@ -180,6 +180,15 @@ data class InstallRequest(
 /** The configured extension-repo index URLs (each an `index.min.json` or its base). */
 data class ReposDto(val repos: List<String>)
 
+/** Explicit repository signer approval or rotation request. */
+data class RepoTrustRequest(
+    val repoUrl: String,
+    val signerFingerprint: String,
+)
+
+/** Independently configured repository signer pins, keyed by repository URL. */
+data class RepoTrustDto(val trust: Map<String, String>)
+
 // ---- Per-source preferences ----
 
 /**

@@ -24,8 +24,12 @@ import suwayomi.tachidesk.manga.impl.util.PackageTools.getPackageInfo
 import suwayomi.tachidesk.manga.impl.util.PackageTools.loadExtensionSources
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.ref.Cleaner
+import java.net.URLClassLoader
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -48,11 +52,33 @@ internal data class PreparedExtension(
     val mainClass: String,
     val apkFile: Path,
     val jarFile: Path,
+    val signerFingerprints: Set<String>,
+    val signingCertificateLineage: List<String> = emptyList(),
+)
+
+/** Verified identity read from an installed APK without transforming or loading its code. */
+internal data class InspectedExtensionArtifact(
+    val pkgName: String,
+    val versionName: String,
+    val versionCode: Long,
+    val mainClass: String,
+    val apkFile: Path,
+    val signature: VerifiedApkSignature,
 )
 
 internal fun interface ExtensionPreparer {
     fun prepare(apk: Path): PreparedExtension
 }
+
+internal fun interface ExtensionArtifactInspector {
+    fun inspect(apk: Path): InspectedExtensionArtifact
+}
+
+/** One immutable generation published atomically to source and installed-state readers. */
+internal data class ExtensionRegistrySnapshot(
+    val sources: Map<Long, Source>,
+    val installed: Map<String, InstalledExtension>,
+)
 
 /**
  * ExtensionLoader installs a Mihon extension APK on a plain JVM and instantiates its
@@ -60,27 +86,42 @@ internal fun interface ExtensionPreparer {
  * stable [Source.id] so the RPC layer can resolve `(sourceId, url)` calls; the per-package
  * source-id map lets [ExtensionManager] unload an extension cleanly on uninstall/update.
  */
-class ExtensionLoader(
+class ExtensionLoader internal constructor(
     private val workDir: File,
+    private val signatureVerifier: ApkSignatureVerifier,
 ) {
+    constructor(workDir: File) : this(workDir, ApkSignerVerifier)
+
     private val logger = KotlinLogging.logger {}
-    private val sources = ConcurrentHashMap<Long, Source>()
+    @Volatile
+    private var registry = ExtensionRegistrySnapshot(emptyMap(), emptyMap())
 
     /** All sources loaded so far, in load order. */
-    fun loaded(): List<Source> = sources.values.toList()
+    fun loaded(): List<Source> = registry.sources.values.toList()
 
     /** Resolve a previously-loaded source by its stable id (null if unknown). */
-    fun source(sourceId: Long): Source? = sources[sourceId]
+    fun source(sourceId: Long): Source? = registry.sources[sourceId]
 
-    /** Drop the given source ids from the in-memory registry (on uninstall). */
-    fun unload(sourceIds: Collection<Long>) {
-        sourceIds.forEach { sources.remove(it) }
+    internal fun snapshotRegistry(): ExtensionRegistrySnapshot = registry
+
+    internal fun prepareRegistry(
+        sources: Map<Long, Source>,
+        installed: Map<String, InstalledExtension>,
+    ): ExtensionRegistrySnapshot =
+        ExtensionRegistrySnapshot(
+            sources = Collections.unmodifiableMap(HashMap(sources)),
+            installed = Collections.unmodifiableMap(HashMap(installed)),
+        )
+
+    /** Publish a fully prepared source/installed generation with one volatile write. */
+    internal fun publishRegistry(snapshot: ExtensionRegistrySnapshot) {
+        registry = snapshot
     }
 
-    /** Load and register an extension from an existing local APK. */
+    /** Load an extension from an existing local APK without publishing it. */
     fun loadFromApk(apkPath: String): LoadedExtension {
         val prepared = prepareFromApk(Path.of(apkPath))
-        return instantiatePrepared(prepared).also { registerReplacement(emptyList(), it.sources) }
+        return instantiatePrepared(prepared)
     }
 
     /**
@@ -89,29 +130,12 @@ class ExtensionLoader(
      * under the lock immediately before committing local state.
      */
     internal fun prepareFromApk(apkPath: Path): PreparedExtension {
-        val apkFile = apkPath.toFile()
-        require(apkFile.exists()) { "APK not found: $apkPath" }
+        val inspected = inspectApk(apkPath)
+        val apkFile = inspected.apkFile.toFile()
         val fileNameWithoutType = apkFile.name.substringBefore(".apk")
         val jarFile = File(workDir, "$fileNameWithoutType.jar")
 
         try {
-            val packageInfo = getPackageInfo(apkFile.absolutePath)
-
-            // Validate the extension lib version (same guard Suwayomi enforces).
-            val libVersion = packageInfo.versionName.substringBeforeLast('.').toDouble()
-            require(libVersion in LIB_VERSION_MIN..LIB_VERSION_MAX) {
-                "Lib version $libVersion outside supported $LIB_VERSION_MIN..$LIB_VERSION_MAX"
-            }
-
-            val sourceClass =
-                packageInfo.applicationInfo.metaData
-                    .getString(METADATA_SOURCE_CLASS)!!
-                    .trim()
-            val className =
-                if (sourceClass.startsWith(".")) packageInfo.packageName + sourceClass else sourceClass
-
-            logger.info { "Extension ${packageInfo.packageName} main class: $className" }
-
             // dex -> jar (+ Suwayomi's android-class bytecode fixups), then strip META-INF / merge assets.
             dex2jar(apkFile.absolutePath, jarFile.absolutePath, fileNameWithoutType)
             extractAssetsFromApk(apkFile, jarFile)
@@ -122,12 +146,14 @@ class ExtensionLoader(
             DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
 
             return PreparedExtension(
-                pkgName = packageInfo.packageName,
-                versionName = packageInfo.versionName,
-                versionCode = packageInfo.versionCode.toLong(),
-                mainClass = className,
+                pkgName = inspected.pkgName,
+                versionName = inspected.versionName,
+                versionCode = inspected.versionCode,
+                mainClass = inspected.mainClass,
                 apkFile = apkFile.toPath(),
                 jarFile = jarFile.toPath(),
+                signerFingerprints = inspected.signature.currentSignerFingerprints,
+                signingCertificateLineage = inspected.signature.signingCertificateLineage,
             )
         } catch (failure: Throwable) {
             jarFile.delete()
@@ -135,15 +161,42 @@ class ExtensionLoader(
         }
     }
 
+    /** Verify an APK and read its package identity without touching its installed jar. */
+    internal fun inspectApk(apkPath: Path): InspectedExtensionArtifact {
+        val apkFile = apkPath.toFile()
+        require(apkFile.exists()) { "APK not found: $apkPath" }
+        val verifiedSignature = signatureVerifier.verifyIdentity(apkPath)
+        val packageInfo = getPackageInfo(apkFile.absolutePath)
+
+        // Validate the extension lib version (same guard Suwayomi enforces).
+        val libVersion = packageInfo.versionName.substringBeforeLast('.').toDouble()
+        require(libVersion in LIB_VERSION_MIN..LIB_VERSION_MAX) {
+            "Lib version $libVersion outside supported $LIB_VERSION_MIN..$LIB_VERSION_MAX"
+        }
+
+        val sourceClass =
+            requireNotNull(packageInfo.applicationInfo.metaData.getString(METADATA_SOURCE_CLASS)) {
+                "Extension ${packageInfo.packageName} has no source class metadata"
+            }.trim()
+        val className =
+            if (sourceClass.startsWith(".")) packageInfo.packageName + sourceClass else sourceClass
+
+        logger.info { "Extension ${packageInfo.packageName} main class: $className" }
+        return InspectedExtensionArtifact(
+            pkgName = packageInfo.packageName,
+            versionName = packageInfo.versionName,
+            versionCode = packageInfo.versionCode.toLong(),
+            mainClass = className,
+            apkFile = apkPath,
+            signature = verifiedSignature,
+        )
+    }
+
+    internal fun verifyApkSignature(apk: Path): VerifiedApkSignature = signatureVerifier.verifyIdentity(apk)
+
     /** Instantiate a prepared jar without changing the active registry. */
     internal fun instantiatePrepared(prepared: PreparedExtension): LoadedExtension {
-        val instance = loadExtensionSources(prepared.jarFile.toString(), prepared.mainClass)
-        val loaded: List<Source> =
-            when (instance) {
-                is Source -> listOf(instance)
-                is SourceFactory -> instance.createSources()
-                else -> error("Unknown source class type: ${instance.javaClass}")
-            }
+        val loaded = instantiateSources(prepared.jarFile.toString(), prepared.mainClass)
 
         loaded.forEach { source ->
             logger.info { "Loaded source id=${source.id} name='${source.name}' lang='${source.lang}'" }
@@ -159,25 +212,47 @@ class ExtensionLoader(
         )
     }
 
-    /** Expose a complete replacement source set after every fallible preparation step has passed. */
-    internal fun registerReplacement(
-        previousSourceIds: Collection<Long>,
-        replacement: List<Source>,
-    ) {
-        val replacementIds = replacement.mapTo(HashSet()) { it.id }
-        replacement.forEach { sources[it.id] = it }
-        previousSourceIds.filterNot { it in replacementIds }.forEach { sources.remove(it) }
+    /**
+     * Instantiate a staged candidate only long enough to inspect its declared source IDs, then
+     * close and evict the staging-path classloader. The active registry is never changed.
+     */
+    internal fun inspectPreparedSourceIds(prepared: PreparedExtension): List<Long> =
+        try {
+            instantiatePrepared(prepared).sources.map { it.id }
+        } finally {
+            evictAndClose(prepared.jarFile)
+        }
+
+    /** Remove and close a loader whose sources were never committed to the active registry. */
+    internal fun evictAndClose(jarFile: Path) {
+        PackageTools.jarLoaderMap.remove(jarFile.toString())?.close()
     }
 
-    internal fun snapshotSources(sourceIds: Collection<Long>): Map<Long, Source> =
-        sourceIds.mapNotNull { sourceId -> sources[sourceId]?.let { sourceId to it } }.toMap()
+    /** Whether [jarFile]'s classloader predates the prospective generation being built. */
+    internal fun hasCachedLoader(jarFile: Path): Boolean = PackageTools.jarLoaderMap.containsKey(jarFile.toString())
 
-    internal fun restoreSources(
-        affectedSourceIds: Collection<Long>,
-        snapshot: Map<Long, Source>,
+    /**
+     * Stop future reuse of a superseded loader immediately, but keep its jar and loader available
+     * until every replaced source instance becomes unreachable. In-flight calls may load helper
+     * classes lazily, so closing the loader at registry replacement time is not safe.
+     */
+    internal fun retire(
+        jarFile: Path,
+        replacedSources: Collection<Source>,
     ) {
-        affectedSourceIds.forEach { sources.remove(it) }
-        snapshot.forEach { (sourceId, source) -> sources[sourceId] = source }
+        val classLoader = PackageTools.jarLoaderMap.remove(jarFile.toString())
+        if (classLoader == null) {
+            jarFile.toFile().delete()
+            return
+        }
+        val distinctSources = Collections.newSetFromMap(IdentityHashMap<Source, Boolean>()).apply { addAll(replacedSources) }
+        if (distinctSources.isEmpty()) {
+            classLoader.close()
+            jarFile.toFile().delete()
+            return
+        }
+        val retirement = LoaderRetirement(classLoader, jarFile, distinctSources.size)
+        distinctSources.forEach { source -> retiredLoaderCleaner.register(source, retirement::release) }
     }
 
     /**
@@ -186,21 +261,24 @@ class ExtensionLoader(
      * just-written SharedPreferences value without the wasteful (and unsafe — it deletes+renames the
      * jar a live classloader still references) reinstall pipeline. `loadExtensionSources` reuses the
      * cached ChildFirstURLClassLoader for this jar, so the fresh instance reads the current prefs.
+     * It does not publish; [ExtensionManager] validates and commits the resulting complete generation.
      * MUST be called under [ExtensionManager]'s mutation lock (the classloader cache is not thread-safe).
      */
     fun reinstantiate(
         jarPath: String,
         className: String,
+    ): List<Source> = instantiateSources(jarPath, className)
+
+    private fun instantiateSources(
+        jarPath: String,
+        className: String,
     ): List<Source> {
         val instance = loadExtensionSources(jarPath, className)
-        val loaded: List<Source> =
-            when (instance) {
-                is Source -> listOf(instance)
-                is SourceFactory -> instance.createSources()
-                else -> error("Unknown source class type: ${instance.javaClass}")
-            }
-        loaded.forEach { sources[it.id] = it }
-        return loaded
+        return when (instance) {
+            is Source -> listOf(instance)
+            is SourceFactory -> instance.createSources()
+            else -> error("Unknown source class type: ${instance.javaClass}")
+        }
     }
 
     /**
@@ -270,5 +348,23 @@ class ExtensionLoader(
             tempJar.delete()
             assetsFolder.deleteRecursively()
         }
+    }
+
+    private class LoaderRetirement(
+        private val classLoader: URLClassLoader,
+        private val jarFile: Path,
+        sourceCount: Int,
+    ) {
+        private val remaining = AtomicInteger(sourceCount)
+
+        fun release() {
+            if (remaining.decrementAndGet() != 0) return
+            runCatching { classLoader.close() }
+            runCatching { jarFile.toFile().delete() }
+        }
+    }
+
+    companion object {
+        private val retiredLoaderCleaner: Cleaner = Cleaner.create()
     }
 }

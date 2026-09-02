@@ -88,7 +88,7 @@ func TestImage_UpstreamFailure(t *testing.T) {
 // raw-bytes path (doRaw) is wrapped and returned, mirroring the JSON path's
 // TestClient_NetworkFailure_IsWrapped.
 func TestImage_NetworkFailure_IsWrapped(t *testing.T) {
-	c := sourceengine.New("http://engine-host.invalid", failingDoer{})
+	c := sourceengine.New("http://engine-host.invalid", failingDoer{}, "test-engine-control-token")
 	if _, _, err := c.Image(context.Background(), 1, "/p", ""); err == nil {
 		t.Fatal("Image: want error from a failing doer, got nil")
 	}

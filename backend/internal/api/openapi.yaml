@@ -3635,6 +3635,32 @@ components:
           example:
             - https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json
 
+    ExtensionRepoTrust:
+      type: object
+      description: Independently approved extension-repository signer pins, keyed by repository URL.
+      required: [trust]
+      properties:
+        trust:
+          type: object
+          additionalProperties:
+            type: string
+            pattern: "^[0-9a-f]{64}$"
+          description: Complete repository URL to normalized SHA-256 certificate-fingerprint map.
+
+    ExtensionRepoTrustUpdate:
+      type: object
+      description: Explicitly approve or rotate the signer pin for one configured extension repository.
+      required: [repoUrl, signerFingerprint]
+      properties:
+        repoUrl:
+          type: string
+          format: uri
+          description: Absolute http(s) URL of an already-configured extension repository.
+        signerFingerprint:
+          type: string
+          description: SHA-256 signer certificate fingerprint, plain or colon-delimited hexadecimal.
+          example: 9add655a78e96c4ec7a53ef89dccb557cb5d767489fac5e785d671a5a75d4da2
+
     SourcePreference:
       type: object
       description: |
@@ -9910,6 +9936,76 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "502":
           description: Suwayomi was unreachable or returned a GraphQL error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/suwayomi/extensions/repos/trust:
+    get:
+      operationId: getExtensionRepoTrust
+      summary: Read independent extension-repository signer pins
+      description: Returns the complete repository URL to SHA-256 signer-fingerprint map.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: The complete independently configured signer-pin map.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionRepoTrust"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host rejected or could not complete the request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: setExtensionRepoTrust
+      summary: Approve or rotate an extension-repository signer pin
+      description: |
+        Explicitly approves or rotates the independent signer pin for one
+        configured repository. The engine host persists the complete map before
+        publishing the new pin and returns that map read back.
+      tags:
+        - suwayomi
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtensionRepoTrustUpdate"
+      responses:
+        "200":
+          description: Pin persisted. Returns the complete signer-pin map.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtensionRepoTrust"
+        "400":
+          description: Invalid URL/fingerprint or the repository is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: The engine host could not complete the request.
           content:
             application/json:
               schema:

@@ -292,7 +292,14 @@ fun main(args: Array<String>) {
     }
     loader.loaded().forEach { logger.info { "  source id=${it.id} name='${it.name}' lang='${it.lang}'" } }
 
-    val server = RpcServer(loader, extensions, port, kcefStatus = kcefLifecycle::snapshot)
+    val server =
+        RpcServer(
+            loader,
+            extensions,
+            port,
+            kcefStatus = kcefLifecycle::snapshot,
+            controlToken = System.getenv("TSUNDOKU_AUTH_SECRET")?.takeIf { it.isNotBlank() },
+        )
     server.start()
     Runtime.getRuntime().addShutdownHook(
         Thread {

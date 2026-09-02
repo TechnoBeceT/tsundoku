@@ -167,6 +167,8 @@ func newTestEnv(t *testing.T, fc *sourceenginefake.Client) *testEnv {
 	authed.POST("/suwayomi/extensions/refresh", h.Refresh)
 	authed.GET("/suwayomi/extensions/repos", h.GetRepos)
 	authed.PUT("/suwayomi/extensions/repos", h.SetRepos)
+	authed.GET("/suwayomi/extensions/repos/trust", h.GetRepoTrust)
+	authed.PUT("/suwayomi/extensions/repos/trust", h.SetRepoTrust)
 	authed.POST("/suwayomi/extensions/:pkgName/install", h.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", h.Update)
 	authed.DELETE("/suwayomi/extensions/:pkgName", h.Uninstall)
@@ -580,4 +582,108 @@ func TestSetRepos_Upstream502(t *testing.T) {
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("SetRepos upstream fail: want 502, got %d", rec.Code)
 	}
+}
+
+// --- Repository signer trust ------------------------------------------------
+
+func TestGetRepoTrust_OK(t *testing.T) {
+	const (
+		repoURL     = "https://repo.test/index.json"
+		fingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	)
+	env := newTestEnv(t, sourceenginefake.New(sourceenginefake.WithRepoTrust(map[string]string{repoURL: fingerprint})))
+	rec := env.do(http.MethodGet, "/api/suwayomi/extensions/repos/trust", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetRepoTrust: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.ExtensionRepoTrustDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Trust[repoURL] != fingerprint {
+		t.Fatalf("GetRepoTrust = %+v", got.Trust)
+	}
+}
+
+func TestRepoTrust_Unauthorized(t *testing.T) {
+	env := newTestEnv(t, sourceenginefake.New())
+	body := `{"repoUrl":"https://repo.test/index.json","signerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	for _, request := range []struct {
+		method string
+		body   string
+	}{
+		{http.MethodGet, ""},
+		{http.MethodPut, body},
+	} {
+		rec := env.noAuth(request.method, "/api/suwayomi/extensions/repos/trust", request.body)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s without token: want 401, got %d", request.method, rec.Code)
+		}
+	}
+	if env.fake.CallCount("RepoTrust") != 0 || env.fake.CallCount("SetRepoTrust") != 0 {
+		t.Fatal("unauthorized repository-trust requests reached the engine client")
+	}
+}
+
+func TestSetRepoTrust_RoundTrip(t *testing.T) {
+	const repoURL = "https://repo.test/index.json"
+	wireFingerprint := strings.Repeat("AA:", 31) + "AA"
+	normalizedFingerprint := strings.Repeat("aa", 32)
+	env := newTestEnv(t, sourceenginefake.New())
+	body := `{"repoUrl":"  ` + repoURL + `  ","signerFingerprint":"` + wireFingerprint + `"}`
+	rec := env.do(http.MethodPut, "/api/suwayomi/extensions/repos/trust", body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("SetRepoTrust: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var got handler.ExtensionRepoTrustDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Trust[repoURL] != normalizedFingerprint {
+		t.Fatalf("SetRepoTrust = %+v", got.Trust)
+	}
+	readBack, err := env.fake.RepoTrust(context.Background())
+	if err != nil || readBack[repoURL] != normalizedFingerprint {
+		t.Fatalf("fake trust after update = %+v, %v", readBack, err)
+	}
+}
+
+func TestSetRepoTrust_Validation400(t *testing.T) {
+	cases := []string{
+		`{}`,
+		`{"repoUrl":"/relative","signerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"repoUrl":"https://repo.test/index.json","signerFingerprint":""}`,
+		`{"repoUrl":"https://repo.test/index.json","signerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+		`{"repoUrl":"https://repo.test/index.json","signerFingerprint":"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}`,
+	}
+	for _, body := range cases {
+		env := newTestEnv(t, sourceenginefake.New())
+		rec := env.do(http.MethodPut, "/api/suwayomi/extensions/repos/trust", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: want 400, got %d (%s)", body, rec.Code, rec.Body.String())
+		}
+		if env.fake.CallCount("SetRepoTrust") != 0 {
+			t.Fatal("invalid repository trust reached the engine client")
+		}
+	}
+}
+
+func TestSetRepoTrust_EngineErrors(t *testing.T) {
+	const body = `{"repoUrl":"https://repo.test/index.json","signerFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+
+	t.Run("engine validation remains a 400", func(t *testing.T) {
+		env := newTestEnv(t, sourceenginefake.New(sourceenginefake.WithError("SetRepoTrust", &sourceengine.BadRequestError{Msg: "repository is not configured"})))
+		rec := env.do(http.MethodPut, "/api/suwayomi/extensions/repos/trust", body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("want 400, got %d (%s)", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("transport failure is a 502", func(t *testing.T) {
+		env := newTestEnv(t, sourceenginefake.New(sourceenginefake.WithError("SetRepoTrust", errors.New("engine rejected"))))
+		rec := env.do(http.MethodPut, "/api/suwayomi/extensions/repos/trust", body)
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("want 502, got %d (%s)", rec.Code, rec.Body.String())
+		}
+	})
 }

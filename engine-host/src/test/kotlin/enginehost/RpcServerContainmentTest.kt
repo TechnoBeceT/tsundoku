@@ -130,16 +130,11 @@ class RpcServerContainmentTest {
         return client.send(request, HttpResponse.BodyHandlers.ofString())
     }
 
-    /** Inject a fake source into the loader's private id->Source registry (no production seam). */
+    /** Register a fake source through the same atomic bootstrap path used before the RPC server starts. */
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
-    ) {
-        val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        val registry = field.get(loader) as MutableMap<Long, Source>
-        registry[source.id] = source
-    }
+    ) = loader.publishTestSources(listOf(source))
 
     /** Read the ephemeral port the RpcServer's HttpServer actually bound to. */
     private fun boundPort(rpc: RpcServer): Int {

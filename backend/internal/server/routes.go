@@ -151,6 +151,8 @@ import (
 //     (Echo matches static before param, so /repos never collides with :pkgName).
 //   - /api/suwayomi/extensions/repos (GET)          — read extension repo URLs (RequireOwner).
 //   - /api/suwayomi/extensions/repos (PUT)          — replace extension repo URLs (RequireOwner).
+//   - /api/suwayomi/extensions/repos/trust (GET)    — read independent repository signer pins (RequireOwner).
+//   - /api/suwayomi/extensions/repos/trust (PUT)    — approve or rotate one repository signer pin (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/install (POST) — install an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/update (POST)  — update an extension (RequireOwner).
 //   - /api/suwayomi/extensions/:pkgName/reinstall (POST) — reinstall a HELD (older) cached version (rollback) (RequireOwner).
@@ -492,6 +494,8 @@ func registerRoutes(
 	authed.POST("/suwayomi/extensions/refresh", extensionsH.Refresh)
 	authed.GET("/suwayomi/extensions/repos", extensionsH.GetRepos)
 	authed.PUT("/suwayomi/extensions/repos", extensionsH.SetRepos)
+	authed.GET("/suwayomi/extensions/repos/trust", extensionsH.GetRepoTrust)
+	authed.PUT("/suwayomi/extensions/repos/trust", extensionsH.SetRepoTrust)
 	authed.POST("/suwayomi/extensions/:pkgName/install", extensionsH.Install)
 	authed.POST("/suwayomi/extensions/:pkgName/update", extensionsH.Update)
 	authed.POST("/suwayomi/extensions/:pkgName/reinstall", extensionsH.Reinstall)

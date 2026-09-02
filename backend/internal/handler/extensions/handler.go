@@ -1,8 +1,8 @@
 // Package extensions holds the thin HTTP handlers for the engine host's
 // "Sources & Extensions management" proxy. It lets the owner list, install,
 // update, uninstall, and refresh extensions (the Tachiyomi/Mihon source
-// plugins) and manage the extension repo URL list — all from Tsundoku, so
-// they never need direct access to the engine host.
+// plugins), manage the extension repo URL list, and explicitly approve repository
+// signer pins — all from Tsundoku, so they never need direct access to the engine host.
 //
 // Like the settings proxy it is a PURE passthrough: no Tsundoku schema, no
 // disk, no SSE, no deletion of Tsundoku rows — the extensions live entirely on
@@ -10,35 +10,18 @@
 // bind → validate → client → DTO. Validation is extracted to validate.go; the
 // DTO mapping to dto.go.
 //
-// NO POST-MUTATION SOURCE-RELOAD HEAL (deliberate, QCAT-281 Slice C).
-// Updating one extension can leave OTHER extensions' sources LISTED in the
-// engine's /sources but MISSING from its runtime loaded-source collection —
-// they then throw "Collection contains no element matching the predicate" on
-// search/fetch (observed live for Rolia Scan + Comick after an Asura update).
-// Tsundoku does NOT attempt to heal this after Install/Update/Uninstall, because
-// no existing capability CAN reliably heal it:
-//   - sourceengine.Client exposes NO runtime source-reload RPC. RefreshExtensions
-//     only re-fetches the AVAILABLE-extensions list from the repos ("check for
-//     updates") — it does not re-instantiate the runtime loaded-source
-//     collection. Install/Update/Uninstall reload only THEIR OWN extension's
-//     sources, not the ones collaterally dropped.
-//   - enginetopo.Reconcile (DB→engine) is drift-gated and only INSTALLS
-//     required-but-MISSING extensions; the dropped sources' extensions are still
-//     reported installed, so Reconcile is a guaranteed no-op for this failure
-//     mode — wiring it here would add latency (and a ConfigProvider dependency)
-//     for zero heal.
-//
-// A true heal needs a NEW engine-host RPC — e.g. POST /sources/reload that
-// re-instantiates the runtime loaded-source collection from all installed
-// extensions (or, equivalently, the engine re-instantiating EVERY extension's
-// sources after any single-extension update). Until Rensaio exposes that, the
-// reliable mitigation is surfacing DEGRADED sources in the picker (the source
-// circuit-breaker trips on the resulting fetch failures — internal/sourcegate)
-// so a broken source is no longer presented as cleanly selectable.
+// Engine-host prepares and validates a complete prospective source/installed
+// generation while readers continue using the previous generation. It persists
+// the replacement manifest before publishing that generation with one atomic
+// reference swap, and retires old files only afterward. A pre-publication
+// registration, invariant, or manifest failure removes the candidate and leaves
+// readers on the old generation. The handler therefore remains a pure
+// passthrough; no post-mutation reload RPC or topology reconciliation is needed.
 package extensions
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
@@ -469,4 +452,37 @@ func (h *Handler) SetRepos(c echo.Context) error {
 		enginetopo.OnReposSet(ctx, h.db, current)
 	}
 	return c.JSON(http.StatusOK, toReposDTO(current))
+}
+
+// GetRepoTrust handles GET /api/suwayomi/extensions/repos/trust. The route is
+// owner-only and returns the complete independently configured signer-pin map.
+func (h *Handler) GetRepoTrust(c echo.Context) error {
+	trust, err := h.sw.RepoTrust(c.Request().Context())
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, toRepoTrustDTO(trust))
+}
+
+// SetRepoTrust handles PUT /api/suwayomi/extensions/repos/trust. It validates
+// the independent signer pin, asks the engine host to persist it atomically,
+// and returns the complete map read back.
+func (h *Handler) SetRepoTrust(c echo.Context) error {
+	var req RepoTrustUpdateRequest
+	if err := c.Bind(&req); err != nil {
+		return httperr.BadRequest("invalid request body")
+	}
+	repoURL, fingerprint, err := validateRepoTrust(req)
+	if err != nil {
+		return err
+	}
+	trust, err := h.sw.SetRepoTrust(c.Request().Context(), repoURL, fingerprint)
+	if err != nil {
+		var badRequest *sourceengine.BadRequestError
+		if errors.As(err, &badRequest) {
+			return httperr.BadRequest(badRequest.Msg)
+		}
+		return httperr.Upstream(err)
+	}
+	return c.JSON(http.StatusOK, toRepoTrustDTO(trust))
 }

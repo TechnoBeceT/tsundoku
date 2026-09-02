@@ -16,6 +16,8 @@ import com.sun.net.httpserver.HttpServer
 import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.InetSocketAddress
+import java.nio.charset.StandardCharsets.UTF_8
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
@@ -31,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference
  * HTTP/JSON. It owns no library state; source content is resolved per request by (sourceId, url).
  * When [executors] is omitted, the server owns and closes its default execution domains. Injected
  * executors remain caller-owned, while the server still completes every exchange it accepted.
+ * Repository trust reads and writes additionally require [controlToken] and fail closed when it is
+ * absent.
  */
 class RpcServer(
     private val loader: ExtensionLoader,
@@ -38,6 +42,7 @@ class RpcServer(
     private val port: Int,
     executors: RpcExecutors? = null,
     private val kcefStatus: () -> KcefStatus = { KcefStatus(KcefState.DISABLED, null) },
+    private val controlToken: String? = null,
 ) {
     private val logger = KotlinLogging.logger {}
     private val ownsExecutors = executors == null
@@ -56,7 +61,7 @@ class RpcServer(
     private lateinit var server: HttpServer
 
     fun start() {
-        server = HttpServer.create(InetSocketAddress(port), 0)
+        server = HttpServer.create(InetSocketAddress("127.0.0.1", port), 0)
         server.executor = Executor(::dispatchFrontDoor)
 
         // Direct, bounded control handlers never wait on source or extension capacity.
@@ -333,11 +338,14 @@ class RpcServer(
                 val changes: Map<String, Any?> = mapper.readValue(exchange.requestBody.readBytes())
                 val refreshed =
                     extensions.underLock {
-                        Preferences.apply(resolve(sourceId), changes)
-                        extensions.reloadForSource(sourceId)
-                        Preferences.describe(resolve(sourceId))
+                        val source = resolve(sourceId)
+                        Preferences.applyRecoverably(source, changes) {
+                            extensions.reloadForSource(sourceId) { refreshedSource ->
+                                PreferencesResponse(Preferences.describe(refreshedSource))
+                            } ?: PreferencesResponse(Preferences.describe(source))
+                        }
                     }
-                response.respondJson(200, PreferencesResponse(refreshed))
+                response.respondJson(200, refreshed)
             }
             else -> response.respondJson(405, ErrorResponse("GET or PUT only"))
         }
@@ -390,21 +398,50 @@ class RpcServer(
         response: ResponseGuard,
     ) {
         try {
-            when (exchange.requestMethod) {
-                "GET" -> response.respondJson(200, ReposDto(extensions.getRepos()))
-                "PUT" -> {
+            val path = exchange.requestURI.path
+            if (path == "/repos/trust" && !isControlAuthorized(exchange)) {
+                response.respondJson(401, ErrorResponse("unauthorized"))
+                return
+            }
+            when {
+                path == "/repos" && exchange.requestMethod == "GET" ->
+                    response.respondJson(200, ReposDto(extensions.getRepos()))
+
+                path == "/repos" && exchange.requestMethod == "PUT" -> {
                     val request: ReposDto = mapper.readValue(exchange.requestBody.readBytes())
                     extensions.setRepos(request.repos)
                     response.respondJson(200, ReposDto(extensions.getRepos()))
                 }
-                else -> response.respondJson(405, ErrorResponse("GET or PUT only"))
+
+                path == "/repos/trust" && exchange.requestMethod == "GET" ->
+                    response.respondJson(200, RepoTrustDto(extensions.getRepoTrust()))
+
+                path == "/repos/trust" && exchange.requestMethod == "PUT" -> {
+                    val request: RepoTrustRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    extensions.setRepoTrust(request.repoUrl, request.signerFingerprint)
+                    response.respondJson(200, RepoTrustDto(extensions.getRepoTrust()))
+                }
+
+                path == "/repos" || path == "/repos/trust" -> response.respondJson(405, ErrorResponse("method not allowed"))
+                else -> response.respondJson(404, ErrorResponse("no route for ${exchange.requestMethod} $path"))
             }
         } catch (e: JacksonException) {
             response.respondJson(400, ErrorResponse("invalid request body: ${e.originalMessage}"))
+        } catch (e: IllegalArgumentException) {
+            response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: Throwable) {
             logger.warn(e) { "repos request failed" }
             response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
         }
+    }
+
+    private fun isControlAuthorized(exchange: HttpExchange): Boolean {
+        val expected = controlToken?.takeIf { it.isNotBlank() } ?: return false
+        val authorization = exchange.requestHeaders.getFirst("Authorization") ?: return false
+        val separator = authorization.indexOf(' ')
+        if (separator <= 0 || !authorization.substring(0, separator).equals("Bearer", ignoreCase = true)) return false
+        val provided = authorization.substring(separator + 1)
+        return MessageDigest.isEqual(expected.toByteArray(UTF_8), provided.toByteArray(UTF_8))
     }
 
     // ================= config passthrough =================

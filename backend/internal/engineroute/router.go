@@ -256,6 +256,16 @@ func (r *Router) SetRepos(ctx context.Context, repos []string) ([]string, error)
 	return r.defaultClient.SetRepos(ctx, repos)
 }
 
+// RepoTrust reads the default instance's repository signer pins.
+func (r *Router) RepoTrust(ctx context.Context) (map[string]string, error) {
+	return r.defaultClient.RepoTrust(ctx)
+}
+
+// SetRepoTrust writes one signer pin on the default instance.
+func (r *Router) SetRepoTrust(ctx context.Context, repoURL, signerFingerprint string) (map[string]string, error) {
+	return r.defaultClient.SetRepoTrust(ctx, repoURL, signerFingerprint)
+}
+
 // SetFlareSolverr pushes the GLOBAL FlareSolverr config onto the default
 // instance. Per-profile FlareSolverr is pushed by ReconcileNetwork onto each
 // non-default instance directly (never through the Router).

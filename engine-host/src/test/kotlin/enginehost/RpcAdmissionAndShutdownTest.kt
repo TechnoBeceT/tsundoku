@@ -495,12 +495,7 @@ class RpcAdmissionAndShutdownTest {
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
-    ) {
-        val field = ExtensionLoader::class.java.getDeclaredField("sources").apply { isAccessible = true }
-        @Suppress("UNCHECKED_CAST")
-        val registry = field.get(loader) as MutableMap<Long, Source>
-        registry[source.id] = source
-    }
+    ) = loader.publishTestSources(listOf(source))
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }
