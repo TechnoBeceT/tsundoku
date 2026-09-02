@@ -15,6 +15,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
+import java.io.InputStream
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
@@ -33,8 +34,8 @@ import java.util.concurrent.atomic.AtomicReference
  * HTTP/JSON. It owns no library state; source content is resolved per request by (sourceId, url).
  * When [executors] is omitted, the server owns and closes its default execution domains. Injected
  * executors remain caller-owned, while the server still completes every exchange it accepted.
- * Repository trust reads and writes additionally require [controlToken] and fail closed when it is
- * absent.
+ * Repository trust reads/writes and installed-APK export additionally require [controlToken] and
+ * fail closed when it is absent.
  */
 class RpcServer(
     private val loader: ExtensionLoader,
@@ -373,6 +374,9 @@ class RpcServer(
                     response.respondJson(200, extensions.list())
                 }
 
+                path.endsWith("/installed-apk") ->
+                    handleInstalledApk(exchange, response, pkgNameFromPath(path, "/installed-apk"))
+
                 path.endsWith("/update") && exchange.requestMethod == "POST" ->
                     response.respondJson(200, extensions.update(pkgNameFromPath(path, "/update")))
 
@@ -390,6 +394,35 @@ class RpcServer(
         } catch (e: Throwable) {
             logger.warn(e) { "extensions request failed" }
             response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))
+        }
+    }
+
+    private fun handleInstalledApk(
+        exchange: HttpExchange,
+        response: ResponseGuard,
+        pkgName: String,
+    ) {
+        if (!isControlAuthorized(exchange)) {
+            response.respondJson(401, ErrorResponse("unauthorized"))
+            return
+        }
+        if (exchange.requestMethod != "GET") {
+            response.respondJson(405, ErrorResponse("GET only"))
+            return
+        }
+        extensions.withInstalledApk(pkgName) { apk ->
+            response.respondStream(
+                status = 200,
+                input = apk.input,
+                contentLength = apk.contentLength,
+                contentType = APK_CONTENT_TYPE,
+                headers =
+                    mapOf(
+                        "X-Tsundoku-Extension-Package" to apk.pkgName,
+                        "X-Tsundoku-Extension-Version-Code" to apk.versionCode.toString(),
+                        "X-Tsundoku-Extension-Version-Name" to apk.versionName,
+                    ),
+            )
         }
     }
 
@@ -715,6 +748,32 @@ class RpcServer(
             }
         }
 
+        fun respondStream(
+            status: Int,
+            input: InputStream,
+            contentLength: Long,
+            contentType: String,
+            headers: Map<String, String>,
+        ) {
+            if (!completed.compareAndSet(false, true)) return
+            disconnectObservation.getAndSet(null)?.close()
+            try {
+                exchange.responseHeaders.add("Content-Type", contentType)
+                headers.forEach { (name, value) -> exchange.responseHeaders.add(name, value) }
+                exchange.sendResponseHeaders(status, contentLength)
+                exchange.responseBody.use { output -> input.copyTo(output) }
+            } catch (failure: Throwable) {
+                writeFailed.set(true)
+                disconnectCancellation.getAndSet(null)?.invoke()
+                throw failure
+            } finally {
+                writeFinished.set(true)
+                disconnectCancellation.set(null)
+                disconnectObservation.getAndSet(null)?.close()
+                completion.countDown()
+            }
+        }
+
         fun respondBusy() = respondLifecycle(BUSY_MESSAGE)
 
         fun respondShutdown() = respondLifecycle(SHUTDOWN_MESSAGE)
@@ -774,6 +833,7 @@ class RpcServer(
     }
 
     private companion object {
+        const val APK_CONTENT_TYPE = "application/vnd.android.package-archive"
         const val BUSY_MESSAGE = "server busy"
         const val SHUTDOWN_MESSAGE = "server shutting down"
         const val SOURCE_QUEUE_FULL_MESSAGE = "source queue full"

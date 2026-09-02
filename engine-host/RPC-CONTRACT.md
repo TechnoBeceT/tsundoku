@@ -3,6 +3,18 @@
 The engine host serves HTTP/JSON on one port. Existing source, image, configuration, and extension
 routes keep their request and response fields unchanged. The status route below is additive.
 
+## `GET /extensions/{pkgName}/installed-apk`
+
+Streams the exact APK backing the installed extension record. This loopback-only control route
+requires `Authorization: Bearer <control-token>` and returns HTTP 401 when the token is missing or
+wrong. Non-GET requests return HTTP 405.
+
+The success response is bounded to 256 MiB, uses a fixed `Content-Length`, and has
+`Content-Type: application/vnd.android.package-archive`. Identity headers are
+`X-Tsundoku-Extension-Package`, `X-Tsundoku-Extension-Version-Code`, and the optional
+`X-Tsundoku-Extension-Version-Name`. The host holds its extension mutation lock until streaming
+finishes, so the bytes and identity headers describe one installed generation.
+
 ## `PUT /config/image-transport`
 
 Applies a partial image connection-policy update and returns the normalized

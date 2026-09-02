@@ -21,6 +21,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
+import java.io.InputStream
 import java.net.URI
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -48,6 +49,15 @@ data class InstalledExtension(
     val sources: List<ExtensionSourceDto>,
     val signerFingerprints: Set<String> = emptySet(),
     val signingCertificateLineage: List<String> = emptyList(),
+)
+
+/** One validated, lock-pinned view of the APK backing an installed extension. */
+data class InstalledApkExport(
+    val pkgName: String,
+    val versionCode: Long,
+    val versionName: String,
+    val contentLength: Long,
+    val input: InputStream,
 )
 
 /** Repository identity that a prepared APK must match exactly before it can replace active state. */
@@ -212,6 +222,29 @@ class ExtensionManager internal constructor(
 
     /** The installed record owning a source id (null if the source came from the CLI bootstrap arg). */
     fun recordForSource(sourceId: Long): InstalledExtension? = installed.values.firstOrNull { sourceId in it.sourceIds }
+
+    /**
+     * Validate and stream the exact APK backing [pkgName] while the extension mutation lock is held.
+     * The callback must consume [InstalledApkExport.input] before returning.
+     */
+    internal fun <T> withInstalledApk(
+        pkgName: String,
+        block: (InstalledApkExport) -> T,
+    ): T =
+        mutationLock.withLock {
+            val record = requireNotNull(installed[pkgName]) { "extension '$pkgName' is not installed" }
+            val apk = installedApkPath(record)
+            require(Files.isRegularFile(apk, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                "installed APK for '$pkgName' is not a regular file"
+            }
+            val size = Files.size(apk)
+            require(size in 1..MAX_EXPORTED_APK_BYTES) {
+                "installed APK for '$pkgName' must be between 1 and $MAX_EXPORTED_APK_BYTES bytes"
+            }
+            Files.newInputStream(apk).use { input ->
+                block(InstalledApkExport(record.pkgName, record.versionCode, record.versionName, size, input))
+            }
+        }
 
     /**
      * Reload the extension that provides [sourceId], so a just-written preference is re-read by a
@@ -891,6 +924,8 @@ class ExtensionManager internal constructor(
     private fun namesIndexFile(repoUrl: String): Boolean = repoUrl.endsWith(".json") || repoUrl.endsWith(".pb")
 
     companion object {
+        private const val MAX_EXPORTED_APK_BYTES: Long = 256L * 1024 * 1024
+
         /**
          * The standard community repo, pre-configured so a fresh host is usable immediately. Points at
          * the full `index.json` (the new wrapper schema): `index.min.json` was neutered to a 2-entry
