@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
@@ -100,6 +101,33 @@ func (a *ExtensionArchive) Update(ctx context.Context, pkgName string) (exts []s
 		return exts, true, err
 	}
 	return exts, true, nil
+}
+
+// SeedInstalled serializes the complete boot capture decision with live
+// updates: installed-state snapshot, cache check, capture, and gap persistence.
+func (a *ExtensionArchive) SeedInstalled(ctx context.Context) (cached, gaps int, err error) {
+	if a == nil || a.client == nil || a.db == nil || a.cache == nil {
+		return 0, 0, fmt.Errorf("enginetopo: exact extension archive unavailable")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	exts, err := a.client.Extensions(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, ext := range exts {
+		if !ext.IsInstalled || exactExtensionCached(ctx, a.db, a.cache, ext) {
+			continue
+		}
+		if err := a.captureLocked(ctx, ext); err != nil {
+			slog.WarnContext(ctx, "enginetopo: could not archive exact installed extension", "pkg_name", ext.PkgName, "version_code", ext.VersionCode, "err", err)
+			recordGap(ctx, a.db, ext)
+			gaps++
+			continue
+		}
+		cached++
+	}
+	return cached, gaps, nil
 }
 
 func extensionByPackage(exts []sourceengine.Extension, pkgName string) (sourceengine.Extension, bool) {

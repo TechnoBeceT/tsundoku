@@ -52,24 +52,9 @@ func SeedExtensionsExact(ctx context.Context, client sourceengine.Client, db *en
 		}
 		res.Repos++
 	}
-	exts, err := client.Extensions(ctx)
+	res.Cached, res.Gaps, err = archive.SeedInstalled(ctx)
 	if err != nil {
-		return res, fmt.Errorf("enginetopo.SeedExtensionsExact: list extensions: %w", err)
-	}
-	for _, ext := range exts {
-		if !ext.IsInstalled {
-			continue
-		}
-		if exactExtensionCached(ctx, db, cache, ext) {
-			continue
-		}
-		if err := archive.Capture(ctx, ext); err != nil {
-			slog.WarnContext(ctx, "enginetopo: could not archive exact installed extension", "pkg_name", ext.PkgName, "version_code", ext.VersionCode, "err", err)
-			recordGap(ctx, db, ext)
-			res.Gaps++
-			continue
-		}
-		res.Cached++
+		return res, fmt.Errorf("enginetopo.SeedExtensionsExact: seed installed extensions: %w", err)
 	}
 	return res, nil
 }

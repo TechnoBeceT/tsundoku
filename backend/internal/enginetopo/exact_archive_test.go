@@ -3,7 +3,9 @@ package enginetopo_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +26,52 @@ type blockingLifecycleClient struct {
 type malformedAPKClient struct {
 	*sourceenginefake.Client
 	apk sourceengine.InstalledAPK
+}
+
+type seedUpdateRaceClient struct {
+	*sourceenginefake.Client
+	mu               sync.Mutex
+	current          sourceengine.Extension
+	extensionCalls   int
+	seedSnapshot     chan struct{}
+	releaseSeed      chan struct{}
+	secondExtensions chan struct{}
+}
+
+func (c *seedUpdateRaceClient) Extensions(ctx context.Context) ([]sourceengine.Extension, error) {
+	c.mu.Lock()
+	c.extensionCalls++
+	call := c.extensionCalls
+	snapshot := c.current
+	c.mu.Unlock()
+	if call == 1 {
+		close(c.seedSnapshot)
+		select {
+		case <-c.releaseSeed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	} else if call == 2 {
+		close(c.secondExtensions)
+	}
+	return []sourceengine.Extension{snapshot}, nil
+}
+
+func (c *seedUpdateRaceClient) InstalledAPK(context.Context, string) (sourceengine.InstalledAPK, error) {
+	c.mu.Lock()
+	ext := c.current
+	c.mu.Unlock()
+	data := []byte(fmt.Sprintf("APK-%d", ext.VersionCode))
+	return sourceengine.InstalledAPK{PkgName: ext.PkgName, VersionCode: int(ext.VersionCode), VersionName: ext.VersionName, ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data))}, nil
+}
+
+func (c *seedUpdateRaceClient) UpdateExtension(context.Context, string) ([]sourceengine.Extension, error) {
+	c.mu.Lock()
+	c.current.VersionCode = 58
+	c.current.VersionName = "v58"
+	ext := c.current
+	c.mu.Unlock()
+	return []sourceengine.Extension{ext}, nil
 }
 
 func (c *malformedAPKClient) InstalledAPK(context.Context, string) (sourceengine.InstalledAPK, error) {
@@ -196,5 +244,49 @@ func TestExtensionArchiveMalformedStreamPreservesPreviousCacheAndMetadata(t *tes
 				t.Fatalf("cache=%q", got)
 			}
 		})
+	}
+}
+
+func TestSeedSnapshotCannotOverwriteCompletedUpdateGeneration(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	ext := sourceengine.Extension{PkgName: "pkg.one", VersionCode: 57, VersionName: "v57", IsInstalled: true}
+	client := &seedUpdateRaceClient{
+		Client: sourceenginefake.New(), current: ext,
+		seedSnapshot: make(chan struct{}), releaseSeed: make(chan struct{}), secondExtensions: make(chan struct{}),
+	}
+	archive := enginetopo.NewExtensionArchive(client, db, cache, nil)
+	seedDone := make(chan error, 1)
+	go func() { _, err := enginetopo.SeedExtensionsExact(ctx, client, db, cache, archive); seedDone <- err }()
+	select {
+	case <-client.seedSnapshot:
+	case <-time.After(time.Second):
+		t.Fatal("seed did not snapshot")
+	}
+	updateDone := make(chan error, 1)
+	go func() { _, _, err := archive.Update(ctx, ext.PkgName); updateDone <- err }()
+	select {
+	case <-client.secondExtensions:
+		// The uncorrected implementation lets the update complete against v57
+		// while the seed holds a stale snapshot outside the archive lock.
+		if err := <-updateDone; err != nil {
+			t.Fatal(err)
+		}
+		close(client.releaseSeed)
+	case <-time.After(100 * time.Millisecond):
+		// Correct behavior: the update cannot even read installed state until the
+		// seed's snapshot/capture/gap decision releases the shared lifecycle lock.
+		close(client.releaseSeed)
+		if err := <-updateDone; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := <-seedDone; err != nil {
+		t.Fatal(err)
+	}
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(ext.PkgName)).OnlyX(ctx)
+	if row.VersionCode != 58 || row.InstalledVersionCode != 58 || !row.ApkCached {
+		t.Fatalf("final row = {version:%d installed:%d cached:%v}, want completed update v58", row.VersionCode, row.InstalledVersionCode, row.ApkCached)
 	}
 }
