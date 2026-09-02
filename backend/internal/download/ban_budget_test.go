@@ -22,6 +22,7 @@ package download_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -188,6 +189,53 @@ func TestFetchFailure_ContainmentSignalTripsImmediatelyAboveGenericThreshold(t *
 	}
 	if got := f.calls.Load(); got != 1 {
 		t.Fatalf("fetch calls after immediate next pass = %d, want 1 (persisted breaker must hold)", got)
+	}
+}
+
+func TestFetchFailure_StructuredThrottleUsesLaterRecoveryHorizonWithoutAttempts(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := client.Series.Create().SetTitle("Throttled").SetSlug("throttled").SaveX(ctx)
+	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("7").SetImportance(10).SaveX(ctx)
+	pc := client.ProviderChapter.Create().SetSeriesProviderID(sp.ID).SetChapterKey("c1").
+		SetURL("/ch/c1").SetProviderIndex(0).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("c1").SaveX(ctx)
+	rs := settings.Static{
+		Retries: 3, Backoff: 30 * time.Minute, DownloadConc: 1,
+		SourcesFailureThresh: 5, SourcesCooldownIv: time.Hour,
+	}
+	gate := sourcegate.NewService(client, rs)
+	engineClient := enginefake.New(
+		enginefake.WithPages(7, "/ch/c1", []sourceengine.Page{{Index: 0, URL: "u0"}}),
+		enginefake.WithError("Image", &sourceengine.UpstreamError{
+			Status: http.StatusBadGateway, Msg: "temporarily unavailable",
+			UpstreamStatus: http.StatusTooManyRequests, RetryAfter: 3 * time.Hour,
+		}),
+	)
+	d := download.New(client, sourceengine.NewFetcher(engineClient, mustTempDir(t)), sse.NewHub(),
+		download.Config{Storage: mustTempDir(t)}, rs, gate)
+	started := time.Now()
+
+	if _, err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+
+	got := client.ProviderChapter.GetX(ctx, pc.ID)
+	if got.Attempts != 0 {
+		t.Fatalf("attempts = %d, want 0", got.Attempts)
+	}
+	if calls := engineClient.CallCount("Image"); calls != 1 {
+		t.Fatalf("Image calls = %d, want 1 (typed 429 must bypass transient retries)", calls)
+	}
+	// PostgreSQL stores this timestamp at microsecond precision, while started
+	// carries Go's nanoseconds; allow only that representation loss.
+	wantFloor := started.Add(3*time.Hour - time.Millisecond)
+	if got.NextAttemptAt == nil || got.NextAttemptAt.Before(wantFloor) {
+		t.Fatalf("next_attempt_at = %v, want at least %v", got.NextAttemptAt, wantFloor)
+	}
+	breaker := client.SourceCircuitState.Query().Where(sourcecircuitstate.SourceKeyEQ("7")).OnlyX(ctx)
+	if breaker.CooldownUntil == nil || breaker.CooldownUntil.Before(wantFloor) {
+		t.Fatalf("breaker cooldown = %v, want at least %v", breaker.CooldownUntil, wantFloor)
 	}
 }
 

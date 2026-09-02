@@ -604,6 +604,9 @@ class RpcServer(
                 response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
             } catch (e: IllegalArgumentException) {
                 response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
+            } catch (e: UpstreamHttpFailure) {
+                logger.warn(e) { "request failed" }
+                response.respondJson(502, errorResponse(e))
             } catch (e: Throwable) {
                 // Extension bytecode can throw Error subclasses, not only Exceptions. Containing
                 // Throwable preserves a response instead of abandoning the exchange (GAP-100).
@@ -679,7 +682,7 @@ class RpcServer(
                     work()
                 } catch (failure: Throwable) {
                     logger.warn(failure) { "$operation failed outside its route containment" }
-                    response.respondJson(502, ErrorResponse("${failure.javaClass.simpleName}: ${failure.message}"))
+                    response.respondJson(502, errorResponse(failure))
                 }
             } finally {
                 state.set(SUBMISSION_COMPLETED)

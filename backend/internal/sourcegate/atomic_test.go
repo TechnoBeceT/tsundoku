@@ -56,6 +56,31 @@ func TestRecordFailure_ConcurrentFirstFailuresCountEveryFailureAndTripAtThreshol
 	}
 }
 
+func TestRecordRateLimit_UsesLaterHorizonWithoutShorteningOrCrossingSources(t *testing.T) {
+	db := testdb.New(t)
+	ctx := context.Background()
+	now := time.Date(2026, time.September, 2, 12, 0, 0, 0, time.UTC)
+	svc := sourcegate.NewService(db, settings.Static{SourcesCooldownIv: 30 * time.Minute})
+
+	var wg sync.WaitGroup
+	for _, delay := range []time.Duration{time.Hour, 3 * time.Hour} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			svc.RecordRateLimit(ctx, "source-a", errors.New("throttled"), now, delay)
+		}()
+	}
+	wg.Wait()
+
+	row := db.SourceCircuitState.Query().Where(entsourcecircuitstate.SourceKeyEQ("source-a")).OnlyX(ctx)
+	if want := now.Add(3 * time.Hour); row.CooldownUntil == nil || !row.CooldownUntil.Equal(want) {
+		t.Fatalf("source-a cooldown = %v, want unchanged later horizon %v", row.CooldownUntil, want)
+	}
+	if !svc.IsAvailable(ctx, "source-b", now) {
+		t.Fatal("source-b was affected by source-a's throttle")
+	}
+}
+
 // TestRecordFailure_ConcurrentExistingFailuresPreserveCountAndThresholdTime
 // catches a read-modify-write update that lets concurrent failures overwrite one
 // another after a breaker row already exists.

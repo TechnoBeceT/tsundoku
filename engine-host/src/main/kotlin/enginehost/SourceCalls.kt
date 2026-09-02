@@ -15,7 +15,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import enginehost.vendor.ChapterRecognition
 import enginehost.vendor.ChapterSanitizer.sanitize
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.Source
@@ -370,7 +370,13 @@ object SourceCalls {
             // chooses between the opted-in pooled source client and the default fresh client.
             val call = imageClientFor(source.id, http.client).newCachelessCallWithProgress(request, page)
             cancellation.withCallSuspend(call) { retained ->
-                retained.awaitSuccess().use { response ->
+                retained.await().use { response ->
+                    if (!response.isSuccessful) {
+                        throw UpstreamHttpFailure(
+                            upstreamStatus = response.code,
+                            retryAfterSeconds = parseRetryAfterSeconds(response.header("Retry-After")),
+                        )
+                    }
                     val contentType = response.header("Content-Type") ?: "application/octet-stream"
                     response.body.bytes() to contentType
                 }

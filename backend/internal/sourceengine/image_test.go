@@ -3,12 +3,55 @@ package sourceengine_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
+
+func TestImage_StructuredUpstreamThrottle(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusBadGateway, map[string]any{
+			"error": "UpstreamHttpFailure: HTTP error 429", "upstreamStatus": 429, "retryAfterSeconds": 90,
+		})
+	}))
+	defer srv.Close()
+
+	_, _, err := newTestClient(t, srv).Image(context.Background(), 7, "/page/1", "https://images.test/1.jpg")
+	var upstream *sourceengine.UpstreamError
+	if !errors.As(err, &upstream) {
+		t.Fatalf("Image error = %v, want *UpstreamError", err)
+	}
+	if upstream.Status != http.StatusBadGateway || upstream.UpstreamStatus != http.StatusTooManyRequests || upstream.RetryAfter != 90*time.Second {
+		t.Fatalf("UpstreamError = %+v, want transport=502 upstream=429 retry=90s", upstream)
+	}
+}
+
+func TestImage_InvalidStructuredThrottleMetadataFailsClosed(t *testing.T) {
+	for _, retrySeconds := range []int64{-1, 86_401} {
+		t.Run(fmt.Sprint(retrySeconds), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeJSON(t, w, http.StatusBadGateway, map[string]any{
+					"error": "legacy-compatible", "upstreamStatus": 999, "retryAfterSeconds": retrySeconds,
+				})
+			}))
+			defer srv.Close()
+
+			_, _, err := newTestClient(t, srv).Image(context.Background(), 7, "/page/1", "")
+			var upstream *sourceengine.UpstreamError
+			if !errors.As(err, &upstream) {
+				t.Fatalf("Image error = %v, want *UpstreamError", err)
+			}
+			if upstream.UpstreamStatus != 0 || upstream.RetryAfter != 0 {
+				t.Fatalf("invalid metadata survived: %+v", upstream)
+			}
+		})
+	}
+}
 
 // TestImage_Success proves POST /image sends {sourceId,pageUrl,imageUrl} and
 // returns the RAW response bytes + Content-Type header, NOT a JSON decode.
@@ -82,6 +125,11 @@ func TestImage_UpstreamFailure(t *testing.T) {
 
 	_, _, err := newTestClient(t, srv).Image(context.Background(), 1, "/p", "")
 	assertUpstreamError(t, err, http.StatusBadGateway)
+	var upstream *sourceengine.UpstreamError
+	errors.As(err, &upstream)
+	if upstream.UpstreamStatus != 0 || upstream.RetryAfter != 0 {
+		t.Fatalf("legacy error gained structured metadata: %+v", upstream)
+	}
 }
 
 // TestImage_NetworkFailure_IsWrapped proves a transport-level failure on the

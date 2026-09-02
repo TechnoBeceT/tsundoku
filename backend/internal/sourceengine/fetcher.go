@@ -252,7 +252,7 @@ func classifyImageFailure(ctx context.Context, err error) error {
 		// succeeded), so mark it CHAPTER-SPECIFIC via ErrImageFetch: the
 		// dispatcher charges the per-source budget but does NOT trip the
 		// breaker for one flaky page. See ErrImageFetch.
-		return fmt.Errorf("sourceengine fetcher: image: %w: %v", ErrImageFetch, err)
+		return fmt.Errorf("sourceengine fetcher: image: %w: %w", ErrImageFetch, err)
 	}
 	// A ban-class image failure (captcha / rate_limit) stays SOURCE-WIDE so it
 	// still trips the breaker; a chapter-specific one (not_found / parse) is

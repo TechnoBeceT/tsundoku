@@ -620,7 +620,7 @@ func (d *Dispatcher) gateRecordFailure(ctx context.Context, sourceKey string, ca
 		return
 	}
 	if isImmediateContainmentFailure(cause) {
-		d.gate.RecordRateLimit(ctx, sourceKey, cause, now)
+		d.gate.RecordRateLimit(ctx, sourceKey, cause, now, sourceRecoveryDelay(cause))
 		return
 	}
 	d.gate.RecordFailure(ctx, sourceKey, cause, now)
@@ -1465,8 +1465,9 @@ func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChap
 
 // cooldownSource records a SOURCE-WIDE/ban fetch failure against a source's
 // ProviderChapter row WITHOUT spending its retry budget: it sets last_error and a
-// backoff cooldown (next_attempt_at = now + backoffCurve(base), the flat retry
-// interval) but leaves attempts UNCHANGED. It is charged (on BOTH the download and
+// backoff cooldown but leaves attempts UNCHANGED. The delay is the greater of the
+// local backoff curve and a typed HTTP 429 Retry-After horizon. An existing later
+// next_attempt_at is never shortened. It is charged (on BOTH the download and
 // upgrade paths) when the SOURCE is down/blocking (rate_limit / captcha / timeout /
 // network / server_error / unknown) rather than the chapter being broken: the
 // chapter is fine, so a ban must never nudge it toward exhaustion or drain the
@@ -1476,12 +1477,25 @@ func (d *Dispatcher) bumpSourceFailure(ctx context.Context, pc *ent.ProviderChap
 // holds the whole source out of candidacy while it is down. A DB write failure is
 // logged, not propagated.
 func (d *Dispatcher) cooldownSource(ctx context.Context, pc *ent.ProviderChapter, cause error, now time.Time) {
-	nextAttempt := now.Add(backoffCurve(d.retry.RetryBackoff(ctx)))
+	delay := backoffCurve(d.retry.RetryBackoff(ctx))
+	if upstream := sourceRecoveryDelay(cause); upstream > delay {
+		delay = upstream
+	}
+	nextAttempt := now.Add(delay)
 	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
 		SetLastError(cause.Error()).
-		SetNextAttemptAt(nextAttempt).
 		Exec(ctx); err != nil {
 		slog.WarnContext(ctx, "download.cooldownSource: could not persist per-source cooldown",
+			"provider_chapter_id", pc.ID,
+			"err", err,
+		)
+		return
+	}
+	if err := d.client.ProviderChapter.UpdateOneID(pc.ID).
+		Where(entproviderchapter.Or(entproviderchapter.NextAttemptAtIsNil(), entproviderchapter.NextAttemptAtLT(nextAttempt))).
+		SetNextAttemptAt(nextAttempt).
+		Exec(ctx); err != nil && !ent.IsNotFound(err) {
+		slog.WarnContext(ctx, "download.cooldownSource: could not extend per-source cooldown",
 			"provider_chapter_id", pc.ID,
 			"err", err,
 		)

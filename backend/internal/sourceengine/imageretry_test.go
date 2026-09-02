@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -201,6 +202,30 @@ func TestStagePages_TransientImage_ExhaustsRetries_WrapsErrImageFetch(t *testing
 	}
 	if client.imageCalls != 4 {
 		t.Errorf("Image called %d times, want 4 (1 initial + 3 retries)", client.imageCalls)
+	}
+}
+
+func TestStagePages_TransientImage_PreservesTypedUpstreamError(t *testing.T) {
+	want := &sourceengine.UpstreamError{
+		Status: http.StatusBadGateway, Msg: "temporarily unavailable",
+		UpstreamStatus: http.StatusServiceUnavailable,
+	}
+	inner := fake.New(
+		fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
+		fake.WithError("Image", want),
+	)
+	f := sourceengine.NewFetcher(inner, t.TempDir())
+
+	_, err := f.Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/ch/1"})
+	if !errors.Is(err, sourceengine.ErrImageFetch) {
+		t.Fatalf("err = %v, want ErrImageFetch", err)
+	}
+	var got *sourceengine.UpstreamError
+	if !errors.As(err, &got) {
+		t.Fatalf("err = %v, want preserved *UpstreamError", err)
+	}
+	if got != want {
+		t.Fatalf("preserved UpstreamError = %p, want %p", got, want)
 	}
 }
 

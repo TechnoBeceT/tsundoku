@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HTTPDoer is the minimal interface the client needs to send a request. A
@@ -338,11 +339,13 @@ func (c *httpClient) Health(ctx context.Context) (Health, error) {
 // responses' {"message":"..."} body. It is decoded once, inside newStatusError,
 // and never exposed directly to callers.
 type errorResponse struct {
-	Error     string  `json:"error"`
-	Message   string  `json:"message"`
-	Code      string  `json:"code"`
-	PkgName   string  `json:"pkgName"`
-	SourceIDs []int64 `json:"sourceIds"`
+	Error             string  `json:"error"`
+	Message           string  `json:"message"`
+	Code              string  `json:"code"`
+	PkgName           string  `json:"pkgName"`
+	SourceIDs         []int64 `json:"sourceIds"`
+	UpstreamStatus    int     `json:"upstreamStatus"`
+	RetryAfterSeconds int64   `json:"retryAfterSeconds"`
 }
 
 // BadRequestError reports a 400 response from the engine host: a malformed
@@ -369,6 +372,24 @@ type UpstreamError struct {
 	Status int
 	// Msg is the engine host's own error message.
 	Msg string
+	// UpstreamStatus is the source server's HTTP status, when the host preserved it.
+	UpstreamStatus int
+	// RetryAfter is the bounded source-requested recovery delay, when present.
+	RetryAfter time.Duration
+}
+
+const maxRetryAfterSeconds int64 = 86_400
+
+func structuredUpstreamMetadata(parsed errorResponse) (int, time.Duration) {
+	status := parsed.UpstreamStatus
+	if status < 100 || status > 599 {
+		status = 0
+	}
+	seconds := parsed.RetryAfterSeconds
+	if seconds < 1 || seconds > maxRetryAfterSeconds {
+		seconds = 0
+	}
+	return status, time.Duration(seconds) * time.Second
 }
 
 // SourceRetirementConflictError is the structured 409 returned when activation
@@ -416,7 +437,13 @@ func newStatusError(resp *http.Response) error {
 	if resp.StatusCode == http.StatusConflict && parsed.Code == "source_retirement_conflict" {
 		return &SourceRetirementConflictError{Msg: msg, Code: parsed.Code, PkgName: parsed.PkgName, SourceIDs: parsed.SourceIDs}
 	}
-	return &UpstreamError{Status: resp.StatusCode, Msg: msg}
+	upstreamStatus, retryAfter := structuredUpstreamMetadata(parsed)
+	return &UpstreamError{
+		Status:         resp.StatusCode,
+		Msg:            msg,
+		UpstreamStatus: upstreamStatus,
+		RetryAfter:     retryAfter,
+	}
 }
 
 // --- shared HTTP/JSON plumbing --------------------------------------------

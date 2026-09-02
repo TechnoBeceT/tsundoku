@@ -393,23 +393,25 @@ func recoveryMutation(
 // NotificationGap. The publication cursor preserves the order of stored
 // transitions across processes. Other DB failures are logged and swallowed.
 func (s *Service) RecordFailure(ctx context.Context, key string, cause error, now time.Time) {
-	s.recordFailureBestEffort(ctx, key, cause, now, s.t.SourcesFailureThreshold(ctx))
+	s.recordFailureBestEffort(ctx, key, cause, now, s.t.SourcesFailureThreshold(ctx), 0)
 }
 
 // RecordRateLimit records an explicit upstream throttle and opens key's persisted
 // breaker immediately. Unlike RecordFailure, it deliberately bypasses the
 // configurable consecutive-failure threshold: a 429 is already definitive
-// evidence that further requests must stop.
-func (s *Service) RecordRateLimit(ctx context.Context, key string, cause error, now time.Time) {
-	s.recordFailureBestEffort(ctx, key, cause, now, 1)
+// evidence that further requests must stop. Its cooldown is the greater of the
+// configured source cooldown and retryAfter, and an existing later cooldown is
+// never shortened.
+func (s *Service) RecordRateLimit(ctx context.Context, key string, cause error, now time.Time, retryAfter time.Duration) {
+	s.recordFailureBestEffort(ctx, key, cause, now, 1, retryAfter)
 }
 
-func (s *Service) recordFailureBestEffort(ctx context.Context, key string, cause error, now time.Time, threshold int) {
-	queued, err := s.recordFailure(ctx, key, cause, now, threshold, true)
+func (s *Service) recordFailureBestEffort(ctx context.Context, key string, cause error, now time.Time, threshold int, retryAfter time.Duration) {
+	queued, err := s.recordFailure(ctx, key, cause, now, threshold, true, retryAfter)
 	if isNotificationEnqueueError(err) {
 		slog.WarnContext(ctx, "sourcegate: trip notification storage failed; preserving containment with a notification gap",
 			"source_key", key, "err", err)
-		queued, err = s.recordFailure(ctx, key, cause, now, threshold, false)
+		queued, err = s.recordFailure(ctx, key, cause, now, threshold, false, retryAfter)
 	}
 	if err != nil {
 		slog.WarnContext(ctx, "sourcegate: RecordFailure failed (best-effort, skipping)",
@@ -428,6 +430,7 @@ func (s *Service) recordFailure(
 	now time.Time,
 	threshold int,
 	enqueueNotification bool,
+	retryAfter time.Duration,
 ) (bool, error) {
 	msg := truncateError(cause)
 	tx, row, err := s.lockCircuitState(ctx, key)
@@ -437,7 +440,7 @@ func (s *Service) recordFailure(
 	committed := false
 	defer rollbackUnlessCommitted(tx, &committed)
 
-	mutation := s.failureMutation(ctx, tx, row, msg, now, threshold, enqueueNotification)
+	mutation := s.failureMutation(ctx, tx, row, msg, now, threshold, enqueueNotification, retryAfter)
 	if err := mutation.update.Exec(ctx); err != nil {
 		return false, err
 	}
@@ -472,6 +475,7 @@ func (s *Service) failureMutation(
 	now time.Time,
 	threshold int,
 	enqueueNotification bool,
+	retryAfter time.Duration,
 ) failureStateMutation {
 	newFailures := row.ConsecutiveFailures + 1
 	u := tx.SourceCircuitState.UpdateOne(row).
@@ -487,7 +491,14 @@ func (s *Service) failureMutation(
 	tripped := false
 	var cooldownUntil *time.Time
 	if newFailures >= threshold {
-		until := now.Add(s.t.SourcesCooldown(ctx))
+		delay := s.t.SourcesCooldown(ctx)
+		if retryAfter > delay {
+			delay = retryAfter
+		}
+		until := now.Add(delay)
+		if row.CooldownUntil != nil && row.CooldownUntil.After(until) {
+			until = *row.CooldownUntil
+		}
 		cooldownUntil = &until
 		u = u.SetCooldownUntil(until)
 		tripped = row.CooldownUntil == nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/technobecet/tsundoku/internal/fetcher"
@@ -52,6 +53,10 @@ var ErrImageFetch = errors.New("sourceengine: image fetch failed after retries")
 // stagePages: only a transient survivor is reclassified off the breaker; a
 // ban-class image failure stays source-wide.
 func isTransientImageError(err error) bool {
+	var upstream *UpstreamError
+	if errors.As(err, &upstream) && upstream.UpstreamStatus == http.StatusTooManyRequests {
+		return false
+	}
 	switch errorclass.Classify(err) {
 	case errorclass.CategoryTimeout, errorclass.CategoryNetwork, errorclass.CategoryServerError:
 		return true

@@ -1,6 +1,7 @@
 package enginehost
 
 import com.fasterxml.jackson.annotation.JsonCreator
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonValue
 
 enum class AddressMode(@get:JsonValue val wire: String) {
@@ -139,7 +140,22 @@ data class ChaptersResponse(val chapters: List<ChapterDto>, val addressMode: Add
 
 data class PagesResponse(val pages: List<PageDto>, val addressMode: AddressMode = AddressMode.UNKNOWN)
 
-data class ErrorResponse(val error: String)
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class ErrorResponse(
+    val error: String,
+    val upstreamStatus: Int? = null,
+    val retryAfterSeconds: Long? = null,
+)
+
+/** Maps one contained failure to the narrow public error envelope. */
+internal fun errorResponse(failure: Throwable): ErrorResponse {
+    val upstream = failure as? UpstreamHttpFailure
+    return ErrorResponse(
+        "${failure.javaClass.simpleName}: ${failure.message}",
+        upstream?.upstreamStatus,
+        upstream?.retryAfterSeconds,
+    )
+}
 
 // ---- Extension management ----
 

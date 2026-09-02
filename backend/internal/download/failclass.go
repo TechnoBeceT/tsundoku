@@ -77,6 +77,10 @@ const (
 // sourceErrorOf. Typed engine sentinels win outright, because they are
 // unambiguous where a substring match can only approximate.
 func classifyFetchFailure(err error) failureKind {
+	var upstream *sourceengine.UpstreamError
+	if errors.As(err, &upstream) && upstream.UpstreamStatus == http.StatusTooManyRequests {
+		return failureSourceWide
+	}
 	if errors.Is(err, sourceengine.ErrBrokenPage) ||
 		errors.Is(err, sourceengine.ErrNoPages) ||
 		errors.Is(err, sourceengine.ErrNotLiveSource) ||
@@ -123,9 +127,23 @@ func isImmediateContainmentFailure(err error) bool {
 func sourceErrorOf(err error) error {
 	var upstream *sourceengine.UpstreamError
 	if errors.As(err, &upstream) && upstream.Status == http.StatusBadGateway {
+		if upstream.UpstreamStatus != 0 {
+			return errors.New(http.StatusText(upstream.UpstreamStatus) + ": " + upstream.Msg)
+		}
 		return errors.New(upstream.Msg)
 	}
 	return err
+}
+
+// sourceRecoveryDelay returns a validated upstream throttle delay. Structured
+// metadata is authoritative only for HTTP 429; every other failure retains the
+// configured local cooldown unchanged.
+func sourceRecoveryDelay(err error) time.Duration {
+	var upstream *sourceengine.UpstreamError
+	if !errors.As(err, &upstream) || upstream.UpstreamStatus != http.StatusTooManyRequests {
+		return 0
+	}
+	return upstream.RetryAfter
 }
 
 // minLockedHorizon is the floor lockedHorizon clamps to. It exists because a

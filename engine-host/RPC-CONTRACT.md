@@ -65,6 +65,14 @@ The impersonate gateway remains first: a gateway success returns before source-c
 selection. On the fallback path, listed sources use the normal source client through the
 cacheless call API; all others derive the existing no-idle-pool client.
 
+## Image upstream failures
+
+`POST /image` continues to return HTTP 502 when the source image server rejects the request. Its
+JSON error envelope may additionally include `upstreamStatus` and `retryAfterSeconds` when the host
+observed them directly. `retryAfterSeconds` accepts the standard delta-seconds and HTTP-date forms,
+is omitted unless it is future-facing and at most 86,400 seconds, and never exposes other upstream
+headers. Older string-only `{"error":"..."}` responses remain valid.
+
 ## `GET /status`
 
 Returns HTTP 200 with one bounded runtime snapshot:
