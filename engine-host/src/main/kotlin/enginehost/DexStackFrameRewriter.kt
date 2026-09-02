@@ -29,7 +29,7 @@ import kotlin.streams.asSequence
 /**
  * Repairs dex2jar mistranslations in every class of a dex2jar-produced extension jar (GAP-100).
  *
- * Five distinct dex2jar bugs are repaired:
+ * Six distinct dex2jar bugs are repaired:
  *  - **(c) object collapse** — `new X` mistranslated to `new java/lang/Object` with X's constructor
  *    dropped; undone by [repairObjectCollapse], a WHOLE-JAR pass that runs FIRST (the dropped constructor
  *    must be synthesized in a class OTHER than the one holding the `new`, so it cannot be done per class);
@@ -46,6 +46,9 @@ import kotlin.streams.asSequence
  *    uninitialized value from `new X` to enter `X.<init>`. [repairInvalidConstructorOwners] retargets only
  *    an exact, unmerged allocation-to-initializer pair whose direct-super relationship and trivial forwarding
  *    constructor are both proven across the whole jar;
+ *  - **skipped constructor ancestors** — R8 can leave `Leaf.<init>` invoking an ancestor constructor above
+ *    its direct superclass. [repairInvalidConstructorOwners] restores the direct chain only when every skipped
+ *    in-jar class can use an exact-descriptor, behavior-free forwarder;
  *  - **(b) self-instantiation collapse** — a class instantiating itself (R8 lambda singletons, minified
  *    enum constants) mistranslated to `new <superclass>`; undone in [repairSelfInstantiation] before the
  *    frame recompute;
@@ -652,7 +655,7 @@ object DexStackFrameRewriter {
         return provenance
     }
 
-    /** One proven `new X` plus the direct-super constructor invocation that must instead initialize X. */
+    /** One proven invalid initializer plus the class its owner must be retargeted to. */
     private data class ConstructorOwnerRepair(
         val caller: ClassNode,
         val initializer: MethodInsnNode,
@@ -664,6 +667,7 @@ object DexStackFrameRewriter {
     private class ConstructorInitCandidates {
         val initializers = LinkedHashMap<TypeInsnNode, MutableSet<MethodInsnNode>>()
         val uncertain = mutableSetOf<TypeInsnNode>()
+        val uninitializedThisInitializers = LinkedHashSet<MethodInsnNode>()
     }
 
     /** Provenance used only by the constructor-owner repair; object-collapse recovery stays isolated. */
@@ -673,20 +677,32 @@ object DexStackFrameRewriter {
         var uninitializedThis = false
     }
 
+    /** Keep reference-copy instructions in the source set so local zero remains distinguishable in ctors. */
+    private object ConstructorSourceInterpreter : SourceInterpreter(Opcodes.ASM9) {
+        override fun copyOperation(
+            insn: AbstractInsnNode,
+            value: SourceValue,
+        ): SourceValue = SourceValue(value.size, LinkedHashSet(value.insns).apply { add(insn) })
+    }
+
     /**
-     * Repair `new X … invokespecial X.super.<init>(d)` across the whole jar.
+     * Repair invalid allocation and uninitialized-this constructor owners across the whole jar.
      *
      * A JVM constructor invocation may initialize only the exact uninitialized type produced by `NEW`.
-     * Android/R8 output can instead call the direct superclass constructor. Retargeting is safe only when
+     * Android/R8 output can instead call the direct superclass constructor for `new X`, or an indirect ancestor
+     * constructor for `this`. Retargeting an allocation is safe only when
      * dataflow proves one unmerged `NEW X` reaches exactly one initializer, X is an instantiable in-jar class,
      * the named owner is X's direct superclass, and `X.<init>(d)` is either a trivial same-descriptor forwarder
      * or can be synthesized by the existing constructor-backfill safety gate. Constructor availability and
-     * every call-site edit are staged in memory and serialized in full before any jar entry is written.
+     * every call-site edit are staged in memory and serialized in full before any jar entry is written. An
+     * ancestor-bypassing `this` call is accepted only when the direct superclass is in-jar and every skipped
+     * class either has no exact constructor or declares an accessible trivial exact-descriptor forwarder.
      *
      * This analysis is deliberately separate from [resolveAllocationProvenance]: object-collapse recovery is
      * usage-driven and recognizes only `new java/lang/Object`, while this repair already knows X from `NEW` and
-     * must reason about the uninitialized constructor receiver itself. Any ambiguity, constructor chaining on
-     * uninitialized `this`, analyzer failure, or serialization failure leaves the affected bytes untouched.
+     * must reason about the uninitialized constructor receiver itself. Any ambiguity, valid direct-super
+     * chaining, unsafe skipped constructor, analyzer failure, or serialization failure leaves the affected
+     * bytes untouched.
      */
     internal fun repairInvalidConstructorOwners(
         jarFile: Path,
@@ -715,7 +731,11 @@ object DexStackFrameRewriter {
                 for (node in classes.values) {
                     for (method in node.methods) {
                         val insns = method.instructions.toArray()
-                        if (insns.none { it is TypeInsnNode && it.opcode == Opcodes.NEW }) continue
+                        if (method.name != "<init>" &&
+                            insns.none { it is TypeInsnNode && it.opcode == Opcodes.NEW }
+                        ) {
+                            continue
+                        }
                         val candidates =
                             try {
                                 collectConstructorInitCandidates(node.name, method)
@@ -751,6 +771,22 @@ object DexStackFrameRewriter {
                                     target = target,
                                     missingCtor =
                                         if (existing == null) MissingCtor(target.name, initializer.desc) else null,
+                                )
+                        }
+                        val thisInitializer = candidates.uninitializedThisInitializers.singleOrNull()
+                        if (method.name == "<init>" && thisInitializer != null) {
+                            val target = safeAncestorBypassTarget(node, thisInitializer, inJar) ?: continue
+                            val existing =
+                                target.methods.singleOrNull {
+                                    it.name == "<init>" && it.desc == thisInitializer.desc
+                                }
+                            provisional +=
+                                ConstructorOwnerRepair(
+                                    caller = node,
+                                    initializer = thisInitializer,
+                                    target = target,
+                                    missingCtor =
+                                        if (existing == null) MissingCtor(target.name, thisInitializer.desc) else null,
                                 )
                         }
                     }
@@ -853,7 +889,7 @@ object DexStackFrameRewriter {
         ownerName: String,
         method: MethodNode,
     ): ConstructorInitCandidates {
-        val frames = Analyzer(SourceInterpreter()).analyze(ownerName, method)
+        val frames = Analyzer(ConstructorSourceInterpreter).analyze(ownerName, method)
         val insns = method.instructions.toArray()
         val found = ConstructorInitCandidates()
         for (i in insns.indices) {
@@ -863,6 +899,9 @@ object DexStackFrameRewriter {
             val receiverIndex = receiverStackIndex(initializer, frame.stackSize) ?: continue
             if (receiverIndex < 0) continue
             val provenance = resolveConstructorAllocationProvenance(frame.getStack(receiverIndex), frames, method)
+            if (provenance.uninitializedThis && !provenance.ambiguous && provenance.allocations.isEmpty()) {
+                found.uninitializedThisInitializers += initializer
+            }
             for (allocation in provenance.allocations) {
                 found.initializers.getOrPut(allocation) { mutableSetOf() } += initializer
             }
@@ -871,6 +910,41 @@ object DexStackFrameRewriter {
             }
         }
         return found
+    }
+
+    /**
+     * Return the direct superclass that an ancestor-bypassing constructor call may safely retarget to.
+     * Every skipped in-jar class must either lack the exact constructor (so this pass can synthesize the
+     * behavior-free forwarder) or already expose that exact behavior-free forwarder. The ancestor that the
+     * broken bytecode originally named may keep non-trivial behavior: the repaired chain still ends there.
+     */
+    private fun safeAncestorBypassTarget(
+        caller: ClassNode,
+        initializer: MethodInsnNode,
+        inJar: Map<String, ClassNode>,
+    ): ClassNode? {
+        if (initializer.itf || initializer.owner == caller.superName) return null
+        val directSuper = inJar[caller.superName] ?: return null
+        var descendant = caller
+        var current = directSuper
+        while (current.name != initializer.owner) {
+            val constructors = current.methods.filter { it.name == "<init>" && it.desc == initializer.desc }
+            if (constructors.size > 1) return null
+            val constructor = constructors.singleOrNull()
+            if (constructor != null &&
+                (!isTrivialForwardingCtor(current, constructor) ||
+                    !isConstructorAccessibleFrom(current, constructor, descendant))
+            ) {
+                return null
+            }
+            descendant = current
+            current = inJar[current.superName] ?: return null
+        }
+
+        val ancestorConstructors = current.methods.filter { it.name == "<init>" && it.desc == initializer.desc }
+        val ancestorConstructor = ancestorConstructors.singleOrNull() ?: return null
+        if (!isConstructorAccessibleFrom(current, ancestorConstructor, descendant)) return null
+        return directSuper
     }
 
     /** Follow copies of one uninitialized constructor receiver back to every NEW instruction that can produce it. */
@@ -895,7 +969,10 @@ object DexStackFrameRewriter {
                 when (producer.opcode) {
                     Opcodes.ALOAD -> {
                         val local = (producer as VarInsnNode).`var`
-                        if (method.name == "<init>" && local == 0) provenance.uninitializedThis = true
+                        if (method.name == "<init>" && local == 0) {
+                            provenance.uninitializedThis = true
+                            continue
+                        }
                         frame?.getLocal(local)
                     }
                     Opcodes.ASTORE, Opcodes.DUP, Opcodes.CHECKCAST ->

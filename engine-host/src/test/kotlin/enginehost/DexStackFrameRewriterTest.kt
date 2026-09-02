@@ -929,6 +929,60 @@ class DexStackFrameRewriterTest {
         return cw.toByteArray()
     }
 
+    /** A subclass constructor that illegally skips its direct superclass and invokes an ancestor constructor. */
+    private fun ancestorBypassConstructor(
+        internalName: String,
+        directSuper: String,
+        constructorOwner: String,
+        repeatInitializer: Boolean = false,
+    ): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, internalName, null, directSuper, null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "(Ljava/lang/String;)V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        if (repeatInitializer) {
+            mv.visitVarInsn(Opcodes.ALOAD, 0)
+            mv.visitVarInsn(Opcodes.ALOAD, 1)
+            mv.visitMethodInsn(Opcodes.INVOKESPECIAL, constructorOwner, "<init>", "(Ljava/lang/String;)V", false)
+        }
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    /** A non-final hierarchy member with a same-descriptor constructor used by ancestor-bypass fixtures. */
+    private fun hierarchyClassWithStringCtor(
+        internalName: String,
+        superName: String,
+        classAccess: Int,
+        constructorAccess: Int = Opcodes.ACC_PUBLIC,
+        trivial: Boolean = true,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V1_8, classAccess, internalName, null, superName, null)
+        if (!trivial) cw.visitField(Opcodes.ACC_PUBLIC, "touched", "Z", null, null).visitEnd()
+        val mv = cw.visitMethod(constructorAccess, "<init>", "(Ljava/lang/String;)V", null, null)
+        mv.visitCode()
+        mv.visitVarInsn(Opcodes.ALOAD, 0)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitMethodInsn(Opcodes.INVOKESPECIAL, superName, "<init>", "(Ljava/lang/String;)V", false)
+        if (!trivial) {
+            mv.visitVarInsn(Opcodes.ALOAD, 0)
+            mv.visitInsn(Opcodes.ICONST_1)
+            mv.visitFieldInsn(Opcodes.PUTFIELD, internalName, "touched", "Z")
+        }
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(2, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
     /** Two control-flow branches initialize the same allocation; there is no unique initializer to retarget. */
     private fun multipleInitializerUser(
         internalName: String,
@@ -1257,6 +1311,129 @@ class DexStackFrameRewriterTest {
             constructorOwners(jar, child, "<init>"),
             "the uninitialized-this chain and independent valid allocation must both remain unchanged",
         )
+    }
+
+    @Test
+    fun `repairStackFrames repairs an ancestor constructor bypass through a ctorless abstract middle`() {
+        val base = "AncestorBase"
+        val middle = "AncestorMiddle"
+        val leaf = "AncestorLeaf"
+        val rawBase =
+            hierarchyClassWithStringCtor(base, "java/lang/Exception", Opcodes.ACC_PUBLIC, trivial = true)
+        val rawMiddle = ctorlessDirectSubclass(middle, base, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT)
+        val rawLeaf = ancestorBypassConstructor(leaf, middle, base)
+        val rawLoader = BytesLoader()
+        rawLoader.define(base, rawBase)
+        rawLoader.define(middle, rawMiddle)
+        val rawError =
+            assertFailsWith<VerifyError> {
+                rawLoader.define(leaf, rawLeaf).getConstructor(String::class.java)
+            }
+        assertTrue(
+            rawError.message!!.contains("wrong <init>") || rawError.message!!.contains("not assignable"),
+            "the fixture must reproduce the ancestor-constructor verifier failure, got: ${rawError.message}",
+        )
+
+        val jar = jarWithClasses(base to rawBase, middle to rawMiddle, leaf to rawLeaf)
+
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+
+        assertEquals(listOf(middle), constructorOwners(jar, leaf, "<init>"))
+        assertEquals(listOf(base), constructorOwners(jar, middle, "<init>"))
+        val loader = BytesLoader()
+        loader.define(base, classBytesFromJar(jar, base))
+        loader.define(middle, classBytesFromJar(jar, middle))
+        val repairedLeaf = loader.define(leaf, classBytesFromJar(jar, leaf))
+        val made = repairedLeaf.getConstructor(String::class.java).newInstance("message") as Exception
+        assertEquals("message", made.message)
+
+        val first = listOf(base, middle, leaf).associateWith { classBytesFromJar(jar, it) }
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+        for (name in first.keys) {
+            assertContentEquals(first.getValue(name), classBytesFromJar(jar, name), "$name must be stable on pass two")
+        }
+    }
+
+    @Test
+    fun `ancestor constructor repair uses an existing trivial direct-super constructor`() {
+        val base = "ExistingAncestorBase"
+        val middle = "ExistingAncestorMiddle"
+        val leaf = "ExistingAncestorLeaf"
+        val middleBytes =
+            hierarchyClassWithStringCtor(
+                middle,
+                base,
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT,
+                trivial = true,
+            )
+        val jar =
+            jarWithClasses(
+                base to hierarchyClassWithStringCtor(base, "java/lang/Exception", Opcodes.ACC_PUBLIC),
+                middle to middleBytes,
+                leaf to ancestorBypassConstructor(leaf, middle, base),
+            )
+
+        DexStackFrameRewriter.repairInvalidConstructorOwners(jar, javaClass.classLoader)
+
+        assertEquals(listOf(middle), constructorOwners(jar, leaf, "<init>"))
+        assertContentEquals(middleBytes, classBytesFromJar(jar, middle))
+    }
+
+    @Test
+    fun `ancestor constructor repair skips a nontrivial intermediate constructor byte-for-byte`() {
+        val base = "UnsafeAncestorBase"
+        val middle = "UnsafeAncestorMiddle"
+        val leaf = "UnsafeAncestorLeaf"
+        val jar =
+            jarWithClasses(
+                base to hierarchyClassWithStringCtor(base, "java/lang/Exception", Opcodes.ACC_PUBLIC),
+                middle to
+                    hierarchyClassWithStringCtor(
+                        middle,
+                        base,
+                        Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT,
+                        trivial = false,
+                    ),
+                leaf to ancestorBypassConstructor(leaf, middle, base),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, base, middle, leaf)
+    }
+
+    @Test
+    fun `ancestor constructor repair skips an inaccessible intermediate constructor byte-for-byte`() {
+        val base = "PrivateAncestorBase"
+        val middle = "PrivateAncestorMiddle"
+        val leaf = "PrivateAncestorLeaf"
+        val jar =
+            jarWithClasses(
+                base to hierarchyClassWithStringCtor(base, "java/lang/Exception", Opcodes.ACC_PUBLIC),
+                middle to
+                    hierarchyClassWithStringCtor(
+                        middle,
+                        base,
+                        Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT,
+                        constructorAccess = Opcodes.ACC_PRIVATE,
+                    ),
+                leaf to ancestorBypassConstructor(leaf, middle, base),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, base, middle, leaf)
+    }
+
+    @Test
+    fun `ancestor constructor repair skips multiple uninitialized-this initializers byte-for-byte`() {
+        val base = "AmbiguousAncestorBase"
+        val middle = "AmbiguousAncestorMiddle"
+        val leaf = "AmbiguousAncestorLeaf"
+        val jar =
+            jarWithClasses(
+                base to hierarchyClassWithStringCtor(base, "java/lang/Exception", Opcodes.ACC_PUBLIC),
+                middle to ctorlessDirectSubclass(middle, base, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT),
+                leaf to ancestorBypassConstructor(leaf, middle, base, repeatInitializer = true),
+            )
+
+        assertConstructorOwnerRepairSkipsByteExactly(jar, base, middle, leaf)
     }
 
     @Test
