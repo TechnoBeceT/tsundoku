@@ -36,6 +36,29 @@ class UpstreamThrottleTest {
     }
 
     @Test
+    fun `HTTP date retry delay rounds up without exceeding the precise 24 hour bound`() {
+        val subsecondNow = Instant.parse("2026-09-02T10:00:00.500Z")
+
+        assertEquals(1L, parseRetryAfterSeconds("Wed, 02 Sep 2026 10:00:01 GMT", subsecondNow))
+        assertEquals(86_400L, parseRetryAfterSeconds("Thu, 03 Sep 2026 10:00:00 GMT", subsecondNow))
+        assertEquals(null, parseRetryAfterSeconds("Thu, 03 Sep 2026 10:00:01 GMT", subsecondNow))
+    }
+
+    @Test
+    fun `retry after rejects repeated fields regardless of order or validity`() {
+        val repeated = listOf(
+            listOf("60", "120"),
+            listOf("120", "60"),
+            listOf("60", "later"),
+            listOf("later", "60"),
+        )
+
+        repeated.forEach { values ->
+            assertEquals(null, parseRetryAfterSeconds(values, now), "values=$values")
+        }
+    }
+
+    @Test
     fun `retry after rejects absent malformed past negative and excessive values`() {
         val cases = listOf<String?>(
             null,
@@ -58,6 +81,22 @@ class UpstreamThrottleTest {
     }
 
     @Test
+    fun `image RPC omits retry delay for repeated retry after fields in either order`() {
+        val repeated = listOf(
+            listOf("60", "120"),
+            listOf("120", "60"),
+            listOf("60", "later"),
+            listOf("later", "60"),
+        )
+
+        repeated.forEach { values ->
+            val body = imageRpcError(values)
+
+            assertTrue(body.get("retryAfterSeconds")?.isNull != false, "values=$values body=$body")
+        }
+    }
+
+    @Test
     fun `image RPC converts retry after HTTP date to a bounded delay`() {
         val retryAt = DateTimeFormatter.RFC_1123_DATE_TIME.format(Instant.now().plusSeconds(120).atZone(ZoneOffset.UTC))
         val seconds = imageRpcError(retryAt)["retryAfterSeconds"].asLong()
@@ -66,8 +105,15 @@ class UpstreamThrottleTest {
     }
 
     private fun imageRpcError(retryAfter: String): com.fasterxml.jackson.databind.JsonNode {
+        return imageRpcError(listOf(retryAfter))
+    }
+
+    private fun imageRpcError(retryAfter: List<String>): com.fasterxml.jackson.databind.JsonNode {
         MockWebServer().use { upstream ->
-            upstream.enqueue(MockResponse(code = 429, headers = okhttp3.Headers.headersOf("Retry-After", retryAfter)))
+            val headers = Headers.Builder().apply {
+                retryAfter.forEach { add("Retry-After", it) }
+            }.build()
+            upstream.enqueue(MockResponse(code = 429, headers = headers))
             upstream.start()
             val workDir = Files.createTempDirectory("rpc-image-throttle").toFile()
             val loader = ExtensionLoader(workDir)

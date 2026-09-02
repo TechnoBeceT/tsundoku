@@ -374,7 +374,7 @@ object SourceCalls {
                     if (!response.isSuccessful) {
                         throw UpstreamHttpFailure(
                             upstreamStatus = response.code,
-                            retryAfterSeconds = parseRetryAfterSeconds(response.header("Retry-After")),
+                            retryAfterSeconds = parseRetryAfterSeconds(response.headers("Retry-After")),
                         )
                     }
                     val contentType = response.header("Content-Type") ?: "application/octet-stream"
