@@ -12,6 +12,7 @@ package enginehost
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+import android.content.SharedPreferences
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
@@ -66,8 +67,46 @@ object Preferences {
     fun apply(
         source: Source,
         changes: Map<String, Any?>,
-    ): List<String> {
+    ): List<String> = apply(source, changes, rawPreferences(source).associateBy { it.key })
+
+    /**
+     * Apply [changes] and run [commit] as one recoverable preference transaction. Any failure while
+     * applying, materializing, validating, or describing the refreshed source restores every
+     * affected persisted value before the failure escapes to the RPC layer.
+     */
+    internal fun <T> applyRecoverably(
+        source: Source,
+        changes: Map<String, Any?>,
+        commit: () -> T,
+    ): T {
         val byKey = rawPreferences(source).associateBy { it.key }
+        val sharedPreferences = (source as? ConfigurableSource)?.sourcePreferences()
+        val snapshot =
+            if (sharedPreferences == null) {
+                emptyMap()
+            } else {
+                snapshotAffected(sharedPreferences, byKey, changes.keys)
+            }
+        try {
+            apply(source, changes, byKey)
+            return commit()
+        } catch (failure: Throwable) {
+            if (sharedPreferences != null) {
+                try {
+                    restore(sharedPreferences, snapshot)
+                } catch (restoreFailure: Throwable) {
+                    failure.addSuppressed(restoreFailure)
+                }
+            }
+            throw failure
+        }
+    }
+
+    private fun apply(
+        source: Source,
+        changes: Map<String, Any?>,
+        byKey: Map<String, Preference>,
+    ): List<String> {
         val written = mutableListOf<String>()
         changes.forEach { (key, raw) ->
             val pref = byKey[key] ?: throw IllegalArgumentException("unknown preference key '$key' for source ${source.name}")
@@ -81,6 +120,50 @@ object Preferences {
             written += key
         }
         return written
+    }
+
+    private data class StoredPreference(
+        val present: Boolean,
+        val value: Any?,
+    )
+
+    private fun snapshotAffected(
+        preferences: SharedPreferences,
+        byKey: Map<String, Preference>,
+        changedKeys: Set<String>,
+    ): Map<String, StoredPreference> {
+        val stored = preferences.all
+        return changedKeys
+            .filter { key -> byKey[key]?.isEnabled == true }
+            .associateWith { key ->
+                StoredPreference(
+                    present = preferences.contains(key),
+                    value = (stored[key] as? Set<*>)?.map { it.toString() }?.toSet() ?: stored[key],
+                )
+            }
+    }
+
+    private fun restore(
+        preferences: SharedPreferences,
+        snapshot: Map<String, StoredPreference>,
+    ) {
+        val editor = preferences.edit()
+        snapshot.forEach { (key, stored) ->
+            if (!stored.present) {
+                editor.remove(key)
+                return@forEach
+            }
+            when (val value = stored.value) {
+                is String -> editor.putString(key, value)
+                is Boolean -> editor.putBoolean(key, value)
+                is Set<*> -> editor.putStringSet(key, value.map { it.toString() }.toSet())
+                is Int -> editor.putInt(key, value)
+                is Long -> editor.putLong(key, value)
+                is Float -> editor.putFloat(key, value)
+                else -> error("cannot restore preference '$key' with value type ${value?.javaClass?.name}")
+            }
+        }
+        check(editor.commit()) { "failed to restore source preferences" }
     }
 
     /** Coerce a JSON-decoded value to the exact type the preference persists. */

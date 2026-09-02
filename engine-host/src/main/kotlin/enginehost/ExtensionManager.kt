@@ -221,8 +221,27 @@ class ExtensionManager internal constructor(
      * isn't owned by an installed extension (e.g. the bootstrap APK arg). MUST be called under the
      * mutation lock — the RPC preference handler wraps apply+reload in [underLock].
      */
-    fun reloadForSource(sourceId: Long): Boolean {
-        val record = recordForSource(sourceId) ?: return false
+    fun reloadForSource(sourceId: Long): Boolean =
+        reloadForSourceGeneration(sourceId) { _, _ -> Unit } != null
+
+    /**
+     * Build and validate a refreshed generation, then derive [prepareResponse] from the refreshed
+     * source before persisting or publishing it. The old source ID is preferred when it survives;
+     * otherwise exactly one newly introduced source ID must identify the response source.
+     */
+    internal fun <T : Any> reloadForSource(
+        sourceId: Long,
+        prepareResponse: (Source) -> T,
+    ): T? =
+        reloadForSourceGeneration(sourceId) { record, sources ->
+            prepareResponse(responseSource(record, sources, sourceId))
+        }
+
+    private fun <T : Any> reloadForSourceGeneration(
+        sourceId: Long,
+        prepareResponse: (InstalledExtension, List<Source>) -> T,
+    ): T? {
+        val record = recordForSource(sourceId) ?: return null
         val jar = installedJarPath(record)
         require(Files.isRegularFile(jar)) { "installed jar missing on disk: ${jar.fileName}" }
         val previous = loader.snapshotRegistry()
@@ -230,13 +249,28 @@ class ExtensionManager internal constructor(
         try {
             val sources = loader.reinstantiate(jar.toString(), record.mainClass)
             val next = buildRegistryGeneration(previous, listOf(MaterializedExtension(record.withSources(sources), sources)))
+            val response = prepareResponse(record, sources)
             persistManifest(next.installed.values)
             loader.publishRegistry(next)
-            return true
+            return response
         } catch (failure: Throwable) {
             if (!loaderWasCached) runCatching { loader.evictAndClose(jar) }
             throw failure
         }
+    }
+
+    private fun responseSource(
+        previousRecord: InstalledExtension,
+        refreshedSources: List<Source>,
+        requestedSourceId: Long,
+    ): Source {
+        refreshedSources.singleOrNull { it.id == requestedSourceId }?.let { return it }
+        val introducedIds = refreshedSources.mapTo(HashSet()) { it.id } - previousRecord.sourceIds.toSet()
+        require(introducedIds.size == 1) {
+            "refreshed extension does not provide an unambiguous replacement for source ID $requestedSourceId"
+        }
+        val introducedId = introducedIds.single()
+        return refreshedSources.single { it.id == introducedId }
     }
 
     // ---- repos ----

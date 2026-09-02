@@ -338,11 +338,14 @@ class RpcServer(
                 val changes: Map<String, Any?> = mapper.readValue(exchange.requestBody.readBytes())
                 val refreshed =
                     extensions.underLock {
-                        Preferences.apply(resolve(sourceId), changes)
-                        extensions.reloadForSource(sourceId)
-                        Preferences.describe(resolve(sourceId))
+                        val source = resolve(sourceId)
+                        Preferences.applyRecoverably(source, changes) {
+                            extensions.reloadForSource(sourceId) { refreshedSource ->
+                                PreferencesResponse(Preferences.describe(refreshedSource))
+                            } ?: PreferencesResponse(Preferences.describe(source))
+                        }
                     }
-                response.respondJson(200, PreferencesResponse(refreshed))
+                response.respondJson(200, refreshed)
             }
             else -> response.respondJson(405, ErrorResponse("GET or PUT only"))
         }
