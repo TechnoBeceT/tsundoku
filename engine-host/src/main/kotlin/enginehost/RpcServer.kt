@@ -391,6 +391,9 @@ class RpcServer(
             response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
         } catch (e: BadRequest) {
             response.respondJson(400, ErrorResponse(e.message ?: "bad request"))
+        } catch (e: InstalledApkUnavailableException) {
+            logger.warn(e) { "installed APK export failed" }
+            response.respondJson(502, ErrorResponse(e.message ?: "installed APK is unavailable"))
         } catch (e: Throwable) {
             logger.warn(e) { "extensions request failed" }
             response.respondJson(502, ErrorResponse("${e.javaClass.simpleName}: ${e.message}"))

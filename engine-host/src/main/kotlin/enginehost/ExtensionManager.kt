@@ -21,6 +21,7 @@ import com.fasterxml.jackson.module.kotlin.readValue
 import eu.kanade.tachiyomi.source.Source
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.net.URI
 import java.nio.file.AtomicMoveNotSupportedException
@@ -59,6 +60,8 @@ data class InstalledApkExport(
     val contentLength: Long,
     val input: InputStream,
 )
+
+internal class InstalledApkUnavailableException(cause: Throwable) : IOException("installed APK is unavailable", cause)
 
 /** Repository identity that a prepared APK must match exactly before it can replace active state. */
 private data class ExpectedArtifact(
@@ -237,13 +240,22 @@ class ExtensionManager internal constructor(
             require(Files.isRegularFile(apk, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 "installed APK for '$pkgName' is not a regular file"
             }
-            val size = Files.size(apk)
+            val size = filesystemAccess { Files.size(apk) }
             require(size in 1..MAX_EXPORTED_APK_BYTES) {
                 "installed APK for '$pkgName' must be between 1 and $MAX_EXPORTED_APK_BYTES bytes"
             }
-            Files.newInputStream(apk).use { input ->
+            filesystemAccess { Files.newInputStream(apk) }.use { input ->
                 block(InstalledApkExport(record.pkgName, record.versionCode, record.versionName, size, input))
             }
+        }
+
+    private fun <T> filesystemAccess(block: () -> T): T =
+        try {
+            block()
+        } catch (failure: IOException) {
+            throw InstalledApkUnavailableException(failure)
+        } catch (failure: SecurityException) {
+            throw InstalledApkUnavailableException(failure)
         }
 
     /**
