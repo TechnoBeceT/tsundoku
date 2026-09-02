@@ -1,5 +1,6 @@
 package enginehost
 
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.PreferenceScreen
 import androidx.preference.SwitchPreferenceCompat
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
@@ -14,12 +15,14 @@ import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.sourcePreferences
+import java.io.ByteArrayInputStream
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Properties
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.io.path.readBytes
@@ -60,15 +63,38 @@ class PreferenceTransactionRpcTest {
     }
 
     @Test
-    fun `rejected preference reload restores durable preferences and the old generation`() {
+    fun `accepted preference reload commits and describes a multi-select update`() {
+        EngineRuntimeIntegrationTestSetup.ensureReady()
+        PreferenceTransactionFixture().use { fixture ->
+            val response = fixture.put("""{"selected_groups":["beta","gamma"]}""")
+
+            assertEquals(200, response.statusCode(), response.body())
+            assertEquals(setOf("beta", "gamma"), fixture.preferences.getStringSet("selected_groups", emptySet()))
+            val described =
+                mapper.readTree(response.body())["preferences"]
+                    .single { it["key"].textValue() == "selected_groups" }
+            assertEquals(setOf("beta", "gamma"), described["currentValue"].map { it.textValue() }.toSet())
+            assertSetEncoding(fixture.preferencePropertyKeys())
+            assertFalse(fixture.preferenceBytesBefore.contentEquals(fixture.preferenceFile.readBytes()))
+            assertEquals(PreferenceTransactionProbe.oldSourceId, fixture.loader.source(PreferenceTransactionProbe.oldSourceId)?.id)
+            assertTrue(fixture.loader.hasCachedLoader(fixture.jar))
+        }
+    }
+
+    @Test
+    fun `rejected preference reload restores multi-select bytes and the old generation`() {
         EngineRuntimeIntegrationTestSetup.ensureReady()
         PreferenceTransactionProbe.replacementSourceId = PreferenceTransactionProbe.foreignSourceId
         PreferenceTransactionFixture(includeForeignOwner = true).use { fixture ->
-            val response = fixture.put("""{"change_id":true}""")
+            assertSetEncoding(fixture.preferencePropertyKeysBefore)
+
+            val response = fixture.put("""{"selected_groups":["gamma"],"change_id":true}""")
 
             assertEquals(400, response.statusCode(), response.body())
             assertFalse(fixture.preferences.getBoolean("change_id", true))
+            assertEquals(setOf("alpha", "beta"), fixture.preferences.getStringSet("selected_groups", emptySet()))
             assertContentEquals(fixture.preferenceBytesBefore, fixture.preferenceFile.readBytes())
+            assertSetEncoding(fixture.preferencePropertyKeys())
             assertContentEquals(fixture.manifestBytesBefore, fixture.manifest.readBytes())
             assertSame(fixture.oldSource, fixture.loader.source(PreferenceTransactionProbe.oldSourceId))
             assertSame(fixture.foreignSource, fixture.loader.source(PreferenceTransactionProbe.foreignSourceId))
@@ -77,18 +103,28 @@ class PreferenceTransactionRpcTest {
     }
 
     @Test
-    fun `response description failure restores preferences before generation publication`() {
+    fun `response description failure restores multi-select bytes before generation publication`() {
         EngineRuntimeIntegrationTestSetup.ensureReady()
         PreferenceTransactionFixture().use { fixture ->
-            val response = fixture.put("""{"fail_description":true}""")
+            assertSetEncoding(fixture.preferencePropertyKeysBefore)
+
+            val response = fixture.put("""{"selected_groups":["gamma"],"fail_description":true}""")
 
             assertEquals(502, response.statusCode(), response.body())
             assertFalse(fixture.preferences.getBoolean("fail_description", true))
+            assertEquals(setOf("alpha", "beta"), fixture.preferences.getStringSet("selected_groups", emptySet()))
             assertContentEquals(fixture.preferenceBytesBefore, fixture.preferenceFile.readBytes())
+            assertSetEncoding(fixture.preferencePropertyKeys())
             assertContentEquals(fixture.manifestBytesBefore, fixture.manifest.readBytes())
             assertSame(fixture.oldSource, fixture.loader.source(PreferenceTransactionProbe.oldSourceId))
             assertTrue(fixture.loader.hasCachedLoader(fixture.jar), "the previous generation's loader was evicted")
         }
+    }
+
+    private fun assertSetEncoding(keys: Set<String>) {
+        assertTrue("selected_groups.0" in keys, keys.toString())
+        assertTrue("selected_groups.1" in keys, keys.toString())
+        assertTrue("selected_groups.size" in keys, keys.toString())
     }
 
     private class PreferenceTransactionFixture(
@@ -109,6 +145,7 @@ class PreferenceTransactionRpcTest {
         private val client = HttpClient.newHttpClient()
         private val port: Int
         val preferenceBytesBefore: ByteArray
+        val preferencePropertyKeysBefore: Set<String>
         val manifestBytesBefore: ByteArray
 
         init {
@@ -116,9 +153,11 @@ class PreferenceTransactionRpcTest {
             preferences.edit()
                 .putBoolean("change_id", false)
                 .putBoolean("fail_description", false)
+                .putStringSet("selected_groups", mutableSetOf("alpha", "beta"))
                 .putString("sentinel", "keep")
                 .commit()
             preferenceBytesBefore = preferenceFile.readBytes()
+            preferencePropertyKeysBefore = propertyKeys(preferenceBytesBefore)
 
             root.resolve("target.apk").writeBytes("apk".toByteArray())
             oldSource = loader.reinstantiate(jar.toString(), PreferenceTransactionFactory::class.java.name).single()
@@ -150,6 +189,8 @@ class PreferenceTransactionRpcTest {
                     .build(),
                 HttpResponse.BodyHandlers.ofString(),
             )
+
+        fun preferencePropertyKeys(): Set<String> = propertyKeys(preferenceFile.readBytes())
 
         override fun close() {
             server.stop()
@@ -200,6 +241,12 @@ class PreferenceTransactionRpcTest {
                 output.closeEntry()
             }
         }
+
+        private fun propertyKeys(bytes: ByteArray): Set<String> =
+            Properties().run {
+                ByteArrayInputStream(bytes).use { loadFromXML(it) }
+                stringPropertyNames()
+            }
     }
 }
 
@@ -246,6 +293,15 @@ internal class PreferenceTransactionSource(
                 key = "change_id"
                 title = "Change source ID ($id)"
                 defaultValue = false
+            },
+        )
+        screen.addPreference(
+            MultiSelectListPreference(screen.context).apply {
+                key = "selected_groups"
+                title = "Selected groups ($id)"
+                entries = arrayOf("Alpha", "Beta", "Gamma")
+                entryValues = arrayOf("alpha", "beta", "gamma")
+                defaultValue = emptySet<String>()
             },
         )
         screen.addPreference(
