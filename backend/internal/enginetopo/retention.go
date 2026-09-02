@@ -47,10 +47,10 @@ func pruneAndBuildCachedVersions(
 	pkgName string,
 	retained, newVersion int,
 	newName string,
-	installedVersion int,
+	keepVersions ...int,
 ) []apkcache.CachedVersion {
 	existing := loadCachedVersions(ctx, db, pkgName)
-	retainedVers, err := cache.Prune(pkgName, retained, installedVersion)
+	retainedVers, err := cache.Prune(pkgName, retained, keepVersions...)
 	if err != nil {
 		slog.WarnContext(ctx, "enginetopo: could not prune cached apk versions",
 			"pkg_name", pkgName, "err", err)

@@ -40,6 +40,12 @@ protected, it returns HTTP 409:
 `DELETE /extensions/{pkgName}/prepared-update` accepts `{"token":"..."}` and explicitly releases a
 candidate. Discard is idempotent when that package has no candidate; a token mismatch is HTTP 400.
 
+`POST /extensions/{pkgName}/prepared-update-outcome` accepts `{"token":"..."}` and returns the
+durable activation state (`pending`, `committed`, `rejected`, or `unknown`) plus package and candidate
+version identity. Outcome files are named by a SHA-256 token digest, survive host restart, and expire
+on a bounded cleanup window. A `pending` or `unknown` result is ambiguous and must not trigger another
+activation. The legacy direct `POST /extensions/{pkgName}/update` route is retired with HTTP 410.
+
 ## `PUT /config/image-transport`
 
 Applies a partial image connection-policy update and returns the normalized

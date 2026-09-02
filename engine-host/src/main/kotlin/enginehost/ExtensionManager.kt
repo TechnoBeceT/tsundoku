@@ -28,6 +28,7 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -150,6 +151,7 @@ class ExtensionManager internal constructor(
     private val reposFile = File(extensionsRoot, "repos.json")
     private val repoTrustFile = File(extensionsRoot, "repo-trust.json")
     private val manifestFile = File(extensionsRoot, "installed.json")
+    private val updateOutcomesDir = File(extensionsRoot.parentFile, "extension-update-outcomes")
     private var manifestRecords: List<InstalledExtension> = emptyList()
 
     // Per-source SharedPreferences files live at <dataRoot>/settings/source_<id>.xml, a sibling of
@@ -198,6 +200,8 @@ class ExtensionManager internal constructor(
 
     init {
         extensionsRoot.mkdirs()
+        updateOutcomesDir.mkdirs()
+        updateOutcomesDir.listFiles()?.filter(File::isFile)?.forEach(::scheduleOutcomeExpiry)
         loadReposFromDisk()
         loadRepoTrustFromDisk()
         manifestRecords = loadManifestFromDisk()
@@ -432,6 +436,9 @@ class ExtensionManager internal constructor(
         require(pkgName != null || apkUrl != null) { "install requires pkgName or apkUrl" }
 
         val stateSnapshot = mutationLock.withLock { InstallState(mutationSequence, repos, repoTrust, pkgName?.let { installed[it] }) }
+        require(pkgName == null || stateSnapshot.installed == null) {
+            "extension '$pkgName' is already installed; use prepared activation"
+        }
         val (url, repoUrl, repoEntry) =
             if (apkUrl != null) {
                 Triple(apkUrl, null, null)
@@ -551,6 +558,7 @@ class ExtensionManager internal constructor(
                 require(current?.versionCode == record.versionCode && current.sourceIds.sorted() == installedIds) {
                     "installed extension changed while preparing the update"
                 }
+                persistUpdateOutcome(held, "pending")
                 preparedUpdates.put(pkgName, held)?.let(::cleanupPrepared)
                 preparedCleanup.schedule(
                     { expirePreparedUpdate(pkgName, token) },
@@ -598,11 +606,28 @@ class ExtensionManager internal constructor(
                     held.candidateSourceIds,
                 )
                 mutationSequence++
+                persistUpdateOutcome(held, "committed")
+            } catch (failure: Throwable) {
+                // Validation and source-retirement failures happen before publication and are
+                // conclusively rejected. I/O/runtime failures may straddle publication, so leave
+                // the durable pending marker as an explicit ambiguous outcome.
+                if (failure is IllegalArgumentException || failure is SourceRetirementConflict) {
+                    persistUpdateOutcome(held, "rejected")
+                }
+                throw failure
             } finally {
                 releasePreparedIfCurrent(held)
             }
         }
         return list()
+    }
+
+    fun preparedUpdateOutcome(pkgName: String, token: String): PreparedUpdateOutcomeDto = mutationLock.withLock {
+        val file = updateOutcomeFile(token)
+        if (!file.isFile) return@withLock PreparedUpdateOutcomeDto("unknown", pkgName, 0)
+        val outcome: StoredUpdateOutcome = mapper.readValue(file)
+        require(outcome.pkgName == pkgName) { "prepared update outcome package does not match" }
+        PreparedUpdateOutcomeDto(outcome.status, outcome.pkgName, outcome.candidateVersionCode)
     }
 
     /** Explicitly release a prepared candidate without changing installed state. */
@@ -612,6 +637,7 @@ class ExtensionManager internal constructor(
     ) = mutationLock.withLock {
         val held = preparedUpdates[pkgName] ?: return@withLock
         require(held.token == token) { "prepared update token does not match" }
+        persistUpdateOutcome(held, "rejected")
         preparedUpdates.remove(pkgName)
         cleanupPrepared(held)
     }
@@ -626,6 +652,36 @@ class ExtensionManager internal constructor(
         // repeated install/uninstall cycles don't accumulate orphan prefs (matches Suwayomi's key
         // `source_<id>` from ConfigurableSource.preferenceKey()).
         record.sourceIds.forEach { id -> File(settingsRoot, "source_$id.xml").delete() }
+    }
+
+    private fun updateOutcomeFile(token: String): File {
+        val digest = MessageDigest.getInstance("SHA-256").digest(token.toByteArray())
+        return File(updateOutcomesDir, digest.joinToString("") { "%02x".format(it) } + ".json")
+    }
+
+    private fun persistUpdateOutcome(held: PreparedUpdate, status: String) {
+        updateOutcomesDir.mkdirs()
+        val target = updateOutcomeFile(held.token).toPath()
+        val temporary = Files.createTempFile(updateOutcomesDir.toPath(), ".outcome-", ".tmp")
+        try {
+            Files.writeString(temporary, mapper.writeValueAsString(StoredUpdateOutcome(status, held.pkgName, held.prepared.versionCode)))
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+        if (status == "pending") scheduleOutcomeExpiry(target.toFile())
+        val cutoff = System.currentTimeMillis() - TimeUnit.NANOSECONDS.toMillis(preparedUpdateTtlNanos)
+        updateOutcomesDir.listFiles()?.filter { it.isFile && it.lastModified() < cutoff }?.forEach { it.delete() }
+    }
+
+    private fun scheduleOutcomeExpiry(file: File) {
+        val ttlMillis = TimeUnit.NANOSECONDS.toMillis(preparedUpdateTtlNanos)
+        val remainingMillis = (file.lastModified() + ttlMillis - System.currentTimeMillis()).coerceAtLeast(0)
+        preparedCleanup.schedule({ runCatching { Files.deleteIfExists(file.toPath()) } }, remainingMillis, TimeUnit.MILLISECONDS)
     }
 
     private fun prepareAndInstall(
@@ -864,6 +920,13 @@ class ExtensionManager internal constructor(
                 mutationSequence,
             )
     }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    private data class StoredUpdateOutcome(
+        val status: String,
+        val pkgName: String,
+        val candidateVersionCode: Long,
+    )
 
     private data class MaterializedExtension(
         val record: InstalledExtension,

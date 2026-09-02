@@ -364,6 +364,7 @@ class RpcServer(
             if (
                 (path.endsWith("/prepare-update") ||
                     path.endsWith("/activate-prepared-update") ||
+                    path.endsWith("/prepared-update-outcome") ||
                     path.endsWith("/prepared-update")) &&
                 !isControlAuthorized(exchange)
             ) {
@@ -397,6 +398,11 @@ class RpcServer(
                     response.respondJson(200, extensions.activatePreparedUpdate(request))
                 }
 
+                path.endsWith("/prepared-update-outcome") && exchange.requestMethod == "POST" -> {
+                    val request: PreparedUpdateOutcomeRequest = mapper.readValue(exchange.requestBody.readBytes())
+                    response.respondJson(200, extensions.preparedUpdateOutcome(pkgNameFromPath(path, "/prepared-update-outcome"), request.token))
+                }
+
                 path.endsWith("/prepared-update") && exchange.requestMethod == "DELETE" -> {
                     val request: DiscardPreparedUpdateRequest = mapper.readValue(exchange.requestBody.readBytes())
                     extensions.discardPreparedUpdate(request.token, pkgNameFromPath(path, "/prepared-update"))
@@ -404,7 +410,7 @@ class RpcServer(
                 }
 
                 path.endsWith("/update") && exchange.requestMethod == "POST" ->
-                    response.respondJson(200, extensions.update(pkgNameFromPath(path, "/update")))
+                    response.respondJson(410, ErrorResponse("direct extension update is retired; use prepared activation"))
 
                 exchange.requestMethod == "DELETE" ->
                     response.respondJson(200, extensions.uninstall(pkgNameFromPath(path, null)))

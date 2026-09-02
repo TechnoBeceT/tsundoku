@@ -41,7 +41,7 @@ func (a *ExtensionArchive) Capture(ctx context.Context, ext sourceengine.Extensi
 	return a.captureLocked(ctx, ext)
 }
 
-func (a *ExtensionArchive) captureLocked(ctx context.Context, ext sourceengine.Extension) error {
+func (a *ExtensionArchive) captureLocked(ctx context.Context, ext sourceengine.Extension, keepAlso ...int) error {
 	apk, err := sourceengine.InstalledAPKFor(ctx, a.client, ext.PkgName)
 	if err != nil {
 		return fmt.Errorf("enginetopo: export installed apk %q: %w", ext.PkgName, err)
@@ -58,7 +58,7 @@ func (a *ExtensionArchive) captureLocked(ctx context.Context, ext sourceengine.E
 		return fmt.Errorf("enginetopo: cache exact installed apk: %w", err)
 	}
 	retained := resolveRetained(ctx, a.retained)
-	cachedVersions := pruneAndBuildCachedVersions(ctx, a.db, a.cache, ext.PkgName, retained, apk.VersionCode, apk.VersionName, apk.VersionCode)
+	cachedVersions := pruneAndBuildCachedVersions(ctx, a.db, a.cache, ext.PkgName, retained, apk.VersionCode, apk.VersionName, append([]int{apk.VersionCode}, keepAlso...)...)
 	if err := upsertExtension(ctx, a.db, extensionRow{
 		pkgName: ext.PkgName, repoURL: repoURLOf(ext), versionCode: apk.VersionCode,
 		installedVersionCode: apk.VersionCode, versionName: apk.VersionName,
@@ -117,7 +117,7 @@ func (a *ExtensionArchive) UpdateWith(ctx context.Context, pkgName string, activ
 	if !ok || !updated.IsInstalled {
 		return exts, true, errors.Join(degradation, fmt.Errorf("updated extension %q missing from engine response", pkgName))
 	}
-	if err := a.captureLocked(ctx, updated); err != nil {
+	if err := a.captureLocked(ctx, updated, int(installed.VersionCode)); err != nil {
 		return exts, true, errors.Join(degradation, err)
 	}
 	return exts, true, degradation

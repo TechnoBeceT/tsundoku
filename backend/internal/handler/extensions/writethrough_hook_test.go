@@ -412,6 +412,29 @@ func TestInstall_UsesExactEngineExportDespiteRepositoryMismatch(t *testing.T) {
 	}
 }
 
+func TestInstall_RejectsAlreadyInstalledPackageBeforeMutation(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, IsInstalled: true}
+	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{ext}))
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/install", h.Install)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	if got := fc.CallCount("InstallExtension"); got != 0 {
+		t.Fatalf("InstallExtension calls=%d, want 0", got)
+	}
+}
+
 const (
 	wrappedIndexPkg        = "pkg.test.one"
 	wrappedIndexRepo       = "https://repo.test/index.json"

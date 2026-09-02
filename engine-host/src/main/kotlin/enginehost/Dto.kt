@@ -204,6 +204,14 @@ data class ActivatePreparedUpdateRequest(
 
 data class DiscardPreparedUpdateRequest(val token: String)
 
+data class PreparedUpdateOutcomeRequest(val token: String)
+
+data class PreparedUpdateOutcomeDto(
+    val status: String,
+    val pkgName: String,
+    val candidateVersionCode: Long,
+)
+
 /** Machine-readable 409 body for an update that would retire a source still used by the library. */
 data class SourceRetirementConflictResponse(
     val error: String,

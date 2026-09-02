@@ -55,6 +55,12 @@ func (c *httpClient) ActivatePreparedExtensionUpdate(ctx context.Context, reques
 	return post[[]Extension](ctx, c, extensionPath(request.PkgName)+"/activate-prepared-update", request)
 }
 
+func (c *httpClient) PreparedExtensionUpdateOutcome(ctx context.Context, pkgName, token string) (PreparedExtensionUpdateOutcome, error) {
+	return post[PreparedExtensionUpdateOutcome](ctx, c, extensionPath(pkgName)+"/prepared-update-outcome", struct {
+		Token string `json:"token"`
+	}{Token: token})
+}
+
 func (c *httpClient) DiscardPreparedExtensionUpdate(ctx context.Context, pkgName, token string) error {
 	_, err := doJSON[struct {
 		OK bool `json:"ok"`

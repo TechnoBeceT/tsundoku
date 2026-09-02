@@ -115,6 +115,26 @@ func TestExtensionArchiveCaptureStoresExactInstalledGeneration(t *testing.T) {
 	}
 }
 
+func TestExtensionArchiveUpdateRetainsImmediatelyPreviousGenerationAtDepthOne(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	before := sourceengine.Extension{PkgName: "pkg.one", VersionCode: 57, VersionName: "v57", IsInstalled: true}
+	after := sourceengine.Extension{PkgName: "pkg.one", VersionCode: 104057, VersionName: "v104057", IsInstalled: true}
+	client := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{before}), sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{after}), sourceenginefake.WithInstalledAPK(before.PkgName, 57, "v57", []byte("APK-57")), sourceenginefake.WithInstalledAPK(after.PkgName, 104057, "v104057", []byte("APK-104057")))
+	archive := enginetopo.NewExtensionArchive(client, db, cache, func(context.Context) int { return 1 })
+	if _, mutated, err := archive.Update(ctx, before.PkgName); err != nil || !mutated {
+		t.Fatalf("Update mutated=%v err=%v", mutated, err)
+	}
+	if !cache.Exists(before.PkgName, 57) || !cache.Exists(before.PkgName, 104057) {
+		t.Fatalf("cache old=%v new=%v, want both", cache.Exists(before.PkgName, 57), cache.Exists(before.PkgName, 104057))
+	}
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(before.PkgName)).OnlyX(ctx)
+	if len(row.CachedVersions) != 2 {
+		t.Fatalf("cachedVersions=%+v, want previous plus current", row.CachedVersions)
+	}
+}
+
 func TestSeedExtensionsExactUsesInstalledExportWithoutRepositoryAPK(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)

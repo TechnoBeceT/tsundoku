@@ -101,6 +101,26 @@ class ExtensionManagerTest {
 
         assertEquals("Owned Candidate Source", fixture.targetSource()?.name)
         fixture.assertUnrelatedPreserved()
+        val outcome = fixture.manager.preparedUpdateOutcome(TARGET_PACKAGE, prepared.token)
+        assertEquals("committed", outcome.status)
+        assertEquals(2, outcome.candidateVersionCode)
+        assertEquals("committed", fixture.outcomeAfterRestart(prepared.token).status)
+    }
+
+    @Test
+    fun `legacy direct update RPC is retired before mutation`() {
+        val fixture = UpdateFixture(candidatePackage = TARGET_PACKAGE, candidateVersionCode = 2, candidateJarSource = CandidateOwnedSource::class.java)
+        val server = fixture.rpcServer(CONTROL_TOKEN)
+        server.start()
+        try {
+            val port = boundAddress(server).port
+            val request = HttpRequest.newBuilder(URI("http://127.0.0.1:$port/extensions/$TARGET_PACKAGE/update")).POST(HttpRequest.BodyPublishers.noBody()).build()
+            assertEquals(410, HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString()).statusCode())
+            fixture.assertUnchanged()
+        } finally {
+            server.stop()
+            fixture.manager.close()
+        }
     }
 
     @Test
@@ -1217,6 +1237,15 @@ class ExtensionManagerTest {
         fun oldTargetSource(): Source = oldSource
 
         fun rpcServer(controlToken: String): RpcServer = RpcServer(loader, manager, port = 0, controlToken = controlToken)
+
+        fun outcomeAfterRestart(token: String): PreparedUpdateOutcomeDto {
+            val reloaded = ExtensionManager(ExtensionLoader(root.toFile(), signatureVerifier), root.toFile())
+            return try {
+                reloaded.preparedUpdateOutcome(TARGET_PACKAGE, token)
+            } finally {
+                reloaded.close()
+            }
+        }
     }
 
     companion object {

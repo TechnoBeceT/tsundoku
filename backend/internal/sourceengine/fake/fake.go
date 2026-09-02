@@ -131,6 +131,14 @@ func (c *Client) DiscardPreparedExtensionUpdate(_ context.Context, _, _ string) 
 	return c.errFor("DiscardPreparedExtensionUpdate")
 }
 
+func (c *Client) PreparedExtensionUpdateOutcome(_ context.Context, pkgName, _ string) (sourceengine.PreparedExtensionUpdateOutcome, error) {
+	c.record("PreparedExtensionUpdateOutcome")
+	if err := c.errFor("PreparedExtensionUpdateOutcome"); err != nil {
+		return sourceengine.PreparedExtensionUpdateOutcome{}, err
+	}
+	return sourceengine.PreparedExtensionUpdateOutcome{Status: "committed", PkgName: pkgName}, nil
+}
+
 func sourceIDsOf(sources []sourceengine.Source) []int64 {
 	out := make([]int64, len(sources))
 	for i, s := range sources {

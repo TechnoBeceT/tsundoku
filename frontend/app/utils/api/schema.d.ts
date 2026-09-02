@@ -10887,6 +10887,22 @@ export interface operations {
                     "application/json": components["schemas"]["Extension"][];
                 };
             };
+            /** @description Activation may have crossed the publication boundary; do not retry until reconciled. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message: string;
+                        /** @constant */
+                        code: "activation_outcome_ambiguous";
+                        pkgName: string;
+                        /** Format: int64 */
+                        candidateVersionCode: number;
+                    };
+                };
+            };
             /** @description A blank pkgName. */
             400: {
                 headers: {

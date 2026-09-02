@@ -259,6 +259,19 @@ func (h *Handler) Refresh(c echo.Context) error {
 // REPO-based (apkURL ""; the apk-cache fallback + sideload install is
 // DEFERRED — see enginetopo.Reconcile's doc comment on the same deferral).
 func (h *Handler) Install(c echo.Context) error {
+	pkgName, err := validatePkgName(c.Param("pkgName"))
+	if err != nil {
+		return err
+	}
+	exts, err := h.sw.Extensions(c.Request().Context())
+	if err != nil {
+		return httperr.Upstream(err)
+	}
+	for _, ext := range exts {
+		if ext.PkgName == pkgName && ext.IsInstalled {
+			return echo.NewHTTPError(http.StatusConflict, "extension is already installed; use the protected update operation")
+		}
+	}
 	return h.mutate(c, func(ctx context.Context, pkgName string) ([]sourceengine.Extension, error) {
 		return h.sw.InstallExtension(ctx, pkgName, "")
 	})
@@ -308,7 +321,29 @@ func (h *Handler) Update(c echo.Context) error {
 			if errors.As(err, &conflict) {
 				return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
 			}
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+			// A response can be lost after the host has atomically published the new
+			// generation. Reconcile the durable token outcome before deciding whether
+			// discard or retry is safe.
+			reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			outcome, outcomeErr := updater.PreparedExtensionUpdateOutcome(reconcileCtx, pkgName, prepared.Token)
+			if outcomeErr == nil && outcome.Status == "rejected" {
+				return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+			}
+			result, listErr := h.sw.Extensions(reconcileCtx)
+			if outcomeErr == nil && outcome.Status == "committed" {
+				succeeded = true
+				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, listErr)}
+			}
+			if current, ok := findExtension(result, pkgName); ok && current.IsInstalled && current.VersionCode == prepared.CandidateVersionCode {
+				succeeded = true
+				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, outcomeErr, listErr)}
+			}
+			// pending/unknown (or an unavailable outcome query) is intentionally
+			// reported as a non-retryable ambiguous success. The durable pre-capture
+			// remains available for explicit operator reconciliation.
+			succeeded = true
+			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: &activationAmbiguous{pkgName: pkgName, candidateVersion: prepared.CandidateVersionCode, cause: errors.Join(err, outcomeErr, listErr)}}
 		}
 		// Activation consumes the token and crosses the irreversible boundary.
 		succeeded = true
@@ -328,10 +363,24 @@ func (h *Handler) Update(c echo.Context) error {
 		return httperr.Upstream(err)
 	}
 	if err != nil {
+		var ambiguous *activationAmbiguous
+		if errors.As(err, &ambiguous) {
+			slog.ErrorContext(ctx, "extensions: activation outcome ambiguous; do not retry", "pkg_name", pkgName, "candidate_version", ambiguous.candidateVersion, "err", err)
+			return c.JSON(http.StatusAccepted, map[string]any{"message": "extension activation outcome is ambiguous; do not retry", "code": "activation_outcome_ambiguous", "pkgName": pkgName, "candidateVersionCode": ambiguous.candidateVersion})
+		}
 		slog.ErrorContext(ctx, "extensions: update succeeded with local coordination or archive degradation; do not retry", "pkg_name", pkgName, "err", err)
 	}
 	return h.respondExtensions(c, exts)
 }
+
+type activationAmbiguous struct {
+	pkgName          string
+	candidateVersion int64
+	cause            error
+}
+
+func (e *activationAmbiguous) Error() string { return "extension activation outcome is ambiguous" }
+func (e *activationAmbiguous) Unwrap() error { return e.cause }
 
 func sourceIDStrings(ids []int64) []string {
 	out := make([]string, len(ids))

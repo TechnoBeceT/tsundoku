@@ -233,10 +233,17 @@ type ActivatePreparedExtensionUpdate struct {
 	ProtectedSourceIDs []int64 `json:"protectedSourceIds"`
 }
 
+type PreparedExtensionUpdateOutcome struct {
+	Status               string `json:"status"`
+	PkgName              string `json:"pkgName"`
+	CandidateVersionCode int64  `json:"candidateVersionCode"`
+}
+
 // ProtectedExtensionUpdater is the additive, fail-closed extension update capability.
 type ProtectedExtensionUpdater interface {
 	PrepareExtensionUpdate(context.Context, string) (PreparedExtensionUpdate, error)
 	ActivatePreparedExtensionUpdate(context.Context, ActivatePreparedExtensionUpdate) ([]Extension, error)
+	PreparedExtensionUpdateOutcome(context.Context, string, string) (PreparedExtensionUpdateOutcome, error)
 	DiscardPreparedExtensionUpdate(context.Context, string, string) error
 }
 
@@ -452,7 +459,7 @@ func isControlPath(path string) bool {
 		return false
 	}
 	suffix := ""
-	for _, candidate := range []string{"/installed-apk", "/prepare-update", "/activate-prepared-update", "/prepared-update"} {
+	for _, candidate := range []string{"/installed-apk", "/prepare-update", "/activate-prepared-update", "/prepared-update-outcome", "/prepared-update"} {
 		if strings.HasSuffix(path, candidate) {
 			suffix = candidate
 			break

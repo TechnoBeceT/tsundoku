@@ -10108,6 +10108,24 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Extension"
+        "202":
+          description: Activation may have crossed the publication boundary; do not retry until reconciled.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message, code, pkgName, candidateVersionCode]
+                properties:
+                  message:
+                    type: string
+                  code:
+                    type: string
+                    const: activation_outcome_ambiguous
+                  pkgName:
+                    type: string
+                  candidateVersionCode:
+                    type: integer
+                    format: int64
         "400":
           description: A blank pkgName.
           content:
