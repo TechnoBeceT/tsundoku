@@ -108,64 +108,79 @@ func installableFake() *sourceenginefake.Client {
 // version, and return both that version and the prior held version for rollback.
 func TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion(t *testing.T) {
 	ctx := context.Background()
-	const (
-		pkg        = "pkg.test.one"
-		repo       = "https://repo.test/index.json"
-		newAPKURL  = "https://cdn.test/pkg.test.one-v2.apk"
-		oldVersion = 1
-		newVersion = 2
-	)
+	env := newWrappedIndexUpdateEnv(t)
+	seedPriorExtensionCapture(t, ctx, env)
 
-	repoURL := repo
+	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	assertWrappedIndexCapture(t, ctx, env)
+	assertRetainedVersionsResponse(t, rec)
+}
+
+const (
+	wrappedIndexPkg        = "pkg.test.one"
+	wrappedIndexRepo       = "https://repo.test/index.json"
+	wrappedIndexNewAPKURL  = "https://cdn.test/pkg.test.one-v2.apk"
+	wrappedIndexOldVersion = 1
+	wrappedIndexNewVersion = 2
+)
+
+func newWrappedIndexUpdateEnv(t *testing.T) *durableEnv {
+	t.Helper()
+	repoURL := wrappedIndexRepo
 	fc := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{{
-		PkgName:     pkg,
+		PkgName:     wrappedIndexPkg,
 		VersionName: "1.0.2",
-		VersionCode: newVersion,
+		VersionCode: wrappedIndexNewVersion,
 		RepoURL:     &repoURL,
 		IsInstalled: true,
 		Sources:     []sourceengine.Source{{ID: 5}},
 	}}))
 	routes := map[string]string{
-		repo: `{"extensionList":{"extensions":[{"packageName":"pkg.test.one","versionName":"1.0.2","versionCode":"2","resources":{"apkUrl":"https://cdn.test/pkg.test.one-v2.apk"}}]}}`,
-		// This is a valid legacy index, but it intentionally lacks the target.
+		wrappedIndexRepo: `{"extensionList":{"extensions":[{"packageName":"pkg.test.one","versionName":"1.0.2","versionCode":"2","resources":{"apkUrl":"https://cdn.test/pkg.test.one-v2.apk"}}]}}`,
+		// This valid legacy index intentionally lacks the target package.
 		"https://repo.test/index.min.json": `[{"pkg":"pkg.someone.else","apk":"else.apk","code":9}]`,
-		newAPKURL:                          "APK-V2",
+		wrappedIndexNewAPKURL:              "APK-V2",
 	}
-	env := newDurableEnv(t, fc, serveRoutes(routes))
+	return newDurableEnv(t, fc, serveRoutes(routes))
+}
 
-	oldAt := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
-	if _, _, err := env.cache.Put(pkg, oldVersion, bytes.NewReader([]byte("APK-V1"))); err != nil {
+func seedPriorExtensionCapture(t *testing.T, ctx context.Context, env *durableEnv) {
+	t.Helper()
+	if _, _, err := env.cache.Put(wrappedIndexPkg, wrappedIndexOldVersion, bytes.NewReader([]byte("APK-V1"))); err != nil {
 		t.Fatalf("cache old version: %v", err)
 	}
+	oldAt := time.Date(2026, time.September, 1, 12, 0, 0, 0, time.UTC)
 	if err := env.db.HarvestedExtension.Create().
-		SetPkgName(pkg).
-		SetRepoURL(repo).
-		SetVersionCode(oldVersion).
-		SetInstalledVersionCode(oldVersion).
+		SetPkgName(wrappedIndexPkg).
+		SetRepoURL(wrappedIndexRepo).
+		SetVersionCode(wrappedIndexOldVersion).
+		SetInstalledVersionCode(wrappedIndexOldVersion).
 		SetVersionName("1.0.1").
 		SetApkCached(true).
-		SetCachedVersions([]apkcache.CachedVersion{{VersionCode: oldVersion, VersionName: "1.0.1", CachedAt: oldAt}}).
+		SetCachedVersions([]apkcache.CachedVersion{{VersionCode: wrappedIndexOldVersion, VersionName: "1.0.1", CachedAt: oldAt}}).
 		Exec(ctx); err != nil {
 		t.Fatalf("seed prior extension capture: %v", err)
 	}
+}
 
-	rec := env.do(http.MethodPost, "/api/suwayomi/extensions/"+pkg+"/update")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("update: want 200, got %d (%s)", rec.Code, rec.Body.String())
-	}
+func assertWrappedIndexCapture(t *testing.T, ctx context.Context, env *durableEnv) {
+	t.Helper()
 
 	row := env.db.HarvestedExtension.Query().
-		Where(entharvestedextension.PkgName(pkg)).
+		Where(entharvestedextension.PkgName(wrappedIndexPkg)).
 		OnlyX(ctx)
-	if row.VersionCode != newVersion || row.InstalledVersionCode != newVersion {
+	if row.VersionCode != wrappedIndexNewVersion || row.InstalledVersionCode != wrappedIndexNewVersion {
 		t.Fatalf("captured versions = {bytes:%d installed:%d}, want {%d %d}",
-			row.VersionCode, row.InstalledVersionCode, newVersion, newVersion)
+			row.VersionCode, row.InstalledVersionCode, wrappedIndexNewVersion, wrappedIndexNewVersion)
 	}
-	if !env.cache.Exists(pkg, newVersion) || !env.cache.Exists(pkg, oldVersion) {
+	if !env.cache.Exists(wrappedIndexPkg, wrappedIndexNewVersion) || !env.cache.Exists(wrappedIndexPkg, wrappedIndexOldVersion) {
 		t.Fatalf("cache presence = {new:%v old:%v}, want both true",
-			env.cache.Exists(pkg, newVersion), env.cache.Exists(pkg, oldVersion))
+			env.cache.Exists(wrappedIndexPkg, wrappedIndexNewVersion), env.cache.Exists(wrappedIndexPkg, wrappedIndexOldVersion))
 	}
-	cached, err := env.cache.Open(pkg, newVersion)
+	cached, err := env.cache.Open(wrappedIndexPkg, wrappedIndexNewVersion)
 	if err != nil {
 		t.Fatalf("open cached current version: %v", err)
 	}
@@ -177,7 +192,10 @@ func TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion(t *tes
 	if !bytes.Equal(cachedBytes, []byte("APK-V2")) {
 		t.Errorf("cached current bytes = %q, want %q", cachedBytes, "APK-V2")
 	}
+}
 
+func assertRetainedVersionsResponse(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
 	var got []handler.ExtensionDTO
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -189,8 +207,8 @@ func TestUpdate_WritesThroughConfiguredWrappedIndexAndRetainsPriorVersion(t *tes
 	for _, held := range got[0].CachedVersions {
 		byVersion[held.VersionCode] = true
 	}
-	if !byVersion[newVersion] || !byVersion[oldVersion] {
-		t.Errorf("response held versions = %v, want {%d,%d}", byVersion, newVersion, oldVersion)
+	if !byVersion[wrappedIndexNewVersion] || !byVersion[wrappedIndexOldVersion] {
+		t.Errorf("response held versions = %v, want {%d,%d}", byVersion, wrappedIndexNewVersion, wrappedIndexOldVersion)
 	}
 }
 

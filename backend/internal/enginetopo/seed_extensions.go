@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -648,44 +649,58 @@ func isProtobufIndex(indexURL string, body []byte) bool {
 }
 
 func parseProtoRepoIndex(body []byte) ([]repoIndexEntry, error) {
-	raw := body
-	if len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b {
-		reader, err := gzip.NewReader(bytes.NewReader(body))
-		if err != nil {
-			return nil, err
-		}
-		decompressed, readErr := io.ReadAll(io.LimitReader(reader, maxIndexBytes+1))
-		closeErr := reader.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		if len(decompressed) > maxIndexBytes {
-			return nil, errors.New("decompressed repository index exceeds maximum size")
-		}
-		raw = decompressed
+	raw, err := decompressProtoIndex(body)
+	if err != nil {
+		return nil, err
 	}
-
 	var entries []repoIndexEntry
-	err := walkProtoFields(raw, func(number int, wireType uint64, value []byte, _ uint64) error {
-		if number != 101 || wireType != 2 {
-			return nil
-		}
-		return walkProtoFields(value, func(number int, wireType uint64, value []byte, _ uint64) error {
-			if number != 1 || wireType != 2 {
-				return nil
-			}
-			entry, err := parseProtoRepoEntry(value)
-			if err != nil {
-				return err
-			}
-			entries = append(entries, entry)
-			return nil
-		})
+	err = walkProtoFields(raw, func(number int, wireType uint64, value []byte, _ uint64) error {
+		return collectProtoExtensionList(number, wireType, value, &entries)
 	})
 	return entries, err
+}
+
+func decompressProtoIndex(body []byte) ([]byte, error) {
+	if len(body) < 2 || body[0] != 0x1f || body[1] != 0x8b {
+		return body, nil
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	decompressed, readErr := io.ReadAll(io.LimitReader(reader, maxIndexBytes+1))
+	closeErr := reader.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(decompressed) > maxIndexBytes {
+		return nil, errors.New("decompressed repository index exceeds maximum size")
+	}
+	return decompressed, nil
+}
+
+func collectProtoExtensionList(number int, wireType uint64, value []byte, entries *[]repoIndexEntry) error {
+	if number != 101 || wireType != 2 {
+		return nil
+	}
+	return walkProtoFields(value, func(number int, wireType uint64, value []byte, _ uint64) error {
+		return collectProtoExtension(number, wireType, value, entries)
+	})
+}
+
+func collectProtoExtension(number int, wireType uint64, value []byte, entries *[]repoIndexEntry) error {
+	if number != 1 || wireType != 2 {
+		return nil
+	}
+	entry, err := parseProtoRepoEntry(value)
+	if err != nil {
+		return err
+	}
+	*entries = append(*entries, entry)
+	return nil
 }
 
 func parseProtoRepoEntry(data []byte) (repoIndexEntry, error) {
@@ -702,10 +717,11 @@ func parseProtoRepoEntry(data []byte) (repoIndexEntry, error) {
 				return nil
 			})
 		case number == 5 && wireType == 0:
-			if uint64(int(varint)) != varint {
+			versionCode, err := checkedProtoInt(varint)
+			if err != nil {
 				return fmt.Errorf("repository version code %d overflows int", varint)
 			}
-			entry.Code = int(varint)
+			entry.Code = versionCode
 		}
 		return nil
 	})
@@ -717,53 +733,81 @@ func parseProtoRepoEntry(data []byte) (repoIndexEntry, error) {
 // fields remain forward-compatible without generated Go bindings.
 func walkProtoFields(data []byte, visit func(number int, wireType uint64, value []byte, varint uint64) error) error {
 	for len(data) > 0 {
-		key, n := binary.Uvarint(data)
-		if n <= 0 {
-			return errors.New("invalid protobuf field key")
+		field, remaining, err := consumeProtoField(data)
+		if err != nil {
+			return err
 		}
-		data = data[n:]
-		number, wireType := int(key>>3), key&7
-		if number < 1 {
-			return errors.New("invalid protobuf field number")
-		}
-
-		var value []byte
-		var scalar uint64
-		switch wireType {
-		case 0:
-			scalar, n = binary.Uvarint(data)
-			if n <= 0 {
-				return errors.New("invalid protobuf varint")
-			}
-			data = data[n:]
-		case 1:
-			if len(data) < 8 {
-				return errors.New("truncated protobuf fixed64")
-			}
-			value, data = data[:8], data[8:]
-		case 2:
-			length, width := binary.Uvarint(data)
-			if width <= 0 {
-				return errors.New("invalid protobuf length")
-			}
-			data = data[width:]
-			if length > uint64(len(data)) {
-				return errors.New("truncated protobuf bytes")
-			}
-			value, data = data[:int(length)], data[int(length):]
-		case 5:
-			if len(data) < 4 {
-				return errors.New("truncated protobuf fixed32")
-			}
-			value, data = data[:4], data[4:]
-		default:
-			return fmt.Errorf("unsupported protobuf wire type %d", wireType)
-		}
-		if err := visit(number, wireType, value, scalar); err != nil {
+		data = remaining
+		if err := visit(field.number, field.wireType, field.value, field.scalar); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type protoField struct {
+	number   int
+	wireType uint64
+	value    []byte
+	scalar   uint64
+}
+
+func consumeProtoField(data []byte) (protoField, []byte, error) {
+	key, width := binary.Uvarint(data)
+	if width <= 0 {
+		return protoField{}, nil, errors.New("invalid protobuf field key")
+	}
+	number, err := checkedProtoInt(key >> 3)
+	if err != nil || number < 1 {
+		return protoField{}, nil, errors.New("invalid protobuf field number")
+	}
+	field := protoField{number: number, wireType: key & 7}
+	remaining, err := consumeProtoValue(data[width:], &field)
+	return field, remaining, err
+}
+
+func consumeProtoValue(data []byte, field *protoField) ([]byte, error) {
+	switch field.wireType {
+	case 0:
+		value, width := binary.Uvarint(data)
+		if width <= 0 {
+			return nil, errors.New("invalid protobuf varint")
+		}
+		field.scalar = value
+		return data[width:], nil
+	case 1:
+		return consumeProtoBytes(data, 8, "truncated protobuf fixed64", field)
+	case 2:
+		length, width := binary.Uvarint(data)
+		if width <= 0 {
+			return nil, errors.New("invalid protobuf length")
+		}
+		size, err := checkedProtoInt(length)
+		if err != nil || size > len(data[width:]) {
+			return nil, errors.New("truncated protobuf bytes")
+		}
+		return consumeProtoBytes(data[width:], size, "truncated protobuf bytes", field)
+	case 5:
+		return consumeProtoBytes(data, 4, "truncated protobuf fixed32", field)
+	default:
+		return nil, fmt.Errorf("unsupported protobuf wire type %d", field.wireType)
+	}
+}
+
+func consumeProtoBytes(data []byte, size int, truncated string, field *protoField) ([]byte, error) {
+	if len(data) < size {
+		return nil, errors.New(truncated)
+	}
+	field.value = data[:size]
+	return data[size:], nil
+}
+
+func checkedProtoInt(value uint64) (int, error) {
+	if value > math.MaxInt {
+		return 0, errors.New("protobuf integer overflows int")
+	}
+	// #nosec G115 -- the architecture-sized upper bound is checked above.
+	return int(value), nil
 }
 
 // repoBaseURL normalises a stored repo URL to its base DIRECTORY — the parent the
