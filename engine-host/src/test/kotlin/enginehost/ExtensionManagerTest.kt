@@ -141,6 +141,46 @@ class ExtensionManagerTest {
     }
 
     @Test
+    fun `stale activation cannot discard a newer prepared candidate for the same package`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+        val stale = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+        val current = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        assertFailsWith<IllegalArgumentException> {
+            fixture.manager.activatePreparedUpdate(stale.toActivationRequest(emptyList()))
+        }
+        fixture.manager.activatePreparedUpdate(current.toActivationRequest(emptyList()))
+
+        assertEquals("Owned Candidate Source", fixture.targetSource()?.name)
+        fixture.assertUnrelatedPreserved()
+    }
+
+    @Test
+    fun `stale discard cannot remove a newer prepared candidate for the same package`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+        val stale = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+        val current = fixture.manager.prepareUpdate(TARGET_PACKAGE)
+
+        assertFailsWith<IllegalArgumentException> {
+            fixture.manager.discardPreparedUpdate(stale.token, TARGET_PACKAGE)
+        }
+        fixture.manager.activatePreparedUpdate(current.toActivationRequest(emptyList()))
+
+        assertEquals("Owned Candidate Source", fixture.targetSource()?.name)
+        fixture.assertUnrelatedPreserved()
+    }
+
+    @Test
     fun `expired prepared update is rejected and cleaned`() {
         val fixture =
             UpdateFixture(
@@ -1046,6 +1086,7 @@ class ExtensionManagerTest {
         private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
         private val expectedUnrelatedSource = unrelatedSource.takeIf { injectUnrelatedSource }
         private val loader = ExtensionLoader(root.toFile(), signatureVerifier)
+        private val prepareCount = AtomicInteger()
         private val directoryBefore: Map<String, ByteArray>
         private val activeFilesBefore: Map<String, ByteArray>
         private val installedBefore: Map<String, InstalledExtension>
@@ -1083,7 +1124,7 @@ class ExtensionManagerTest {
                 }
             val preparer =
                 ExtensionPreparer { apk ->
-                    val jar = root.resolve(".prepared-candidate.jar")
+                    val jar = root.resolve(".prepared-candidate-${prepareCount.incrementAndGet()}.jar")
                     writeClassJar(jar, candidateJarSource)
                     val verifiedSignature =
                         if (verifyCandidateSignature) {

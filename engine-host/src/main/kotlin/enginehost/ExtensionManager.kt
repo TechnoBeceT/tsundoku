@@ -570,9 +570,9 @@ class ExtensionManager internal constructor(
     fun activatePreparedUpdate(request: ActivatePreparedUpdateRequest): List<ExtensionDto> {
         mutationLock.withLock {
             val held = preparedUpdates[request.pkgName] ?: throw IllegalArgumentException("prepared update not found")
+            require(request.token == held.token) { "prepared update token does not match" }
             try {
                 require(System.nanoTime() < held.expiresAtNanos) { "prepared update expired" }
-                require(request.token == held.token) { "prepared update token does not match" }
                 require(request.pkgName == held.pkgName) { "prepared update package does not match" }
                 require(request.installedVersionCode == held.installedVersionCode) { "prepared installed version does not match" }
                 require(request.candidateVersionCode == held.prepared.versionCode) { "prepared candidate version does not match" }
@@ -599,7 +599,7 @@ class ExtensionManager internal constructor(
                 )
                 mutationSequence++
             } finally {
-                preparedUpdates.remove(request.pkgName)?.let(::cleanupPrepared)
+                releasePreparedIfCurrent(held)
             }
         }
         return list()
@@ -828,6 +828,12 @@ class ExtensionManager internal constructor(
         runCatching { loader.evictAndClose(held.prepared.jarFile) }
         runCatching { Files.deleteIfExists(held.prepared.jarFile) }
         runCatching { Files.deleteIfExists(held.prepared.apkFile) }
+    }
+
+    private fun releasePreparedIfCurrent(held: PreparedUpdate) {
+        if (preparedUpdates[held.pkgName] !== held) return
+        preparedUpdates.remove(held.pkgName)
+        cleanupPrepared(held)
     }
 
     private data class PreparedUpdate(
