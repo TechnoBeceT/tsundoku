@@ -2,6 +2,7 @@ package enginehost
 
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
 import eu.kanade.tachiyomi.source.model.Page
@@ -324,9 +325,278 @@ class ExtensionManagerTest {
     }
 
     @Test
+    fun `boot reload rejects a missing installed file without replacing the previous generation`() {
+        val root = Files.createTempDirectory("extension-manager-boot-missing")
+        val diskRecord = installedRecord(TARGET_PACKAGE, "missing.apk", listOf(TARGET_SOURCE_ID))
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(diskRecord)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val previousSource = TestSource(UNRELATED_SOURCE_ID)
+        val previousRecord = installedRecord(UNRELATED_PACKAGE, "previous.apk", listOf(UNRELATED_SOURCE_ID))
+        loader.publishRegistry(loader.prepareRegistry(mapOf(UNRELATED_SOURCE_ID to previousSource), mapOf(UNRELATED_PACKAGE to previousRecord)))
+        val manager = ExtensionManager(loader, root.toFile())
+
+        val failure = assertFailsWith<IllegalArgumentException> { manager.reloadInstalled() }
+
+        assertTrue(failure.message.orEmpty().contains("missing"))
+        assertSame(previousSource, loader.source(UNRELATED_SOURCE_ID))
+        assertEquals(mapOf(UNRELATED_PACKAGE to previousRecord), installedSnapshot(loader))
+    }
+
+    @Test
+    fun `boot reload rejects mismatched APK identity and signer without replacing the previous generation`() {
+        val failures =
+            listOf(
+                assertBootRejected(inspectedPackage = "substituted.extension"),
+                assertBootRejected(inspectedVersionName = "1.2.2"),
+                assertBootRejected(inspectedVersionCode = 2),
+                assertBootRejected(inspectedMainClass = TestSource::class.java.name),
+                assertBootRejected(inspectedSignature = VerifiedApkSignature(setOf(TEST_SIGNER_B), emptyList())),
+            )
+
+        assertTrue(failures[0].message.orEmpty().contains("does not match manifest package"))
+        assertTrue(failures[1].message.orEmpty().contains("does not match manifest version"))
+        assertTrue(failures[2].message.orEmpty().contains("does not match manifest version"))
+        assertTrue(failures[3].message.orEmpty().contains("does not match manifest main class"))
+        assertTrue(failures[4].message.orEmpty().contains("does not match its manifest identity"))
+    }
+
+    @Test
+    fun `boot reload rejects a source set that differs from its manifest record`() {
+        PreferenceReloadProbe.sourceIds = listOf(PREFERENCE_SOURCE_ID)
+        try {
+            val failure = assertBootRejected(sourceClass = PreferenceReloadFactory::class.java)
+
+            assertTrue(failure.message.orEmpty().contains("source IDs do not match its manifest record"))
+        } finally {
+            PreferenceReloadProbe.sourceIds = emptyList()
+        }
+    }
+
+    @Test
+    fun `boot reload rejects a cross-package source collision without replacing the previous generation`() {
+        val root = Files.createTempDirectory("extension-manager-boot-collision")
+        val firstRecord =
+            installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = CandidateOwnedSource::class.java.name,
+                signerFingerprints = setOf(TEST_SIGNER),
+            )
+        val secondRecord =
+            installedRecord(UNRELATED_PACKAGE, "foreign.apk", listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = CandidateOwnedSource::class.java.name,
+                signerFingerprints = setOf(TEST_SIGNER),
+            )
+        listOf(firstRecord, secondRecord).forEach { record ->
+            root.resolve(record.apkFileName).writeBytes("apk".toByteArray())
+            writeClassJar(root.resolve(record.apkFileName.replaceAfterLast('.', "jar")), CandidateOwnedSource::class.java)
+        }
+        val manifest = root.resolve("installed.json")
+        manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(firstRecord, secondRecord)))
+        val recordsByFile = listOf(firstRecord, secondRecord).associateBy { it.apkFileName }
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val previousSource = TestSource(PREFERENCE_SOURCE_ID)
+        val previousRecord = installedRecord("previous.extension", "previous.apk", listOf(PREFERENCE_SOURCE_ID))
+        loader.publishRegistry(
+            loader.prepareRegistry(
+                mapOf(PREFERENCE_SOURCE_ID to previousSource),
+                mapOf(previousRecord.pkgName to previousRecord),
+            ),
+        )
+        val manager =
+            ExtensionManager(
+                loader,
+                root.toFile(),
+                localApkDownloader(ByteArray(0)),
+                ExtensionPreparer { error("unused") },
+                ExtensionArtifactInspector { apk ->
+                    val record = recordsByFile.getValue(apk.fileName.toString())
+                    InspectedExtensionArtifact(
+                        record.pkgName,
+                        record.versionName,
+                        record.versionCode,
+                        record.mainClass,
+                        apk,
+                        VerifiedApkSignature(setOf(TEST_SIGNER), emptyList()),
+                    )
+                },
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { manager.reloadInstalled() }
+
+        assertTrue(failure.message.orEmpty().contains("source ID $TARGET_SOURCE_ID"))
+        assertSame(previousSource, loader.source(PREFERENCE_SOURCE_ID))
+        assertEquals(mapOf(previousRecord.pkgName to previousRecord), installedSnapshot(loader))
+    }
+
+    @Test
+    fun `boot reload rejects a missing installed jar without replacing the previous generation`() {
+        val root = Files.createTempDirectory("extension-manager-boot-missing-jar")
+        val diskRecord =
+            installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = CandidateOwnedSource::class.java.name,
+                signerFingerprints = setOf(TEST_SIGNER),
+            )
+        root.resolve(diskRecord.apkFileName).writeBytes("apk".toByteArray())
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(diskRecord)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val previousSource = TestSource(UNRELATED_SOURCE_ID)
+        val previousRecord = installedRecord(UNRELATED_PACKAGE, "previous.apk", listOf(UNRELATED_SOURCE_ID))
+        loader.publishRegistry(loader.prepareRegistry(mapOf(UNRELATED_SOURCE_ID to previousSource), mapOf(UNRELATED_PACKAGE to previousRecord)))
+        val manager = ExtensionManager(loader, root.toFile())
+
+        val failure = assertFailsWith<IllegalArgumentException> { manager.reloadInstalled() }
+
+        assertTrue(failure.message.orEmpty().contains("jar missing"))
+        assertSame(previousSource, loader.source(UNRELATED_SOURCE_ID))
+        assertEquals(mapOf(UNRELATED_PACKAGE to previousRecord), installedSnapshot(loader))
+    }
+
+    @Test
+    fun `corrupt boot manifest fails closed without replacing the previous generation`() {
+        val root = Files.createTempDirectory("extension-manager-boot-corrupt")
+        root.resolve("installed.json").writeBytes("{".toByteArray())
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val previousSource = TestSource(UNRELATED_SOURCE_ID)
+        val previousRecord = installedRecord(UNRELATED_PACKAGE, "previous.apk", listOf(UNRELATED_SOURCE_ID))
+        loader.publishRegistry(loader.prepareRegistry(mapOf(UNRELATED_SOURCE_ID to previousSource), mapOf(UNRELATED_PACKAGE to previousRecord)))
+
+        val failure = assertFailsWith<IllegalArgumentException> { ExtensionManager(loader, root.toFile()) }
+
+        assertTrue(failure.message.orEmpty().contains("manifest is corrupt"))
+        assertSame(previousSource, loader.source(UNRELATED_SOURCE_ID))
+        assertEquals(mapOf(UNRELATED_PACKAGE to previousRecord), installedSnapshot(loader))
+    }
+
+    @Test
+    fun `boot reload migrates a legacy empty signer record after verified materialization`() {
+        val root = Files.createTempDirectory("extension-manager-boot-legacy-signer")
+        val record =
+            installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = CandidateOwnedSource::class.java.name,
+            )
+        root.resolve(record.apkFileName).writeBytes("apk".toByteArray())
+        writeClassJar(root.resolve("target.jar"), CandidateOwnedSource::class.java)
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(record)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val manager = bootManager(loader, root, record, VerifiedApkSignature(setOf(TEST_SIGNER), emptyList()))
+
+        manager.reloadInstalled()
+
+        assertEquals(TARGET_SOURCE_ID, loader.source(TARGET_SOURCE_ID)?.id)
+        assertEquals(setOf(TEST_SIGNER), manager.recordForSource(TARGET_SOURCE_ID)?.signerFingerprints)
+        val persisted = jacksonObjectMapper().readValue(root.resolve("installed.json").toFile(), Array<InstalledExtension>::class.java).single()
+        assertEquals(setOf(TEST_SIGNER), persisted.signerFingerprints)
+    }
+
+    @Test
+    fun `boot reload accepts an owner-approved descendant signer with verified lineage`() {
+        val root = Files.createTempDirectory("extension-manager-boot-lineage")
+        val record =
+            installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = CandidateOwnedSource::class.java.name,
+                repoUrl = REPO_URL,
+                signerFingerprints = setOf(TEST_SIGNER),
+                signingCertificateLineage = listOf(TEST_SIGNER),
+            )
+        root.resolve(record.apkFileName).writeBytes("apk".toByteArray())
+        writeClassJar(root.resolve("target.jar"), CandidateOwnedSource::class.java)
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(record)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER_B) })
+        val signature = VerifiedApkSignature(setOf(TEST_SIGNER_B), listOf(TEST_SIGNER, TEST_SIGNER_B))
+        val manager = bootManager(loader, root, record, signature)
+        manager.setRepos(listOf(REPO_URL))
+        manager.setRepoTrust(REPO_URL, TEST_SIGNER_B)
+
+        manager.reloadInstalled()
+
+        val migrated = manager.recordForSource(TARGET_SOURCE_ID)
+        assertEquals(setOf(TEST_SIGNER_B), migrated?.signerFingerprints)
+        assertEquals(listOf(TEST_SIGNER, TEST_SIGNER_B), migrated?.signingCertificateLineage)
+    }
+
+    @Test
+    fun `preference reload removes stale IDs and atomically updates manifest ownership`() {
+        val root = Files.createTempDirectory("extension-manager-preference-ids")
+        val apk = root.resolve("target.apk").also { it.writeBytes("target apk".toByteArray()) }
+        val jar = root.resolve("target.jar").also { writeClassJar(it, PreferenceReloadFactory::class.java) }
+        val record =
+            installedRecord(TARGET_PACKAGE, apk.fileName.toString(), listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = PreferenceReloadFactory::class.java.name,
+            )
+        root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(record)))
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        val oldSource = TestSource(TARGET_SOURCE_ID)
+        injectSource(loader, oldSource)
+        publishInstalled(loader, mapOf(TARGET_PACKAGE to record))
+        val manager = ExtensionManager(loader, root.toFile())
+        PreferenceReloadProbe.sourceIds = listOf(PREFERENCE_SOURCE_ID)
+
+        val reloaded = manager.underLock { manager.reloadForSource(TARGET_SOURCE_ID) }
+
+        assertTrue(reloaded)
+        assertEquals(null, loader.source(TARGET_SOURCE_ID), "stale source ID remained active")
+        assertEquals(PREFERENCE_SOURCE_ID, loader.source(PREFERENCE_SOURCE_ID)?.id)
+        assertEquals(listOf(PREFERENCE_SOURCE_ID), manager.recordForSource(PREFERENCE_SOURCE_ID)?.sourceIds)
+        val persisted = jacksonObjectMapper().readValue(root.resolve("installed.json").toFile(), Array<InstalledExtension>::class.java).single()
+        assertEquals(listOf(PREFERENCE_SOURCE_ID), persisted.sourceIds)
+        assertTrue(Files.exists(jar))
+    }
+
+    @Test
+    fun `preference reload rejects a foreign source ID and preserves the previous generation`() {
+        val root = Files.createTempDirectory("extension-manager-preference-collision")
+        val targetApk = root.resolve("target.apk").also { it.writeBytes("target apk".toByteArray()) }
+        root.resolve("target.jar").also { writeClassJar(it, PreferenceReloadFactory::class.java) }
+        val foreignApk = root.resolve("foreign.apk").also { it.writeBytes("foreign apk".toByteArray()) }
+        val targetRecord =
+            installedRecord(TARGET_PACKAGE, targetApk.fileName.toString(), listOf(TARGET_SOURCE_ID)).copy(
+                mainClass = PreferenceReloadFactory::class.java.name,
+            )
+        val foreignRecord = installedRecord(UNRELATED_PACKAGE, foreignApk.fileName.toString(), listOf(UNRELATED_SOURCE_ID))
+        val manifest = root.resolve("installed.json")
+        manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(targetRecord, foreignRecord)))
+        val manifestBefore = manifest.readBytes()
+        val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+        PreferenceReloadProbe.sourceIds = listOf(TARGET_SOURCE_ID)
+        val targetJar = root.resolve("target.jar")
+        val oldTarget = loader.reinstantiate(targetJar.toString(), PreferenceReloadFactory::class.java.name).single()
+        val foreignSource = TestSource(UNRELATED_SOURCE_ID)
+        loader.publishTestSources(listOf(oldTarget))
+        injectSource(loader, foreignSource)
+        publishInstalled(loader, mapOf(TARGET_PACKAGE to targetRecord, UNRELATED_PACKAGE to foreignRecord))
+        val manager = ExtensionManager(loader, root.toFile())
+        PreferenceReloadProbe.sourceIds = listOf(UNRELATED_SOURCE_ID)
+
+        val failure = assertFailsWith<IllegalArgumentException> {
+            manager.underLock { manager.reloadForSource(TARGET_SOURCE_ID) }
+        }
+
+        assertTrue(failure.message.orEmpty().contains("source ID $UNRELATED_SOURCE_ID"))
+        assertSame(oldTarget, loader.source(TARGET_SOURCE_ID))
+        assertSame(foreignSource, loader.source(UNRELATED_SOURCE_ID))
+        assertTrue(loader.hasCachedLoader(targetJar), "the previous generation's loader was evicted")
+        assertContentEquals(manifestBefore, manifest.readBytes())
+    }
+
+    @Test
+    fun `final activation rejects duplicate source multiplicity without mutation`() {
+        ActivationDuplicateProbe.reset()
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = ActivationDuplicateFactory::class.java,
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("duplicate source IDs"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
     fun `failed final activation evicts its loader before a same-name retry`() {
         val root = Files.createTempDirectory("extension-manager-loader-retry")
-        val manifest = Files.createDirectory(root.resolve("installed.json"))
+        val manifest = root.resolve("installed.json")
         val prepareCount = AtomicInteger()
         val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
         val downloader = localApkDownloader("candidate apk".toByteArray())
@@ -350,6 +620,7 @@ class ExtensionManagerTest {
             }
         val manager = ExtensionManager(loader, root.toFile(), downloader, preparer)
         val finalJar = root.resolve("retry.jar")
+        Files.createDirectory(manifest)
 
         assertFails { manager.install(apkUrl = "https://cdn.example.test/retry.apk") }
 
@@ -371,6 +642,12 @@ class ExtensionManagerTest {
         root.resolve("installed.json").writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(oldRecord)))
         val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
         val oldSource = loader.reinstantiate(oldJar.toString(), RETRY_CLASS_NAME).single()
+        loader.publishRegistry(
+            loader.prepareRegistry(
+                mapOf(RETRY_SOURCE_ID to oldSource),
+                mapOf(TARGET_PACKAGE to oldRecord),
+            ),
+        )
         val downloader =
             object : ExtensionDownloadClient {
                 override fun downloadRepoIndex(url: String): ByteArray =
@@ -494,6 +771,7 @@ class ExtensionManagerTest {
         val loader = ExtensionLoader(root.toFile())
         val source = TestSource(7L)
         injectSource(loader, source)
+        publishInstalled(loader, mapOf(installed.pkgName to installed))
         val downloader =
             object : ExtensionDownloadClient {
                 override fun downloadRepoIndex(url: String): ByteArray = error("unused")
@@ -556,7 +834,7 @@ class ExtensionManagerTest {
         candidatePackage: String,
         candidateVersionCode: Long,
         repositoryVersionCode: Long = 2,
-        candidateJarSource: Class<out Source> = CandidateSource::class.java,
+        candidateJarSource: Class<*> = CandidateSource::class.java,
         oldApkBytes: ByteArray = "old target apk".toByteArray(),
         candidateApkBytes: ByteArray = "candidate apk".toByteArray(),
         repositorySigningKey: String? = TEST_SIGNER,
@@ -595,6 +873,7 @@ class ExtensionManagerTest {
             manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(targetRecord, unrelatedRecord)))
             injectSource(loader, oldSource)
             expectedUnrelatedSource?.let { injectSource(loader, it) }
+            publishInstalled(loader, mapOf(targetRecord.pkgName to targetRecord, unrelatedRecord.pkgName to unrelatedRecord))
 
             val downloader =
                 object : ExtensionDownloadClient {
@@ -713,8 +992,10 @@ class ExtensionManagerTest {
         private const val TARGET_SOURCE_ID = 7L
         private const val UNRELATED_SOURCE_ID = 9L
         private const val RETRY_SOURCE_ID = 11L
+        private const val PREFERENCE_SOURCE_ID = 13L
         private const val RETRY_CLASS_NAME = "enginehost.RetrySourceNew"
         private const val TEST_SIGNER = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        private const val TEST_SIGNER_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         private const val REPO_URL = "https://repo.example.test"
 
         private data class TrustMutationState(
@@ -775,7 +1056,93 @@ class ExtensionManagerTest {
         private fun injectSource(
             loader: ExtensionLoader,
             source: Source,
-        ) = loader.registerSources(listOf(source))
+        ) = loader.publishTestSources(listOf(source))
+
+        private fun publishInstalled(
+            loader: ExtensionLoader,
+            installed: Map<String, InstalledExtension>,
+        ) {
+            val current = loader.snapshotRegistry()
+            loader.publishRegistry(loader.prepareRegistry(current.sources, installed))
+        }
+
+        private fun assertBootRejected(
+            sourceClass: Class<*> = CandidateOwnedSource::class.java,
+            inspectedPackage: String = TARGET_PACKAGE,
+            inspectedVersionName: String = "1.2.1",
+            inspectedVersionCode: Long = 1,
+            inspectedMainClass: String = sourceClass.name,
+            inspectedSignature: VerifiedApkSignature = VerifiedApkSignature(setOf(TEST_SIGNER), emptyList()),
+        ): IllegalArgumentException {
+            val root = Files.createTempDirectory("extension-manager-boot-identity")
+            val diskRecord =
+                installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID)).copy(
+                    mainClass = sourceClass.name,
+                    signerFingerprints = setOf(TEST_SIGNER),
+                )
+            root.resolve(diskRecord.apkFileName).writeBytes("apk".toByteArray())
+            writeClassJar(root.resolve("target.jar"), sourceClass)
+            val manifest = root.resolve("installed.json")
+            manifest.writeBytes(jacksonObjectMapper().writeValueAsBytes(listOf(diskRecord)))
+            val manifestBefore = manifest.readBytes()
+            val loader = ExtensionLoader(root.toFile(), ApkSignatureVerifier { setOf(TEST_SIGNER) })
+            val previousSource = TestSource(UNRELATED_SOURCE_ID)
+            val previousRecord = installedRecord(UNRELATED_PACKAGE, "previous.apk", listOf(UNRELATED_SOURCE_ID))
+            loader.publishRegistry(
+                loader.prepareRegistry(
+                    mapOf(UNRELATED_SOURCE_ID to previousSource),
+                    mapOf(UNRELATED_PACKAGE to previousRecord),
+                ),
+            )
+            val manager =
+                ExtensionManager(
+                    loader,
+                    root.toFile(),
+                    localApkDownloader(ByteArray(0)),
+                    ExtensionPreparer { error("unused") },
+                    ExtensionArtifactInspector { apk ->
+                        InspectedExtensionArtifact(
+                            inspectedPackage,
+                            inspectedVersionName,
+                            inspectedVersionCode,
+                            inspectedMainClass,
+                            apk,
+                            inspectedSignature,
+                        )
+                    },
+                )
+
+            val failure = assertFailsWith<IllegalArgumentException> { manager.reloadInstalled() }
+
+            assertSame(previousSource, loader.source(UNRELATED_SOURCE_ID))
+            assertEquals(mapOf(UNRELATED_PACKAGE to previousRecord), installedSnapshot(loader))
+            assertContentEquals(manifestBefore, manifest.readBytes())
+            assertTrue(!loader.hasCachedLoader(root.resolve("target.jar")), "rejected boot loader remained cached")
+            return failure
+        }
+
+        private fun bootManager(
+            loader: ExtensionLoader,
+            root: Path,
+            record: InstalledExtension,
+            signature: VerifiedApkSignature,
+        ): ExtensionManager =
+            ExtensionManager(
+                loader,
+                root.toFile(),
+                localApkDownloader(ByteArray(0)),
+                ExtensionPreparer { error("unused") },
+                ExtensionArtifactInspector { apk ->
+                    InspectedExtensionArtifact(
+                        record.pkgName,
+                        record.versionName,
+                        record.versionCode,
+                        record.mainClass,
+                        apk,
+                        signature,
+                    )
+                },
+            )
 
         private fun writeClassJar(
             target: Path,
@@ -828,7 +1195,7 @@ class ExtensionManagerTest {
 
 }
 
-private class TestSource(
+internal class TestSource(
     override val id: Long,
 ) : Source {
     override val name: String = "Test Source"
@@ -853,6 +1220,32 @@ private class TestSource(
     ): MangasPage = error("unused")
 
     override suspend fun getPageList(chapter: SChapter): List<Page> = error("unused")
+}
+
+internal object PreferenceReloadProbe {
+    @Volatile
+    var sourceIds: List<Long> = emptyList()
+}
+
+internal class PreferenceReloadFactory : SourceFactory {
+    override fun createSources(): List<Source> = PreferenceReloadProbe.sourceIds.map(::TestSource)
+}
+
+internal object ActivationDuplicateProbe {
+    private val calls = AtomicInteger()
+
+    fun reset() = calls.set(0)
+
+    fun createSources(): List<Source> =
+        if (calls.getAndIncrement() == 0) {
+            listOf(CandidateOwnedSource())
+        } else {
+            listOf(CandidateOwnedSource(), CandidateOwnedSource())
+        }
+}
+
+internal class ActivationDuplicateFactory : SourceFactory {
+    override fun createSources(): List<Source> = ActivationDuplicateProbe.createSources()
 }
 
 internal class CandidateSource : Source {

@@ -406,6 +406,8 @@ class EngineIsolationIntegrationTest {
             Files.writeString(root.resolve("installed.json"), mapper.writeValueAsString(listOf(installed)))
             val loader = ExtensionLoader(root.toFile())
             injectSource(loader, MutablePreferenceSource())
+            val current = loader.snapshotRegistry()
+            loader.publishRegistry(loader.prepareRegistry(current.sources, mapOf(installed.pkgName to installed)))
             val manager = ExtensionManager(loader, root.toFile())
             manager.setRepos(listOf(upstream.url("/index.json").toString()))
             val runningServer = RpcServer(loader, manager, port = 0)
@@ -515,7 +517,7 @@ class EngineIsolationIntegrationTest {
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
-    ) = loader.registerSources(listOf(source))
+    ) = loader.publishTestSources(listOf(source))
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }

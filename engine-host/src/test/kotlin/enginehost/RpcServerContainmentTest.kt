@@ -134,7 +134,7 @@ class RpcServerContainmentTest {
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
-    ) = loader.registerSources(listOf(source))
+    ) = loader.publishTestSources(listOf(source))
 
     /** Read the ephemeral port the RpcServer's HttpServer actually bound to. */
     private fun boundPort(rpc: RpcServer): Int {

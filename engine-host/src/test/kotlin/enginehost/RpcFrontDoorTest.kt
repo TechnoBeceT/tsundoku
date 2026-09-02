@@ -159,7 +159,7 @@ class RpcFrontDoorTest {
     private fun injectSource(
         loader: ExtensionLoader,
         source: Source,
-    ) = loader.registerSources(listOf(source))
+    ) = loader.publishTestSources(listOf(source))
 
     private fun boundPort(rpc: RpcServer): Int {
         val field = RpcServer::class.java.getDeclaredField("server").apply { isAccessible = true }
