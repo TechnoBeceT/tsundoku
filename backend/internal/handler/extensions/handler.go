@@ -268,27 +268,12 @@ func (h *Handler) Update(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	before, err := h.sw.Extensions(ctx)
+	exts, mutated, err := h.archive.Update(ctx, pkgName)
+	if err != nil && !mutated {
+		return httperr.Upstream(err)
+	}
 	if err != nil {
-		return httperr.Upstream(err)
-	}
-	installed, ok := findExtension(before, pkgName)
-	if !ok || !installed.IsInstalled {
-		return echo.NewHTTPError(http.StatusNotFound, "installed extension not found")
-	}
-	if err := h.archive.Capture(ctx, installed); err != nil {
-		return httperr.Upstream(err)
-	}
-	exts, err := h.sw.UpdateExtension(ctx, pkgName)
-	if err != nil {
-		return httperr.Upstream(err)
-	}
-	updated, ok := findExtension(exts, pkgName)
-	if !ok || !updated.IsInstalled {
-		return httperr.Upstream(errors.New("updated extension missing from engine response"))
-	}
-	if err := h.archive.Capture(ctx, updated); err != nil {
-		return httperr.Upstream(err)
+		slog.ErrorContext(ctx, "extensions: update succeeded but exact post-update archive degraded", "pkg_name", pkgName, "err", err)
 	}
 	return h.respondExtensions(c, exts)
 }
@@ -439,6 +424,12 @@ func (h *Handler) captureInstallOrUpdate(ctx context.Context, pkgName string, ex
 	if !ok {
 		slog.WarnContext(ctx, "extensions: installed extension not in post-mutation list, skipping topology capture",
 			"pkg_name", pkgName)
+		return
+	}
+	if h.archive != nil {
+		if err := h.archive.Capture(ctx, ext); err != nil {
+			slog.ErrorContext(ctx, "extensions: install succeeded but exact archive degraded", "pkg_name", pkgName, "err", err)
+		}
 		return
 	}
 	enginetopo.OnExtensionInstalled(ctx, h.db, h.cache, func(_ context.Context, url string) (*http.Response, error) {

@@ -156,9 +156,13 @@ func TestUpdate_ArchivesBeforeAndAfterSuccessfulMutation(t *testing.T) {
 	cache := apkcache.New(t.TempDir())
 	repo := "https://repo.test/index.json"
 	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", RepoURL: &repo, IsInstalled: true}
+	updated := ext
+	updated.VersionCode, updated.VersionName = 58, "1.58"
 	fc := sourceenginefake.New(
 		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
 		sourceenginefake.WithInstalledAPK(ext.PkgName, 57, "1.57", []byte("EXACT-57")),
+		sourceenginefake.WithInstalledAPK(ext.PkgName, 58, "1.58", []byte("EXACT-58")),
+		sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{updated}),
 	)
 	archive := enginetopo.NewExtensionArchive(fc, db, cache, nil)
 	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(archive)
@@ -180,8 +184,97 @@ func TestUpdate_ArchivesBeforeAndAfterSuccessfulMutation(t *testing.T) {
 	if got := fc.CallCount("UpdateExtension"); got != 1 {
 		t.Fatalf("UpdateExtension calls=%d, want 1", got)
 	}
-	if !cache.Exists(ext.PkgName, 57) {
-		t.Fatal("exact post-update generation not cached")
+	if !cache.Exists(ext.PkgName, 57) || !cache.Exists(ext.PkgName, 58) {
+		t.Fatal("old and new exact generations must both be cached")
+	}
+}
+
+func TestUpdate_PostCaptureFailurePreservesSuccessfulResponse(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	repo := "https://repo.test/index.json"
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", RepoURL: &repo, IsInstalled: true}
+	updated := ext
+	updated.VersionCode = 58
+	fc := sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
+		sourceenginefake.WithInstalledAPK(ext.PkgName, 57, "1.57", []byte("EXACT-57")),
+		sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{updated}),
+		sourceenginefake.WithErrorSequence("InstalledAPK", nil, errors.New("post export unavailable")),
+	)
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if fc.CallCount("UpdateExtension") != 1 {
+		t.Fatal("successful mutation was not retained")
+	}
+}
+
+func TestUpdate_MissingPostMutationMetadataPreservesSuccessfulResponse(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, IsInstalled: true}
+	fc := sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
+		sourceenginefake.WithInstalledAPK(ext.PkgName, 57, "v57", []byte("EXACT-57")),
+		sourceenginefake.WithUpdateExtensions([]sourceengine.Extension{}),
+	)
+	h := handler.NewHandler(fc, db, cache, nil, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/update", h.Update)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/update", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if fc.CallCount("UpdateExtension") != 1 {
+		t.Fatal("successful mutation was not retained")
+	}
+}
+
+func TestInstall_UsesExactEngineExportDespiteRepositoryMismatch(t *testing.T) {
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	repo := "https://repo.test/index.json"
+	ext := sourceengine.Extension{PkgName: "pkg.test.one", VersionCode: 57, VersionName: "1.57", RepoURL: &repo, IsInstalled: false}
+	fc := sourceenginefake.New(
+		sourceenginefake.WithExtensions([]sourceengine.Extension{ext}),
+		sourceenginefake.WithInstalledAPK(ext.PkgName, 57, "1.57", []byte("EXACT-57")),
+	)
+	httpCalls := 0
+	h := handler.NewHandler(fc, db, cache, func(string) (*http.Response, error) {
+		httpCalls++
+		return nil, errors.New("repository candidate is version 99")
+	}, nil, nil, nil).WithArchive(enginetopo.NewExtensionArchive(fc, db, cache, nil))
+	e := echo.New()
+	e.HTTPErrorHandler = middleware.ErrorHandler
+	authSvc := auth.NewService(testSecret)
+	e.Group("/api", middleware.RequireOwner(authSvc, false)).POST("/suwayomi/extensions/:pkgName/install", h.Install)
+	token, _ := authSvc.Issue(uuid.New())
+	r := httptest.NewRequest(http.MethodPost, "/api/suwayomi/extensions/pkg.test.one/install", nil)
+	r.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if httpCalls != 0 || !cache.Exists(ext.PkgName, 57) {
+		t.Fatalf("repoCalls=%d exact=%v", httpCalls, cache.Exists(ext.PkgName, 57))
 	}
 }
 

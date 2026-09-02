@@ -36,7 +36,10 @@ func (a *ExtensionArchive) Capture(ctx context.Context, ext sourceengine.Extensi
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.captureLocked(ctx, ext)
+}
 
+func (a *ExtensionArchive) captureLocked(ctx context.Context, ext sourceengine.Extension) error {
 	apk, err := sourceengine.InstalledAPKFor(ctx, a.client, ext.PkgName)
 	if err != nil {
 		return fmt.Errorf("enginetopo: export installed apk %q: %w", ext.PkgName, err)
@@ -44,6 +47,9 @@ func (a *ExtensionArchive) Capture(ctx context.Context, ext sourceengine.Extensi
 	defer func() { _ = apk.Body.Close() }()
 	if apk.PkgName != ext.PkgName || apk.VersionCode != int(ext.VersionCode) {
 		return fmt.Errorf("enginetopo: exported generation %q@%d does not match installed %q@%d", apk.PkgName, apk.VersionCode, ext.PkgName, ext.VersionCode)
+	}
+	if apk.ContentLength <= 0 || apk.ContentLength > maxAPKBytes {
+		return fmt.Errorf("enginetopo: exported extension %q has invalid content length %d", ext.PkgName, apk.ContentLength)
 	}
 	sha, _, err := a.cache.Put(ext.PkgName, apk.VersionCode, &exactLengthReader{r: apk.Body, remaining: apk.ContentLength})
 	if err != nil {
@@ -60,6 +66,49 @@ func (a *ExtensionArchive) Capture(ctx context.Context, ext sourceengine.Extensi
 		return fmt.Errorf("enginetopo: persist exact installed extension: %w", err)
 	}
 	return nil
+}
+
+// Update serializes the complete rollback-safe update lifecycle. mutated is
+// true only after UpdateExtension returned success; callers must preserve that
+// success even if the post-mutation archive reports degradation.
+func (a *ExtensionArchive) Update(ctx context.Context, pkgName string) (exts []sourceengine.Extension, mutated bool, err error) {
+	if a == nil || a.client == nil || a.db == nil || a.cache == nil {
+		return nil, false, fmt.Errorf("enginetopo: exact extension archive unavailable")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	before, err := a.client.Extensions(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	installed, ok := extensionByPackage(before, pkgName)
+	if !ok || !installed.IsInstalled {
+		return nil, false, fmt.Errorf("installed extension %q not found", pkgName)
+	}
+	if err := a.captureLocked(ctx, installed); err != nil {
+		return nil, false, err
+	}
+	exts, err = a.client.UpdateExtension(ctx, pkgName)
+	if err != nil {
+		return nil, false, err
+	}
+	updated, ok := extensionByPackage(exts, pkgName)
+	if !ok || !updated.IsInstalled {
+		return exts, true, fmt.Errorf("updated extension %q missing from engine response", pkgName)
+	}
+	if err := a.captureLocked(ctx, updated); err != nil {
+		return exts, true, err
+	}
+	return exts, true, nil
+}
+
+func extensionByPackage(exts []sourceengine.Extension, pkgName string) (sourceengine.Extension, bool) {
+	for _, ext := range exts {
+		if ext.PkgName == pkgName {
+			return ext, true
+		}
+	}
+	return sourceengine.Extension{}, false
 }
 
 type exactLengthReader struct {

@@ -55,10 +55,12 @@ type Client struct {
 	imageTransport sourceengine.ImageTransportConfig
 
 	lastInstallApkURL string
-	installedAPKs     map[string]sourceengine.InstalledAPK
+	installedAPKs     map[string]map[int]sourceengine.InstalledAPK
 
-	errors map[string]error
-	calls  map[string]int
+	errors           map[string]error
+	errorSequences   map[string][]error
+	calls            map[string]int
+	updateExtensions []sourceengine.Extension
 }
 
 // Option configures a Client at construction time.
@@ -67,17 +69,18 @@ type Option func(*Client)
 // New builds a Client with the given options applied in order.
 func New(opts ...Option) *Client {
 	c := &Client{
-		searchResults: map[int64]sourceengine.SearchResult{},
-		mangaDetails:  map[contentKey]sourceengine.MangaDetails{},
-		chapters:      map[contentKey]sourceengine.ChaptersResult{},
-		pages:         map[contentKey]sourceengine.PagesResult{},
-		images:        map[contentKey]imageEntry{},
-		coverImages:   map[contentKey]imageEntry{},
-		preferences:   map[int64][]sourceengine.Preference{},
-		repoTrust:     map[string]string{},
-		errors:        map[string]error{},
-		calls:         map[string]int{},
-		installedAPKs: map[string]sourceengine.InstalledAPK{},
+		searchResults:  map[int64]sourceengine.SearchResult{},
+		mangaDetails:   map[contentKey]sourceengine.MangaDetails{},
+		chapters:       map[contentKey]sourceengine.ChaptersResult{},
+		pages:          map[contentKey]sourceengine.PagesResult{},
+		images:         map[contentKey]imageEntry{},
+		coverImages:    map[contentKey]imageEntry{},
+		preferences:    map[int64][]sourceengine.Preference{},
+		repoTrust:      map[string]string{},
+		errors:         map[string]error{},
+		errorSequences: map[string][]error{},
+		calls:          map[string]int{},
+		installedAPKs:  map[string]map[int]sourceengine.InstalledAPK{},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -85,10 +88,23 @@ func New(opts ...Option) *Client {
 	return c
 }
 
+// WithErrorSequence returns each configured error by call index; nil entries succeed.
+func WithErrorSequence(method string, errs ...error) Option {
+	return func(c *Client) { c.errorSequences[method] = append([]error(nil), errs...) }
+}
+
+// WithUpdateExtensions replaces the extension list when UpdateExtension succeeds.
+func WithUpdateExtensions(exts []sourceengine.Extension) Option {
+	return func(c *Client) { c.updateExtensions = append(make([]sourceengine.Extension, 0, len(exts)), exts...) }
+}
+
 // WithInstalledAPK seeds exact installed bytes and identity metadata for pkg.
 func WithInstalledAPK(pkg string, version int, versionName string, data []byte) Option {
 	return func(c *Client) {
-		c.installedAPKs[pkg] = sourceengine.InstalledAPK{
+		if c.installedAPKs[pkg] == nil {
+			c.installedAPKs[pkg] = map[int]sourceengine.InstalledAPK{}
+		}
+		c.installedAPKs[pkg][version] = sourceengine.InstalledAPK{
 			PkgName: pkg, VersionCode: version, VersionName: versionName,
 			ContentLength: int64(len(data)), Body: io.NopCloser(bytes.NewReader(data)),
 		}
@@ -216,6 +232,9 @@ func (c *Client) record(method string) {
 func (c *Client) errFor(method string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if seq := c.errorSequences[method]; len(seq) >= c.calls[method] {
+		return seq[c.calls[method]-1]
+	}
 	return c.errors[method]
 }
 
@@ -412,7 +431,19 @@ func (c *Client) InstalledAPK(_ context.Context, pkgName string) (sourceengine.I
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	apk, ok := c.installedAPKs[pkgName]
+	version := 0
+	for _, ext := range c.extensions {
+		if ext.PkgName == pkgName && ext.IsInstalled {
+			version = int(ext.VersionCode)
+			break
+		}
+	}
+	if version == 0 && len(c.installedAPKs[pkgName]) == 1 {
+		for configuredVersion := range c.installedAPKs[pkgName] {
+			version = configuredVersion
+		}
+	}
+	apk, ok := c.installedAPKs[pkgName][version]
 	if !ok {
 		return sourceengine.InstalledAPK{}, errors.New("installed APK not configured")
 	}
@@ -421,7 +452,7 @@ func (c *Client) InstalledAPK(_ context.Context, pkgName string) (sourceengine.I
 		return sourceengine.InstalledAPK{}, err
 	}
 	apk.Body = io.NopCloser(bytes.NewReader(data))
-	c.installedAPKs[pkgName] = sourceengine.InstalledAPK{
+	c.installedAPKs[pkgName][version] = sourceengine.InstalledAPK{
 		PkgName: apk.PkgName, VersionCode: apk.VersionCode, VersionName: apk.VersionName,
 		ContentLength: apk.ContentLength, Body: io.NopCloser(bytes.NewReader(data)),
 	}
@@ -475,6 +506,11 @@ func (c *Client) UpdateExtension(_ context.Context, _ string) ([]sourceengine.Ex
 	if err := c.errFor("UpdateExtension"); err != nil {
 		return nil, err
 	}
+	c.mu.Lock()
+	if c.updateExtensions != nil {
+		c.extensions = append([]sourceengine.Extension(nil), c.updateExtensions...)
+	}
+	c.mu.Unlock()
 	return c.extensionsCopy(), nil
 }
 

@@ -66,6 +66,77 @@ func TestInstalledAPK_RejectsMismatchedIdentityAndClosesBody(t *testing.T) {
 	}
 }
 
+func TestInstalledAPK_EscapesPackagePathAndScopesControlBearer(t *testing.T) {
+	const pkg = "pkg with space"
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch r.URL.Path {
+		case "/extensions":
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Fatalf("bearer leaked to ordinary route: %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("[]"))
+		case "/extensions/pkg with space/installed-apk":
+			if r.RequestURI != "/extensions/pkg%20with%20space/installed-apk" {
+				t.Fatalf("RequestURI=%q", r.RequestURI)
+			}
+			if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+				t.Fatalf("Authorization=%q", got)
+			}
+			w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+			w.Header().Set("X-Tsundoku-Extension-Package", pkg)
+			w.Header().Set("X-Tsundoku-Extension-Version-Code", "1")
+			w.Header().Set("Content-Length", "3")
+			_, _ = w.Write([]byte("APK"))
+		default:
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	client := sourceengine.New(srv.URL, srv.Client(), "secret")
+	if _, err := client.Extensions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	apk, err := sourceengine.InstalledAPKFor(context.Background(), client, pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = apk.Body.Close()
+	if calls != 2 {
+		t.Fatalf("calls=%d", calls)
+	}
+}
+
+func TestInstalledAPK_CancellationInterruptsStreamAndBodyCloses(t *testing.T) {
+	const pkg = "pkg.one"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+		w.Header().Set("X-Tsundoku-Extension-Package", pkg)
+		w.Header().Set("X-Tsundoku-Extension-Version-Code", "1")
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	apk, err := sourceengine.InstalledAPKFor(ctx, sourceengine.New(srv.URL, srv.Client(), "secret"), pkg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if _, err := io.ReadAll(apk.Body); err == nil {
+		t.Fatal("want cancellation read error")
+	}
+	if err := apk.Body.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
