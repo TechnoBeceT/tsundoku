@@ -206,6 +206,52 @@ class ExtensionManagerTest {
     }
 
     @Test
+    fun `repository update restores every source when replacement registration drops an unrelated source`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+                targetRecordSourceIds = listOf(TARGET_SOURCE_ID, UNRELATED_SOURCE_ID),
+            )
+
+        val failure = assertFailsWith<IllegalArgumentException> { fixture.manager.update(TARGET_PACKAGE) }
+
+        assertTrue(failure.message.orEmpty().contains("unrelated source ID $UNRELATED_SOURCE_ID disappeared"))
+        fixture.assertUnchanged()
+    }
+
+    @Test
+    fun `successful repository update preserves the unrelated source and owning package`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+
+        val updated = fixture.manager.update(TARGET_PACKAGE).single { it.pkgName == TARGET_PACKAGE }
+
+        assertEquals(2, updated.versionCode)
+        fixture.assertUnrelatedPreserved()
+    }
+
+    @Test
+    fun `manifest failure restores the complete installed and runtime state`() {
+        val fixture =
+            UpdateFixture(
+                candidatePackage = TARGET_PACKAGE,
+                candidateVersionCode = 2,
+                candidateJarSource = CandidateOwnedSource::class.java,
+            )
+        fixture.blockManifestPersistence()
+
+        assertFails { fixture.manager.update(TARGET_PACKAGE) }
+
+        fixture.assertBlockedManifestRollback()
+    }
+
+    @Test
     fun `failed final activation evicts its loader before a same-name retry`() {
         val root = Files.createTempDirectory("extension-manager-loader-retry")
         val manifest = Files.createDirectory(root.resolve("installed.json"))
@@ -448,6 +494,7 @@ class ExtensionManagerTest {
         configuredSignerFingerprint: String? = repositorySigningKey,
         unrelatedPackage: String = UNRELATED_PACKAGE,
         unrelatedRecordSourceIds: List<Long> = listOf(UNRELATED_SOURCE_ID),
+        targetRecordSourceIds: List<Long> = listOf(TARGET_SOURCE_ID),
     ) {
         private val root = Files.createTempDirectory("extension-manager-identity")
         private val oldApk = root.resolve("target.apk")
@@ -455,12 +502,13 @@ class ExtensionManagerTest {
         private val unrelatedApk = root.resolve("unrelated.apk")
         private val unrelatedJar = root.resolve("unrelated.jar")
         private val manifest = root.resolve("installed.json")
-        private val targetRecord = installedRecord(TARGET_PACKAGE, "target.apk", listOf(TARGET_SOURCE_ID))
+        private val targetRecord = installedRecord(TARGET_PACKAGE, "target.apk", targetRecordSourceIds)
         private val unrelatedRecord = installedRecord(unrelatedPackage, "unrelated.apk", unrelatedRecordSourceIds)
         private val oldSource = TestSource(TARGET_SOURCE_ID)
         private val unrelatedSource = TestSource(UNRELATED_SOURCE_ID)
         private val loader = ExtensionLoader(root.toFile(), signatureVerifier)
         private val directoryBefore: Map<String, ByteArray>
+        private val activeFilesBefore: Map<String, ByteArray>
         private val installedBefore: Map<String, InstalledExtension>
         val manager: ExtensionManager
 
@@ -517,6 +565,8 @@ class ExtensionManagerTest {
             configuredSignerFingerprint?.let { manager.setRepoTrust(REPO_URL, it) }
             installedBefore = installedSnapshot(manager)
             directoryBefore = snapshotDirectory(root)
+            activeFilesBefore =
+                listOf(oldApk, oldJar, unrelatedApk, unrelatedJar).associate { it.fileName.toString() to it.readBytes() }
         }
 
         fun assertTrustPersisted(expected: String) {
@@ -542,6 +592,30 @@ class ExtensionManagerTest {
             assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
             assertSame(unrelatedSource, loader.source(UNRELATED_SOURCE_ID))
             assertEquals(installedBefore, installedSnapshot(manager))
+        }
+
+        fun assertUnrelatedPreserved() {
+            assertSame(unrelatedSource, loader.source(UNRELATED_SOURCE_ID))
+            assertEquals(unrelatedRecord, manager.recordForSource(UNRELATED_SOURCE_ID))
+        }
+
+        fun blockManifestPersistence() {
+            Files.delete(manifest)
+            Files.createDirectory(manifest)
+        }
+
+        fun assertBlockedManifestRollback() {
+            activeFilesBefore.forEach { (name, bytes) ->
+                assertContentEquals(bytes, root.resolve(name).readBytes(), "$name bytes changed")
+            }
+            assertSame(oldSource, loader.source(TARGET_SOURCE_ID))
+            assertUnrelatedPreserved()
+            assertEquals(installedBefore, installedSnapshot(manager))
+            assertEquals(
+                directoryBefore.keys,
+                root.listDirectoryEntries().mapTo(sortedSetOf()) { it.fileName.toString() },
+                "manifest failure leaked a staged or replacement file",
+            )
         }
     }
 

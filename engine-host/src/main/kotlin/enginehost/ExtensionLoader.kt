@@ -222,15 +222,13 @@ class ExtensionLoader internal constructor(
         previousSourceIds.filterNot { it in replacementIds }.forEach { sources.remove(it) }
     }
 
-    internal fun snapshotSources(sourceIds: Collection<Long>): Map<Long, Source> =
-        sourceIds.mapNotNull { sourceId -> sources[sourceId]?.let { sourceId to it } }.toMap()
+    /** Capture the complete active registry so a failed replacement can restore every source. */
+    internal fun snapshotSources(): Map<Long, Source> = HashMap(sources)
 
-    internal fun restoreSources(
-        affectedSourceIds: Collection<Long>,
-        snapshot: Map<Long, Source>,
-    ) {
-        affectedSourceIds.forEach { sources.remove(it) }
-        snapshot.forEach { (sourceId, source) -> sources[sourceId] = source }
+    /** Replace the complete active registry with a previously captured snapshot. */
+    internal fun restoreSources(snapshot: Map<Long, Source>) {
+        sources.clear()
+        sources.putAll(snapshot)
     }
 
     /**

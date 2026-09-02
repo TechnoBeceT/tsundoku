@@ -460,17 +460,25 @@ class ExtensionManager internal constructor(
                     sources = ext.sources.map { ExtensionSourceDto(it.id, it.name, it.lang) },
                     signerFingerprints = prepared.signerFingerprints,
                 )
+            val installedSnapshot = HashMap(installed)
             val nextInstalled = installed.toMutableMap().apply { put(record.pkgName, record) }
-            val affectedSourceIds = (old?.sourceIds.orEmpty() + ext.sources.map { it.id }).toSet()
-            val sourceSnapshot = loader.snapshotSources(affectedSourceIds)
+            val sourceSnapshot = loader.snapshotSources()
             val replacedSources = old?.sourceIds.orEmpty().mapNotNull(sourceSnapshot::get)
             try {
                 loader.registerReplacement(old?.sourceIds.orEmpty(), ext.sources)
                 installed[record.pkgName] = record
+                requireRegistryIntegrity(
+                    replacementPackage = record.pkgName,
+                    candidateSources = ext.sources.associateBy { it.id },
+                    previousInstalled = installedSnapshot,
+                    nextInstalled = nextInstalled,
+                    previousSources = sourceSnapshot,
+                )
                 persistManifest(nextInstalled.values)
             } catch (failure: Throwable) {
-                loader.restoreSources(affectedSourceIds, sourceSnapshot)
-                if (old == null) installed.remove(record.pkgName) else installed[record.pkgName] = old
+                loader.restoreSources(sourceSnapshot)
+                installed.clear()
+                installed.putAll(installedSnapshot)
                 throw failure
             }
             old?.let { removeSupersededFiles(it, record, replacedSources) }
@@ -484,6 +492,68 @@ class ExtensionManager internal constructor(
             throw failure
         }
     }
+
+    private fun requireRegistryIntegrity(
+        replacementPackage: String,
+        candidateSources: Map<Long, eu.kanade.tachiyomi.source.Source>,
+        previousInstalled: Map<String, InstalledExtension>,
+        nextInstalled: Map<String, InstalledExtension>,
+        previousSources: Map<Long, eu.kanade.tachiyomi.source.Source>,
+    ) {
+        val candidateSourceIds = candidateSources.keys
+        previousInstalled.filterKeys { it != replacementPackage }.forEach { (pkgName, previousRecord) ->
+            require(nextInstalled[pkgName] == previousRecord) {
+                "unrelated extension '$pkgName' changed during '$replacementPackage' replacement"
+            }
+        }
+
+        val replacement = requireNotNull(nextInstalled[replacementPackage]) {
+            "replacement record '$replacementPackage' disappeared during registration"
+        }
+        require(replacement.sourceIds.toSet() == candidateSourceIds) {
+            "replacement record '$replacementPackage' does not match the prepared candidate source IDs"
+        }
+
+        val previousOwners = sourceOwners(previousInstalled.values)
+        val nextOwners = sourceOwners(nextInstalled.values)
+        nextOwners.forEach { (sourceId, owners) ->
+            require(owners.size == 1) {
+                "source ID $sourceId is owned by multiple installed packages: ${owners.sorted().joinToString()}"
+            }
+        }
+        candidateSourceIds.forEach { sourceId ->
+            require(nextOwners[sourceId] == setOf(replacementPackage)) {
+                "candidate source ID $sourceId is not owned exclusively by '$replacementPackage'"
+            }
+            require(loader.source(sourceId) === candidateSources.getValue(sourceId)) {
+                "candidate source ID $sourceId is not active after '$replacementPackage' registration"
+            }
+        }
+
+        previousSources.forEach { (sourceId, previousSource) ->
+            val previousUnrelatedOwners = previousOwners[sourceId].orEmpty() - replacementPackage
+            val belongedOnlyToReplacement = previousOwners[sourceId] == setOf(replacementPackage)
+            if (!belongedOnlyToReplacement) {
+                val currentSource = loader.source(sourceId)
+                require(currentSource != null) {
+                    "unrelated source ID $sourceId disappeared during '$replacementPackage' replacement"
+                }
+                require(currentSource === previousSource) {
+                    "unrelated source ID $sourceId changed runtime instance during '$replacementPackage' replacement"
+                }
+                require(nextOwners[sourceId].orEmpty() == previousUnrelatedOwners) {
+                    "unrelated source ID $sourceId changed owning package during '$replacementPackage' replacement"
+                }
+            }
+        }
+    }
+
+    private fun sourceOwners(records: Collection<InstalledExtension>): Map<Long, Set<String>> =
+        buildMap<Long, MutableSet<String>> {
+            records.forEach { record ->
+                record.sourceIds.forEach { sourceId -> getOrPut(sourceId) { mutableSetOf() }.add(record.pkgName) }
+            }
+        }
 
     private fun removeSupersededFiles(
         old: InstalledExtension,
