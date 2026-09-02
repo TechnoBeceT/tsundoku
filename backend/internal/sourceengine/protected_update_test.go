@@ -36,23 +36,32 @@ func TestProtectedExtensionUpdateRoundTripAndStructuredConflict(t *testing.T) {
 	})
 	c := sourceengine.New("http://engine", doer, "secret")
 	u, err := sourceengine.ProtectedUpdaterFor(c)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireProtectedNoError(t, err)
 	p, err := u.PrepareExtensionUpdate(context.Background(), "pkg.test")
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireProtectedNoError(t, err)
 	_, err = u.ActivatePreparedExtensionUpdate(context.Background(), sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: p, ProtectedSourceIDs: []int64{11}})
 	var conflict *sourceengine.SourceRetirementConflictError
+	assertProtectedConflict(t, conflict, err)
+	assertActivatedWitness(t, activated)
+	requireProtectedNoError(t, u.DiscardPreparedExtensionUpdate(context.Background(), "pkg.test", "t"))
+}
+
+func requireProtectedNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func assertProtectedConflict(t *testing.T, conflict *sourceengine.SourceRetirementConflictError, err error) {
+	t.Helper()
 	if !errors.As(err, &conflict) || conflict.Code != "source_retirement_conflict" || len(conflict.SourceIDs) != 1 || conflict.SourceIDs[0] != 11 {
 		t.Fatalf("conflict=%#v err=%v", conflict, err)
 	}
+}
+func assertActivatedWitness(t *testing.T, activated sourceengine.ActivatePreparedExtensionUpdate) {
+	t.Helper()
 	if len(activated.ProtectedSourceIDs) != 1 || activated.Token != "t" {
 		t.Fatalf("activated=%+v", activated)
-	}
-	if err := u.DiscardPreparedExtensionUpdate(context.Background(), "pkg.test", "t"); err != nil {
-		t.Fatal(err)
 	}
 }
 

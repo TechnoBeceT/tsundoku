@@ -34,16 +34,19 @@ func TestInstalledAPK_StreamsExactAuthenticatedGeneration(t *testing.T) {
 
 	client := sourceengine.New(srv.URL, srv.Client(), "control-secret")
 	apk, err := sourceengine.InstalledAPKFor(context.Background(), client, pkg)
-	if err != nil {
-		t.Fatalf("InstalledAPKFor: %v", err)
-	}
+	requireNoError(t, err, "InstalledAPKFor")
 	defer func() { _ = apk.Body.Close() }()
 	got, err := io.ReadAll(apk.Body)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	requireNoError(t, err, "read")
 	if apk.PkgName != pkg || apk.VersionCode != 57 || apk.VersionName != "1.2.3" || apk.ContentLength != int64(len(want)) || !bytes.Equal(got, want) {
 		t.Fatalf("apk = %+v bytes=%q", apk, got)
+	}
+}
+
+func requireNoError(t *testing.T, err error, action string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("%s: %v", action, err)
 	}
 }
 

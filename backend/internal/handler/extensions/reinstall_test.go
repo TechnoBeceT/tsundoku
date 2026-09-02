@@ -139,13 +139,7 @@ func TestReinstall_HappyPath(t *testing.T) {
 	}
 	// The apkURL MUST be the cached apk's local path for (pkg, 41) — the engine
 	// installs the held bytes, never a repo re-download of the latest.
-	var got []handler.ExtensionDTO
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(got) != 1 || got[0].PkgName != reinstallPkg {
-		t.Fatalf("response = %+v, want the refreshed list", got)
-	}
+	assertReinstallResponse(t, rec)
 	// Durable write-through pinned installed_version_code to 41.
 	row, err := env.db.HarvestedExtension.Query().Only(context.Background())
 	if err != nil {
@@ -153,6 +147,17 @@ func TestReinstall_HappyPath(t *testing.T) {
 	}
 	if row.InstalledVersionCode != 41 {
 		t.Errorf("installed_version_code = %d, want 41", row.InstalledVersionCode)
+	}
+}
+
+func assertReinstallResponse(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	var got []handler.ExtensionDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].PkgName != reinstallPkg {
+		t.Fatalf("response = %+v, want the refreshed list", got)
 	}
 }
 

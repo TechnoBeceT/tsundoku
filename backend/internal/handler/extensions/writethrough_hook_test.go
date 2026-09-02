@@ -219,6 +219,22 @@ func TestUpdate_SourceRetirementConflictIsStableAndCountsOnlyLiveReferences(t *t
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	body := decodeRetirementConflict(t, rec)
+	if body.Code != "source_retirement_conflict" || body.PkgName != before.PkgName || len(body.SourceIDs) != 1 || body.SourceIDs[0] != "11" || body.AffectedProviderCount != 2 || body.AffectedSeriesCount != 1 {
+		t.Fatalf("body=%+v", body)
+	}
+	if fc.CallCount("ActivatePreparedExtensionUpdate") != 1 || fc.CallCount("DiscardPreparedExtensionUpdate") != 1 {
+		t.Fatalf("activate=%d discard=%d", fc.CallCount("ActivatePreparedExtensionUpdate"), fc.CallCount("DiscardPreparedExtensionUpdate"))
+	}
+}
+
+func decodeRetirementConflict(t *testing.T, rec *httptest.ResponseRecorder) struct {
+	Code, PkgName         string
+	SourceIDs             []string `json:"sourceIds"`
+	AffectedProviderCount int      `json:"affectedProviderCount"`
+	AffectedSeriesCount   int      `json:"affectedSeriesCount"`
+} {
+	t.Helper()
 	var body struct {
 		Code, PkgName         string
 		SourceIDs             []string `json:"sourceIds"`
@@ -228,12 +244,7 @@ func TestUpdate_SourceRetirementConflictIsStableAndCountsOnlyLiveReferences(t *t
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Code != "source_retirement_conflict" || body.PkgName != before.PkgName || len(body.SourceIDs) != 1 || body.SourceIDs[0] != "11" || body.AffectedProviderCount != 2 || body.AffectedSeriesCount != 1 {
-		t.Fatalf("body=%+v", body)
-	}
-	if fc.CallCount("ActivatePreparedExtensionUpdate") != 1 || fc.CallCount("DiscardPreparedExtensionUpdate") != 1 {
-		t.Fatalf("activate=%d discard=%d", fc.CallCount("ActivatePreparedExtensionUpdate"), fc.CallCount("DiscardPreparedExtensionUpdate"))
-	}
+	return body
 }
 
 func TestUpdate_ProviderMutationCannotEnterEnumerationToActivationWindow(t *testing.T) {

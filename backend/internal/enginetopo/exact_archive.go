@@ -91,18 +91,14 @@ type ExtensionUpdateOutcome struct {
 // UpdateWith wraps an alternate update activation in the same exact pre/post
 // archive lifecycle as the legacy mutation.
 func (a *ExtensionArchive) UpdateWith(ctx context.Context, pkgName string, activate func() ExtensionUpdateOutcome) (exts []sourceengine.Extension, mutated bool, err error) {
-	if a == nil || a.client == nil || a.db == nil || a.cache == nil {
-		return nil, false, fmt.Errorf("enginetopo: exact extension archive unavailable")
+	if err := a.requireAvailable(); err != nil {
+		return nil, false, err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	before, err := a.client.Extensions(ctx)
+	installed, err := a.installedExtension(ctx, pkgName)
 	if err != nil {
 		return nil, false, err
-	}
-	installed, ok := extensionByPackage(before, pkgName)
-	if !ok || !installed.IsInstalled {
-		return nil, false, fmt.Errorf("installed extension %q not found", pkgName)
 	}
 	if err := a.captureLocked(ctx, installed); err != nil {
 		return nil, false, err
@@ -121,6 +117,25 @@ func (a *ExtensionArchive) UpdateWith(ctx context.Context, pkgName string, activ
 		return exts, true, errors.Join(degradation, err)
 	}
 	return exts, true, degradation
+}
+
+func (a *ExtensionArchive) requireAvailable() error {
+	if a == nil || a.client == nil || a.db == nil || a.cache == nil {
+		return fmt.Errorf("enginetopo: exact extension archive unavailable")
+	}
+	return nil
+}
+
+func (a *ExtensionArchive) installedExtension(ctx context.Context, pkgName string) (sourceengine.Extension, error) {
+	exts, err := a.client.Extensions(ctx)
+	if err != nil {
+		return sourceengine.Extension{}, err
+	}
+	ext, ok := extensionByPackage(exts, pkgName)
+	if !ok || !ext.IsInstalled {
+		return sourceengine.Extension{}, fmt.Errorf("installed extension %q not found", pkgName)
+	}
+	return ext, nil
 }
 
 // SeedInstalled serializes the complete boot capture decision with live

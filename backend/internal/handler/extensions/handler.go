@@ -283,94 +283,9 @@ func (h *Handler) Update(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if h.archive == nil {
-		return httperr.Upstream(errors.New("protected extension update unavailable"))
-	}
-	ctx := c.Request().Context()
-	updater, err := sourceengine.ProtectedUpdaterFor(h.sw)
-	if err != nil {
-		return httperr.Upstream(err)
-	}
-	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() enginetopo.ExtensionUpdateOutcome {
-		prepared, err := updater.PrepareExtensionUpdate(ctx, pkgName)
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		succeeded := false
-		defer func() {
-			if !succeeded {
-				discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				defer cancel()
-				if discardErr := updater.DiscardPreparedExtensionUpdate(discardCtx, pkgName, prepared.Token); discardErr != nil {
-					slog.WarnContext(ctx, "extensions: discard prepared update failed", "pkg_name", pkgName, "err", discardErr)
-				}
-			}
-		}()
-		tx, err := h.db.Tx(ctx)
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		defer func() { _ = tx.Rollback() }()
-		protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
-		if err != nil {
-			var conflict *sourceengine.SourceRetirementConflictError
-			if errors.As(err, &conflict) {
-				return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
-			}
-			// A response can be lost after the host has atomically published the new
-			// generation. Reconcile the durable token outcome before deciding whether
-			// discard or retry is safe.
-			reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			outcome, outcomeErr := updater.PreparedExtensionUpdateOutcome(reconcileCtx, pkgName, prepared.Token)
-			if outcomeErr == nil && outcome.Status == "rejected" {
-				return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-			}
-			result, listErr := h.sw.Extensions(reconcileCtx)
-			if outcomeErr == nil && outcome.Status == "committed" {
-				succeeded = true
-				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, listErr)}
-			}
-			if current, ok := findExtension(result, pkgName); ok && current.IsInstalled && current.VersionCode == prepared.CandidateVersionCode {
-				succeeded = true
-				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, outcomeErr, listErr)}
-			}
-			// pending/unknown (or an unavailable outcome query) is intentionally
-			// reported as a non-retryable ambiguous success. The durable pre-capture
-			// remains available for explicit operator reconciliation.
-			succeeded = true
-			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: &activationAmbiguous{pkgName: pkgName, candidateVersion: prepared.CandidateVersionCode, cause: errors.Join(err, outcomeErr, listErr)}}
-		}
-		// Activation consumes the token and crosses the irreversible boundary.
-		succeeded = true
-		if h.beforeUpdateCommit != nil {
-			h.beforeUpdateCommit(tx)
-		}
-		if err := tx.Commit(); err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: fmt.Errorf("provider-reference coordination commit after successful activation: %w", err)}
-		}
-		return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true}
-	})
-	if err != nil && !mutated {
-		var conflict *retirementConflict
-		if errors.As(err, &conflict) {
-			return c.JSON(http.StatusConflict, map[string]any{"message": "extension update would retire sources used by the library", "code": "source_retirement_conflict", "pkgName": pkgName, "sourceIds": sourceIDStrings(conflict.sourceIDs), "affectedProviderCount": conflict.providerCount, "affectedSeriesCount": conflict.seriesCount})
-		}
-		return httperr.Upstream(err)
-	}
-	if err != nil {
-		var ambiguous *activationAmbiguous
-		if errors.As(err, &ambiguous) {
-			slog.ErrorContext(ctx, "extensions: activation outcome ambiguous; do not retry", "pkg_name", pkgName, "candidate_version", ambiguous.candidateVersion, "err", err)
-			return c.JSON(http.StatusAccepted, map[string]any{"message": "extension activation outcome is ambiguous; do not retry", "code": "activation_outcome_ambiguous", "pkgName": pkgName, "candidateVersionCode": ambiguous.candidateVersion})
-		}
-		slog.ErrorContext(ctx, "extensions: update succeeded with local coordination or archive degradation; do not retry", "pkg_name", pkgName, "err", err)
-	}
-	return h.respondExtensions(c, exts)
+	return h.runProtectedReplacement(c, pkgName, "update", func(ctx context.Context, updater sourceengine.ProtectedExtensionUpdater) (sourceengine.PreparedExtensionUpdate, error) {
+		return updater.PrepareExtensionUpdate(ctx, pkgName)
+	}, h.beforeUpdateCommit)
 }
 
 type activationAmbiguous struct {
@@ -527,75 +442,115 @@ func (h *Handler) Reinstall(c echo.Context) error {
 }
 
 func (h *Handler) runProtectedReinstall(c echo.Context, updater sourceengine.ProtectedExtensionUpdater, pkgName string, versionCode int, apkPath string) error {
-	ctx := c.Request().Context()
-	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() enginetopo.ExtensionUpdateOutcome {
-		prepared, err := updater.PrepareExtensionReinstall(ctx, sourceengine.PrepareExtensionReinstall{PkgName: pkgName, APKURL: apkPath, CandidateVersionCode: int64(versionCode)})
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		succeeded := false
-		defer func() {
-			if !succeeded {
-				discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				defer cancel()
-				if discardErr := updater.DiscardPreparedExtensionUpdate(discardCtx, pkgName, prepared.Token); discardErr != nil {
-					slog.WarnContext(ctx, "extensions: discard prepared reinstall failed", "pkg_name", pkgName, "err", discardErr)
-				}
-			}
-		}()
-		tx, err := h.db.Tx(ctx)
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		defer func() { _ = tx.Rollback() }()
-		protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
-		if err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-		}
-		result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
-		if err != nil {
-			var conflict *sourceengine.SourceRetirementConflictError
-			if errors.As(err, &conflict) {
-				return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
-			}
-			reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			outcome, outcomeErr := updater.PreparedExtensionUpdateOutcome(reconcileCtx, pkgName, prepared.Token)
-			if outcomeErr == nil && outcome.Status == "rejected" {
-				return enginetopo.ExtensionUpdateOutcome{Degradation: err}
-			}
-			result, listErr := h.sw.Extensions(reconcileCtx)
-			if outcomeErr == nil && outcome.Status == "committed" {
-				succeeded = true
-				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, listErr)}
-			}
-			if current, ok := findExtension(result, pkgName); ok && current.IsInstalled && current.VersionCode == prepared.CandidateVersionCode {
-				succeeded = true
-				return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: errors.Join(err, outcomeErr, listErr)}
-			}
-			succeeded = true
-			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: &activationAmbiguous{pkgName: pkgName, candidateVersion: prepared.CandidateVersionCode, cause: errors.Join(err, outcomeErr, listErr)}}
-		}
-		succeeded = true
-		if err := tx.Commit(); err != nil {
-			return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: fmt.Errorf("provider-reference coordination commit after successful reinstall: %w", err)}
-		}
-		return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true}
-	})
-	if err != nil && !mutated {
-		var conflict *retirementConflict
-		if errors.As(err, &conflict) {
-			return c.JSON(http.StatusConflict, map[string]any{"message": "extension reinstall would retire sources used by the library", "code": "source_retirement_conflict", "pkgName": pkgName, "sourceIds": sourceIDStrings(conflict.sourceIDs), "affectedProviderCount": conflict.providerCount, "affectedSeriesCount": conflict.seriesCount})
-		}
+	return h.runProtectedReplacement(c, pkgName, "reinstall", func(ctx context.Context, _ sourceengine.ProtectedExtensionUpdater) (sourceengine.PreparedExtensionUpdate, error) {
+		return updater.PrepareExtensionReinstall(ctx, sourceengine.PrepareExtensionReinstall{PkgName: pkgName, APKURL: apkPath, CandidateVersionCode: int64(versionCode)})
+	}, nil)
+}
+
+type prepareReplacement func(context.Context, sourceengine.ProtectedExtensionUpdater) (sourceengine.PreparedExtensionUpdate, error)
+
+func (h *Handler) runProtectedReplacement(c echo.Context, pkgName, action string, prepare prepareReplacement, beforeCommit func(*ent.Tx)) error {
+	if h.archive == nil {
+		return httperr.Upstream(fmt.Errorf("protected extension %s unavailable", action))
+	}
+	updater, err := sourceengine.ProtectedUpdaterFor(h.sw)
+	if err != nil {
 		return httperr.Upstream(err)
 	}
+	ctx := c.Request().Context()
+	exts, mutated, err := h.archive.UpdateWith(ctx, pkgName, func() enginetopo.ExtensionUpdateOutcome {
+		return h.activateProtectedReplacement(ctx, updater, pkgName, action, prepare, beforeCommit)
+	})
+	return h.respondProtectedReplacement(c, pkgName, action, exts, mutated, err)
+}
+
+func (h *Handler) activateProtectedReplacement(ctx context.Context, updater sourceengine.ProtectedExtensionUpdater, pkgName, action string, prepare prepareReplacement, beforeCommit func(*ent.Tx)) enginetopo.ExtensionUpdateOutcome {
+	prepared, err := prepare(ctx, updater)
 	if err != nil {
-		var ambiguous *activationAmbiguous
-		if errors.As(err, &ambiguous) {
-			return c.JSON(http.StatusAccepted, map[string]any{"message": "extension activation outcome is ambiguous; do not retry", "code": "activation_outcome_ambiguous", "pkgName": pkgName, "candidateVersionCode": ambiguous.candidateVersion})
-		}
-		slog.ErrorContext(ctx, "extensions: reinstall succeeded with archive degradation; do not retry", "pkg_name", pkgName, "err", err)
+		return enginetopo.ExtensionUpdateOutcome{Degradation: err}
 	}
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			h.discardPrepared(ctx, updater, pkgName, action, prepared.Token)
+		}
+	}()
+	tx, err := h.db.Tx(ctx)
+	if err != nil {
+		return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+	}
+	defer func() { _ = tx.Rollback() }()
+	protected, providers, series, err := referencedRemovedSources(ctx, tx, prepared.RemovedSourceIDs)
+	if err != nil {
+		return enginetopo.ExtensionUpdateOutcome{Degradation: err}
+	}
+	result, err := updater.ActivatePreparedExtensionUpdate(ctx, sourceengine.ActivatePreparedExtensionUpdate{PreparedExtensionUpdate: prepared, ProtectedSourceIDs: protected})
+	if err != nil {
+		out := h.reconcileActivation(ctx, updater, pkgName, prepared, err, providers, series)
+		succeeded = out.Activated
+		return out
+	}
+	succeeded = true
+	if beforeCommit != nil {
+		beforeCommit(tx)
+	}
+	if err := tx.Commit(); err != nil {
+		return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true, Degradation: fmt.Errorf("provider-reference coordination commit after successful %s: %w", action, err)}
+	}
+	return enginetopo.ExtensionUpdateOutcome{Extensions: result, Activated: true}
+}
+
+func (h *Handler) discardPrepared(ctx context.Context, updater sourceengine.ProtectedExtensionUpdater, pkgName, action, token string) {
+	discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := updater.DiscardPreparedExtensionUpdate(discardCtx, pkgName, token); err != nil {
+		slog.WarnContext(ctx, "extensions: discard prepared replacement failed", "action", action, "pkg_name", pkgName, "err", err)
+	}
+}
+
+func (h *Handler) reconcileActivation(ctx context.Context, updater sourceengine.ProtectedExtensionUpdater, pkgName string, prepared sourceengine.PreparedExtensionUpdate, activationErr error, providers, series int) enginetopo.ExtensionUpdateOutcome {
+	var conflict *sourceengine.SourceRetirementConflictError
+	if errors.As(activationErr, &conflict) {
+		return enginetopo.ExtensionUpdateOutcome{Degradation: &retirementConflict{sourceIDs: conflict.SourceIDs, providerCount: providers, seriesCount: series}}
+	}
+	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	outcome, outcomeErr := updater.PreparedExtensionUpdateOutcome(reconcileCtx, pkgName, prepared.Token)
+	if outcomeErr == nil && outcome.Status == "rejected" {
+		return enginetopo.ExtensionUpdateOutcome{Degradation: activationErr}
+	}
+	exts, listErr := h.sw.Extensions(reconcileCtx)
+	degradation := errors.Join(activationErr, outcomeErr, listErr)
+	if activationCommitted(outcome, outcomeErr, exts, pkgName, prepared.CandidateVersionCode) {
+		return enginetopo.ExtensionUpdateOutcome{Extensions: exts, Activated: true, Degradation: degradation}
+	}
+	return enginetopo.ExtensionUpdateOutcome{Extensions: exts, Activated: true, Degradation: &activationAmbiguous{pkgName: pkgName, candidateVersion: prepared.CandidateVersionCode, cause: degradation}}
+}
+
+func activationCommitted(outcome sourceengine.PreparedExtensionUpdateOutcome, outcomeErr error, exts []sourceengine.Extension, pkgName string, candidate int64) bool {
+	if outcomeErr == nil && outcome.Status == "committed" {
+		return true
+	}
+	current, ok := findExtension(exts, pkgName)
+	return ok && current.IsInstalled && current.VersionCode == candidate
+}
+
+func (h *Handler) respondProtectedReplacement(c echo.Context, pkgName, action string, exts []sourceengine.Extension, mutated bool, err error) error {
+	if err == nil {
+		return h.respondExtensions(c, exts)
+	}
+	var conflict *retirementConflict
+	if !mutated && errors.As(err, &conflict) {
+		return c.JSON(http.StatusConflict, map[string]any{"message": "extension " + action + " would retire sources used by the library", "code": "source_retirement_conflict", "pkgName": pkgName, "sourceIds": sourceIDStrings(conflict.sourceIDs), "affectedProviderCount": conflict.providerCount, "affectedSeriesCount": conflict.seriesCount})
+	}
+	if !mutated {
+		return httperr.Upstream(err)
+	}
+	var ambiguous *activationAmbiguous
+	if errors.As(err, &ambiguous) {
+		return c.JSON(http.StatusAccepted, map[string]any{"message": "extension activation outcome is ambiguous; do not retry", "code": "activation_outcome_ambiguous", "pkgName": pkgName, "candidateVersionCode": ambiguous.candidateVersion})
+	}
+	slog.ErrorContext(c.Request().Context(), "extensions: replacement succeeded with degradation; do not retry", "action", action, "pkg_name", pkgName, "err", err)
 	return h.respondExtensions(c, exts)
 }
 

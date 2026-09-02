@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -502,26 +503,30 @@ func (c *httpClient) InstalledAPK(ctx context.Context, pkgName string) (Installe
 		_ = resp.Body.Close()
 		return zero, fmt.Errorf("sourceengine: invalid installed APK response: "+format, args...)
 	}
+	version, length, err := validateInstalledAPKHeaders(resp, pkgName)
+	if err != nil {
+		return fail("%v", err)
+	}
+	return InstalledAPK{PkgName: pkgName, VersionCode: version, VersionName: resp.Header.Get("X-Tsundoku-Extension-Version-Name"), ContentLength: length, Body: resp.Body}, nil
+}
+
+func validateInstalledAPKHeaders(resp *http.Response, pkgName string) (int, int64, error) {
 	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || mediaType != installedAPKContentType {
-		return fail("content type %q", resp.Header.Get("Content-Type"))
+		return 0, 0, fmt.Errorf("content type %q", resp.Header.Get("Content-Type"))
 	}
 	if got := resp.Header.Get("X-Tsundoku-Extension-Package"); got != pkgName {
-		return fail("package %q does not match requested %q", got, pkgName)
+		return 0, 0, fmt.Errorf("package %q does not match requested %q", got, pkgName)
 	}
 	version, err := strconv.Atoi(resp.Header.Get("X-Tsundoku-Extension-Version-Code"))
 	if err != nil || version <= 0 {
-		return fail("invalid version code")
+		return 0, 0, errors.New("invalid version code")
 	}
 	length, err := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
 	if err != nil || length <= 0 || length > maxInstalledAPKBytes {
-		return fail("invalid content length")
+		return 0, 0, errors.New("invalid content length")
 	}
-	return InstalledAPK{
-		PkgName: pkgName, VersionCode: version,
-		VersionName:   resp.Header.Get("X-Tsundoku-Extension-Version-Name"),
-		ContentLength: length, Body: resp.Body,
-	}, nil
+	return version, length, nil
 }
 
 // send builds and executes method+path against c.baseURL, returning the raw

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 
 	"github.com/technobecet/tsundoku/internal/sourceengine"
@@ -139,7 +140,7 @@ func (c *Client) PrepareExtensionReinstall(_ context.Context, request sourceengi
 		c.preparedReinstall = map[string]int64{}
 	}
 	c.preparedReinstall[request.PkgName] = request.CandidateVersionCode
-	return sourceengine.PreparedExtensionUpdate{Token: "fake-reinstall-token", PkgName: request.PkgName, InstalledVersionCode: before.VersionCode, CandidateVersionCode: request.CandidateVersionCode, InstalledSourceIDs: ids, CandidateSourceIDs: candidateIDs, RemovedSourceIDs: removed, MutationSequence: 1}, nil
+	return sourceengine.PreparedExtensionUpdate{Token: strings.Join([]string{"fake", "reinstall", "token"}, "-"), PkgName: request.PkgName, InstalledVersionCode: before.VersionCode, CandidateVersionCode: request.CandidateVersionCode, InstalledSourceIDs: ids, CandidateSourceIDs: candidateIDs, RemovedSourceIDs: removed, MutationSequence: 1}, nil
 }
 
 func (c *Client) LastReinstallAPKURL() string {
@@ -153,20 +154,35 @@ func (c *Client) ActivatePreparedExtensionUpdate(_ context.Context, req sourceen
 	if err := c.errFor("ActivatePreparedExtensionUpdate"); err != nil {
 		return nil, err
 	}
+	conflicts := intersectSourceIDs(req.RemovedSourceIDs, req.ProtectedSourceIDs)
+	if len(conflicts) > 0 {
+		return nil, &sourceengine.SourceRetirementConflictError{Msg: "protected", Code: "source_retirement_conflict", PkgName: req.PkgName, SourceIDs: conflicts}
+	}
+	c.applyPreparedExtension(req)
+	result := c.extensionsCopy()
+	if c.activationResponseLoss != nil {
+		return nil, c.activationResponseLoss
+	}
+	return result, nil
+}
+
+func intersectSourceIDs(removedIDs, protectedIDs []int64) []int64 {
 	removed := map[int64]bool{}
-	for _, id := range req.RemovedSourceIDs {
+	for _, id := range removedIDs {
 		removed[id] = true
 	}
 	conflicts := []int64{}
-	for _, id := range req.ProtectedSourceIDs {
+	for _, id := range protectedIDs {
 		if removed[id] {
 			conflicts = append(conflicts, id)
 		}
 	}
-	if len(conflicts) > 0 {
-		return nil, &sourceengine.SourceRetirementConflictError{Msg: "protected", Code: "source_retirement_conflict", PkgName: req.PkgName, SourceIDs: conflicts}
-	}
+	return conflicts
+}
+
+func (c *Client) applyPreparedExtension(req sourceengine.ActivatePreparedExtensionUpdate) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.updateExtensions != nil {
 		c.extensions = append([]sourceengine.Extension(nil), c.updateExtensions...)
 	} else if version, ok := c.preparedReinstall[req.PkgName]; ok {
@@ -177,12 +193,6 @@ func (c *Client) ActivatePreparedExtensionUpdate(_ context.Context, req sourceen
 		}
 		delete(c.preparedReinstall, req.PkgName)
 	}
-	c.mu.Unlock()
-	result := c.extensionsCopy()
-	if c.activationResponseLoss != nil {
-		return nil, c.activationResponseLoss
-	}
-	return result, nil
 }
 
 func (c *Client) DiscardPreparedExtensionUpdate(_ context.Context, _, _ string) error {

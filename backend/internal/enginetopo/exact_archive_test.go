@@ -234,36 +234,39 @@ func TestExtensionArchiveMalformedStreamPreservesPreviousCacheAndMetadata(t *tes
 		{name: "truncated", length: 100},
 		{name: "oversize", length: 257 << 20},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			db := testdb.New(t)
-			cache := apkcache.New(t.TempDir())
-			ext := sourceengine.Extension{PkgName: "pkg.one", VersionCode: 57, VersionName: "v57", IsInstalled: true}
-			if _, _, err := cache.Put(ext.PkgName, 57, bytes.NewReader([]byte("PREVIOUS"))); err != nil {
-				t.Fatal(err)
-			}
-			if err := db.HarvestedExtension.Create().SetPkgName(ext.PkgName).SetVersionCode(57).SetInstalledVersionCode(57).SetVersionName("v57").SetApkSha256("previous-sha").SetApkCached(true).SetCachedVersions([]apkcache.CachedVersion{{VersionCode: 57, VersionName: "v57"}}).Exec(ctx); err != nil {
-				t.Fatal(err)
-			}
-			base := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{ext}))
-			client := &malformedAPKClient{Client: base, apk: sourceengine.InstalledAPK{PkgName: ext.PkgName, VersionCode: 57, VersionName: "v57", ContentLength: tc.length, Body: io.NopCloser(bytes.NewReader([]byte("SHORT")))}}
-			if err := enginetopo.NewExtensionArchive(client, db, cache, nil).Capture(ctx, ext); err == nil {
-				t.Fatal("want malformed stream error")
-			}
-			row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(ext.PkgName)).OnlyX(ctx)
-			if row.ApkSha256 != "previous-sha" || row.VersionCode != 57 {
-				t.Fatalf("metadata changed: %+v", row)
-			}
-			r, err := cache.Open(ext.PkgName, 57)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = r.Close() }()
-			got, _ := io.ReadAll(r)
-			if !bytes.Equal(got, []byte("PREVIOUS")) {
-				t.Fatalf("cache=%q", got)
-			}
-		})
+		t.Run(tc.name, func(t *testing.T) { assertMalformedStreamPreserved(t, tc.length) })
+	}
+}
+
+func assertMalformedStreamPreserved(t *testing.T, length int64) {
+	t.Helper()
+	ctx := context.Background()
+	db := testdb.New(t)
+	cache := apkcache.New(t.TempDir())
+	ext := sourceengine.Extension{PkgName: "pkg.one", VersionCode: 57, VersionName: "v57", IsInstalled: true}
+	if _, _, err := cache.Put(ext.PkgName, 57, bytes.NewReader([]byte("PREVIOUS"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.HarvestedExtension.Create().SetPkgName(ext.PkgName).SetVersionCode(57).SetInstalledVersionCode(57).SetVersionName("v57").SetApkSha256("previous-sha").SetApkCached(true).SetCachedVersions([]apkcache.CachedVersion{{VersionCode: 57, VersionName: "v57"}}).Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	base := sourceenginefake.New(sourceenginefake.WithExtensions([]sourceengine.Extension{ext}))
+	client := &malformedAPKClient{Client: base, apk: sourceengine.InstalledAPK{PkgName: ext.PkgName, VersionCode: 57, VersionName: "v57", ContentLength: length, Body: io.NopCloser(bytes.NewReader([]byte("SHORT")))}}
+	if err := enginetopo.NewExtensionArchive(client, db, cache, nil).Capture(ctx, ext); err == nil {
+		t.Fatal("want malformed stream error")
+	}
+	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(ext.PkgName)).OnlyX(ctx)
+	if row.ApkSha256 != "previous-sha" || row.VersionCode != 57 {
+		t.Fatalf("metadata changed: %+v", row)
+	}
+	r, err := cache.Open(ext.PkgName, 57)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	got, _ := io.ReadAll(r)
+	if !bytes.Equal(got, []byte("PREVIOUS")) {
+		t.Fatalf("cache=%q", got)
 	}
 }
 
@@ -279,11 +282,7 @@ func TestSeedSnapshotCannotOverwriteCompletedUpdateGeneration(t *testing.T) {
 	archive := enginetopo.NewExtensionArchive(client, db, cache, nil)
 	seedDone := make(chan error, 1)
 	go func() { _, err := enginetopo.SeedExtensionsExact(ctx, client, db, cache, archive); seedDone <- err }()
-	select {
-	case <-client.seedSnapshot:
-	case <-time.After(time.Second):
-		t.Fatal("seed did not snapshot")
-	}
+	waitForSignal(t, client.seedSnapshot, time.Second, "seed did not snapshot")
 	updateDone := make(chan error, 1)
 	go func() { _, _, err := archive.Update(ctx, ext.PkgName); updateDone <- err }()
 	select {
@@ -308,5 +307,14 @@ func TestSeedSnapshotCannotOverwriteCompletedUpdateGeneration(t *testing.T) {
 	row := db.HarvestedExtension.Query().Where(entharvestedextension.PkgName(ext.PkgName)).OnlyX(ctx)
 	if row.VersionCode != 58 || row.InstalledVersionCode != 58 || !row.ApkCached {
 		t.Fatalf("final row = {version:%d installed:%d cached:%v}, want completed update v58", row.VersionCode, row.InstalledVersionCode, row.ApkCached)
+	}
+}
+
+func waitForSignal(t *testing.T, signal <-chan struct{}, timeout time.Duration, message string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(timeout):
+		t.Fatal(message)
 	}
 }
