@@ -21,5 +21,5 @@ func AbsorbProviderChapterRace(
 	key string,
 	fc FetchedChapter,
 ) error {
-	return absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc)
+	return absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc, nil)
 }

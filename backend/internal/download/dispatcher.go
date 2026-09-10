@@ -1329,6 +1329,10 @@ func (d *Dispatcher) cleanupStaging(ctx context.Context, dir string) {
 // must react to a failure (chargeFetchFailure's not_found branch, which only
 // clears the page links when the wipe SUCCEEDS) can. A blank dir is a no-op.
 func (d *Dispatcher) removeStaging(dir string) error {
+	return removeStagingDir(dir)
+}
+
+func removeStagingDir(dir string) error {
 	if dir == "" {
 		return nil
 	}

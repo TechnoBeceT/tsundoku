@@ -4,16 +4,71 @@ package chapter_test
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/database/testdb"
+	"github.com/technobecet/tsundoku/internal/download"
+	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 )
+
+type failingProviderChapterCacheInvalidator struct {
+	err error
+}
+
+func (f failingProviderChapterCacheInvalidator) InvalidateProviderChapterCache(context.Context, uuid.UUID) error {
+	return f.err
+}
+
+func seedReconcileStaging(t *testing.T, root string, providerChapterID uuid.UUID) (string, string) {
+	t.Helper()
+	dir := filepath.Join(root, providerChapterID.String())
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("create staging dir: %v", err)
+	}
+	marker := filepath.Join(dir, "000001.jpg")
+	if err := os.WriteFile(marker, []byte("staged"), 0o600); err != nil {
+		t.Fatalf("create staged page: %v", err)
+	}
+	return dir, marker
+}
+
+func assertPreservedProviderChapterState(
+	t *testing.T,
+	providerChapter *ent.ProviderChapter,
+	nextAttempt time.Time,
+) {
+	t.Helper()
+	if len(providerChapter.PageLinks) != 0 {
+		t.Errorf("page links = %+v, want cleared after address change", providerChapter.PageLinks)
+	}
+	if providerChapter.Attempts != 3 || providerChapter.LastError != "temporary failure" {
+		t.Errorf("retry state = attempts %d, error %q; want preserved", providerChapter.Attempts, providerChapter.LastError)
+	}
+	if providerChapter.NextAttemptAt == nil || !providerChapter.NextAttemptAt.Equal(nextAttempt) {
+		t.Errorf("next attempt = %v, want %v", providerChapter.NextAttemptAt, nextAttempt)
+	}
+}
+
+func assertPreservedLogicalChapterState(t *testing.T, logicalChapter *ent.Chapter, providerID uuid.UUID) {
+	t.Helper()
+	if logicalChapter.State != entchapter.StateDownloaded || logicalChapter.Filename != "chapter-1.cbz" {
+		t.Errorf("chapter state/filename = %s/%q, want downloaded/chapter-1.cbz", logicalChapter.State, logicalChapter.Filename)
+	}
+	if logicalChapter.SatisfiedByProviderID == nil || *logicalChapter.SatisfiedByProviderID != providerID || logicalChapter.SatisfiedImportance == nil || *logicalChapter.SatisfiedImportance != 20 {
+		t.Errorf("chapter satisfaction changed: provider=%v importance=%v", logicalChapter.SatisfiedByProviderID, logicalChapter.SatisfiedImportance)
+	}
+}
 
 // TestIngestDedupAcrossProviders verifies the core dedup invariant:
 // ingesting the same chapter_key from two different SeriesProviders of one
@@ -324,10 +379,156 @@ func TestIngestProviderChaptersDBError(t *testing.T) {
 	}
 }
 
+func TestIngestProviderChaptersChangedAddressInvalidatesOnlyResolverCache(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	nextAttempt := time.Date(2026, time.September, 12, 3, 4, 5, 0, time.UTC)
+
+	series := client.Series.Create().SetTitle("Address Change").SetSlug("address-change").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("42").SetImportance(20).SaveX(ctx)
+	existingChapter := client.Chapter.Create().
+		SetSeries(series).
+		SetChapterKey("1").
+		SetState(entchapter.StateDownloaded).
+		SetFilename("chapter-1.cbz").
+		SetSatisfiedByProviderID(provider.ID).
+		SetSatisfiedImportance(20).
+		SaveX(ctx)
+	existingProviderChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/old/chapter-1").
+		SetWebURL("https://old.example/chapter-1").
+		SetAttempts(3).
+		SetLastError("temporary failure").
+		SetNextAttemptAt(nextAttempt).
+		SetPageLinks([]fetcher.PageLink{{URL: "/page/1", ImageURL: "https://images.example/1"}}).
+		SaveX(ctx)
+
+	_, err := chapter.IngestProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+		Number: ptr(1),
+		Name:   "Chapter 1 refreshed",
+		URL:    "/new/chapter-1",
+		WebURL: "https://old.example/chapter-1",
+	}})
+	if err != nil {
+		t.Fatalf("IngestProviderChapters: %v", err)
+	}
+
+	assertPreservedProviderChapterState(t, client.ProviderChapter.GetX(ctx, existingProviderChapter.ID), nextAttempt)
+	assertPreservedLogicalChapterState(t, client.Chapter.GetX(ctx, existingChapter.ID), provider.ID)
+}
+
+func TestReconcileProviderChaptersAddressChangeInvalidatesStagingPair(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	series := client.Series.Create().SetTitle("Staging Change").SetSlug("staging-change").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("42").SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/old/chapter-1").
+		SetWebURL("https://old.example/chapter-1").
+		SetPageLinks([]fetcher.PageLink{{URL: "/page/1"}}).
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+
+	stagingRoot := t.TempDir()
+	stagingDir, _ := seedReconcileStaging(t, stagingRoot, providerChapter.ID)
+
+	_, err := chapter.ReconcileProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+		Number: ptr(1),
+		Name:   "Chapter 1",
+		URL:    "/old/chapter-1",
+		WebURL: "https://new.example/chapter-1",
+	}}, download.NewProviderChapterCacheInvalidator(stagingRoot))
+	if err != nil {
+		t.Fatalf("ReconcileProviderChapters: %v", err)
+	}
+	if _, err := os.Stat(stagingDir); !os.IsNotExist(err) {
+		t.Errorf("staging dir stat error = %v, want not exist", err)
+	}
+	if links := client.ProviderChapter.GetX(ctx, providerChapter.ID).PageLinks; len(links) != 0 {
+		t.Errorf("page links = %+v, want cleared", links)
+	}
+}
+
+func TestReconcileProviderChaptersInvalidationFailureLeavesCachePairAndAddressUnchanged(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	series := client.Series.Create().SetTitle("Staging Failure").SetSlug("staging-failure").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("42").SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/old/chapter-1").
+		SetWebURL("https://old.example/chapter-1").
+		SetPageLinks([]fetcher.PageLink{{URL: "/page/1"}}).
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+
+	wipeErr := errors.New("staging unavailable")
+	_, err := chapter.ReconcileProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+		Number: ptr(1),
+		Name:   "Chapter 1 changed",
+		URL:    "/new/chapter-1",
+		WebURL: "https://new.example/chapter-1",
+	}}, failingProviderChapterCacheInvalidator{err: wipeErr})
+	if !errors.Is(err, wipeErr) {
+		t.Fatalf("ReconcileProviderChapters error = %v, want wrapped %v", err, wipeErr)
+	}
+
+	got := client.ProviderChapter.GetX(ctx, providerChapter.ID)
+	if got.URL != "/old/chapter-1" || got.WebURL != "https://old.example/chapter-1" {
+		t.Errorf("address = %q/%q, want old address", got.URL, got.WebURL)
+	}
+	if len(got.PageLinks) != 1 {
+		t.Errorf("page links = %+v, want retained", got.PageLinks)
+	}
+}
+
+func TestReconcileProviderChaptersUnchangedAddressRetainsStagingPair(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	series := client.Series.Create().SetTitle("Staging Stable").SetSlug("staging-stable").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("42").SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/chapter-1").
+		SetWebURL("https://example.test/chapter-1").
+		SetPageLinks([]fetcher.PageLink{{URL: "/page/1"}}).
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+
+	stagingRoot := t.TempDir()
+	_, marker := seedReconcileStaging(t, stagingRoot, providerChapter.ID)
+
+	_, err := chapter.ReconcileProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+		Number: ptr(1),
+		Name:   "Chapter 1 renamed",
+		URL:    "/chapter-1",
+		WebURL: "https://example.test/chapter-1",
+	}}, download.NewProviderChapterCacheInvalidator(stagingRoot))
+	if err != nil {
+		t.Fatalf("ReconcileProviderChapters: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("unchanged-address staging marker: %v", err)
+	}
+	if links := client.ProviderChapter.GetX(ctx, providerChapter.ID).PageLinks; len(links) != 1 {
+		t.Errorf("page links = %+v, want retained", links)
+	}
+}
+
 // TestAbsorbProviderChapterRace verifies absorbProviderChapterRace deterministically:
 // given an existing ProviderChapter row, calling AbsorbProviderChapterRace with new
 // values must re-fetch the row, update all mutable fields, and return nil error.
-// This exercises the concurrent-INSERT loser path without relying on a real race.
+// This exercises the concurrent-insert loser path without relying on a real race.
 func TestAbsorbProviderChapterRace(t *testing.T) {
 	ctx := context.Background()
 	client := testdb.New(t)
@@ -397,8 +598,8 @@ func TestAbsorbProviderChapterRaceVanishedRow(t *testing.T) {
 	sp := client.SeriesProvider.Create().SetSeries(s).SetProvider("prov-vanished").SetImportance(1).SaveX(ctx)
 
 	// Call AbsorbProviderChapterRace for a key that has no pre-existing row.
-	// This simulates: ingest goroutine got a constraint error (the "winner"
-	// inserted the row), then RemoveProvider deleted that row before the re-fetch.
+	// This simulates: another ingest inserted the winner, then RemoveProvider
+	// deleted that row before the losing call could re-fetch it.
 	fc := chapter.FetchedChapter{
 		Number:        ptr(3.0),
 		Name:          "Chapter 3",

@@ -106,7 +106,7 @@ func TestRefreshAll_DiscoversNewChapters(t *testing.T) {
 	}
 }
 
-func TestRefreshAll_PersistsResolvedAddressMode(t *testing.T) {
+func TestRefreshAll_PreservesStoredAddressMode(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	const sourceID, mangaURL = 78, "/manga/address-mode"
@@ -121,8 +121,8 @@ func TestRefreshAll_PersistsResolvedAddressMode(t *testing.T) {
 	}
 
 	got := db.SeriesProvider.GetX(ctx, sp.ID)
-	if got.AddressMode.String() != "url_search" {
-		t.Fatalf("address mode = %q, want url_search", got.AddressMode)
+	if got.AddressMode.String() != "unknown" {
+		t.Fatalf("address mode = %q, want stored unknown", got.AddressMode)
 	}
 }
 

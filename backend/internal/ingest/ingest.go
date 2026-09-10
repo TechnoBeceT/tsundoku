@@ -76,10 +76,11 @@ var ErrSourceCooledDown = errors.New("source in circuit-breaker cooldown")
 //     fetches via FetchChaptersUncached (no cache, no gate) and applies its own
 //     gate around that pre-fetch, so the shared cache stays interactive-only.
 type Ingest struct {
-	client sourceengine.Client
-	db     *ent.Client
-	cache  *ChapterCache
-	gate   *sourcegate.Service
+	client           sourceengine.Client
+	db               *ent.Client
+	cache            *ChapterCache
+	gate             *sourcegate.Service
+	cacheInvalidator chapter.ProviderChapterCacheInvalidator
 	// ignoreScanlator is the TSUNDOKU-SIDE per-source "ignore scanlator" flag
 	// store (internal/ignorescanlator). When a source is flagged, the adopt/
 	// attach entries (AddSeries/AddSeriesUngated) force that source's scanlator
@@ -87,6 +88,38 @@ type Ingest struct {
 	// EffectiveScanlator. Nil ⇒ nothing is flagged (today's split-by-scanlator
 	// behaviour); attach it with WithIgnoreScanlator.
 	ignoreScanlator IgnoreScanlatorStore
+}
+
+// WithProviderChapterCacheInvalidator attaches the disposable page-staging
+// cache invalidator shared with the download path. It is invoked when chapter
+// URL or WebURL changes before the corresponding page_links are cleared.
+func (i *Ingest) WithProviderChapterCacheInvalidator(invalidator chapter.ProviderChapterCacheInvalidator) *Ingest {
+	i.cacheInvalidator = invalidator
+	return i
+}
+
+// ProviderAddressPolicy controls whether ReconcileProvider may author the
+// existing SeriesProvider's address tuple.
+type ProviderAddressPolicy uint8
+
+const (
+	// PreserveProviderAddress leaves URL, WebURL, and AddressMode untouched. It
+	// is the background-refresh policy, preventing stale work from restoring an
+	// address that an owner replacement committed concurrently.
+	PreserveProviderAddress ProviderAddressPolicy = iota
+	// ReplaceProviderAddress writes the supplied URL, WebURL, and AddressMode as
+	// one explicit owner-selected tuple.
+	ReplaceProviderAddress
+)
+
+// ProviderReconcileInput is a pre-fetched provider snapshot. Source metadata
+// fields update only when non-empty; Chapters remains upsert-only.
+type ProviderReconcileInput struct {
+	Ref          sourceengine.ProviderRef
+	Title        string
+	CoverURL     string
+	ProviderName string
+	Chapters     []sourceengine.Chapter
 }
 
 // IgnoreScanlatorStore is the narrow read surface Ingest needs to know which
@@ -186,6 +219,50 @@ func NewIngest(client sourceengine.Client, db *ent.Client) *Ingest {
 // need the extra collaborators.
 func NewIngestWithGate(client sourceengine.Client, db *ent.Client, cache *ChapterCache, gate *sourcegate.Service) *Ingest {
 	return &Ingest{client: client, db: db, cache: cache, gate: gate}
+}
+
+// ReconcileProvider updates one specific existing SeriesProvider and reconciles
+// a pre-fetched chapter list into that same row. db may be tx.Client(); in that
+// form the provider update and every feed/chapter upsert commit or roll back
+// together. Matching rows retain their UUIDs and retry/download state, absent
+// upstream keys remain stored, and new keys create ordinary wanted Chapters.
+func (i *Ingest) ReconcileProvider(
+	ctx context.Context,
+	db *ent.Client,
+	seriesProviderID uuid.UUID,
+	input ProviderReconcileInput,
+	policy ProviderAddressPolicy,
+) (chapter.IngestResult, error) {
+	provider, err := db.SeriesProvider.Get(ctx, seriesProviderID)
+	if err != nil {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: load series provider %s: %w", seriesProviderID, err)
+	}
+	if provider.Provider != providerKey(input.Ref.SourceID) {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: source %d does not match provider %q", input.Ref.SourceID, provider.Provider)
+	}
+
+	update := db.SeriesProvider.UpdateOne(provider)
+	applyOptionalSeriesProviderFields(update, input.Title, input.CoverURL, "", input.ProviderName, false)
+	switch policy {
+	case PreserveProviderAddress:
+	case ReplaceProviderAddress:
+		storedMode, modeErr := provideraddress.ToStored(input.Ref.AddressMode)
+		if modeErr != nil {
+			return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: %w", modeErr)
+		}
+		update.
+			SetURL(input.Ref.URL).
+			SetWebURL(input.Ref.WebURL).
+			SetAddressMode(storedMode)
+	default:
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: invalid address policy %d", policy)
+	}
+
+	updated, err := update.Save(ctx)
+	if err != nil {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: update series provider %s: %w", seriesProviderID, err)
+	}
+	return i.reconcileProviderFeed(ctx, db, updated, input.Chapters)
 }
 
 // AddSeries fetches all chapters for the manga at url on sourceID, upserts the
@@ -301,7 +378,7 @@ func (i *Ingest) addSeriesRef(
 	// AddSeriesWithChapters path deliberately keeps the stored scanlator.
 	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
 	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, chapterResult.AddressMode)
-	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, chapterResult.Chapters)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, chapterResult.Chapters, ReplaceProviderAddress)
 }
 
 // AddSeriesWithChapters is AddSeries WITHOUT the upstream fetch: it ingests the
@@ -327,6 +404,9 @@ func (i *Ingest) AddSeriesWithChapters(
 }
 
 // AddSeriesWithChaptersRef ingests a pre-fetched address-aware chapter result.
+// When the SeriesProvider already exists, its stored URL, WebURL, and
+// AddressMode are authoritative and remain untouched; only an explicit owner
+// replacement may author a new address tuple.
 func (i *Ingest) AddSeriesWithChaptersRef(
 	ctx context.Context,
 	ref sourceengine.ProviderRef,
@@ -337,7 +417,7 @@ func (i *Ingest) AddSeriesWithChaptersRef(
 	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, raw.AddressMode)
 	sourceID := ref.SourceID
 	providerName := i.resolveProviderName(ctx, sourceID)
-	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, raw.Chapters)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, raw.Chapters, PreserveProviderAddress)
 }
 
 // addSeriesWithChapters is the shared ingest body for AddSeries and
@@ -352,6 +432,7 @@ func (i *Ingest) addSeriesWithChapters(
 	scanlator string,
 	providerName string,
 	swChapters []sourceengine.Chapter,
+	addressPolicy ProviderAddressPolicy,
 ) (chapter.IngestResult, error) {
 	sourceID := ref.SourceID
 	// Defensive scanlator collapse (mirrors the FE collapseUntaggedScanlator, but
@@ -378,34 +459,34 @@ func (i *Ingest) addSeriesWithChapters(
 	//    MangaDetails is called inside upsertSeriesProvider to populate the
 	//    source's own title and cover — distinct from the canonical series title
 	//    above.
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, ref, scanlator, providerName)
+	sp, err := i.upsertSeriesProvider(ctx, series.ID, ref, scanlator, providerName, addressPolicy)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: upsert series provider %d (scanlator %q) for series %s: %w", sourceID, scanlator, series.ID, err)
 	}
 
-	// 3a. Owner gate: a source flagged as a fractional re-uploader for THIS series
-	//     contributes NO fractional chapters to its feed. Applied to the RAW slice
-	//     so the ingest mapping (step 4) stays in lockstep with what the sweep
-	//     actually intended to ingest.
-	//
-	//     Upsert-only semantics are untouched: fractional rows ingested BEFORE the
-	//     flag was ticked are NOT deleted (never-auto-delete) — they are simply
-	//     never refreshed here, and never dispatched. Un-ticking restores the
-	//     source at once.
-	if sp.IgnoreFractional {
-		swChapters = dropFractional(swChapters)
+	return i.reconcileProviderFeed(ctx, i.db, sp, swChapters)
+}
+
+// reconcileProviderFeed applies the stored provider filters and delegates the
+// structural upsert to chapter.ReconcileProviderChapters. Keeping this as the
+// single mapping boundary means ordinary ingest and transaction-backed owner
+// replacement share chapter-key normalization, row identity, and cache rules.
+func (i *Ingest) reconcileProviderFeed(
+	ctx context.Context,
+	db *ent.Client,
+	provider *ent.SeriesProvider,
+	raw []sourceengine.Chapter,
+) (chapter.IngestResult, error) {
+	// A source flagged as a fractional re-uploader contributes no fractional
+	// chapters. Existing rows remain because reconcile is upsert-only.
+	if provider.IgnoreFractional {
+		raw = dropFractional(raw)
 	}
-
-	// 4. Map engine chapters to the M1 FetchedChapter type, filtered to this
-	//    provider's scanlator (see mapToFetchedChapters).
-	fetched := mapToFetchedChapters(swChapters, scanlator)
-
-	// 5. Delegate to the M1 ingest engine (dedup/identity — never duplicated).
-	result, err := chapter.IngestProviderChapters(ctx, i.db, sp.ID, fetched)
+	fetched := mapToFetchedChapters(raw, provider.Scanlator)
+	result, err := chapter.ReconcileProviderChapters(ctx, db, provider.ID, fetched, i.cacheInvalidator)
 	if err != nil {
-		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: ingest chapters for series provider %s: %w", sp.ID, err)
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest: reconcile chapters for series provider %s: %w", provider.ID, err)
 	}
-
 	return result, nil
 }
 
@@ -466,15 +547,17 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 // Series.title set by the caller. SeriesProvider.URL is set to the CALLER'S
 // url argument, never derived from the MangaDetails response (the engine host
 // has no id→lookup; url is the only stable key we have).
-// On find it refreshes title, provider_name, cover_url, and url in case the
-// manga (or the source name) was updated upstream. Returns the existing or
-// newly created row.
+// On find it refreshes non-address metadata. Interactive add/attach keeps its
+// historical address-authoring behavior, while background pre-fetched refresh
+// preserves the stored address tuple. Returns the existing or newly created
+// row.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
 	ref sourceengine.ProviderRef,
 	scanlator string,
 	providerName string,
+	addressPolicy ProviderAddressPolicy,
 ) (*ent.SeriesProvider, error) {
 	sourceID, url := ref.SourceID, ref.URL
 	provider := providerKey(sourceID)
@@ -498,8 +581,10 @@ func (i *Ingest) upsertSeriesProvider(
 	if existErr != nil {
 		return nil, existErr
 	}
-	if err := i.retainExistingProviderAddress(ctx, existing, &ref); err != nil {
-		return nil, err
+	if addressPolicy == ReplaceProviderAddress {
+		if err := i.retainExistingProviderAddress(ctx, existing, &ref); err != nil {
+			return nil, err
+		}
 	}
 
 	// Fetch the source's own title and cover so SeriesProvider reflects what
@@ -517,7 +602,7 @@ func (i *Ingest) upsertSeriesProvider(
 	}
 
 	if existing != nil {
-		return i.updateSeriesProvider(ctx, existing, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
+		return i.updateSeriesProvider(ctx, existing, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode, addressPolicy)
 	}
 	return i.createSeriesProvider(ctx, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
 }
@@ -528,20 +613,24 @@ func (i *Ingest) updateSeriesProvider(
 	seriesID uuid.UUID,
 	provider, scanlator, url, srcTitle, cover, webURL, providerName string,
 	resolvedMode sourceengine.AddressMode,
+	addressPolicy ProviderAddressPolicy,
 ) (*ent.SeriesProvider, error) {
-	// Keep source title, cover, and url fresh in case the manga was re-added
-	// from a different engine host or updated upstream. SetScanlator also repairs
-	// a self-healed broken twin whose old scanlator was the source name.
+	// SetScanlator repairs a self-healed broken twin whose old scanlator was the
+	// source name. Address fields are written only by an address-authoring entry.
 	update := i.db.SeriesProvider.UpdateOne(existing).
-		SetScanlator(scanlator).
-		SetURL(url)
-	applyOptionalSeriesProviderFields(update, srcTitle, cover, webURL, providerName)
+		SetScanlator(scanlator)
+	if addressPolicy == ReplaceProviderAddress {
+		update.SetURL(url)
+	}
+	applyOptionalSeriesProviderFields(update, srcTitle, cover, webURL, providerName, addressPolicy == ReplaceProviderAddress)
 	updated, updateErr := update.Save(ctx)
 	if updateErr != nil {
 		return nil, fmt.Errorf("update (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, updateErr)
 	}
-	if err := provideraddress.PersistResolved(ctx, i.db, updated.ID, resolvedMode); err != nil {
-		return nil, err
+	if addressPolicy == ReplaceProviderAddress {
+		if err := provideraddress.PersistResolved(ctx, i.db, updated.ID, resolvedMode); err != nil {
+			return nil, err
+		}
 	}
 	return updated, nil
 }
@@ -591,23 +680,22 @@ func (i *Ingest) retainExistingProviderAddress(ctx context.Context, existing *en
 	return provideraddress.PersistResolved(ctx, i.db, existing.ID, ref.AddressMode)
 }
 
-// applyOptionalSeriesProviderFields guards the four MangaDetails-sourced
+// applyOptionalSeriesProviderFields guards the MangaDetails-sourced
 // SeriesProvider.Update fields that must NEVER be blanked by a transient
-// empty engine response: title/cover/webURL are only set when non-empty (a
-// blank MangaDetails hiccup must not overwrite a previously-stored good
-// value), and providerName only when a Sources() lookup actually resolved
-// one (a transient failure yields "" and must not clobber a stored name).
+// empty engine response. Title and cover are only set when non-empty, WebURL
+// additionally requires an address-replacement policy, and providerName is
+// set only when a Sources() lookup actually resolved one.
 // Extracted from upsertSeriesProvider's update branch to keep that
 // function's cyclomatic complexity within the fleet lint budget (§2 DRY is a
 // side benefit, not the primary reason).
-func applyOptionalSeriesProviderFields(update *ent.SeriesProviderUpdateOne, srcTitle, cover, webURL, providerName string) {
+func applyOptionalSeriesProviderFields(update *ent.SeriesProviderUpdateOne, srcTitle, cover, webURL, providerName string, updateWebURL bool) {
 	if srcTitle != "" {
 		update.SetTitle(srcTitle)
 	}
 	if cover != "" {
 		update.SetCoverURL(cover)
 	}
-	if webURL != "" {
+	if updateWebURL && webURL != "" {
 		update.SetWebURL(webURL)
 	}
 	if providerName != "" {

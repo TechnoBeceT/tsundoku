@@ -11,6 +11,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/category"
 	"github.com/technobecet/tsundoku/internal/config"
 	"github.com/technobecet/tsundoku/internal/disabledsource"
+	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/downloads"
 	"github.com/technobecet/tsundoku/internal/enginetopo"
 	"github.com/technobecet/tsundoku/internal/enginetopo/apkcache"
@@ -560,6 +561,7 @@ func registerRoutes(
 	// flagged source's already-adopted per-uploader rows keep refreshing untouched
 	// (Slice A is apply-forward only).
 	ingestSvc := ingest.NewIngestWithGate(engineClient, client, chapterCache, gate).
+		WithProviderChapterCacheInvalidator(download.NewProviderChapterCacheInvalidator(filepath.Join(cfg.Storage.Folder, ".tsundoku-staging"))).
 		WithIgnoreScanlator(ignoreScanlatorSvc)
 	importsSvc := imports.NewServiceWithCaches(
 		engineClient, ingestSvc, client, cfg.Storage.Folder, cfg.Engine.SearchTimeout, metricsSvc, chapterCache,
