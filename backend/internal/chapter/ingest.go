@@ -2,7 +2,9 @@ package chapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,13 +43,127 @@ type IngestResult struct {
 	NewProviderChapters int
 }
 
-// ProviderChapterCacheInvalidator removes the disposable staged page bytes for
-// one ProviderChapter before its persisted page links are cleared. The staging
-// directory and page_links form one index-keyed cache pair, so callers that
-// configure disk staging must supply the same invalidator used by the download
-// path.
+// ProviderChapterCacheInvalidator starts a recoverable cache-invalidation
+// transaction. Its transaction must quarantine staged bytes until Commit and
+// restore them on Rollback, keeping filesystem state aligned with the database
+// transaction that clears page links.
 type ProviderChapterCacheInvalidator interface {
+	BeginProviderChapterCacheInvalidation() ProviderChapterCacheInvalidation
+}
+
+// ProviderChapterCacheInvalidation is one recoverable staging-cache journal.
+// Invalidate removes a cache from live use, Commit discards its quarantined
+// bytes, and Rollback restores them.
+type ProviderChapterCacheInvalidation interface {
 	InvalidateProviderChapterCache(context.Context, uuid.UUID) error
+	Commit()
+	Rollback() error
+}
+
+type noopProviderChapterCacheInvalidation struct{}
+
+func (noopProviderChapterCacheInvalidation) InvalidateProviderChapterCache(context.Context, uuid.UUID) error {
+	return nil
+}
+
+func (noopProviderChapterCacheInvalidation) Commit() {}
+
+func (noopProviderChapterCacheInvalidation) Rollback() error { return nil }
+
+// ProviderReconcileScope serializes one SeriesProvider feed reconcile against
+// other reconciles and active download fetches. Transactional callers keep the
+// scope open until their Ent transaction commits or rolls back.
+type ProviderReconcileScope struct {
+	providerID    uuid.UUID
+	lease         *ProviderFeedLease
+	chapterLeases map[uuid.UUID]*ProviderChapterLease
+	invalidation  ProviderChapterCacheInvalidation
+	done          sync.Once
+	rollbackErr   error
+}
+
+// BeginProviderReconcile acquires exclusive ownership of providerID's feed and
+// starts its recoverable staging-cache journal.
+func BeginProviderReconcile(
+	ctx context.Context,
+	providerID uuid.UUID,
+	invalidator ProviderChapterCacheInvalidator,
+) (*ProviderReconcileScope, error) {
+	lease, err := AcquireProviderFeedLease(ctx, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("chapter.BeginProviderReconcile: acquire provider feed: %w", err)
+	}
+	invalidation := ProviderChapterCacheInvalidation(noopProviderChapterCacheInvalidation{})
+	if invalidator != nil {
+		invalidation = invalidator.BeginProviderChapterCacheInvalidation()
+		if invalidation == nil {
+			lease.Release()
+			return nil, errors.New("chapter.BeginProviderReconcile: cache invalidator returned nil transaction")
+		}
+	}
+	return &ProviderReconcileScope{
+		providerID:    providerID,
+		lease:         lease,
+		chapterLeases: make(map[uuid.UUID]*ProviderChapterLease),
+		invalidation:  invalidation,
+	}, nil
+}
+
+// ReconcileProviderChapters applies chapters through client while retaining the
+// scope's feed ownership and cache journal. client may be tx.Client().
+func (s *ProviderReconcileScope) ReconcileProviderChapters(
+	ctx context.Context,
+	client *ent.Client,
+	chapters []FetchedChapter,
+) (IngestResult, error) {
+	return reconcileProviderChapters(ctx, client, s, chapters)
+}
+
+// Commit makes this scope's cache invalidations permanent and releases its feed
+// ownership. Call it only after the corresponding database commit succeeds.
+func (s *ProviderReconcileScope) Commit() {
+	if s == nil {
+		return
+	}
+	s.done.Do(func() {
+		s.invalidation.Commit()
+		s.releaseLeases()
+	})
+}
+
+// Rollback restores this scope's quarantined caches and releases its feed
+// ownership. Call it only after the corresponding database rollback completes.
+func (s *ProviderReconcileScope) Rollback() error {
+	if s == nil {
+		return nil
+	}
+	s.done.Do(func() {
+		s.rollbackErr = s.invalidation.Rollback()
+		s.releaseLeases()
+	})
+	return s.rollbackErr
+}
+
+func (s *ProviderReconcileScope) lockProviderChapter(
+	ctx context.Context,
+	client *ent.Client,
+	providerChapterID uuid.UUID,
+) (*ent.ProviderChapter, error) {
+	if s.chapterLeases[providerChapterID] == nil {
+		lease, err := AcquireProviderChapterLease(ctx, providerChapterID)
+		if err != nil {
+			return nil, err
+		}
+		s.chapterLeases[providerChapterID] = lease
+	}
+	return client.ProviderChapter.Get(ctx, providerChapterID)
+}
+
+func (s *ProviderReconcileScope) releaseLeases() {
+	for _, lease := range s.chapterLeases {
+		lease.Release()
+	}
+	s.lease.Release()
 }
 
 // IngestProviderChapters processes a slice of provider-supplied chapters for a
@@ -56,7 +172,7 @@ type ProviderChapterCacheInvalidator interface {
 // chapter_key) pair.
 //
 // For each FetchedChapter:
-//  1. chapter_key is derived via NormalizeChapterKey (Task 1's normaliser).
+//  1. chapter_key is derived via NormalizeChapterKey.
 //  2. The ProviderChapter row keyed (series_provider_id, chapter_key) is created
 //     or updated in-place (all mutable fields are refreshed on conflict).
 //  3. A Chapter row keyed (series_id, chapter_key) is created with state=wanted
@@ -75,12 +191,11 @@ func IngestProviderChapters(
 	return ReconcileProviderChapters(ctx, client, seriesProviderID, chapters, nil)
 }
 
-// ReconcileProviderChapters is the transaction-aware form of
-// IngestProviderChapters. client may be an Ent transaction client. When an
-// existing ProviderChapter's URL or WebURL changes, invalidator removes its
-// paired disposable staging directory before page_links is cleared; a removal
-// error aborts the row update so the two caches cannot drift apart. A nil
-// invalidator represents a deployment with no configured staging cache.
+// ReconcileProviderChapters atomically reconciles a provider feed using a new
+// Ent transaction and feed scope. When an existing ProviderChapter's URL or
+// WebURL changes, staged bytes are quarantined before page_links is cleared;
+// commit discards them and rollback restores them. Callers already holding an
+// Ent transaction use BeginProviderReconcile and the returned scope instead.
 func ReconcileProviderChapters(
 	ctx context.Context,
 	client *ent.Client,
@@ -88,6 +203,40 @@ func ReconcileProviderChapters(
 	chapters []FetchedChapter,
 	invalidator ProviderChapterCacheInvalidator,
 ) (IngestResult, error) {
+	scope, err := BeginProviderReconcile(ctx, seriesProviderID, invalidator)
+	if err != nil {
+		return IngestResult{}, err
+	}
+	tx, err := client.Tx(ctx)
+	if err != nil {
+		_ = scope.Rollback()
+		return IngestResult{}, fmt.Errorf("chapter.ReconcileProviderChapters: begin transaction: %w", err)
+	}
+	result, err := scope.ReconcileProviderChapters(ctx, tx.Client(), chapters)
+	if err != nil {
+		return IngestResult{}, rollbackProviderReconcile(tx, scope, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return IngestResult{}, errors.Join(
+			fmt.Errorf("chapter.ReconcileProviderChapters: commit: %w", err),
+			scope.Rollback(),
+		)
+	}
+	scope.Commit()
+	return result, nil
+}
+
+func rollbackProviderReconcile(tx *ent.Tx, scope *ProviderReconcileScope, cause error) error {
+	return errors.Join(cause, tx.Rollback(), scope.Rollback())
+}
+
+func reconcileProviderChapters(
+	ctx context.Context,
+	client *ent.Client,
+	scope *ProviderReconcileScope,
+	chapters []FetchedChapter,
+) (IngestResult, error) {
+	seriesProviderID := scope.providerID
 	sp, err := client.SeriesProvider.Get(ctx, seriesProviderID)
 	if err != nil {
 		return IngestResult{}, fmt.Errorf("chapter.IngestProviderChapters: load series provider %s: %w", seriesProviderID, err)
@@ -99,7 +248,7 @@ func ReconcileProviderChapters(
 	for _, fc := range chapters {
 		key := NormalizeChapterKey(fc.Number, fc.Name)
 
-		newPC, err := ingestProviderChapter(ctx, client, seriesProviderID, key, fc, invalidator)
+		newPC, err := ingestProviderChapter(ctx, client, scope, key, fc)
 		if err != nil {
 			return IngestResult{}, fmt.Errorf("chapter.IngestProviderChapters: provider chapter %q: %w", key, err)
 		}
@@ -124,11 +273,11 @@ func ReconcileProviderChapters(
 func ingestProviderChapter(
 	ctx context.Context,
 	client *ent.Client,
-	seriesProviderID uuid.UUID,
+	scope *ProviderReconcileScope,
 	key string,
 	fc FetchedChapter,
-	invalidator ProviderChapterCacheInvalidator,
 ) (isNew bool, err error) {
+	seriesProviderID := scope.providerID
 	// Try to fetch the existing row first (read-before-write keeps the common
 	// re-ingest path cheap and avoids a write on every sync).
 	existing, err := client.ProviderChapter.Query().
@@ -139,8 +288,12 @@ func ingestProviderChapter(
 		Only(ctx)
 
 	if err == nil {
+		existing, err = scope.lockProviderChapter(ctx, client, existing.ID)
+		if err != nil {
+			return false, fmt.Errorf("lock and refresh: %w", err)
+		}
 		// Row exists — update all mutable fields in place.
-		if _, err := applyProviderChapterUpdate(ctx, client, existing, fc, invalidator); err != nil {
+		if _, err := applyProviderChapterUpdate(ctx, client, existing, fc, scope.invalidation); err != nil {
 			return false, fmt.Errorf("update: %w", err)
 		}
 		return false, nil
@@ -182,7 +335,7 @@ func ingestProviderChapter(
 	}
 
 	// A concurrent insert won the structural key. Refresh that same row in place.
-	return false, absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc, invalidator)
+	return false, absorbProviderChapterRace(ctx, client, scope, key, fc)
 }
 
 // absorbProviderChapterRace handles a concurrent ProviderChapter insert by
@@ -190,11 +343,11 @@ func ingestProviderChapter(
 func absorbProviderChapterRace(
 	ctx context.Context,
 	client *ent.Client,
-	seriesProviderID uuid.UUID,
+	scope *ProviderReconcileScope,
 	key string,
 	fc FetchedChapter,
-	invalidator ProviderChapterCacheInvalidator,
 ) error {
+	seriesProviderID := scope.providerID
 	existing, err := client.ProviderChapter.Query().
 		Where(
 			entproviderchapter.SeriesProviderID(seriesProviderID),
@@ -211,7 +364,11 @@ func absorbProviderChapterRace(
 		// TestAbsorbProviderChapterRaceVanishedRow.
 		return fmt.Errorf("re-fetch after constraint race: %w", err)
 	}
-	if _, err := applyProviderChapterUpdate(ctx, client, existing, fc, invalidator); err != nil {
+	existing, err = scope.lockProviderChapter(ctx, client, existing.ID)
+	if err != nil {
+		return fmt.Errorf("lock and refresh after constraint race: %w", err)
+	}
+	if _, err := applyProviderChapterUpdate(ctx, client, existing, fc, scope.invalidation); err != nil {
 		// Defensive path: DB connection lost between re-fetch and update — not
 		// reachable under normal operation.
 		return fmt.Errorf("update after constraint race: %w", err)
@@ -226,11 +383,11 @@ func applyProviderChapterUpdate(
 	client *ent.Client,
 	existing *ent.ProviderChapter,
 	fc FetchedChapter,
-	invalidator ProviderChapterCacheInvalidator,
+	invalidation ProviderChapterCacheInvalidation,
 ) (*ent.ProviderChapter, error) {
 	addressChanged := existing.URL != fc.URL || existing.WebURL != fc.WebURL
-	if addressChanged && invalidator != nil {
-		if err := invalidator.InvalidateProviderChapterCache(ctx, existing.ID); err != nil {
+	if addressChanged {
+		if err := invalidation.InvalidateProviderChapterCache(ctx, existing.ID); err != nil {
 			return nil, fmt.Errorf("invalidate resolver cache: %w", err)
 		}
 	}

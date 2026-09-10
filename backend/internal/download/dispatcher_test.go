@@ -316,6 +316,9 @@ func TestDispatcher_PerProviderConcurrency(t *testing.T) {
 	if cf.peak > cap {
 		t.Errorf("peak concurrency %d exceeded cap %d", cf.peak, cap)
 	}
+	if cf.peak < cap {
+		t.Errorf("peak concurrency = %d, want configured capacity %d to remain usable", cf.peak, cap)
+	}
 }
 
 // TestDispatcher_SSEEvents verifies that RunOnce on a single wanted chapter

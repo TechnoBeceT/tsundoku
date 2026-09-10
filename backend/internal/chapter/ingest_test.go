@@ -26,9 +26,42 @@ type failingProviderChapterCacheInvalidator struct {
 	err error
 }
 
+func (f failingProviderChapterCacheInvalidator) BeginProviderChapterCacheInvalidation() chapter.ProviderChapterCacheInvalidation {
+	return f
+}
+
 func (f failingProviderChapterCacheInvalidator) InvalidateProviderChapterCache(context.Context, uuid.UUID) error {
 	return f.err
 }
+
+func (failingProviderChapterCacheInvalidator) Commit()         {}
+func (failingProviderChapterCacheInvalidator) Rollback() error { return nil }
+
+type firstBlockingProviderChapterCacheInvalidator struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *firstBlockingProviderChapterCacheInvalidator) BeginProviderChapterCacheInvalidation() chapter.ProviderChapterCacheInvalidation {
+	return b
+}
+
+func (b *firstBlockingProviderChapterCacheInvalidator) InvalidateProviderChapterCache(context.Context, uuid.UUID) error {
+	b.mu.Lock()
+	b.calls++
+	first := b.calls == 1
+	b.mu.Unlock()
+	if first {
+		close(b.entered)
+		<-b.release
+	}
+	return nil
+}
+
+func (*firstBlockingProviderChapterCacheInvalidator) Commit()         {}
+func (*firstBlockingProviderChapterCacheInvalidator) Rollback() error { return nil }
 
 func seedReconcileStaging(t *testing.T, root string, providerChapterID uuid.UUID) (string, string) {
 	t.Helper()
@@ -522,6 +555,69 @@ func TestReconcileProviderChaptersUnchangedAddressRetainsStagingPair(t *testing.
 	}
 	if links := client.ProviderChapter.GetX(ctx, providerChapter.ID).PageLinks; len(links) != 1 {
 		t.Errorf("page links = %+v, want retained", links)
+	}
+}
+
+func TestReconcileProviderChaptersSerializesAddressComparisonThroughUpdate(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	series := client.Series.Create().SetTitle("Concurrent Address").SetSlug("concurrent-address").SaveX(ctx)
+	provider := client.SeriesProvider.Create().SetSeries(series).SetProvider("42").SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/original/chapter-1").
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+
+	invalidator := &firstBlockingProviderChapterCacheInvalidator{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := chapter.ReconcileProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+			Number: ptr(1),
+			URL:    "/first/chapter-1",
+		}}, invalidator)
+		firstDone <- err
+	}()
+	<-invalidator.entered
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, err := chapter.ReconcileProviderChapters(ctx, client, provider.ID, []chapter.FetchedChapter{{
+			Number: ptr(1),
+			URL:    "/second/chapter-1",
+		}}, invalidator)
+		secondDone <- err
+	}()
+
+	secondCompletedBeforeRelease := false
+	select {
+	case err := <-secondDone:
+		secondCompletedBeforeRelease = true
+		if err != nil {
+			t.Errorf("second reconcile before release: %v", err)
+		}
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(invalidator.release)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if !secondCompletedBeforeRelease {
+		if err := <-secondDone; err != nil {
+			t.Fatalf("second reconcile: %v", err)
+		}
+	}
+
+	if secondCompletedBeforeRelease {
+		t.Error("second reconcile completed while the first was paused after its address read")
+	}
+	if got := client.ProviderChapter.GetX(ctx, providerChapter.ID).URL; got != "/second/chapter-1" {
+		t.Errorf("final provider chapter URL = %q, want second reconcile value", got)
 	}
 }
 

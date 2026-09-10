@@ -28,10 +28,13 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
+	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/series"
+	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 	enginefake "github.com/technobecet/tsundoku/internal/sourceengine/fake"
+	"github.com/technobecet/tsundoku/internal/sse"
 )
 
 // --- helpers -----------------------------------------------------------------
@@ -136,6 +139,30 @@ func assertReplacementFeed(t *testing.T, ctx context.Context, client *ent.Client
 	newChapter := client.Chapter.Query().Where(entchapter.SeriesID(seriesID), entchapter.ChapterKey("2")).OnlyX(ctx)
 	if newChapter.State != entchapter.StateWanted {
 		t.Errorf("new chapter state = %q, want wanted", newChapter.State)
+	}
+}
+
+func assertRollbackRestored(
+	t *testing.T,
+	ctx context.Context,
+	client *ent.Client,
+	providerID, providerChapterID uuid.UUID,
+	stagingDir string,
+) {
+	t.Helper()
+	provider := client.SeriesProvider.GetX(ctx, providerID)
+	if provider.URL != "/old/address" || provider.WebURL != "https://old.example/title" || provider.AddressMode.String() != "direct" {
+		t.Errorf("provider address after rollback = %q/%q/%q, want original tuple", provider.URL, provider.WebURL, provider.AddressMode)
+	}
+	providerChapter := client.ProviderChapter.GetX(ctx, providerChapterID)
+	if providerChapter.Name != "Chapter 1 old" || providerChapter.URL != "/old/chapter-1" || len(providerChapter.PageLinks) != 1 {
+		t.Errorf("provider chapter after rollback = name %q URL %q links %+v, want original cache-bearing row", providerChapter.Name, providerChapter.URL, providerChapter.PageLinks)
+	}
+	if count := client.Chapter.Query().CountX(ctx); count != 1 {
+		t.Errorf("chapter count after rollback = %d, want 1", count)
+	}
+	if _, err := os.Stat(filepath.Join(stagingDir, "000001.jpg")); err != nil {
+		t.Errorf("staging cache after rollback: %v, want restored", err)
 	}
 }
 
@@ -1531,7 +1558,7 @@ func TestReconcileProviderReplacePreservesIdentityAndUpsertsFeed(t *testing.T) {
 	}
 	ing := ingest.NewIngest(enginefake.New(), client).
 		WithProviderChapterCacheInvalidator(download.NewProviderChapterCacheInvalidator(stagingRoot))
-	result, err := ing.ReconcileProvider(ctx, tx.Client(), provider.ID, ingest.ProviderReconcileInput{
+	result, err := ing.ReconcileProvider(ctx, tx, provider.ID, ingest.ProviderReconcileInput{
 		Ref: sourceengine.ProviderRef{
 			SourceID:    sourceID,
 			URL:         "/new/address",
@@ -1578,21 +1605,26 @@ func TestReconcileProviderTransactionRollbackRestoresAddressAndFeed(t *testing.T
 		SetChapterKey("1").
 		SetNumber(1).
 		SetName("Chapter 1 old").
-		SetURL("/chapter-1").
+		SetURL("/old/chapter-1").
+		SetPageLinks([]fetcher.PageLink{{URL: "/old/page-1"}}).
 		SaveX(ctx)
 	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+	stagingRoot := t.TempDir()
+	stagingDir := seedReconcileStaging(t, stagingRoot, providerChapter.ID)
 
 	tx, err := client.Tx(ctx)
 	if err != nil {
 		t.Fatalf("begin transaction: %v", err)
 	}
-	_, err = ingest.NewIngest(enginefake.New(), client).ReconcileProvider(ctx, tx.Client(), provider.ID, ingest.ProviderReconcileInput{
-		Ref: sourceengine.ProviderRef{SourceID: 4246, URL: "/new/address", WebURL: "https://new.example/title", AddressMode: sourceengine.AddressModeURLSearch},
-		Chapters: []sourceengine.Chapter{
-			{Name: "Chapter 1 new", Number: 1, URL: "/chapter-1"},
-			{Name: "Chapter 2", Number: 2, URL: "/chapter-2"},
-		},
-	}, ingest.ReplaceProviderAddress)
+	_, err = ingest.NewIngest(enginefake.New(), client).
+		WithProviderChapterCacheInvalidator(download.NewProviderChapterCacheInvalidator(stagingRoot)).
+		ReconcileProvider(ctx, tx, provider.ID, ingest.ProviderReconcileInput{
+			Ref: sourceengine.ProviderRef{SourceID: 4246, URL: "/new/address", WebURL: "https://new.example/title", AddressMode: sourceengine.AddressModeURLSearch},
+			Chapters: []sourceengine.Chapter{
+				{Name: "Chapter 1 new", Number: 1, URL: "/new/chapter-1"},
+				{Name: "Chapter 2", Number: 2, URL: "/chapter-2"},
+			},
+		}, ingest.ReplaceProviderAddress)
 	if err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("ReconcileProvider: %v", err)
@@ -1601,16 +1633,124 @@ func TestReconcileProviderTransactionRollbackRestoresAddressAndFeed(t *testing.T
 		t.Fatalf("rollback: %v", err)
 	}
 
-	gotProvider := client.SeriesProvider.GetX(ctx, provider.ID)
-	if gotProvider.URL != "/old/address" || gotProvider.WebURL != "https://old.example/title" || gotProvider.AddressMode.String() != "direct" {
-		t.Errorf("provider address after rollback = %q/%q/%q, want original tuple", gotProvider.URL, gotProvider.WebURL, gotProvider.AddressMode)
+	assertRollbackRestored(t, ctx, client, provider.ID, providerChapter.ID, stagingDir)
+}
+
+type blockedOldAddressFetcher struct {
+	entered     chan fetcher.FetchRef
+	release     chan struct{}
+	stagingRoot string
+}
+
+func (f *blockedOldAddressFetcher) Fetch(_ context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	f.entered <- ref
+	<-f.release
+	dir := filepath.Join(f.stagingRoot, ref.ProviderChapterID.String())
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fetcher.ChapterPages{}, err
 	}
-	gotProviderChapter := client.ProviderChapter.GetX(ctx, providerChapter.ID)
-	if gotProviderChapter.Name != "Chapter 1 old" {
-		t.Errorf("provider chapter name after rollback = %q, want original", gotProviderChapter.Name)
+	if err := os.WriteFile(filepath.Join(dir, "000001.jpg"), []byte("old-address-page"), 0o600); err != nil {
+		return fetcher.ChapterPages{}, err
 	}
-	if count := client.Chapter.Query().CountX(ctx); count != 1 {
-		t.Errorf("chapter count after rollback = %d, want 1", count)
+	return fetcher.ChapterPages{
+		StagingDir: dir,
+		PageLinks:  []fetcher.PageLink{{URL: "/old/page-1"}},
+	}, errors.New("old-address fetch stopped")
+}
+
+func startProviderReplacement(
+	ctx context.Context,
+	client *ent.Client,
+	stagingRoot string,
+	providerID uuid.UUID,
+	sourceID int64,
+) chan error {
+	done := make(chan error, 1)
+	go func() {
+		tx, err := client.Tx(ctx)
+		if err == nil {
+			_, err = ingest.NewIngest(enginefake.New(), client).
+				WithProviderChapterCacheInvalidator(download.NewProviderChapterCacheInvalidator(stagingRoot)).
+				ReconcileProvider(ctx, tx, providerID, ingest.ProviderReconcileInput{
+					Ref:      sourceengine.ProviderRef{SourceID: sourceID, URL: "/new/address", AddressMode: sourceengine.AddressModeDirect},
+					Chapters: []sourceengine.Chapter{{Name: "Chapter 1", Number: 1, URL: "/new/chapter-1"}},
+				}, ingest.ReplaceProviderAddress)
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else if tx != nil {
+			_ = tx.Rollback()
+		}
+		done <- err
+	}()
+	return done
+}
+
+func assertReplacementStillBlocked(t *testing.T, done chan error) {
+	t.Helper()
+	select {
+	case err := <-done:
+		t.Errorf("replacement completed before old fetch release: %v", err)
+		done <- err
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func TestReconcileProviderWaitsForActiveOldAddressFetchAndInvalidatesItsArtifacts(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	const sourceID int64 = 4248
+	series := client.Series.Create().SetTitle("Blocked Fetch").SetSlug("blocked-fetch").SaveX(ctx)
+	provider := client.SeriesProvider.Create().
+		SetSeries(series).
+		SetProvider("4248").
+		SetURL("/old/address").
+		SetAddressMode("direct").
+		SetImportance(10).
+		SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/old/chapter-1").
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
+
+	stagingRoot := t.TempDir()
+	blockedFetcher := &blockedOldAddressFetcher{
+		entered:     make(chan fetcher.FetchRef, 1),
+		release:     make(chan struct{}),
+		stagingRoot: stagingRoot,
+	}
+	dispatcher := download.New(client, blockedFetcher, sse.NewHub(), download.Config{
+		Storage:     t.TempDir(),
+		StagingRoot: stagingRoot,
+	}, settings.Static{Retries: 3, Backoff: time.Hour, DownloadConc: 1}, nil)
+	downloadDone := make(chan error, 1)
+	go func() {
+		_, err := dispatcher.RunOnce(ctx)
+		downloadDone <- err
+	}()
+	fetchRef := <-blockedFetcher.entered
+	if fetchRef.URL != "/old/chapter-1" {
+		t.Fatalf("blocked fetch URL = %q, want old chapter address", fetchRef.URL)
+	}
+
+	replacementDone := startProviderReplacement(ctx, client, stagingRoot, provider.ID, sourceID)
+	assertReplacementStillBlocked(t, replacementDone)
+	close(blockedFetcher.release)
+	if err := <-downloadDone; err != nil {
+		t.Fatalf("download cycle: %v", err)
+	}
+	if err := <-replacementDone; err != nil {
+		t.Fatalf("replacement: %v", err)
+	}
+	got := client.ProviderChapter.GetX(ctx, providerChapter.ID)
+	if got.URL != "/new/chapter-1" || len(got.PageLinks) != 0 {
+		t.Errorf("provider chapter after replacement = URL %q links %+v, want new address with empty resolver cache", got.URL, got.PageLinks)
+	}
+	if _, err := os.Stat(filepath.Join(stagingRoot, providerChapter.ID.String())); !os.IsNotExist(err) {
+		t.Errorf("old-address staging directory stat error = %v, want not exist", err)
 	}
 }
 
@@ -1643,6 +1783,13 @@ func TestStaleRefreshCannotRestoreAddressAfterReplacementCommit(t *testing.T) {
 		SetWebURL("https://old.example/title").
 		SetAddressMode("direct").
 		SaveX(ctx)
+	providerChapter := client.ProviderChapter.Create().
+		SetSeriesProvider(provider).
+		SetChapterKey("1").
+		SetNumber(1).
+		SetURL("/old/chapter-1").
+		SaveX(ctx)
+	client.Chapter.Create().SetSeries(series).SetChapterKey("1").SetNumber(1).SaveX(ctx)
 	base := enginefake.New(enginefake.WithMangaDetails(sourceID, "/old/address", sourceengine.MangaDetails{
 		Title:       title,
 		RealURL:     "https://old.example/title",
@@ -1655,7 +1802,10 @@ func TestStaleRefreshCannotRestoreAddressAfterReplacementCommit(t *testing.T) {
 	go func() {
 		_, err := ing.AddSeriesWithChaptersRef(ctx, sourceengine.ProviderRef{
 			SourceID: sourceID, URL: "/old/address", WebURL: "https://old.example/title", AddressMode: sourceengine.AddressModeDirect,
-		}, title, "", sourceengine.ChaptersResult{Chapters: makeChapters(1), AddressMode: sourceengine.AddressModeDirect})
+		}, title, "", sourceengine.ChaptersResult{
+			Chapters:    []sourceengine.Chapter{{Name: "Chapter 1 stale", Number: 1, URL: "/old/chapter-1"}},
+			AddressMode: sourceengine.AddressModeDirect,
+		})
 		refreshErr <- err
 	}()
 	<-engine.entered
@@ -1664,9 +1814,9 @@ func TestStaleRefreshCannotRestoreAddressAfterReplacementCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin replacement transaction: %v", err)
 	}
-	_, err = ing.ReconcileProvider(ctx, tx.Client(), provider.ID, ingest.ProviderReconcileInput{
+	_, err = ing.ReconcileProvider(ctx, tx, provider.ID, ingest.ProviderReconcileInput{
 		Ref:      sourceengine.ProviderRef{SourceID: sourceID, URL: "/new/address", WebURL: "https://new.example/title", AddressMode: sourceengine.AddressModeURLSearch},
-		Chapters: makeChapters(1),
+		Chapters: []sourceengine.Chapter{{Name: "Chapter 1 current", Number: 1, URL: "/new/chapter-1"}},
 	}, ingest.ReplaceProviderAddress)
 	if err != nil {
 		_ = tx.Rollback()
@@ -1683,5 +1833,9 @@ func TestStaleRefreshCannotRestoreAddressAfterReplacementCommit(t *testing.T) {
 	got := client.SeriesProvider.GetX(ctx, provider.ID)
 	if got.URL != "/new/address" || got.WebURL != "https://new.example/title" || got.AddressMode.String() != "url_search" {
 		t.Errorf("provider address after stale refresh = %q/%q/%q, want committed replacement", got.URL, got.WebURL, got.AddressMode)
+	}
+	gotProviderChapter := client.ProviderChapter.GetX(ctx, providerChapter.ID)
+	if gotProviderChapter.URL != "/new/chapter-1" || gotProviderChapter.Name != "Chapter 1 current" {
+		t.Errorf("provider chapter after stale refresh = %q/%q, want committed replacement feed", gotProviderChapter.URL, gotProviderChapter.Name)
 	}
 }

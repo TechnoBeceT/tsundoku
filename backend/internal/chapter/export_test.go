@@ -21,5 +21,10 @@ func AbsorbProviderChapterRace(
 	key string,
 	fc FetchedChapter,
 ) error {
-	return absorbProviderChapterRace(ctx, client, seriesProviderID, key, fc, nil)
+	scope, err := BeginProviderReconcile(ctx, seriesProviderID, nil)
+	if err != nil {
+		return err
+	}
+	defer scope.Commit()
+	return absorbProviderChapterRace(ctx, client, scope, key, fc)
 }

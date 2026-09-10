@@ -27,6 +27,12 @@
 //     via ProviderChapter.URL (see download's buildFetchRef). The old
 //     backfillSuwayomiChapterIDs step (and ProviderChapter.suwayomi_chapter_id)
 //     has no equivalent here — it is simply not written by this package.
+//
+//   - Provider replacement is transaction-owned. ReconcileProvider accepts the
+//     caller's *ent.Tx and binds both feed leases and a recoverable staging-cache
+//     journal to that transaction's commit/rollback hooks. Background refresh
+//     snapshots re-check the stored provider address after acquiring the same
+//     feed ownership and yield when their fetched-from tuple is stale.
 package ingest
 
 import (
@@ -222,17 +228,26 @@ func NewIngestWithGate(client sourceengine.Client, db *ent.Client, cache *Chapte
 }
 
 // ReconcileProvider updates one specific existing SeriesProvider and reconciles
-// a pre-fetched chapter list into that same row. db may be tx.Client(); in that
-// form the provider update and every feed/chapter upsert commit or roll back
-// together. Matching rows retain their UUIDs and retry/download state, absent
-// upstream keys remain stored, and new keys create ordinary wanted Chapters.
+// a pre-fetched chapter list into that same row. It binds feed ownership and a
+// recoverable staging-cache journal to tx's commit/rollback lifecycle; all row
+// work is performed through tx.Client(). The caller must finish tx even when
+// this method returns an error so those resources are always released.
 func (i *Ingest) ReconcileProvider(
 	ctx context.Context,
-	db *ent.Client,
+	tx *ent.Tx,
 	seriesProviderID uuid.UUID,
 	input ProviderReconcileInput,
 	policy ProviderAddressPolicy,
 ) (chapter.IngestResult, error) {
+	if tx == nil {
+		return chapter.IngestResult{}, errors.New("ingest.Ingest.ReconcileProvider: transaction is nil")
+	}
+	scope, err := chapter.BeginProviderReconcile(ctx, seriesProviderID, i.cacheInvalidator)
+	if err != nil {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: %w", err)
+	}
+	bindProviderReconcileScope(tx, scope)
+	db := tx.Client()
 	provider, err := db.SeriesProvider.Get(ctx, seriesProviderID)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: load series provider %s: %w", seriesProviderID, err)
@@ -262,7 +277,24 @@ func (i *Ingest) ReconcileProvider(
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.ReconcileProvider: update series provider %s: %w", seriesProviderID, err)
 	}
-	return i.reconcileProviderFeed(ctx, db, updated, input.Chapters)
+	return scope.ReconcileProviderChapters(ctx, db, i.mapProviderFeed(updated, input.Chapters))
+}
+
+func bindProviderReconcileScope(tx *ent.Tx, scope *chapter.ProviderReconcileScope) {
+	tx.OnCommit(func(next ent.Committer) ent.Committer {
+		return ent.CommitFunc(func(ctx context.Context, tx *ent.Tx) error {
+			if err := next.Commit(ctx, tx); err != nil {
+				return errors.Join(err, scope.Rollback())
+			}
+			scope.Commit()
+			return nil
+		})
+	})
+	tx.OnRollback(func(next ent.Rollbacker) ent.Rollbacker {
+		return ent.RollbackFunc(func(ctx context.Context, tx *ent.Tx) error {
+			return errors.Join(next.Rollback(ctx, tx), scope.Rollback())
+		})
+	})
 }
 
 // AddSeries fetches all chapters for the manga at url on sourceID, upserts the
@@ -378,7 +410,7 @@ func (i *Ingest) addSeriesRef(
 	// AddSeriesWithChapters path deliberately keeps the stored scanlator.
 	scanlator = i.EffectiveScanlator(ctx, sourceID, scanlator)
 	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, chapterResult.AddressMode)
-	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, chapterResult.Chapters, ReplaceProviderAddress)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, chapterResult.Chapters, ReplaceProviderAddress, nil)
 }
 
 // AddSeriesWithChapters is AddSeries WITHOUT the upstream fetch: it ingests the
@@ -414,10 +446,11 @@ func (i *Ingest) AddSeriesWithChaptersRef(
 	scanlator string,
 	raw sourceengine.ChaptersResult,
 ) (chapter.IngestResult, error) {
+	fetchedFrom := ref
 	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, raw.AddressMode)
 	sourceID := ref.SourceID
 	providerName := i.resolveProviderName(ctx, sourceID)
-	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, raw.Chapters, PreserveProviderAddress)
+	return i.addSeriesWithChapters(ctx, ref, title, scanlator, providerName, raw.Chapters, PreserveProviderAddress, &fetchedFrom)
 }
 
 // addSeriesWithChapters is the shared ingest body for AddSeries and
@@ -433,6 +466,7 @@ func (i *Ingest) addSeriesWithChapters(
 	providerName string,
 	swChapters []sourceengine.Chapter,
 	addressPolicy ProviderAddressPolicy,
+	fetchedFrom *sourceengine.ProviderRef,
 ) (chapter.IngestResult, error) {
 	sourceID := ref.SourceID
 	// Defensive scanlator collapse (mirrors the FE collapseUntaggedScanlator, but
@@ -459,35 +493,76 @@ func (i *Ingest) addSeriesWithChapters(
 	//    MangaDetails is called inside upsertSeriesProvider to populate the
 	//    source's own title and cover — distinct from the canonical series title
 	//    above.
-	sp, err := i.upsertSeriesProvider(ctx, series.ID, ref, scanlator, providerName, addressPolicy)
+	sp, existed, err := i.upsertSeriesProvider(ctx, series.ID, ref, scanlator, providerName, addressPolicy)
 	if err != nil {
 		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest.AddSeries: upsert series provider %d (scanlator %q) for series %s: %w", sourceID, scanlator, series.ID, err)
 	}
 
-	return i.reconcileProviderFeed(ctx, i.db, sp, swChapters)
+	if !existed {
+		fetchedFrom = nil
+	}
+	return i.reconcileProviderFeed(ctx, sp.ID, swChapters, fetchedFrom)
 }
 
-// reconcileProviderFeed applies the stored provider filters and delegates the
-// structural upsert to chapter.ReconcileProviderChapters. Keeping this as the
-// single mapping boundary means ordinary ingest and transaction-backed owner
-// replacement share chapter-key normalization, row identity, and cache rules.
+// reconcileProviderFeed owns a short transaction and feed scope for ordinary
+// ingest. A background snapshot is discarded when fetchedFrom no longer equals
+// the stored address tuple after ownership is acquired; this is the stale-fetch
+// guard that keeps a completed replacement authoritative.
 func (i *Ingest) reconcileProviderFeed(
 	ctx context.Context,
-	db *ent.Client,
-	provider *ent.SeriesProvider,
+	providerID uuid.UUID,
 	raw []sourceengine.Chapter,
+	fetchedFrom *sourceengine.ProviderRef,
 ) (chapter.IngestResult, error) {
+	scope, err := chapter.BeginProviderReconcile(ctx, providerID, i.cacheInvalidator)
+	if err != nil {
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest: begin provider reconcile: %w", err)
+	}
+	tx, err := i.db.Tx(ctx)
+	if err != nil {
+		_ = scope.Rollback()
+		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest: begin feed transaction: %w", err)
+	}
+	db := tx.Client()
+	provider, err := db.SeriesProvider.Get(ctx, providerID)
+	if err != nil {
+		return chapter.IngestResult{}, rollbackProviderFeed(tx, scope, fmt.Errorf("ingest.Ingest: load series provider %s: %w", providerID, err))
+	}
+	if fetchedFrom != nil && !sameProviderAddress(provider, *fetchedFrom) {
+		if err := tx.Rollback(); err != nil {
+			return chapter.IngestResult{}, errors.Join(err, scope.Rollback())
+		}
+		return chapter.IngestResult{}, scope.Rollback()
+	}
+	fetched := i.mapProviderFeed(provider, raw)
+	result, err := scope.ReconcileProviderChapters(ctx, db, fetched)
+	if err != nil {
+		return chapter.IngestResult{}, rollbackProviderFeed(tx, scope, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return chapter.IngestResult{}, errors.Join(err, scope.Rollback())
+	}
+	scope.Commit()
+	return result, nil
+}
+
+func rollbackProviderFeed(tx *ent.Tx, scope *chapter.ProviderReconcileScope, cause error) error {
+	return errors.Join(cause, tx.Rollback(), scope.Rollback())
+}
+
+func sameProviderAddress(provider *ent.SeriesProvider, ref sourceengine.ProviderRef) bool {
+	return provider.URL == ref.URL &&
+		provider.WebURL == ref.WebURL &&
+		provideraddress.FromStored(provider.AddressMode) == ref.AddressMode
+}
+
+func (i *Ingest) mapProviderFeed(provider *ent.SeriesProvider, raw []sourceengine.Chapter) []chapter.FetchedChapter {
 	// A source flagged as a fractional re-uploader contributes no fractional
 	// chapters. Existing rows remain because reconcile is upsert-only.
 	if provider.IgnoreFractional {
 		raw = dropFractional(raw)
 	}
-	fetched := mapToFetchedChapters(raw, provider.Scanlator)
-	result, err := chapter.ReconcileProviderChapters(ctx, db, provider.ID, fetched, i.cacheInvalidator)
-	if err != nil {
-		return chapter.IngestResult{}, fmt.Errorf("ingest.Ingest: reconcile chapters for series provider %s: %w", provider.ID, err)
-	}
-	return result, nil
+	return mapToFetchedChapters(raw, provider.Scanlator)
 }
 
 // upsertSeries finds the Series row by slug or creates it, then updates the
@@ -549,8 +624,8 @@ func (i *Ingest) upsertSeries(ctx context.Context, title string) (*ent.Series, e
 // has no id→lookup; url is the only stable key we have).
 // On find it refreshes non-address metadata. Interactive add/attach keeps its
 // historical address-authoring behavior, while background pre-fetched refresh
-// preserves the stored address tuple. Returns the existing or newly created
-// row.
+// preserves the stored address tuple. The boolean reports whether the returned
+// row existed before this call.
 func (i *Ingest) upsertSeriesProvider(
 	ctx context.Context,
 	seriesID uuid.UUID,
@@ -558,7 +633,7 @@ func (i *Ingest) upsertSeriesProvider(
 	scanlator string,
 	providerName string,
 	addressPolicy ProviderAddressPolicy,
-) (*ent.SeriesProvider, error) {
+) (*ent.SeriesProvider, bool, error) {
 	sourceID, url := ref.SourceID, ref.URL
 	provider := providerKey(sourceID)
 
@@ -571,7 +646,7 @@ func (i *Ingest) upsertSeriesProvider(
 		First(ctx)
 	if existErr != nil && !ent.IsNotFound(existErr) {
 		// Defensive path: reachable only on DB connection loss or cancelled context.
-		return nil, fmt.Errorf("query (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, existErr)
+		return nil, false, fmt.Errorf("query (series=%s provider=%q scanlator=%q): %w", seriesID, provider, scanlator, existErr)
 	}
 
 	// Self-heal a row broken by the pre-fix scanlator-leak (see
@@ -579,11 +654,11 @@ func (i *Ingest) upsertSeriesProvider(
 	// place instead of Create()ing a duplicate on the next refresh sweep.
 	existing, existErr = i.existingOrSelfHealTwin(ctx, existing, seriesID, provider, scanlator, providerName)
 	if existErr != nil {
-		return nil, existErr
+		return nil, false, existErr
 	}
 	if addressPolicy == ReplaceProviderAddress {
 		if err := i.retainExistingProviderAddress(ctx, existing, &ref); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
@@ -591,7 +666,7 @@ func (i *Ingest) upsertSeriesProvider(
 	// this specific source knows about the manga, not the canonical adopt title.
 	meta, err := sourceengine.MangaDetailsFor(ctx, i.client, ref)
 	if err != nil {
-		return nil, fmt.Errorf("manga details (series=%s source=%d url=%q): %w", seriesID, sourceID, url, err)
+		return nil, false, fmt.Errorf("manga details (series=%s source=%d url=%q): %w", seriesID, sourceID, url, err)
 	}
 	resolvedMode := provideraddress.PreserveKnown(ref.AddressMode, meta.AddressMode)
 	srcTitle := meta.Title
@@ -602,9 +677,11 @@ func (i *Ingest) upsertSeriesProvider(
 	}
 
 	if existing != nil {
-		return i.updateSeriesProvider(ctx, existing, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode, addressPolicy)
+		updated, updateErr := i.updateSeriesProvider(ctx, existing, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode, addressPolicy)
+		return updated, true, updateErr
 	}
-	return i.createSeriesProvider(ctx, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
+	created, createErr := i.createSeriesProvider(ctx, seriesID, provider, scanlator, url, srcTitle, cover, webURL, providerName, resolvedMode)
+	return created, false, createErr
 }
 
 func (i *Ingest) updateSeriesProvider(
