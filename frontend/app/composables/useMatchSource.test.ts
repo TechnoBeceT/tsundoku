@@ -45,6 +45,7 @@ let calls: Call[] = []
 
 let nextSearchOk = true
 let nextBatchAddOk = true
+let delayedSearch: Promise<{ data: unknown, error: null, response: Response }> | null = null
 
 vi.mock('~/utils/api/client', () => ({
   apiClient: {
@@ -61,6 +62,7 @@ vi.mock('~/utils/api/client', () => ({
         })
       }
       if (path === '/api/search') {
+        if (delayedSearch) return delayedSearch
         if (!nextSearchOk) {
           return Promise.resolve({ data: null, error: { message: 'search failed' }, response: new Response(null, { status: 500 }) })
         }
@@ -179,6 +181,7 @@ beforeEach(() => {
   calls = []
   nextSearchOk = true
   nextBatchAddOk = true
+  delayedSearch = null
 })
 
 afterEach(() => {
@@ -187,6 +190,20 @@ afterEach(() => {
 })
 
 describe('useMatchSource', () => {
+  it('resetSearch clears state and prevents an earlier in-flight search from repopulating it', async () => {
+    let resolve!: (value: { data: unknown, error: null, response: Response }) => void
+    delayedSearch = new Promise((done) => { resolve = done })
+    const { groups, searching, error, search, resetSearch } = mountUseMatchSource()
+    const pending = search({ q: 'old', sources: [] })
+    expect(searching.value).toBe(true)
+    resetSearch()
+    expect(groups.value).toEqual([])
+    expect(searching.value).toBe(false)
+    expect(error.value).toBeNull()
+    resolve({ data: [{ title: 'Old', candidates: [] }], error: null, response: new Response() })
+    await pending
+    expect(groups.value).toEqual([])
+  })
   it('loadSources() GETs /api/sources once, maps it, and never re-fetches on a second call', async () => {
     const { sources, loadSources } = mountUseMatchSource()
 

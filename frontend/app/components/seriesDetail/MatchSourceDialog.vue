@@ -90,6 +90,12 @@ const props = withDefaults(defineProps<{
   saving?: boolean
   /** A search-or-attach failure message, or null for none. */
   error?: string | null
+  /** Single-candidate address repair, rather than multi-source attachment. */
+  mode?: 'add' | 'rematch'
+  /** Exact source ID allowed in rematch mode. */
+  exactSource?: string
+  /** Human-readable source name shown in rematch copy. */
+  sourceLabel?: string
 }>(), {
   seriesTitle: '',
   sources: () => [],
@@ -99,6 +105,9 @@ const props = withDefaults(defineProps<{
   searching: false,
   saving: false,
   error: null,
+  mode: 'add',
+  exactSource: '',
+  sourceLabel: '',
 })
 
 const emit = defineEmits<{
@@ -118,6 +127,20 @@ const query = ref(props.seriesTitle)
 const srcFilter = ref<string[]>([])
 const stage = ref<'search' | 'configure'>('search')
 const searched = ref(false)
+const rematchCandidate = ref<SearchCandidate | null>(null)
+const rematchMode = computed(() => props.mode === 'rematch')
+const validAddressModes = new Set(['unknown', 'direct', 'url_search', undefined])
+const isValidRematchCandidate = (candidate: SearchCandidate): boolean =>
+  candidate.source === props.exactSource
+  && candidate.url.trim().length > 0
+  && validAddressModes.has(candidate.addressMode)
+const visibleGroups = computed(() => {
+  if (!rematchMode.value) return props.groups
+  return props.groups.map(group => ({
+    ...group,
+    candidates: group.candidates.filter(isValidRematchCandidate),
+  })).filter(group => group.candidates.length > 0)
+})
 
 // The Configure-stage orchestration (tray, row selection/order, per-scanlator
 // split, rank) is owned by the shared composable (Slice P) — this dialog
@@ -154,18 +177,24 @@ watch(() => props.open, (isOpen) => {
     searched.value = false
     tray.value = []
     group.value = null
+    rematchCandidate.value = null
   }
 })
 
 const noResults = computed(() => searched.value && !props.searching && props.groups.length === 0)
 
 function runSearch(): void {
+  if (rematchMode.value) rematchCandidate.value = null
   searched.value = true
-  emit('search', { q: query.value.trim(), sources: [...srcFilter.value] })
+  emit('search', { q: query.value.trim(), sources: rematchMode.value ? [props.exactSource] : [...srcFilter.value] })
 }
 
 // Classic single-group pick (tray empty) — advances straight to Configure.
 function pickGroup(g: SearchGroup): void {
+  if (rematchMode.value) {
+    rematchCandidate.value = g.candidates.find(isValidRematchCandidate) ?? null
+    return
+  }
   enterConfigure(g.candidates)
   stage.value = 'configure'
 }
@@ -187,6 +216,12 @@ function onBackOrCancel(): void {
 }
 
 function confirm(): void {
+  if (rematchMode.value) {
+    const candidate = rematchCandidate.value
+    if (!candidate || !isValidRematchCandidate(candidate) || props.saving) return
+    emit('confirm', [{ source: candidate.source, mangaId: candidate.mangaId, scanlator: '', url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl }])
+    return
+  }
   if (selectedCount.value === 0 || props.saving || breakdownsResolving.value) return
   emit('confirm', orderedProviders.value)
 }
@@ -196,7 +231,7 @@ function confirm(): void {
   <Dialog
     :open="open"
     :busy="saving"
-    title="Add a source"
+    :title="rematchMode ? 'Rematch source' : 'Add a source'"
     @update:open="emit('update:open', $event)"
   >
     <ErrorBanner v-if="error" class="match__error" :message="error" :dismissible="false" />
@@ -217,7 +252,8 @@ function confirm(): void {
       </div>
 
       <!-- Source filter chips (only when the parent supplied a source list) -->
-      <SourceFilterChips v-if="sources.length" v-model:selected="srcFilter" :sources="sources" />
+      <p v-if="rematchMode" class="match-note match-note--source">Search is limited to {{ sourceLabel || 'this source' }}.</p>
+      <SourceFilterChips v-else-if="sources.length" v-model:selected="srcFilter" :sources="sources" />
 
       <div v-if="searching" class="match-loading">
         <Spinner :size="16" tone="accent" />
@@ -227,24 +263,28 @@ function confirm(): void {
 
       <!-- Cross-search gather tray: persists across a new search, always above the results -->
       <AdoptTray
-        v-if="trayActive"
+        v-if="trayActive && !rematchMode"
         :candidates="tray"
         @configure="onConfigureTray"
         @remove="removeCand"
       />
 
-      <div v-if="!searching && groups.length" class="match-groups">
+      <div v-if="!searching && visibleGroups.length" class="match-groups">
         <SearchGroupCard
-          v-for="g in groups"
+          v-for="g in visibleGroups"
           :key="g.title"
           :group="g"
-          tray-enabled
+          :tray-enabled="!rematchMode"
           :added="isGroupAdded(g)"
           :tray-active="trayActive"
           @pick="pickGroup"
           @add="addGroup"
           @remove="removeGroup"
         />
+      </div>
+      <div v-if="rematchCandidate" class="match-rematch-confirm" role="status">
+        <strong>{{ rematchCandidate.title }}</strong>
+        <span>Downloaded chapters and files stay unchanged. Only this provider's source address and chapter feed are refreshed.</span>
       </div>
     </section>
 
@@ -276,6 +316,15 @@ function confirm(): void {
         @click="confirm"
       >
         Attach sources
+      </AppButton>
+      <AppButton
+        v-if="rematchMode && rematchCandidate"
+        variant="primary"
+        :loading="saving"
+        :disabled="saving"
+        @click="confirm"
+      >
+        Rematch source
       </AppButton>
     </template>
   </Dialog>
@@ -323,6 +372,9 @@ function confirm(): void {
   text-align: left;
   color: var(--faint);
 }
+.match-note--source { padding: 0 0 var(--space-sm); text-align: left; }
+.match-rematch-confirm { display: grid; gap: var(--space-xs); margin-top: var(--space-md); padding: var(--space-md); border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accentSoft); color: var(--muted); font-size: var(--text-sm); }
+.match-rematch-confirm strong { color: var(--text); }
 
 .match-groups {
   display: flex;

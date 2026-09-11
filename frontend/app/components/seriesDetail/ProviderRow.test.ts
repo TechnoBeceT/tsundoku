@@ -53,6 +53,14 @@ function render(over: Partial<Provider> = {}) {
 }
 
 describe('ProviderRow — coverage line', () => {
+  it('offers rematch for linked providers and never offers disk matching there', async () => {
+    const w = render()
+    const rematch = w.findAll('button').find(button => button.text() === 'Rematch source')!
+    expect(rematch.exists()).toBe(true)
+    expect(w.text()).not.toContain('Match to source')
+    await rematch.trigger('click')
+    expect(w.emitted('rematch')).toEqual([[]])
+  })
   it('shows the source\'s offering (count + ranges) and the supplied count, with no click', () => {
     const w = render()
 

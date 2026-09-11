@@ -105,3 +105,27 @@ export const Saving: Story = {
     await userEvent.click(await canvas.findByText(searchResults[0]!.title))
   },
 }
+
+/** Same-source address repair: one candidate and explicit no-redownload copy. */
+export const Rematch: Story = {
+  args: {
+    mode: 'rematch',
+    exactSource: searchResults[0]!.candidates[0]!.source,
+    sourceLabel: searchResults[0]!.candidates[0]!.sourceName,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+  },
+}
+
+/** Rematch request in flight: dismissal and duplicate submission are disabled. */
+export const RematchSaving: Story = {
+  args: {
+    mode: 'rematch',
+    exactSource: searchResults[0]!.candidates[0]!.source,
+    sourceLabel: searchResults[0]!.candidates[0]!.sourceName,
+    saving: true,
+  },
+  play: Rematch.play,
+}

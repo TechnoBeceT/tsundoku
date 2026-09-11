@@ -106,6 +106,14 @@ export function useMatchSource(seriesId: string) {
   /** Monotonic request-generation counter for `search()`'s stale-response guard (see above). */
   let searchGeneration = 0
 
+  /** Starts a fresh dialog lifecycle and makes every earlier search response stale. */
+  function resetSearch(): void {
+    searchGeneration++
+    groups.value = []
+    searching.value = false
+    error.value = null
+  }
+
   // ---- sources (the source-filter chip list, loaded lazily on first open) ----
   // Unlike the Import wizard (which loads sources eagerly on mount), this dialog
   // only needs the list once the owner opens it, so `loadSources` is called
@@ -318,5 +326,5 @@ export function useMatchSource(seriesId: string) {
     }
   }
 
-  return { sources, groups, searching, saving, error, breakdowns, breakdownSnapshots, loadSources, search, loadBreakdowns, refreshBreakdown, batchAddProviders }
+  return { sources, groups, searching, saving, error, breakdowns, breakdownSnapshots, loadSources, resetSearch, search, loadBreakdowns, refreshBreakdown, batchAddProviders }
 }

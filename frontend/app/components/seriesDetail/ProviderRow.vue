@@ -71,6 +71,8 @@ const emit = defineEmits<{
   remove: []
   /** The "Match to source" button was pressed (unlinked groups only). */
   match: []
+  /** The linked provider's stored address needs to be replaced from a current same-source candidate. */
+  rematch: []
   /** The ignore-fractional switch flipped — carries the NEW value. */
   toggleIgnoreFractional: [ignore: boolean]
   /** The consolidation checkbox flipped — carries the NEW selected value. */
@@ -208,6 +210,9 @@ const rel = (iso: string | null): string => {
             <path d="M9 18l6-6-6-6" />
           </svg>
           Match to source
+        </button>
+        <button v-if="provider.linked" type="button" class="btn-match" :disabled="saving" @click="emit('rematch')">
+          Rematch source
         </button>
         <button type="button" class="btn-remove" :disabled="saving" @click="emit('remove')">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

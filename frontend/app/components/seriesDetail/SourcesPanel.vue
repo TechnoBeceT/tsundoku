@@ -77,6 +77,8 @@ const emit = defineEmits<{
   removeSource: [id: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [id: string]
+  /** "Rematch source" was pressed on a linked provider. */
+  rematchProvider: [id: string]
   /** A source's ignore-fractional switch flipped — carries its SeriesProvider id and the NEW value. */
   toggleIgnoreFractional: [id: string, ignore: boolean]
   /** The Add button was pressed (→ opens the Match Source dialog). */
@@ -202,6 +204,7 @@ const onStartConsolidate = (): void => {
         @move="emit('move', p.id, $event)"
         @remove="emit('removeSource', p.id)"
         @match="emit('matchProvider', p.id)"
+        @rematch="emit('rematchProvider', p.id)"
         @toggle-ignore-fractional="emit('toggleIgnoreFractional', p.id, $event)"
         @toggle-select="toggleSelect(p.id, $event)"
       />

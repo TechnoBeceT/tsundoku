@@ -40,6 +40,40 @@ function findGroupCard(wrapper: VueWrapper, title: string) {
 }
 
 describe('MatchSourceDialog', () => {
+  it('locks rematch search to one source and confirms one candidate with preservation copy', async () => {
+    const wrapper = mountDialog({ mode: 'rematch', exactSource: searchResults[0]!.candidates[0]!.source, sourceLabel: 'MangaDex' })
+    await wrapper.findAll('button').find(b => b.text() === 'Search')!.trigger('click')
+    expect(wrapper.emitted('search')).toEqual([[{ q: 'Solo Leveling', sources: [searchResults[0]!.candidates[0]!.source] }]])
+    expect(wrapper.find('button.imp-chip').exists()).toBe(false)
+    await wrapper.find('.group').trigger('click')
+    expect(wrapper.text()).toContain('Downloaded chapters and files stay unchanged')
+    await wrapper.findAll('button').find(b => b.text() === 'Rematch source')!.trigger('click')
+    const providers = wrapper.emitted('confirm')![0]![0] as { source: string }[]
+    expect(providers).toHaveLength(1)
+    expect(providers[0]!.source).toBe(searchResults[0]!.candidates[0]!.source)
+  })
+
+  it('does not expose an empty-address rematch candidate for confirmation', () => {
+    const source = searchResults[0]!.candidates[0]!.source
+    const groups = [{ ...searchResults[0]!, candidates: [{ ...searchResults[0]!.candidates[0]!, url: '   ' }] }]
+    const wrapper = mountDialog({ mode: 'rematch', exactSource: source, groups })
+    expect(wrapper.find('.group').exists()).toBe(false)
+    expect(wrapper.findAll('button').some(button => button.text() === 'Rematch source')).toBe(false)
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
+
+  it('clears the selected rematch candidate as soon as a new search starts', async () => {
+    const source = searchResults[0]!.candidates[0]!.source
+    const wrapper = mountDialog({ mode: 'rematch', exactSource: source })
+    await wrapper.find('.group').trigger('click')
+    expect(wrapper.text()).toContain('Downloaded chapters and files stay unchanged')
+
+    await wrapper.findAll('button').find(button => button.text() === 'Search')!.trigger('click')
+
+    expect(wrapper.text()).not.toContain('Downloaded chapters and files stay unchanged')
+    expect(wrapper.findAll('button').filter(button => button.text() === 'Rematch source')).toHaveLength(0)
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+  })
   it('prefills the search box with the series title', () => {
     const wrapper = mountDialog()
     const input = wrapper.find('input[type="search"]')
