@@ -188,6 +188,7 @@ const emit = defineEmits<{
   requestRemoveSource: [providerId: string]
   /** "Match to source" was pressed on an unlinked disk-origin group — carries its SeriesProvider id. */
   matchProvider: [providerId: string]
+  rematchProvider: [providerId: string]
   /** A source's "Ignore fractional chapters" switch flipped — carries its SeriesProvider id and the NEW value. */
   toggleIgnoreFractional: [providerId: string, ignore: boolean]
   /** RichSeriesCard's "Metadata" button was pressed (→ the page opens MetadataIdentifyModal). */
@@ -354,6 +355,7 @@ const onConfirmDelete = (deleteFiles: boolean): void => {
         @move="onMove"
         @remove-source="emit('requestRemoveSource', $event)"
         @match-provider="emit('matchProvider', $event)"
+        @rematch-provider="emit('rematchProvider', $event)"
         @toggle-ignore-fractional="(providerId, ignore) => emit('toggleIgnoreFractional', providerId, ignore)"
         @add-source="emit('addSource')"
         @dedup-providers="emit('dedupProviders')"

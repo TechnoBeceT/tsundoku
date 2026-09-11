@@ -454,7 +454,8 @@ func main() {
 	})
 	refreshSvc := refresh.NewService(
 		entClient,
-		ingest.NewIngestWithGate(engineClient, entClient, refreshChapterCache, gateSvc),
+		ingest.NewIngestWithGate(engineClient, entClient, refreshChapterCache, gateSvc).
+			WithProviderChapterCacheInvalidator(download.NewProviderChapterCacheInvalidator(stagingRoot)),
 		hub,
 		settingsSvc,
 		gateSvc,

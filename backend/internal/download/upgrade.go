@@ -39,6 +39,7 @@ var errUpgradeSourceUnavailable = errors.New("upgrade source is no longer availa
 type upgradeResult struct {
 	owned       bool
 	fetched     bool
+	releaseFeed func()
 	pc          *ent.ProviderChapter
 	sp          *ent.SeriesProvider
 	importance  int
@@ -451,6 +452,9 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 	// DownloadConcurrency. UpgradeAll passes ONE limiter for the whole pass, so its
 	// per-source upgrade parallelism can never exceed that cap upstream.
 	res, err := d.fetchAndRender(ctx, ch, chapterID, limiter, disabled, globalSem)
+	if res.releaseFeed != nil {
+		defer res.releaseFeed()
+	}
 	if err != nil {
 		if !res.fetched && (errors.Is(err, errUpgradeNoLongerNeeded) || errors.Is(err, errUpgradeSourceUnavailable)) {
 			return d.finishUnstartedUpgrade(ctx, ch, res.refreshSatisfiedImportance)
@@ -570,6 +574,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		d.broadcast("upgrade.start", DownloadEvent{ChapterID: chapterID, State: string(entchapter.StateUpgrading)})
 		return true, nil
 	})
+	releaseFeed := admission.releaseFeed
 	d.persistUpgradeResolvedAddressMode(ctx, sp.ID, admission)
 	if err != nil {
 		d.recordUpgradeFetchFailure(ctx, sourceKey, admission, err)
@@ -578,7 +583,7 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// source-wide → cooldown), and stagingDir so the caller wipes the
 		// partially-staged pages — Fetch populates StagingDir even on error. The fetched
 		// flag keeps this metadata unreachable for a local admission error.
-		return upgradeResult{fetched: admission.fetched, pc: pc, sp: sp, stagingDir: admission.pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
+		return upgradeResult{fetched: admission.fetched, releaseFeed: releaseFeed, pc: pc, sp: sp, stagingDir: admission.pages.StagingDir, usedCachedLinks: usedCachedLinks}, err
 	}
 	if !admission.owned {
 		return upgradeResult{}, nil
@@ -599,12 +604,13 @@ func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapte
 		// A render failure is a LOCAL fault (no pc → no cooldown), but the fetch
 		// already staged every page — carry stagingDir so the caller wipes it (a
 		// failed upgrade never resumes, unlike the download path).
-		return upgradeResult{owned: true, fetched: true, stagingDir: pages.StagingDir}, err
+		return upgradeResult{owned: true, fetched: true, releaseFeed: releaseFeed, stagingDir: pages.StagingDir}, err
 	}
 
 	return upgradeResult{
 		owned:       true,
 		fetched:     true,
+		releaseFeed: releaseFeed,
 		pc:          pc,
 		sp:          sp,
 		importance:  sp.Importance,

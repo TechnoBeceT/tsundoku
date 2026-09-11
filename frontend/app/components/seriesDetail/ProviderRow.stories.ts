@@ -83,6 +83,16 @@ export const Saving: Story = {
   },
 }
 
+/** Linked provider with the address-repair action ready. */
+export const RematchReady: Story = {
+  args: { ...Preferred.args },
+}
+
+/** Linked provider while rematching; row mutations cannot be submitted twice. */
+export const RematchBusy: Story = {
+  args: { ...Preferred.args, saving: true },
+}
+
 /** An unlinked disk-origin group: UNLINKED chip, note, and the "Match to source" action. */
 export const Unlinked: Story = {
   args: {

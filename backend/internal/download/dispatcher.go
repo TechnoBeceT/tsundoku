@@ -9,6 +9,9 @@
 // one BOUNDED batch per source per call rather than draining a source's whole
 // backlog — see RunOnce's doc comment and job.Runner.RunDownloadCycle, which
 // loops it to drain a cycle while staying responsive to newly-wanted chapters.
+// A fetch holds shared ProviderChapter feed ownership from admission through
+// page-link persistence and staging cleanup, allowing ordinary fetch concurrency
+// while making an address-changing reconcile wait for every old-address owner.
 package download
 
 import (
@@ -393,9 +396,10 @@ func (d *Dispatcher) gateWait(ctx context.Context, sourceKey string) {
 // retry/breaker/cache accounting only when fetched is true; owned=false is a
 // harmless concurrent-claim loss.
 type fetchAdmissionResult struct {
-	pages   fetcher.ChapterPages
-	fetched bool
-	owned   bool
+	pages       fetcher.ChapterPages
+	fetched     bool
+	owned       bool
+	releaseFeed func()
 }
 
 // fetchWithAdmission makes one engine call after all admission controls that
@@ -410,7 +414,10 @@ type fetchAdmissionResult struct {
 // completes never reaches the engine; sourcegate deliberately retains a
 // politeness reservation cancelled while waiting, preserving its spacing
 // contract. A successful callback transfers ownership to the engine, so there
-// is deliberately no cancellation check between it and Fetch.
+// is deliberately no cancellation check between it and Fetch. The call also
+// takes the addressed ProviderChapter's feed lease before admission. A fetched
+// result transfers that lease to the caller, which must release it only after
+// page-link persistence and staging cleanup are complete.
 func (d *Dispatcher) fetchWithAdmission(
 	ctx context.Context,
 	sourceKey string,
@@ -436,6 +443,16 @@ func (d *Dispatcher) fetchWithAdmission(
 	if err := ctx.Err(); err != nil {
 		return fetchAdmissionResult{}, err
 	}
+	feedLease, err := chapter.AcquireProviderChapterFetchLease(ctx, ref.ProviderChapterID)
+	if err != nil {
+		return fetchAdmissionResult{}, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			feedLease.Release()
+		}
+	}()
 	if onAdmitted != nil {
 		owned, err := onAdmitted()
 		if err != nil || !owned {
@@ -443,7 +460,8 @@ func (d *Dispatcher) fetchWithAdmission(
 		}
 	}
 	pages, err := d.f.Fetch(ctx, ref)
-	return fetchAdmissionResult{pages: pages, fetched: true, owned: true}, err
+	transferred = true
+	return fetchAdmissionResult{pages: pages, fetched: true, owned: true, releaseFeed: feedLease.Release}, err
 }
 
 // admitChapterFetch conditionally claims one exact eligible→in-flight edge in a
@@ -1088,6 +1106,9 @@ func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterI
 	result, fetchErr := d.fetchWithAdmission(pctx, sourceKey, buildFetchRef(cand.ProviderChapter, cand.SeriesProvider), limiter, globalSem, func() (bool, error) {
 		return onAdmitted(cand)
 	})
+	if result.releaseFeed != nil {
+		defer result.releaseFeed()
+	}
 	fetchDuration := time.Since(fetchStart)
 	if !result.fetched {
 		return false, false, fetchErr
@@ -1329,6 +1350,10 @@ func (d *Dispatcher) cleanupStaging(ctx context.Context, dir string) {
 // must react to a failure (chargeFetchFailure's not_found branch, which only
 // clears the page links when the wipe SUCCEEDS) can. A blank dir is a no-op.
 func (d *Dispatcher) removeStaging(dir string) error {
+	return removeStagingDir(dir)
+}
+
+func removeStagingDir(dir string) error {
 	if dir == "" {
 		return nil
 	}

@@ -15,6 +15,11 @@ function mountPanel(props: Record<string, unknown> = {}) {
 }
 
 describe('SourcesPanel — multi-select consolidation', () => {
+  it('bubbles a linked row rematch with the provider id', async () => {
+    const wrapper = mountPanel({ providers: singleProviderSeries.providers })
+    await wrapper.findAll('button').find(button => button.text() === 'Rematch source')!.trigger('click')
+    expect(wrapper.emitted('rematchProvider')).toEqual([[singleProviderSeries.providers[0]!.id]])
+  })
   it('renders a select checkbox per row when there are ≥2 sources', () => {
     const wrapper = mountPanel()
     expect(wrapper.findAll('input[type="checkbox"]')).toHaveLength(richSeries.providers.length)

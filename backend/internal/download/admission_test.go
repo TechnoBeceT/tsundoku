@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -168,7 +169,10 @@ func TestFetchWithAdmission_GlobalCapBoundsActualEngineCalls(t *testing.T) {
 }
 
 func admissionCall(d *Dispatcher, ctx context.Context, sourceKey string, global *semaphore.Weighted) error {
-	_, err := d.fetchWithAdmission(ctx, sourceKey, fetcher.FetchRef{}, newProviderLimiter(1), global, nil)
+	result, err := d.fetchWithAdmission(ctx, sourceKey, fetcher.FetchRef{ProviderChapterID: uuid.New()}, newProviderLimiter(1), global, nil)
+	if result.releaseFeed != nil {
+		defer result.releaseFeed()
+	}
 	return err
 }
 
@@ -207,7 +211,10 @@ func TestFetchWithAdmission_ReleasesGlobalPermitOnEngineError(t *testing.T) {
 	want := errors.New("engine unavailable")
 	d := &Dispatcher{f: &admissionFetcher{err: want}}
 
-	_, err := d.fetchWithAdmission(context.Background(), "ready", fetcher.FetchRef{}, newProviderLimiter(1), global, nil)
+	result, err := d.fetchWithAdmission(context.Background(), "ready", fetcher.FetchRef{ProviderChapterID: uuid.New()}, newProviderLimiter(1), global, nil)
+	if result.releaseFeed != nil {
+		defer result.releaseFeed()
+	}
 	if !errors.Is(err, want) {
 		t.Fatalf("fetchWithAdmission error = %v, want %v", err, want)
 	}
@@ -227,7 +234,7 @@ func TestFetchWithAdmission_ReleasesGlobalPermitWhenEnginePanics(t *testing.T) {
 				t.Fatal("fetchWithAdmission did not preserve engine panic")
 			}
 		}()
-		_, _ = d.fetchWithAdmission(context.Background(), "ready", fetcher.FetchRef{}, newProviderLimiter(1), global, nil)
+		_, _ = d.fetchWithAdmission(context.Background(), "ready", fetcher.FetchRef{ProviderChapterID: uuid.New()}, newProviderLimiter(1), global, nil)
 	}()
 	if !global.TryAcquire(1) {
 		t.Fatal("global admission leaked after engine panic")

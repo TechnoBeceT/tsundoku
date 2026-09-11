@@ -39,6 +39,7 @@ import { useSeriesDetail } from './useSeriesDetail'
 interface Call { method: string, path: string, body?: unknown, params?: unknown }
 let calls: Call[] = []
 let nextMatchOk = true
+let nextRematchOk = true
 let nextConsolidateOk = true
 let nextDedupOk = true
 let nextDedupeFilesOk = true
@@ -194,6 +195,10 @@ vi.mock('~/utils/api/client', () => ({
     }),
     POST: vi.fn().mockImplementation((path: string, opts?: { params?: { path?: Record<string, unknown> }, body?: unknown }) => {
       calls.push({ method: 'POST', path, params: opts?.params?.path, body: opts?.body })
+      if (path === '/api/series/{id}/providers/{providerId}/rematch') {
+        if (!nextRematchOk) return Promise.resolve({ data: null, error: { message: 'candidate rejected' }, response: new Response(null, { status: 400 }) })
+        return Promise.resolve({ data: { ...initialDetail, displayName: 'Rematched title' }, error: null, response: new Response(null, { status: 200 }) })
+      }
       if (path === '/api/series/{id}/providers/{providerId}/match') {
         if (!nextMatchOk) {
           return Promise.resolve({ data: null, error: { message: 'match failed' }, response: new Response(null, { status: 400 }) })
@@ -291,6 +296,38 @@ vi.mock('~/composables/useProgressStream', () => ({
     disconnect: vi.fn(),
   }),
 }))
+
+describe('useSeriesDetail — rematchProvider', () => {
+  beforeEach(() => {
+    calls = []
+    nextRematchOk = true
+    seriesDetailResponse = initialDetail
+  })
+
+  it('posts the generated address tuple and replaces detail from the response', async () => {
+    const detail = useSeriesDetail('series-1')
+    await detail.refresh()
+    const body = { source: 'src-2', url: '/comics/title', addressMode: 'url_search' as const, webUrl: 'https://example.test/comics/title' }
+    expect(await detail.rematchProvider('real-provider-2', body)).toBe(true)
+    expect(calls.find(call => call.path.endsWith('/rematch'))).toEqual({
+      method: 'POST',
+      path: '/api/series/{id}/providers/{providerId}/rematch',
+      params: { id: 'series-1', providerId: 'real-provider-2' },
+      body,
+    })
+    expect(detail.series.value?.title).toBe('Rematched title')
+  })
+
+  it('surfaces the backend error and leaves local detail untouched', async () => {
+    const detail = useSeriesDetail('series-1')
+    await detail.refresh()
+    const before = detail.series.value
+    nextRematchOk = false
+    expect(await detail.rematchProvider('real-provider-2', { source: 'src-2', url: '/bad' })).toBe(false)
+    expect(detail.series.value).toBe(before)
+    expect(detail.error.value).toBe('candidate rejected')
+  })
+})
 
 describe('useSeriesDetail — matchDiskProvider (async)', () => {
   beforeEach(() => {

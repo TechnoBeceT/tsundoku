@@ -4314,6 +4314,26 @@ components:
             for "all chapters from this source". The same source may be attached again
             under a different scanlator.
 
+    RematchProviderRequest:
+      type: object
+      description: Replaces only an existing provider's source-owned manga address.
+      required:
+        - source
+        - url
+      properties:
+        source:
+          type: string
+          description: Existing provider source ID; a different source is rejected.
+        url:
+          type: string
+          minLength: 1
+          description: Owner-selected source-owned serialized manga address.
+        addressMode:
+          $ref: "#/components/schemas/AddressMode"
+        webUrl:
+          type: string
+          description: Optional browser URL used as a resolution witness.
+
     ProviderDedupResult:
       type: object
       description: |
@@ -5536,6 +5556,81 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: A source exists but its anti-ban circuit-breaker is cooled down — retry shortly.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/series/{id}/providers/{providerId}/rematch:
+    post:
+      operationId: rematchSeriesProvider
+      summary: Repair an existing provider's manga address
+      description: >-
+        Resolves an owner-selected candidate from the provider's existing source,
+        then updates the same provider and reconciles its chapter feed in place.
+        Existing chapter state and files are preserved.
+      tags:
+        - library
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: providerId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RematchProviderRequest"
+      responses:
+        "200":
+          description: Provider rematched; returns refreshed series detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SeriesDetail"
+        "400":
+          description: Invalid IDs/address tuple, or selected source differs from the provider source.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid Bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Series/provider relationship or installed source not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Another provider mutation holds the per-series latch.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: Source resolution or fetch failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Source is temporarily unavailable.
           content:
             application/json:
               schema:

@@ -32,6 +32,9 @@ let removeOk = true
 // removed source, exactly as the backend does. This is what USED to degrade the
 // still-open dialog's heading to `Remove “”?` (the name no longer resolved).
 let removed = false
+let rematchOk = true
+let malformedCandidate = false
+let rematchPosts = 0
 
 const detail = {
   id: 'series-1',
@@ -84,9 +87,26 @@ vi.mock('~/utils/api/client', () => ({
         const data = removed ? { ...detail, providers: [] } : detail
         return Promise.resolve({ data, error: null, response: new Response() })
       }
+      if (path === '/api/search') {
+        return Promise.resolve({
+          data: [{
+            title: 'Solo Leveling',
+            candidates: [{ source: 'asurascans', sourceName: 'Asura Scans', lang: 'en', mangaId: 42, title: 'Solo Leveling', url: malformedCandidate ? ' ' : '/comics/solo-leveling', thumbnailUrl: '', author: '', artist: '', description: '', genres: [] }],
+          }],
+          error: null,
+          response: new Response(),
+        })
+      }
       return Promise.resolve({ data: [], error: null, response: new Response() })
     }),
-    POST: vi.fn(() => Promise.resolve({ data: null, error: null, response: new Response() })),
+    POST: vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/series/{id}/providers/{providerId}/rematch') {
+        rematchPosts++
+        if (!rematchOk) return Promise.resolve({ data: null, error: { message: 'rematch already running' }, response: new Response(null, { status: 409 }) })
+        return Promise.resolve({ data: detail, error: null, response: new Response() })
+      }
+      return Promise.resolve({ data: null, error: null, response: new Response() })
+    }),
     PATCH: vi.fn(() => Promise.resolve({ data: null, error: null, response: new Response() })),
     DELETE: vi.fn().mockImplementation(() => {
       if (!removeOk) {
@@ -161,5 +181,59 @@ describe('series detail page — remove-source dialog', () => {
     expect(wrapper.text()).toContain('Remove “asurascans”?')
     expect(confirmButton(wrapper)).toBeDefined()
     expect(wrapper.text()).toContain('Update failed')
+  })
+})
+
+async function openRematchDialog() {
+  const wrapper = await mountSuspended(Page, { global: { stubs: { Dialog: DialogStub } } })
+  await flushPromises()
+  await wrapper.findAll('button').find(button => button.text() === 'Rematch source')!.trigger('click')
+  await flushPromises()
+  return wrapper
+}
+
+describe('series detail page — rematch source', () => {
+  beforeEach(() => {
+    removed = false
+    rematchOk = true
+    malformedCandidate = false
+    rematchPosts = 0
+  })
+
+  it('closes only after a successful same-source rematch', async () => {
+    const wrapper = await openRematchDialog()
+    await wrapper.findAll('button').find(button => button.text() === 'Search')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('.group').trigger('click')
+    await wrapper.findAll('button').filter(button => button.text() === 'Rematch source').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(rematchPosts).toBe(1)
+    expect(wrapper.text()).not.toContain('Downloaded chapters and files stay unchanged')
+    expect(wrapper.text()).toContain('Source rematched')
+  })
+
+  it('keeps the dialog open on a 409 and clears its error before reopening', async () => {
+    rematchOk = false
+    const wrapper = await openRematchDialog()
+    await wrapper.findAll('button').find(button => button.text() === 'Search')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('.group').trigger('click')
+    await wrapper.findAll('button').filter(button => button.text() === 'Rematch source').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('rematch already running')
+    expect(wrapper.text()).toContain('Downloaded chapters and files stay unchanged')
+    await wrapper.findAll('button').find(button => button.text() === 'Cancel')!.trigger('click')
+    await wrapper.findAll('button').find(button => button.text() === 'Rematch source')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('rematch already running')
+  })
+
+  it('never submits a malformed empty candidate address', async () => {
+    malformedCandidate = true
+    const wrapper = await openRematchDialog()
+    await wrapper.findAll('button').find(button => button.text() === 'Search')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.group').exists()).toBe(false)
+    expect(rematchPosts).toBe(0)
   })
 })

@@ -157,6 +157,7 @@ const {
   deleteBusy,
   removeBusy,
   matchBusy,
+  rematchBusy,
   setMonitored,
   setCompleted,
   setCategory,
@@ -165,6 +166,7 @@ const {
   setIgnoreFractional,
   deleteSeries,
   matchDiskProvider,
+  rematchProvider,
   consolidateProviders,
   dismissError,
   reseed,
@@ -212,6 +214,7 @@ const {
   saving: matchSaving,
   error: matchError,
   loadSources: matchLoadSources,
+  resetSearch: resetMatchSearch,
   search: matchSearch,
   loadBreakdowns: matchLoadBreakdowns,
   refreshBreakdown: matchRefreshBreakdown,
@@ -219,11 +222,24 @@ const {
 } = useMatchSource(id)
 
 const matchOpen = ref(false)
+const rematchOpen = ref(false)
+const rematchTargetId = ref<string | null>(null)
+const rematchTarget = computed(() => series.value?.providers.find(provider => provider.id === rematchTargetId.value) ?? null)
 
 // Lazily load the source-filter list the first time the "Add a source" dialog
 // opens (useMatchSource.loadSources is guarded to fetch at most once).
 watch(matchOpen, (isOpen) => {
-  if (isOpen) void matchLoadSources()
+  if (isOpen) {
+    resetMatchSearch()
+    dismissError()
+    void matchLoadSources()
+  }
+})
+
+watch(rematchOpen, (isOpen) => {
+  if (!isOpen) return
+  resetMatchSearch()
+  dismissError()
 })
 
 async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
@@ -232,6 +248,29 @@ async function onMatchConfirm(providers: ProviderRef[]): Promise<void> {
     matchOpen.value = false
     reseed(detail)
   }
+}
+
+function openRematchProvider(providerId: string): void {
+  const provider = series.value?.providers.find(item => item.id === providerId)
+  if (!provider?.linked) return
+  rematchTargetId.value = providerId
+  rematchOpen.value = true
+}
+
+async function onRematchConfirm(providers: ProviderRef[]): Promise<void> {
+  const target = rematchTarget.value
+  const candidate = providers[0]
+  if (!target || rematchBusy.value) return
+  if (candidate?.source !== target.provider) return
+  if (candidate.url.trim().length === 0) return
+  if (candidate.addressMode && !['unknown', 'direct', 'url_search'].includes(candidate.addressMode)) return
+  const ok = await rematchProvider(target.id, {
+    source: candidate.source,
+    url: candidate.url,
+    addressMode: candidate.addressMode,
+    webUrl: candidate.webUrl,
+  })
+  if (ok) rematchOpen.value = false
 }
 
 // ---- Remove source (confirm dialog) ----------------------------------------
@@ -640,7 +679,7 @@ function onResume(): void {
       v-else-if="series"
       :series="series"
       :category-options="categoryOptions"
-      :saving="saving"
+      :saving="saving || rematchBusy"
       :delete-busy="deleteBusy"
       :error="screenError"
       :dedup-busy="dedupBusy"
@@ -676,6 +715,7 @@ function onResume(): void {
       @reorder-providers="reorderProviders"
       @request-remove-source="openRemove"
       @match-provider="openMatchProvider"
+      @rematch-provider="openRematchProvider"
       @toggle-ignore-fractional="setIgnoreFractional"
       @request-identify="identifyOpen = true"
       @request-cover-picker="coverPickerOpen = true"
@@ -743,6 +783,21 @@ function onResume(): void {
       @load-breakdowns="matchLoadBreakdowns"
       @refresh-breakdown="matchRefreshBreakdown"
       @confirm="onMatchConfirm"
+    />
+
+    <MatchSourceDialog
+      v-if="series && rematchTarget"
+      v-model:open="rematchOpen"
+      mode="rematch"
+      :series-title="series.title"
+      :exact-source="rematchTarget.provider"
+      :source-label="rematchTarget.providerName"
+      :groups="matchGroups"
+      :searching="matchSearching"
+      :saving="rematchBusy"
+      :error="matchError ?? error"
+      @search="matchSearch"
+      @confirm="onRematchConfirm"
     />
 
     <MatchDiskProviderDialog

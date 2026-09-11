@@ -67,6 +67,8 @@ export interface MatchDiskProviderPayload {
   scanlator?: string
 }
 
+export type RematchProviderPayload = components['schemas']['RematchProviderRequest']
+
 function mapChapter(dto: ChapterDTO): Chapter {
   return {
     id: dto.id,
@@ -160,6 +162,7 @@ export function useSeriesDetail(id: string) {
   const deleteBusy = ref(false)
   const removeBusy = ref(false)
   const matchBusy = ref(false)
+  const rematchBusy = ref(false)
   const dedupBusy = ref(false)
   const dedupePreviewBusy = ref(false)
   const dedupeFilesBusy = ref(false)
@@ -332,6 +335,30 @@ export function useSeriesDetail(id: string) {
       matchBusy.value = false
       error.value = err instanceof Error ? err.message : 'Match failed'
       return false
+    }
+  }
+
+  /** Replaces one linked provider's address and feed while preserving the returned chapter/file state. */
+  const rematchProvider = async (providerId: string, payload: RematchProviderPayload): Promise<boolean> => {
+    rematchBusy.value = true
+    error.value = null
+    dedupMessage.value = null
+    try {
+      const res = await apiClient.POST('/api/series/{id}/providers/{providerId}/rematch', {
+        params: { path: { id, providerId } },
+        body: payload,
+      })
+      if (res.error || !res.data) throw new Error(res.error ? res.error.message : 'Rematch failed')
+      series.value = mapDetail(res.data)
+      dedupMessage.value = 'Source rematched'
+      return true
+    }
+    catch (err) {
+      error.value = err instanceof Error ? err.message : 'Rematch failed'
+      return false
+    }
+    finally {
+      rematchBusy.value = false
     }
   }
 
@@ -686,6 +713,7 @@ export function useSeriesDetail(id: string) {
     deleteBusy,
     removeBusy,
     matchBusy,
+    rematchBusy,
     dedupBusy,
     dedupePreviewBusy,
     dedupeFilesBusy,
@@ -702,6 +730,7 @@ export function useSeriesDetail(id: string) {
     chooseMetadataSource,
     deleteSeries,
     matchDiskProvider,
+    rematchProvider,
     consolidateProviders,
     dedupProviders,
     fetchDedupePreview,

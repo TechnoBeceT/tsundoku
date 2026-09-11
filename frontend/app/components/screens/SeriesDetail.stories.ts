@@ -99,6 +99,21 @@ export const NoCover: Story = {
   render: () => interactive(noCoverSeries),
 }
 
+/** Address repair in flight: source-row mutations are disabled. */
+export const RematchBusy: Story = {
+  args: { series: richSeries, categoryOptions, saving: true },
+}
+
+/** Address repair completed and the Sources panel reports the result. */
+export const RematchSuccess: Story = {
+  args: { series: richSeries, categoryOptions, dedupMessage: 'Source rematched' },
+}
+
+/** Address repair failed and the exact server error remains visible. */
+export const RematchFailure: Story = {
+  args: { series: richSeries, categoryOptions, error: 'The selected source address is no longer valid.' },
+}
+
 /** A library-imported unlinked disk-group alongside linked sources — the "Match to source" row action. */
 export const WithUnlinkedGroup: Story = {
   render: () => interactive(seriesWithUnlinkedGroup),

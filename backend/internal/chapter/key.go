@@ -5,6 +5,13 @@
 // stable key stored in the database. Everything downstream — ingest, dedup,
 // disk layout, reconciliation — relies on this normalisation being deterministic
 // and collision-free.
+//
+// Provider feed mutation also owns the shared concurrency boundary for chapter
+// addresses and their resolver caches. A reconcile takes exclusive ownership of
+// each existing ProviderChapter it changes through transaction completion;
+// download fetches take shared ownership through page-link persistence and
+// staging cleanup. That keeps address comparison, cache invalidation, and row
+// update atomic without reducing normal per-provider fetch parallelism.
 package chapter
 
 import (

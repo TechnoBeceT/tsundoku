@@ -34,8 +34,9 @@ import (
 // onto internal/sourceengine, which has no manga-id lookup, only
 // (sourceID, url) pairs.
 const (
-	weebSourceID int64 = 1
-	weebMangaURL       = "/manga/99"
+	weebSourceID   int64 = 1
+	weebMangaURL         = "/manga/99"
+	weebRematchURL       = "/comics/99"
 )
 
 // newMatchClient builds a sourceengine fake exposing one source ("weeb", id
@@ -46,12 +47,14 @@ const (
 // ingest.Ingest.upsertSeriesProvider does not fail.
 func newMatchClient() *fake.Client {
 	return fake.New(
-		fake.WithSources([]sourceengine.Source{{ID: weebSourceID, Name: "weeb", Lang: "en"}}),
+		fake.WithSources([]sourceengine.Source{{ID: weebSourceID, Name: "weeb", Lang: "en"}, {ID: 2, Name: "weebA", Lang: "en"}, {ID: 3, Name: "weebB", Lang: "en"}}),
 		fake.WithChapters(weebSourceID, weebMangaURL, []sourceengine.Chapter{
 			{URL: weebMangaURL + "/1", Name: "Chapter 1", Number: 1},
 			{URL: weebMangaURL + "/2", Name: "Chapter 2", Number: 2},
 		}),
 		fake.WithMangaDetails(weebSourceID, weebMangaURL, sourceengine.MangaDetails{URL: weebMangaURL, Title: "My Series"}),
+		fake.WithChapters(weebSourceID, weebRematchURL, []sourceengine.Chapter{{URL: weebRematchURL + "/1", Name: "Chapter 1", Number: 1}, {URL: weebRematchURL + "/2", Name: "Chapter 2", Number: 2}}),
+		fake.WithMangaDetails(weebSourceID, weebRematchURL, sourceengine.MangaDetails{URL: weebRematchURL, Title: "My Series"}),
 	)
 }
 
@@ -66,9 +69,10 @@ func newEnvWithMatchIngest(t *testing.T, storage string) *testEnv {
 	client := testdb.New(t)
 	authSvc := auth.NewService(testSecret)
 	seriesSvc := series.NewService(client, storage, 14)
-	ing := ingest.NewIngest(newMatchClient(), client)
+	engine := newMatchClient()
+	ing := ingest.NewIngest(engine, client)
 	hub := sse.NewHub()
-	svc := library.NewService(client, ing, nil, seriesSvc, func() {}, storage, hub)
+	svc := library.NewService(client, ing, nil, seriesSvc, func() {}, storage, hub).WithSourceLister(engine)
 	h := handler.NewHandler(svc)
 
 	e := echo.New()
@@ -77,6 +81,7 @@ func newEnvWithMatchIngest(t *testing.T, storage string) *testEnv {
 	authed.POST("/series/:id/providers", h.AddProvider)
 	authed.POST("/series/:id/providers/batch", h.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", h.MatchDiskProvider)
+	authed.POST("/series/:id/providers/:providerId/rematch", h.RematchProvider)
 
 	token, err := authSvc.Issue(uuid.New())
 	if err != nil {

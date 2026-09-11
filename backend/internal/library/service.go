@@ -68,6 +68,12 @@ var (
 	// twin above the disk chapters' watermark and re-download the whole imported
 	// series.
 	ErrMergeInFlight = errors.New("a merge is already running for this series, retry shortly")
+	// ErrProviderSourceMismatch rejects rematching a provider to a different
+	// extension source. Rematch repairs only the source-owned manga address.
+	ErrProviderSourceMismatch = errors.New("selected source does not match provider source")
+	// ErrInvalidProviderAddress rejects an incomplete or unsupported provider
+	// address tuple before any upstream or database mutation.
+	ErrInvalidProviderAddress = errors.New("invalid provider address")
 )
 
 // SourceLister lists the engine host's currently-loaded sources. AddProvider and

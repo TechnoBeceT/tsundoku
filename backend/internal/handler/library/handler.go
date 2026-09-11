@@ -256,6 +256,37 @@ func (h *Handler) AddProviders(c echo.Context) error {
 	return c.JSON(http.StatusOK, out)
 }
 
+// RematchProvider handles an owner-selected same-source address replacement
+// for an existing linked provider and returns the refreshed series detail.
+func (h *Handler) RematchProvider(c echo.Context) error {
+	seriesID, err := validateID(c.Param("id"))
+	if err != nil {
+		return err
+	}
+	providerID, err := validateProviderID(c.Param("providerId"))
+	if err != nil {
+		return err
+	}
+	var body rematchProviderBody
+	if err := c.Bind(&body); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid body")
+	}
+	if err := validateRematchProviderBody(body); err != nil {
+		return err
+	}
+	out, err := h.svc.RematchProvider(c.Request().Context(), seriesID, providerID, library.ProviderRef{Source: body.Source, URL: body.URL, AddressMode: body.AddressMode, WebURL: body.WebURL})
+	if err != nil {
+		if errors.Is(err, library.ErrProviderNotInSeries) {
+			return echo.NewHTTPError(http.StatusNotFound, "provider not found in series")
+		}
+		if errors.Is(err, library.ErrProviderSourceMismatch) || errors.Is(err, library.ErrInvalidProviderAddress) {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
 // matchStartedResponse is the wire shape returned by POST
 // /api/series/:id/providers/:providerId/match: {"started":true} on 202 once the
 // async match/merge is launched, or {"started":false} on 409 when one is already
