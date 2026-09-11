@@ -128,6 +128,25 @@ type ProviderReconcileInput struct {
 	Chapters     []sourceengine.Chapter
 }
 
+// ResolveProvider fetches source metadata and the complete chapter feed for an
+// owner-selected address without mutating the database.
+func (i *Ingest) ResolveProvider(ctx context.Context, ref sourceengine.ProviderRef, title, providerName string) (ProviderReconcileInput, error) {
+	meta, err := sourceengine.MangaDetailsFor(ctx, i.client, ref)
+	if err != nil {
+		return ProviderReconcileInput{}, fmt.Errorf("resolve provider details: %w", err)
+	}
+	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, meta.AddressMode)
+	if meta.RealURL != "" {
+		ref.WebURL = meta.RealURL
+	}
+	chapters, err := i.FetchChaptersUncachedRef(ctx, ref, title)
+	if err != nil {
+		return ProviderReconcileInput{}, fmt.Errorf("resolve provider chapters: %w", err)
+	}
+	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, chapters.AddressMode)
+	return ProviderReconcileInput{Ref: ref, Title: meta.Title, CoverURL: meta.ThumbnailURL, ProviderName: providerName, Chapters: chapters.Chapters}, nil
+}
+
 // IgnoreScanlatorStore is the narrow read surface Ingest needs to know which
 // sources the owner has flagged "ignore scanlator" (uploader-in-scanlator
 // sources — see internal/ignorescanlator). It returns the set of flagged

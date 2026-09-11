@@ -70,6 +70,15 @@ type addProvidersBody struct {
 	Providers []providerRefBody `json:"providers"`
 }
 
+// rematchProviderBody is the owner-selected replacement address tuple. The
+// provider's ranking and scanlator are deliberately absent and preserved.
+type rematchProviderBody struct {
+	Source      string                   `json:"source"`
+	URL         string                   `json:"url"`
+	AddressMode sourceengine.AddressMode `json:"addressMode"`
+	WebURL      string                   `json:"webUrl"`
+}
+
 // skipBody is the wire shape for POST /api/library/imports/skip.
 type skipBody struct {
 	Path string `json:"path"`
@@ -87,6 +96,18 @@ func validateID(raw string) (uuid.UUID, error) {
 		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid series id")
 	}
 	return id, nil
+}
+
+func validateProviderID(raw string) (uuid.UUID, error) {
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, echo.NewHTTPError(http.StatusBadRequest, "invalid provider id")
+	}
+	return id, nil
+}
+
+func validateRematchProviderBody(body rematchProviderBody) error {
+	return validateProviderRef(providerRefBody{Source: body.Source, URL: body.URL, AddressMode: body.AddressMode, WebURL: body.WebURL})
 }
 
 // validatePath validates a REQUIRED, non-empty path query param. path is a

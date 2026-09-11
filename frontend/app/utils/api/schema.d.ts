@@ -304,6 +304,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/series/{id}/providers/{providerId}/rematch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Repair an existing provider's manga address
+         * @description Resolves an owner-selected candidate from the provider's existing source, then updates the same provider and reconciles its chapter feed in place. Existing chapter state and files are preserved.
+         */
+        post: operations["rematchSeriesProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/series/{id}/providers/{providerId}/match": {
         parameters: {
             query?: never;
@@ -5458,6 +5478,16 @@ export interface components {
              */
             scanlator?: string;
         };
+        /** @description Replaces only an existing provider's source-owned manga address. */
+        RematchProviderRequest: {
+            /** @description Existing provider source ID; a different source is rejected. */
+            source: string;
+            /** @description Owner-selected source-owned serialized manga address. */
+            url: string;
+            addressMode: components["schemas"]["AddressMode"];
+            /** @description Optional browser URL used as a resolution witness. */
+            webUrl?: string;
+        };
         /**
          * @description Result of an owner-triggered provider dedup: how many drifted
          *     disk/live source pairs were merged, how many were skipped, and the
@@ -6534,6 +6564,87 @@ export interface operations {
                 };
             };
             /** @description A source exists but its anti-ban circuit-breaker is cooled down — retry shortly. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rematchSeriesProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                providerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RematchProviderRequest"];
+            };
+        };
+        responses: {
+            /** @description Provider rematched; returns refreshed series detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SeriesDetail"];
+                };
+            };
+            /** @description Invalid IDs/address tuple, or selected source differs from the provider source. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid Bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Series/provider relationship or installed source not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Another provider mutation holds the per-series latch. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source resolution or fetch failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Source is temporarily unavailable. */
             503: {
                 headers: {
                     [name: string]: unknown;

@@ -14,6 +14,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	"github.com/technobecet/tsundoku/internal/ent/chapter"
+	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/ingest"
 	"github.com/technobecet/tsundoku/internal/library"
@@ -275,6 +276,52 @@ func TestAddProviderRef_RetainsAddressContext(t *testing.T) {
 	}
 	if provider.WebURL != webURL {
 		t.Errorf("web URL = %q, want %q", provider.WebURL, webURL)
+	}
+}
+
+func TestRematchProviderPreservesRowsAndDownloadedChapterState(t *testing.T) {
+	storage := t.TempDir()
+	client := testdb.New(t)
+	ctx := context.Background()
+	ser := client.Series.Create().SetTitle("Rematched Series").SetSlug("rematched-series").SaveX(ctx)
+	fake := newFakeClientWithFeed(t)
+	ingestSvc := ingest.NewIngest(fake, client)
+	svc := library.NewService(client, ingestSvc, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+	if _, err := svc.AddProviderRef(ctx, ser.ID, library.ProviderRef{Source: "1", URL: "/series/old", AddressMode: sourceengine.AddressModeDirect}, 17); err != nil {
+		t.Fatalf("AddProviderRef: %v", err)
+	}
+	provider := client.SeriesProvider.Query().Where(entseriesprovider.SeriesID(ser.ID)).OnlyX(ctx)
+	chapterBefore := client.Chapter.Query().Where(chapter.SeriesID(ser.ID)).FirstX(ctx)
+	client.Chapter.UpdateOneID(chapterBefore.ID).SetState(chapter.StateDownloaded).SetFilename("kept.cbz").SetSatisfiedImportance(17).SaveX(ctx)
+	feedBefore := client.ProviderChapter.Query().Where(entproviderchapter.SeriesProviderID(provider.ID), entproviderchapter.ChapterKeyEQ(chapterBefore.ChapterKey)).OnlyX(ctx)
+	client.ProviderChapter.UpdateOneID(feedBefore.ID).SetAttempts(3).SetLastError("kept retry state").SaveX(ctx)
+
+	if _, err := svc.RematchProvider(ctx, ser.ID, provider.ID, library.ProviderRef{Source: "1", URL: "/comics/new", AddressMode: sourceengine.AddressModeDirect}); err != nil {
+		t.Fatalf("RematchProvider: %v", err)
+	}
+	assertRematchedProvider(t, client.SeriesProvider.GetX(ctx, provider.ID), provider)
+	assertRematchedChapter(t, client.Chapter.GetX(ctx, chapterBefore.ID))
+	assertRematchedFeed(t, client.ProviderChapter.GetX(ctx, feedBefore.ID))
+}
+
+func assertRematchedProvider(t *testing.T, got, before *ent.SeriesProvider) {
+	t.Helper()
+	if got.URL != "/comics/new" || got.Importance != 17 || got.Scanlator != before.Scanlator {
+		t.Fatalf("provider after rematch = url %q importance %d scanlator %q", got.URL, got.Importance, got.Scanlator)
+	}
+}
+
+func assertRematchedChapter(t *testing.T, got *ent.Chapter) {
+	t.Helper()
+	if got.State != chapter.StateDownloaded || got.Filename != "kept.cbz" || got.SatisfiedImportance == nil || *got.SatisfiedImportance != 17 {
+		t.Fatalf("chapter state changed: %+v", got)
+	}
+}
+
+func assertRematchedFeed(t *testing.T, got *ent.ProviderChapter) {
+	t.Helper()
+	if got.Attempts != 3 || got.LastError != "kept retry state" {
+		t.Fatalf("provider chapter retry state changed: %+v", got)
 	}
 }
 

@@ -615,6 +615,7 @@ func registerRoutes(
 	authed.POST("/series/:id/providers", libraryH.AddProvider)
 	authed.POST("/series/:id/providers/batch", libraryH.AddProviders)
 	authed.POST("/series/:id/providers/:providerId/match", libraryH.MatchDiskProvider)
+	authed.POST("/series/:id/providers/:providerId/rematch", libraryH.RematchProvider)
 	authed.POST("/series/:id/providers/consolidate", libraryH.ConsolidateProviders)
 	authed.POST("/series/:id/providers/dedup", libraryH.DedupProviders)
 	authed.POST("/library/dedup-providers", libraryH.DedupAllProviders)
