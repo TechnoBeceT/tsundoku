@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -27,5 +28,13 @@ func TestValidateRematchRefRequiresSameSourceAndValidAddress(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestRematchSourceMustBeVerifiable(t *testing.T) {
+	svc := &Service{}
+	_, _, err := svc.verifiedRematchSource(context.Background(), 42, "")
+	if !errors.Is(err, ErrSourceUnavailable) {
+		t.Fatalf("error = %v, want ErrSourceUnavailable", err)
 	}
 }

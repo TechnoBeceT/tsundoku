@@ -40,16 +40,12 @@ func (s *Service) RematchProvider(ctx context.Context, seriesID, providerID uuid
 	if err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
-	exists, err := s.sourceExists(ctx, sourceID)
+	exists, providerName, err := s.verifiedRematchSource(ctx, sourceID, provider.ProviderName)
 	if err != nil {
 		return series.SeriesDetailDTO{}, err
 	}
 	if !exists {
 		return series.SeriesDetailDTO{}, ErrSourceNotFound
-	}
-	providerName, err := s.rematchProviderName(ctx, sourceID, provider.ProviderName)
-	if err != nil {
-		return series.SeriesDetailDTO{}, err
 	}
 	engineRef := sourceengine.ProviderRef{SourceID: sourceID, URL: ref.URL, AddressMode: ref.AddressMode, WebURL: ref.WebURL}
 	resolved, err := s.ingest.ResolveProvider(ctx, engineRef, provider.Edges.Series.Title, providerName)
@@ -84,20 +80,23 @@ func (s *Service) applyProviderRematch(ctx context.Context, seriesID, providerID
 	return nil
 }
 
-func (s *Service) rematchProviderName(ctx context.Context, sourceID int64, stored string) (string, error) {
-	if stored != "" || s.sources == nil {
-		return stored, nil
+func (s *Service) verifiedRematchSource(ctx context.Context, sourceID int64, stored string) (bool, string, error) {
+	if s.sources == nil {
+		return false, "", fmt.Errorf("%w: source registry is not configured", ErrSourceUnavailable)
 	}
 	all, err := s.sources.Sources(ctx)
 	if err != nil {
-		return "", fmt.Errorf("%w: list sources: %w", ErrSourceUpstream, err)
+		return false, "", fmt.Errorf("%w: list sources: %w", ErrSourceUpstream, err)
 	}
 	for _, src := range all {
 		if src.ID == sourceID {
-			return src.Name, nil
+			if stored != "" {
+				return true, stored, nil
+			}
+			return true, src.Name, nil
 		}
 	}
-	return "", ErrSourceNotFound
+	return false, "", nil
 }
 
 func (s *Service) rematchProviderRow(ctx context.Context, seriesID, providerID uuid.UUID) (*ent.SeriesProvider, error) {

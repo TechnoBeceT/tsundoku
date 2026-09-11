@@ -4320,7 +4320,6 @@ components:
       required:
         - source
         - url
-        - addressMode
       properties:
         source:
           type: string

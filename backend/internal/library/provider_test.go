@@ -75,7 +75,7 @@ func (f *fakeAddProviderClient) Status(ctx context.Context) (sourceengine.Engine
 }
 func (f *fakeAddProviderClient) Sources(ctx context.Context) ([]sourceengine.Source, error) {
 	if f.searchTitle == "" {
-		return nil, nil
+		return []sourceengine.Source{{ID: 1, Name: "Weeb Source", Lang: "en"}}, nil
 	}
 	return []sourceengine.Source{{ID: 1, Name: "Weeb Source", Lang: "en"}}, nil
 }
@@ -199,7 +199,7 @@ func TestAddProvider_AttachesSourceAndFlagsUpgrade(t *testing.T) {
 	fake := newFakeClientWithFeed(t) // returns 2 chapters keyed "1","2" for any url
 	ingestSvc := ingest.NewIngest(fake, client)
 	seriesSvc := series.NewService(client, storage, 14)
-	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, seriesSvc, func() {}, storage, sse.NewHub()).WithSourceLister(fake)
 
 	dto, err := svc.AddProvider(ctx, ser.ID, "1", "/manga/99", 5, "")
 	if err != nil {
@@ -286,7 +286,7 @@ func TestRematchProviderPreservesRowsAndDownloadedChapterState(t *testing.T) {
 	ser := client.Series.Create().SetTitle("Rematched Series").SetSlug("rematched-series").SaveX(ctx)
 	fake := newFakeClientWithFeed(t)
 	ingestSvc := ingest.NewIngest(fake, client)
-	svc := library.NewService(client, ingestSvc, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub())
+	svc := library.NewService(client, ingestSvc, nil, series.NewService(client, storage, 14), func() {}, storage, sse.NewHub()).WithSourceLister(fake)
 	if _, err := svc.AddProviderRef(ctx, ser.ID, library.ProviderRef{Source: "1", URL: "/series/old", AddressMode: sourceengine.AddressModeDirect}, 17); err != nil {
 		t.Fatalf("AddProviderRef: %v", err)
 	}

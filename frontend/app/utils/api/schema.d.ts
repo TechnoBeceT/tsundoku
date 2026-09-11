@@ -5484,7 +5484,7 @@ export interface components {
             source: string;
             /** @description Owner-selected source-owned serialized manga address. */
             url: string;
-            addressMode: components["schemas"]["AddressMode"];
+            addressMode?: components["schemas"]["AddressMode"];
             /** @description Optional browser URL used as a resolution witness. */
             webUrl?: string;
         };
