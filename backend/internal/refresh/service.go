@@ -64,7 +64,30 @@ type Service struct {
 	// skips those sources' providers entirely — no upstream fetch, no sync-state
 	// write, no error counted. Nil ⇒ nothing is paused (the pre-QCAT-513
 	// behaviour), so existing call sites and tests are unaffected.
-	disabled DisabledSources
+	disabled    DisabledSources
+	recovererMu sync.RWMutex
+	recoverer   AddressRecoverer
+}
+
+// AddressRecoverer repairs a provider whose stored manga address has vanished.
+// A successful return means its address and feed were reconciled in place.
+type AddressRecoverer interface {
+	RecoverProviderAddress(ctx context.Context, providerID uuid.UUID, pace func(context.Context)) error
+}
+
+// WithAddressRecoverer connects the library's guarded address repair after
+// routes have constructed it. Refresh may already be running at that point.
+func (s *Service) WithAddressRecoverer(r AddressRecoverer) *Service {
+	s.recovererMu.Lock()
+	s.recoverer = r
+	s.recovererMu.Unlock()
+	return s
+}
+
+func (s *Service) addressRecoverer() AddressRecoverer {
+	s.recovererMu.RLock()
+	defer s.recovererMu.RUnlock()
+	return s.recoverer
 }
 
 // DisabledSources is the narrow read surface the sweep needs to honour the
@@ -230,12 +253,13 @@ func (s *Service) sweep(ctx context.Context, seriesList []*ent.Series) RefreshRe
 	// sink collects one `refresh` audit event per group, flushed ONCE after the
 	// sweep (nil when no recorder is wired, so nothing is collected).
 	sink := s.newEventSink()
+	recovery := newAddressRecoveryBudget()
 
 	// Read the parallel-refetch bound at use-time so a settings change applies to
 	// this sweep. The bound caps concurrent GROUPS (each = one upstream fetch)
 	// rather than providers.
 	s.runRefreshGroups(ctx, groups, s.refreshLimit(ctx), func(gctx context.Context, grp refreshGroup) {
-		s.refreshGroup(gctx, grp, now, &mu, &result, sink)
+		s.refreshGroup(gctx, grp, now, &mu, &result, sink, recovery)
 	})
 	s.flushEventSink(ctx, sink)
 
@@ -253,6 +277,29 @@ type refreshSourceQueue struct {
 	groups   []refreshGroup
 	next     int
 	inFlight int
+}
+
+// Recovery searches and resolves a candidate in several source calls. Keep a
+// broken source from turning one sweep into an unbounded catalogue crawl.
+const maxAddressRecoveriesPerSource = 12
+
+type addressRecoveryBudget struct {
+	mu    sync.Mutex
+	count map[int64]int
+}
+
+func newAddressRecoveryBudget() *addressRecoveryBudget {
+	return &addressRecoveryBudget{count: make(map[int64]int)}
+}
+
+func (b *addressRecoveryBudget) admit(sourceID int64) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.count[sourceID] >= maxAddressRecoveriesPerSource {
+		return false
+	}
+	b.count[sourceID]++
+	return true
 }
 
 // refreshAdmissionQueue retains discovery order within each source and rotates
@@ -482,7 +529,7 @@ func (s *Service) fetchableSourceID(ctx context.Context, sr *ent.Series, p *ent.
 // scanlator-provider that shares it from that single raw list. A fetch failure
 // is recorded against the breaker once and marks every provider in the group as
 // errored; a context cancellation is silently skipped (clean shutdown).
-func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink) {
+func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink, recovery *addressRecoveryBudget) {
 	// Politeness delay before the fetch — the runtime-tunable minimum gap between
 	// successive requests to this physical source. This IS the gated call for the
 	// group; AddSeriesWithChapters below is deliberately ungated (no double-Wait).
@@ -498,7 +545,7 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 	raw, fetchErr := s.ingest.FetchChaptersUncachedRef(ctx, grp.ref, grp.providers[0].title)
 	fetchDuration := time.Since(start)
 	if fetchErr != nil {
-		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result, sink, fetchDuration)
+		s.handleGroupFetchError(ctx, grp, fetchErr, now, mu, result, sink, fetchDuration, recovery)
 		return
 	}
 	s.gateRecordSuccess(ctx, grp.sourceKey)
@@ -513,13 +560,61 @@ func (s *Service) refreshGroup(ctx context.Context, grp refreshGroup, now time.T
 // cancellation is skipped entirely (not a provider error, no breaker trip), else
 // it trips the breaker once and marks every provider in the group errored +
 // persists each one's sync-state failure.
-func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, fetchErr error, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink, fetchDuration time.Duration) {
+func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, fetchErr error, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink, fetchDuration time.Duration, recovery *addressRecoveryBudget) {
 	if isContextErr(fetchErr) {
 		return
 	}
+	// A moved manga address is a failure of this stored provider reference, not
+	// evidence that the physical source is unavailable. Give the library's
+	// guarded in-place repair one chance before updating the source breaker.
+	if isMissingSourceCandidate(fetchErr) {
+		repairedIDs := make(map[uuid.UUID]bool)
+		var recoverySourceError error
+		var repairedCount int
+		if recoverer := s.addressRecoverer(); recoverer != nil {
+			for _, p := range grp.providers {
+				if !recovery.admit(grp.sourceID) {
+					continue
+				}
+				if err := recoverer.RecoverProviderAddress(ctx, p.providerID, func(callCtx context.Context) {
+					s.gateWait(callCtx, grp.sourceKey)
+				}); err != nil {
+					slog.WarnContext(ctx, "refresh: provider address recovery skipped", "provider_id", p.providerID, "err", err)
+					var upstream *sourceengine.UpstreamError
+					if errors.As(err, &upstream) && recoverySourceError == nil {
+						recoverySourceError = err
+					}
+					continue
+				}
+				repairedCount++
+				repairedIDs[p.providerID] = true
+				if err := s.upsertSyncState(ctx, p.providerID, nil); err != nil {
+					slog.ErrorContext(ctx, "refresh: persist repaired sync state failed", "provider_id", p.providerID, "err", err)
+				}
+			}
+			if recoverySourceError != nil {
+				s.gateRecordFailure(ctx, grp.sourceKey, recoverySourceError, now)
+			} else if repairedCount > 0 {
+				s.gateRecordSuccess(ctx, grp.sourceKey)
+			}
+			mu.Lock()
+			result.ProvidersRefreshed += repairedCount
+			mu.Unlock()
+		}
+		if repairedCount > 0 {
+			sink.add(newRefreshEvent(grp, sourceevents.StatusSuccess, fetchDuration, nil, nil))
+		}
+		if len(repairedIDs) == len(grp.providers) {
+			return
+		}
+		grp.providers = unrepairedProviders(grp.providers, repairedIDs)
+		// An absent candidate cannot establish a source-wide outage, even when
+		// an ambiguous provider was deliberately left untouched for owner review.
+	} else {
+		s.gateRecordFailure(ctx, grp.sourceKey, fetchErr, now)
+	}
 	slog.ErrorContext(ctx, "refresh: group fetch failed",
 		"source", grp.sourceID, "url", grp.url, "err", fetchErr)
-	s.gateRecordFailure(ctx, grp.sourceKey, fetchErr, now)
 	sink.add(newRefreshEvent(grp, sourceevents.StatusFailed, fetchDuration, nil, fetchErr))
 	for _, p := range grp.providers {
 		if uerr := s.upsertSyncState(ctx, p.providerID, fetchErr); uerr != nil {
@@ -530,6 +625,22 @@ func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, f
 		result.Errors++
 		mu.Unlock()
 	}
+}
+
+func unrepairedProviders(providers []refreshProvider, repaired map[uuid.UUID]bool) []refreshProvider {
+	remaining := make([]refreshProvider, 0, len(providers))
+	for _, p := range providers {
+		if !repaired[p.providerID] {
+			remaining = append(remaining, p)
+		}
+	}
+	return remaining
+}
+
+func isMissingSourceCandidate(err error) bool {
+	var upstream *sourceengine.UpstreamError
+	return errors.As(err, &upstream) && upstream.Status == 502 &&
+		strings.HasPrefix(upstream.Msg, "NoSuchElementException: source candidate not found for address: ")
 }
 
 // ingestProvider ingests ONE scanlator-provider from the group's shared raw

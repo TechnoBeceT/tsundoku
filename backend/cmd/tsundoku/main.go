@@ -560,7 +560,12 @@ func main() {
 	// async + single-flight per series. It does NOT alter the whole-library cadence.
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
-	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, extensionArchive, onNetworkChange, runner.SetProviderHealer)
+	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, extensionArchive, onNetworkChange, func(healer job.ProviderHealer) {
+		runner.SetProviderHealer(healer)
+		if recoverer, ok := healer.(refresh.AddressRecoverer); ok {
+			refreshSvc.WithAddressRecoverer(recoverer)
+		}
+	})
 
 	addr := ":" + cfg.Server.Port
 

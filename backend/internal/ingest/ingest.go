@@ -131,6 +131,16 @@ type ProviderReconcileInput struct {
 // ResolveProvider fetches source metadata and the complete chapter feed for an
 // owner-selected address without mutating the database.
 func (i *Ingest) ResolveProvider(ctx context.Context, ref sourceengine.ProviderRef, title, providerName string) (ProviderReconcileInput, error) {
+	return i.ResolveProviderPaced(ctx, ref, title, providerName, nil)
+}
+
+// ResolveProviderPaced is the background recovery variant. pace runs before
+// each upstream call so a search/details/chapters sequence observes the same
+// source delay as other background operations. Nil retains the owner path.
+func (i *Ingest) ResolveProviderPaced(ctx context.Context, ref sourceengine.ProviderRef, title, providerName string, pace func(context.Context)) (ProviderReconcileInput, error) {
+	if pace != nil {
+		pace(ctx)
+	}
 	meta, err := sourceengine.MangaDetailsFor(ctx, i.client, ref)
 	if err != nil {
 		return ProviderReconcileInput{}, fmt.Errorf("resolve provider details: %w", err)
@@ -138,6 +148,9 @@ func (i *Ingest) ResolveProvider(ctx context.Context, ref sourceengine.ProviderR
 	ref.AddressMode = provideraddress.PreserveKnown(ref.AddressMode, meta.AddressMode)
 	if meta.RealURL != "" {
 		ref.WebURL = meta.RealURL
+	}
+	if pace != nil {
+		pace(ctx)
 	}
 	chapters, err := i.FetchChaptersUncachedRef(ctx, ref, title)
 	if err != nil {

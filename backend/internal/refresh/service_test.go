@@ -442,6 +442,60 @@ func TestRefreshAll_PersistsSyncStateOnFailure(t *testing.T) {
 	}
 }
 
+type addressRecoveryStub struct {
+	called []uuid.UUID
+	err    error
+}
+
+func (r *addressRecoveryStub) RecoverProviderAddress(_ context.Context, providerID uuid.UUID, _ func(context.Context)) error {
+	r.called = append(r.called, providerID)
+	return r.err
+}
+
+func TestRefreshAll_RepairsMissingCandidateWithoutSourceFailure(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	_, sp := seedMonitoredSeries(t, ctx, db, "Moved Series", 42, "/comics/moved-old")
+	missing := &sourceengine.UpstreamError{Status: 502, Msg: "NoSuchElementException: source candidate not found for address: /comics/moved-old"}
+	fc := enginefake.New(enginefake.WithError("Chapters", missing))
+	recovery := &addressRecoveryStub{}
+	svc := newSvc(t, db, fc).WithAddressRecoverer(recovery)
+	result, err := svc.RefreshAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovery.called) != 1 || recovery.called[0] != sp.ID {
+		t.Fatalf("recovery calls = %v, want provider %s", recovery.called, sp.ID)
+	}
+	if result.Errors != 0 || result.ProvidersRefreshed != 1 {
+		t.Fatalf("result = %+v, want one repaired provider and no error", result)
+	}
+	state := db.SuwayomiSyncState.Query().Where(suwayomisyncstate.SeriesProviderID(sp.ID)).OnlyX(ctx)
+	if state.LastError != "" || state.LastSyncedAt == nil {
+		t.Fatalf("repaired sync state = %+v, want current success", state)
+	}
+}
+
+func TestRefreshAll_LeavesAmbiguousCandidateErrored(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	_, sp := seedMonitoredSeries(t, ctx, db, "Moved Series", 42, "/comics/moved-old")
+	missing := &sourceengine.UpstreamError{Status: 502, Msg: "NoSuchElementException: source candidate not found for address: /comics/moved-old"}
+	fc := enginefake.New(enginefake.WithError("Chapters", missing))
+	recovery := &addressRecoveryStub{err: errors.New("ambiguous match")}
+	result, err := newSvc(t, db, fc).WithAddressRecoverer(recovery).RefreshAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Errors != 1 || result.ProvidersRefreshed != 0 {
+		t.Fatalf("result = %+v, want one visible failure", result)
+	}
+	state := db.SuwayomiSyncState.Query().Where(suwayomisyncstate.SeriesProviderID(sp.ID)).OnlyX(ctx)
+	if state.LastError == "" || state.LastSyncedAt != nil {
+		t.Fatalf("unrepaired sync state = %+v, want original failure", state)
+	}
+}
+
 // TestRefreshAll_SkipsCompleted proves a completed series is excluded from the
 // discovery sweep even while monitored, and returns to the sweep once it is
 // un-completed (non-vacuous: the second half fails if the predicate is dropped).

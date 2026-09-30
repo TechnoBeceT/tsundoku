@@ -69,6 +69,35 @@ func rematchEngine(opts ...enginefake.Option) *enginefake.Client {
 	base := []enginefake.Option{enginefake.WithSources([]sourceengine.Source{{ID: 1, Name: "Current Source", Lang: "en"}}), enginefake.WithMangaDetails(1, rematchOldURL, sourceengine.MangaDetails{URL: rematchOldURL, Title: "Rematch Series"}), enginefake.WithMangaDetails(1, rematchNewURL, sourceengine.MangaDetails{URL: rematchNewURL, Title: "Rematch Series", RealURL: "https://source.test/comics/new"}), enginefake.WithChapters(1, rematchOldURL, []sourceengine.Chapter{{URL: "/chapter/1-old", Name: "Chapter 1", Number: 1}, {URL: "/chapter/2", Name: "Chapter 2", Number: 2}}), enginefake.WithChapters(1, rematchNewURL, []sourceengine.Chapter{{URL: "/chapter/1-new", Name: "Chapter 1", Number: 1}, {URL: "/chapter/3", Name: "Chapter 3", Number: 3}})}
 	return enginefake.New(append(base, opts...)...)
 }
+
+func TestRecoverProviderAddressPreservesDownloadedChapterAndFile(t *testing.T) {
+	f := newRematchFixture(t)
+	f.db.Chapter.Create().SetSeriesID(f.seriesID).SetChapterKey("3").SaveX(f.ctx)
+	f.db.ProviderChapter.Create().SetSeriesProviderID(f.providerID).SetChapterKey("3").SetURL("/chapter/3-old").SetProviderIndex(2).SaveX(f.ctx)
+	before := f.snapshot(t)
+	downloaded := f.db.Chapter.Query().Where(chapter.SeriesID(f.seriesID), chapter.ChapterKeyEQ("1")).OnlyX(f.ctx)
+	candidate := sourceengine.MangaEntry{URL: rematchNewURL, Title: "Rematch Series", AddressMode: sourceengine.AddressModeDirect}
+	engine := rematchEngine(
+		enginefake.WithSearchResult(1, sourceengine.SearchResult{Manga: []sourceengine.MangaEntry{candidate}}),
+		enginefake.WithChapters(1, rematchNewURL, []sourceengine.Chapter{{URL: "/chapter/1-new", Number: 1}, {URL: "/chapter/2-new", Number: 2}, {URL: "/chapter/3-new", Number: 3}, {URL: "/chapter/4-new", Number: 4}}),
+	)
+	f.replaceEngine(engine, true)
+	paceCalls := 0
+	if err := f.service.RecoverProviderAddress(f.ctx, f.providerID, func(context.Context) { paceCalls++ }); err != nil {
+		t.Fatal(err)
+	}
+	if paceCalls != 3 {
+		t.Fatalf("paced calls = %d, want search, details, chapters", paceCalls)
+	}
+	after := f.snapshot(t)
+	if after.url != rematchNewURL || after.file != before.file || after.feeds != before.feeds+1 || after.chapters != before.chapters+1 {
+		t.Fatalf("recovery changed unexpected state: before=%+v after=%+v", before, after)
+	}
+	got := f.db.Chapter.GetX(f.ctx, downloaded.ID)
+	if got.State != chapter.StateDownloaded || got.Filename != downloaded.Filename || got.SatisfiedImportance == nil || downloaded.SatisfiedImportance == nil || *got.SatisfiedImportance != *downloaded.SatisfiedImportance {
+		t.Fatalf("downloaded chapter changed: %+v", got)
+	}
+}
 func (f *rematchFixture) replaceEngine(engine *enginefake.Client, withLister bool) {
 	f.service = library.NewService(f.db, ingest.NewIngest(engine, f.db), nil, series.NewService(f.db, f.storage, 14), func() {}, f.storage, f.hub)
 	if withLister {
