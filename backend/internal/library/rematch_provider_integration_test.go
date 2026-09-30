@@ -90,6 +90,11 @@ func TestRecoverProviderAddressPreservesDownloadedChapterAndFile(t *testing.T) {
 		t.Fatalf("paced calls = %d, want search, details, chapters", paceCalls)
 	}
 	after := f.snapshot(t)
+	assertRecoveredState(t, f, before, after, downloaded)
+}
+
+func assertRecoveredState(t *testing.T, f rematchFixture, before, after rematchSnapshot, downloaded *ent.Chapter) {
+	t.Helper()
 	if after.url != rematchNewURL || after.file != before.file || after.feeds != before.feeds+1 || after.chapters != before.chapters+1 {
 		t.Fatalf("recovery changed unexpected state: before=%+v after=%+v", before, after)
 	}

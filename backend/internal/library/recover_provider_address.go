@@ -44,9 +44,7 @@ func (s *Service) RecoverProviderAddress(ctx context.Context, providerID uuid.UU
 	if strings.TrimSpace(title) == "" {
 		title = provider.Edges.Series.Title
 	}
-	if pace != nil {
-		pace(ctx)
-	}
+	paceRecovery(ctx, pace)
 	found, err := searcher.Search(ctx, sourceID, title, 1)
 	if err != nil {
 		return fmt.Errorf("search provider source: %w", err)
@@ -62,27 +60,35 @@ func (s *Service) RecoverProviderAddress(ctx context.Context, providerID uuid.UU
 	for _, key := range oldKeys {
 		keySet[key] = struct{}{}
 	}
-	for _, candidate := range found.Manga {
+	resolved, err := s.resolveRecoveryCandidate(ctx, provider, sourceID, title, found.Manga, keySet, pace)
+	if err != nil {
+		return err
+	}
+	return s.applyRecoveredProviderAddress(ctx, provider, resolved)
+}
+
+func (s *Service) resolveRecoveryCandidate(ctx context.Context, provider *ent.SeriesProvider, sourceID int64, title string, results []sourceengine.MangaEntry, oldKeys map[string]struct{}, pace func(context.Context)) (ingest.ProviderReconcileInput, error) {
+	for _, candidate := range results {
 		if !strings.EqualFold(strings.TrimSpace(candidate.Title), strings.TrimSpace(title)) {
 			continue
 		}
 		if candidate.URL == "" || candidate.URL == provider.URL || !candidate.AddressMode.IsValid() {
-			return ErrAddressRecoverySkipped
+			return ingest.ProviderReconcileInput{}, ErrAddressRecoverySkipped
 		}
 		ref := sourceengine.ProviderRef{SourceID: sourceID, URL: candidate.URL, WebURL: candidate.RealURL, AddressMode: candidate.AddressMode}
 		resolved, resolveErr := s.ingest.ResolveProviderPaced(ctx, ref, title, provider.ProviderName, pace)
 		if resolveErr != nil {
-			return fmt.Errorf("resolve recovery candidate: %w", resolveErr)
+			return ingest.ProviderReconcileInput{}, fmt.Errorf("resolve recovery candidate: %w", resolveErr)
 		}
 		if !strings.EqualFold(strings.TrimSpace(resolved.Title), strings.TrimSpace(title)) {
-			return ErrAddressRecoverySkipped
+			return ingest.ProviderReconcileInput{}, ErrAddressRecoverySkipped
 		}
-		if !safeRecoveryCandidate(title, provider.URL, found.Manga, candidate, keySet, resolved.Chapters) {
-			return ErrAddressRecoverySkipped
+		if !safeRecoveryCandidate(title, provider.URL, results, candidate, oldKeys, resolved.Chapters) {
+			return ingest.ProviderReconcileInput{}, ErrAddressRecoverySkipped
 		}
-		return s.applyRecoveredProviderAddress(ctx, provider, resolved)
+		return resolved, nil
 	}
-	return ErrAddressRecoverySkipped
+	return ingest.ProviderReconcileInput{}, ErrAddressRecoverySkipped
 }
 
 func (s *Service) applyRecoveredProviderAddress(ctx context.Context, provider *ent.SeriesProvider, resolved ingest.ProviderReconcileInput) error {
@@ -114,27 +120,19 @@ func safeRecoveryCandidate(title, oldURL string, results []sourceengine.MangaEnt
 	if selected.URL == "" || selected.URL == oldURL || !selected.AddressMode.IsValid() {
 		return false
 	}
-	exact := 0
-	for _, result := range results {
-		if strings.EqualFold(strings.TrimSpace(result.Title), strings.TrimSpace(title)) {
-			exact++
-		}
-	}
+	exact := exactTitleCount(title, results)
 	if exact != 1 || !strings.EqualFold(strings.TrimSpace(selected.Title), strings.TrimSpace(title)) {
 		return false
 	}
 	if len(oldKeys) < 3 || len(chapters) < 3 {
 		return false
 	}
-	newKeys := make(map[string]struct{}, len(chapters))
-	for _, ch := range chapters {
-		var number *float64
-		if ch.Number >= 0 {
-			n := ch.Number
-			number = &n
-		}
-		newKeys[chapter.NormalizeChapterKey(number, ch.Name)] = struct{}{}
-	}
+	newKeys := recoveryChapterKeys(chapters)
+	overlap, minimum := recoveryOverlap(oldKeys, newKeys)
+	return overlap >= 3 && overlap*4 >= minimum*3
+}
+
+func recoveryOverlap(oldKeys, newKeys map[string]struct{}) (int, int) {
 	overlap := 0
 	for key := range newKeys {
 		if _, ok := oldKeys[key]; ok {
@@ -145,5 +143,34 @@ func safeRecoveryCandidate(title, oldURL string, results []sourceengine.MangaEnt
 	if len(newKeys) < minimum {
 		minimum = len(newKeys)
 	}
-	return overlap >= 3 && overlap*4 >= minimum*3
+	return overlap, minimum
+}
+
+func paceRecovery(ctx context.Context, pace func(context.Context)) {
+	if pace != nil {
+		pace(ctx)
+	}
+}
+
+func exactTitleCount(title string, results []sourceengine.MangaEntry) int {
+	count := 0
+	for _, result := range results {
+		if strings.EqualFold(strings.TrimSpace(result.Title), strings.TrimSpace(title)) {
+			count++
+		}
+	}
+	return count
+}
+
+func recoveryChapterKeys(chapters []sourceengine.Chapter) map[string]struct{} {
+	keys := make(map[string]struct{}, len(chapters))
+	for _, ch := range chapters {
+		var number *float64
+		if ch.Number >= 0 {
+			n := ch.Number
+			number = &n
+		}
+		keys[chapter.NormalizeChapterKey(number, ch.Name)] = struct{}{}
+	}
+	return keys
 }

@@ -568,51 +568,67 @@ func (s *Service) handleGroupFetchError(ctx context.Context, grp refreshGroup, f
 	// evidence that the physical source is unavailable. Give the library's
 	// guarded in-place repair one chance before updating the source breaker.
 	if isMissingSourceCandidate(fetchErr) {
-		repairedIDs := make(map[uuid.UUID]bool)
-		var recoverySourceError error
-		var repairedCount int
-		if recoverer := s.addressRecoverer(); recoverer != nil {
-			for _, p := range grp.providers {
-				if !recovery.admit(grp.sourceID) {
-					continue
-				}
-				if err := recoverer.RecoverProviderAddress(ctx, p.providerID, func(callCtx context.Context) {
-					s.gateWait(callCtx, grp.sourceKey)
-				}); err != nil {
-					slog.WarnContext(ctx, "refresh: provider address recovery skipped", "provider_id", p.providerID, "err", err)
-					var upstream *sourceengine.UpstreamError
-					if errors.As(err, &upstream) && recoverySourceError == nil {
-						recoverySourceError = err
-					}
-					continue
-				}
-				repairedCount++
-				repairedIDs[p.providerID] = true
-				if err := s.upsertSyncState(ctx, p.providerID, nil); err != nil {
-					slog.ErrorContext(ctx, "refresh: persist repaired sync state failed", "provider_id", p.providerID, "err", err)
-				}
-			}
-			if recoverySourceError != nil {
-				s.gateRecordFailure(ctx, grp.sourceKey, recoverySourceError, now)
-			} else if repairedCount > 0 {
-				s.gateRecordSuccess(ctx, grp.sourceKey)
-			}
-			mu.Lock()
-			result.ProvidersRefreshed += repairedCount
-			mu.Unlock()
-		}
-		if repairedCount > 0 {
-			sink.add(newRefreshEvent(grp, sourceevents.StatusSuccess, fetchDuration, nil, nil))
-		}
-		if len(repairedIDs) == len(grp.providers) {
+		grp.providers = s.recoverGroupAddresses(ctx, grp, now, mu, result, sink, fetchDuration, recovery)
+		if len(grp.providers) == 0 {
 			return
 		}
-		grp.providers = unrepairedProviders(grp.providers, repairedIDs)
 		// An absent candidate cannot establish a source-wide outage, even when
 		// an ambiguous provider was deliberately left untouched for owner review.
 	} else {
 		s.gateRecordFailure(ctx, grp.sourceKey, fetchErr, now)
 	}
+	s.recordGroupFetchFailure(ctx, grp, fetchErr, sink, fetchDuration, mu, result)
+}
+
+func (s *Service) recoverGroupAddresses(ctx context.Context, grp refreshGroup, now time.Time, mu *sync.Mutex, result *RefreshResult, sink *refreshEventSink, fetchDuration time.Duration, recovery *addressRecoveryBudget) []refreshProvider {
+	recoverer := s.addressRecoverer()
+	if recoverer == nil {
+		return grp.providers
+	}
+	repairedIDs := make(map[uuid.UUID]bool)
+	var recoverySourceError error
+	for _, p := range grp.providers {
+		if !recovery.admit(grp.sourceID) {
+			continue
+		}
+		if err := recoverer.RecoverProviderAddress(ctx, p.providerID, func(callCtx context.Context) {
+			s.gateWait(callCtx, grp.sourceKey)
+		}); err != nil {
+			slog.WarnContext(ctx, "refresh: provider address recovery skipped", "provider_id", p.providerID, "err", err)
+			if recoverySourceError == nil && isUpstreamRecoveryError(err) {
+				recoverySourceError = err
+			}
+			continue
+		}
+		repairedIDs[p.providerID] = true
+		s.recordRecoveredSyncState(ctx, p.providerID)
+	}
+	if recoverySourceError != nil {
+		s.gateRecordFailure(ctx, grp.sourceKey, recoverySourceError, now)
+	} else if len(repairedIDs) > 0 {
+		s.gateRecordSuccess(ctx, grp.sourceKey)
+	}
+	mu.Lock()
+	result.ProvidersRefreshed += len(repairedIDs)
+	mu.Unlock()
+	if len(repairedIDs) > 0 {
+		sink.add(newRefreshEvent(grp, sourceevents.StatusSuccess, fetchDuration, nil, nil))
+	}
+	return unrepairedProviders(grp.providers, repairedIDs)
+}
+
+func (s *Service) recordRecoveredSyncState(ctx context.Context, providerID uuid.UUID) {
+	if err := s.upsertSyncState(ctx, providerID, nil); err != nil {
+		slog.ErrorContext(ctx, "refresh: persist repaired sync state failed", "provider_id", providerID, "err", err)
+	}
+}
+
+func isUpstreamRecoveryError(err error) bool {
+	var upstream *sourceengine.UpstreamError
+	return errors.As(err, &upstream)
+}
+
+func (s *Service) recordGroupFetchFailure(ctx context.Context, grp refreshGroup, fetchErr error, sink *refreshEventSink, fetchDuration time.Duration, mu *sync.Mutex, result *RefreshResult) {
 	slog.ErrorContext(ctx, "refresh: group fetch failed",
 		"source", grp.sourceID, "url", grp.url, "err", fetchErr)
 	sink.add(newRefreshEvent(grp, sourceevents.StatusFailed, fetchDuration, nil, fetchErr))

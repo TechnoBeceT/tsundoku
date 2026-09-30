@@ -561,10 +561,7 @@ func main() {
 	seriesSync := seriessync.NewOrchestrator(refreshSvc, dispatcher, runner.Trigger)
 
 	e := server.New(cfg, entClient, authSvc, hub, ownerH, engineClient, settingsSvc, sourceThroughputSvc, sourceConfigurationSvc, sourceImageProxySvc, sourceTransportSvc, networkSvc, metricsSvc, eventsSvc, warmupSvc, gateSvc, chapterCache, metaSvc, trackerRegistry, trackerConnectSvc, trackerBindSvc, syncSvc, pushSubsSvc, vapidPublic, runner.Trigger, runner, seriesSync, apkStore, extensionArchive, onNetworkChange, func(healer job.ProviderHealer) {
-		runner.SetProviderHealer(healer)
-		if recoverer, ok := healer.(refresh.AddressRecoverer); ok {
-			refreshSvc.WithAddressRecoverer(recoverer)
-		}
+		registerProviderRecovery(runner, refreshSvc, healer)
 	})
 
 	addr := ":" + cfg.Server.Port
@@ -582,6 +579,13 @@ func main() {
 	<-ctx.Done()
 	log.Println("tsundoku: shutdown signal received — draining requests")
 	safeToCloseDependencies = gracefulShutdown(e, runtimeApplier, runner, engineHostLauncher, bootDone)
+}
+
+func registerProviderRecovery(runner *job.Runner, refreshSvc *refresh.Service, healer job.ProviderHealer) {
+	runner.SetProviderHealer(healer)
+	if recoverer, ok := healer.(refresh.AddressRecoverer); ok {
+		refreshSvc.WithAddressRecoverer(recoverer)
+	}
 }
 
 // gracefulShutdown drains in-flight HTTP requests, closes and joins all runtime
