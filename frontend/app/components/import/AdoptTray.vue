@@ -22,7 +22,7 @@ defineProps<{
 const emit = defineEmits<{
   /** Carry the whole tray into Stage 2 (Configure) as one synthetic group. */
   configure: []
-  /** Drop one candidate from the tray, by its `candKey` (`source:mangaId`). */
+  /** Drop one candidate from the tray, by its exact source/address `candKey`. */
   remove: [key: string]
 }>()
 

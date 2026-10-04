@@ -193,6 +193,45 @@ expect_eq "queue-driven order and queue-only sources do not alter the running-wo
 expect_eq "a changed running source population changes the fingerprint" \
     "8|8|11:2,22:2,33:2,55:2" "$(status_fingerprint "$FIXTURES/status-fingerprint-changed.json")"
 
+# Browser capability is documented status metadata, independent of exhaustion.
+expect_eq "documented browser capability preserves exhaustion evidence" \
+    "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$FIXTURES/status-kcef.json" || echo unknown)"
+kcef_status=$(mktemp)
+for state in disabled initializing failed; do
+    sed "s/\"ready\",\"errorCode\":null/\"$state\",\"errorCode\":null/" "$FIXTURES/status-kcef.json" > "$kcef_status"
+    expect_eq "documented browser state $state preserves exhaustion evidence" \
+        "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$kcef_status" || echo unknown)"
+done
+for code in init_timeout init_failed; do
+    sed "s/\"ready\",\"errorCode\":null/\"failed\",\"errorCode\":\"$code\"/" "$FIXTURES/status-kcef.json" > "$kcef_status"
+    expect_eq "documented browser error $code preserves exhaustion evidence" \
+        "$EXPECTED_STATUS_FINGERPRINT" "$(status_fingerprint "$kcef_status" || echo unknown)"
+done
+for replacement in \
+    '{"state":"r eady","errorCode":null}' \
+    '{"state":"failed","errorCode":"init_ timeout"}' \
+    '{"state":"unknown","errorCode":null}' \
+    '{"state":"ready","errorCode":"secret"}' \
+    '{"state":"ready","errorCode":null,"extra":1}' \
+    '{"state":"ready","state":"failed","errorCode":null}' \
+    '{"state":"ready"}' \
+    'null'; do
+    sed "s/{\"state\":\"ready\",\"errorCode\":null}/$replacement/" "$FIXTURES/status-kcef.json" > "$kcef_status"
+    expect_eq "malformed browser capability declines evidence: $replacement" \
+        "unknown" "$(status_fingerprint "$kcef_status" || echo unknown)"
+done
+sed 's/"kcef":/"kcef":{"state":"ready","errorCode":null},"kcef":/' "$FIXTURES/status-kcef.json" > "$kcef_status"
+expect_eq "duplicate browser capability declines evidence" \
+    "unknown" "$(status_fingerprint "$kcef_status" || echo unknown)"
+sed 's/"source_id":11,/"source_id":11,"kcef":{"state":"ready","errorCode":null},/' "$FIXTURES/status-exhausted.json" > "$kcef_status"
+expect_eq "nested browser capability declines evidence" \
+    "unknown" "$(status_fingerprint "$kcef_status" || echo unknown)"
+sed 's/"state":"ready"/"state":"r\
+eady"/' "$FIXTURES/status-kcef.json" > "$kcef_status"
+expect_eq "literal newline in browser state declines evidence" \
+    "unknown" "$(status_fingerprint "$kcef_status" || echo unknown)"
+rm -f "$kcef_status"
+
 sample=$(exhaustion_sample "$FIXTURES/status-exhausted.json" "$FIXTURES/dump-source-first.txt")
 expect_eq "an exhaustion sample carries sequence, age, occupancy, fingerprint, and dump population" \
     "41 181001 8 8 $EXPECTED_STATUS_FINGERPRINT engine-source-1,engine-source-2,engine-source-3,engine-source-4,engine-source-5,engine-source-6,engine-source-7,engine-source-8" \

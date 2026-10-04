@@ -38,9 +38,9 @@ type resolvedChapter struct {
 // source — see roundRobinBySeries for the exact interleaving rule.
 //
 // A chapter with no live candidate never enters a group and never occupies a
-// start slot: it is handled inline via handleNoCandidates (stays wanted when no
-// source has it yet or all are on cooldown; permanently_failed when every source
-// is exhausted). A bulk resolution error is logged and skips this pass, matching
+// start slot. Waiting chapters use the same loaded feed; potential terminal or
+// sourceless decisions re-read current state via handleNoCandidates (stays wanted
+// without a source; permanently_failed when every source is exhausted). A bulk resolution error is logged and skips this pass, matching
 // the old path where the same database failure made every per-chapter resolution
 // fail and be skipped.
 //
@@ -54,7 +54,7 @@ func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Sel
 	for i, selection := range selections {
 		chapters[i] = selection.Chapter
 	}
-	candsByChapter, err := chapter.RankedLiveCandidatesForMany(ctx, d.client, chapters, maxRetries, now, disabled)
+	resolutions, err := chapter.ResolveCandidatesForMany(ctx, d.client, chapters, maxRetries, now, disabled)
 	if err != nil {
 		slog.WarnContext(ctx, "download.RunOnce: could not rank candidates — skipping selected batch this cycle",
 			"err", err,
@@ -62,15 +62,23 @@ func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Sel
 		return groups
 	}
 
+	snap := loadBreakerSnapshot(ctx, d.gate)
 	for _, selection := range selections {
 		ch := selection.Chapter
-		cands := candsByChapter[ch.ID]
+		resolution := resolutions[ch.ID]
+		cands := resolution.Candidates
 		// Exclude any candidate whose physical source is currently cooled down by
 		// the source-politeness gate — a chapter whose ONLY live candidates are
 		// all cooled down is handled exactly like "no live candidate" below (stays
 		// wanted, never churned through downloading→failed).
-		cands = d.filterGated(ctx, cands, now)
+		cands = gateFilterCandidatesSnapshot(snap, cands, now)
 		if len(cands) == 0 {
+			// A remaining retry budget means waiting (cooldown, pause or breaker).
+			// Only potential terminal/sourceless decisions need fresh database reads;
+			// handleNoCandidates retains their current-state checks before mutation.
+			if resolution.HasProviders && !resolution.AllExhausted {
+				continue
+			}
 			if err := d.handleNoCandidates(ctx, ch, maxRetries); err != nil {
 				slog.WarnContext(ctx, "download.RunOnce: handleNoCandidates failed — skipping chapter this cycle",
 					"chapter_id", ch.ID,

@@ -1497,6 +1497,22 @@ components:
           type: integer
           description: The 1-based page number returned.
 
+    SearchSnapshot:
+      type: object
+      required: [groups, pendingSources, done]
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchGroup"
+        pendingSources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Source"
+        done:
+          type: boolean
+          description: True for the terminal snapshot; pendingSources is then empty.
+
     SearchGroup:
       type: object
       required:
@@ -7073,6 +7089,13 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - name: stream
+          in: query
+          required: false
+          description: Return progressive request-scoped search events instead of a JSON array.
+          schema:
+            type: boolean
+            default: false
         - name: q
           in: query
           required: true
@@ -7091,6 +7114,15 @@ paths:
         "200":
           description: Grouped search results.
           content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  With stream=true, event search contains a JSON SearchSnapshot.
+                  An initial snapshot lists pending sources; accumulated grouped results follow
+                  as sources finish. The terminal snapshot has done=true and pendingSources=[].
+                  Cache hits emit only the terminal snapshot. After streaming begins, a terminal
+                  event error contains JSON {message:string}. Disconnecting cancels the request.
             application/json:
               schema:
                 type: array
@@ -8519,6 +8551,13 @@ paths:
       security:
         - BearerAuth: []
       parameters:
+        - name: stream
+          in: query
+          required: false
+          description: Return progressive request-scoped search events instead of a JSON array.
+          schema:
+            type: boolean
+            default: false
         - name: path
           in: query
           required: true
@@ -8537,6 +8576,15 @@ paths:
         "200":
           description: Cross-source search results, grouped by title similarity.
           content:
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  With stream=true, event search contains a JSON SearchSnapshot.
+                  An initial snapshot lists pending sources; accumulated grouped results follow
+                  as sources finish. The terminal snapshot has done=true and pendingSources=[].
+                  Cache hits emit only the terminal snapshot. After streaming begins, a terminal
+                  event error contains JSON {message:string}. Disconnecting cancels the request.
             application/json:
               schema:
                 type: array
@@ -8544,6 +8592,12 @@ paths:
                   $ref: "#/components/schemas/SearchGroup"
         "400":
           description: Missing or empty path.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No staged entry exists for the supplied path.
           content:
             application/json:
               schema:

@@ -32,14 +32,15 @@ RUN bunx nuxi generate
 # Replaces the old "embedded Suwayomi JAR" stage. A JDK-21 toolchain is REQUIRED
 # (JDK 17 cannot build AndroidCompat's --release 21 Java sources). The composite
 # build needs Suwayomi-Server's own modules, so we clone it at the pinned commit
-# and point Gradle at it via -PsuwayomiSrc (no fork, no IKVM).
+# and point Gradle at it via -PsuwayomiSrc. Settings prepare the same pinned solver
+# correction used by local builds and CI in a disposable copy.
 FROM eclipse-temurin:21-jdk-noble AS engine
 ARG SUWAYOMI_REPO=https://github.com/Suwayomi/Suwayomi-Server.git
 ARG SUWAYOMI_COMMIT=b0bc8c6fb3cdd050dbbfdeb50a9ee1b0d2cbad45
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN git clone "$SUWAYOMI_REPO" suwayomi && \
-    cd suwayomi && git checkout "$SUWAYOMI_COMMIT" && git submodule update --init --recursive || true
+    cd suwayomi && git checkout "$SUWAYOMI_COMMIT" && git submodule update --init --recursive
 COPY engine-host/ /src/engine-host/
 WORKDIR /src/engine-host
 # Foojay auto-provisions the pinned toolchain; -Xmx keeps the Suwayomi :server

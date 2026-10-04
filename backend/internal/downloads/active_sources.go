@@ -39,7 +39,7 @@ func (s *Service) ActiveSourceCounts(ctx context.Context) (map[string]int, error
 	}
 
 	_, seriesIDs := distinctSeries(rows)
-	provByID, provBySeries, err := s.loadProviders(ctx, seriesIDs)
+	provByID, provBySeries, err := s.loadProviders(ctx, seriesIDs, rows)
 	if err != nil {
 		return nil, err
 	}

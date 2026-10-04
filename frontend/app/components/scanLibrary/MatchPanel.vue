@@ -47,7 +47,7 @@ import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGr
  * separately from the CONFIRM mutation's loading/error state (`busy`/`error`,
  * from `useScanLibrary().busy(path)`/`.error(path)`) — two distinct async
  * operations, two distinct §16 state pairs. `breakdowns` (per-scanlator
- * coverage cache, keyed `source:mangaId`) arrives the same way, and every
+ * coverage cache, keyed the exact source/address key) arrives the same way, and every
  * Configure-stage breakdown fetch is emitted via `loadBreakdowns` for the
  * parent's `useScanLibrary.loadBreakdowns` to run (§16 — no fetching here).
  * `breakdownSnapshots` (GAP-140) is that SAME cache's snapshot lifecycle
@@ -60,31 +60,21 @@ import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGr
  * `useScanLibrary.refreshBreakdown` to run.
  *
  * Resets to the Groups stage (and drops the gathered tray + picked group)
- * whenever `groups` changes: a fresh match search's results (the owner
- * clicked Match on a staged entry; `groups` starts `[]` while `searching`,
- * then updates once the search resolves) must never leave a stale Configure
- * selection showing. Unlike a dialog's open/close, this panel has no single
- * "reopen" moment to reset on — the parent mounts it via `v-if` as soon as
- * the search STARTS (so it can show the spinner), then the SAME instance
- * re-renders once `groups` actually updates — hence the reset lives on a
- * `groups` watcher rather than an `open` watcher (see `ScanLibrary.vue`'s
- * `onMatch`).
- *
- * Tray-leak guard: `tray-enabled` is intentionally ON here (Slice P widened
- * this surface to MULTI-select) — the sibling single-select match surface
- * `MatchDiskProviderDialog` (the no-re-download link of an unlinked
- * disk-origin group) is untouched and still leaves it off.
+ * when a new `searchGeneration` arrives. Progressive snapshots of the same
+ * request preserve the active Configure stage and gathered selection.
  */
 const props = withDefaults(defineProps<{
   /** The staged entry's title, for the panel header. */
   title: string
   /** Cross-source candidate groups returned by the match search. */
   groups: SearchGroup[]
-  /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
+  searchGeneration?: number
+  /** Per-scanlator breakdown cache, keyed the exact source/address key (see `useSourceConfigure`). */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
   /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
   breakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** True while the match search itself is in flight. */
+  pendingSourceCount?: number
   searching?: boolean
   /** A match-search failure message, or "" for none. */
   searchError?: string
@@ -95,7 +85,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   breakdowns: () => ({}),
   breakdownSnapshots: () => ({}),
+  searchGeneration: 0,
   searching: false,
+  pendingSourceCount: 0,
   searchError: '',
   busy: false,
   error: '',
@@ -124,10 +116,8 @@ const cfg = useSourceConfigure({
   onLoadBreakdowns: c => emit('loadBreakdowns', c),
 })
 
-// A fresh match search (new `groups` prop — the owner matched a different
-// row, or this one's search just resolved) always restarts at the
-// group-picking stage and drops any gathered tray/selection.
-watch(() => props.groups, () => {
+// A new request resets the selection; later snapshots of that request keep it.
+watch(() => props.searchGeneration, () => {
   stage.value = 'groups'
   cfg.tray.value = []
   cfg.group.value = null
@@ -169,16 +159,16 @@ function confirm(): void {
 
     <div v-if="searching" class="mp-loading">
       <Spinner :size="16" tone="accent" />
-      Searching sources…
+      Searching sources… <span v-if="pendingSourceCount">{{ pendingSourceCount }} pending</span>
     </div>
 
-    <ErrorBanner v-else-if="searchError" class="mp-error" :message="searchError" :dismissible="false" />
+    <ErrorBanner v-if="searchError" class="mp-error" :message="searchError" :dismissible="false" />
 
-    <p v-else-if="groups.length === 0" class="mp-note mp-note--center">
+    <p v-if="!searching && groups.length === 0" class="mp-note mp-note--center">
       No matches found across any source.
     </p>
 
-    <template v-else-if="stage === 'groups'">
+    <template v-if="groups.length && stage === 'groups'">
       <p class="mp-subhead">
         {{ groups.length }} possible match{{ groups.length === 1 ? '' : 'es' }} · choose one or gather several
       </p>
@@ -208,7 +198,7 @@ function confirm(): void {
       </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="stage === 'configure'">
       <SourceConfigurePanel
         :rows="cfg.displayRows.value"
         hide-inspect

@@ -30,11 +30,12 @@
  * new `loadBreakdown` call simply replaces; a failure resolves `null` (never
  * throws) so the dialog can fall back to an "all chapters, no split" choice.
  */
-import { ref } from 'vue'
+import { useSourceSearch } from './useSourceSearch'
+import { ref, watch } from 'vue'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
-import { mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
-import type { ScanlatorCoverage, SearchGroup, Source } from '~/components/screens/import.types'
+import { mapScanlatorCoverage } from '~/composables/importMappers'
+import type { ScanlatorCoverage, Source } from '~/components/screens/import.types'
 
 type SourceDTO = components['schemas']['Source']
 
@@ -49,13 +50,16 @@ function mapSource(dto: SourceDTO): Source {
 }
 
 export function useMatchDiskProvider() {
-  const groups = ref<SearchGroup[]>([])
-  const searching = ref(false)
+  const sourceSearch = useSourceSearch()
+  const groups = sourceSearch.groups
+  const pendingSources = sourceSearch.pendingSources
+  const searching = sourceSearch.searching
+  const resetSearch = sourceSearch.reset
   const breakdown = ref<ScanlatorCoverage[] | null>(null)
   const breakdownLoading = ref(false)
   const error = ref<string | null>(null)
-  /** Monotonic request-generation counter for `search()`'s stale-response guard (see above). */
-  let searchGeneration = 0
+  // Search failures share this surface with the domain actions below.
+  watch(sourceSearch.error, value => { error.value = value })
 
   // ---- sources (the source-filter chip list, loaded lazily on first open) ----
   // Mirrors `useMatchSource`: this dialog only needs the source list once the
@@ -74,40 +78,11 @@ export function useMatchDiskProvider() {
     }
   }
 
-  /**
-   * Cross-source title search — the same endpoint + grouping as the Import
-   * wizard and the add-source dialog. Captures its own generation and clears
-   * `groups`/`error` immediately (so a re-search never shows stale results
-   * while in flight); the eventual success or failure is only written back if
-   * this call is still the most recently started one. `sources` is an optional
-   * list of source IDs to restrict the search to (from `SourceFilterChips`); an
-   * empty list searches every source (mirrors `useMatchSource.search`).
-   */
+  /** Shares progressive snapshots, cancellation and stale-frame protection
+   * with the other search surfaces through useSourceSearch. */
   async function search(payload: { q: string, sources: string[] }): Promise<void> {
-    const generation = ++searchGeneration
-    searching.value = true
     error.value = null
-    groups.value = []
-    try {
-      // Omit sources param when empty (all sources searched); join as CSV when set.
-      const query: { q: string, sources?: string } = { q: payload.q }
-      if (payload.sources.length > 0) {
-        query.sources = payload.sources.join(',')
-      }
-      const res = await apiClient.GET('/api/search', { params: { query } })
-      if (res.error || !res.data) {
-        throw new Error(res.error ? res.error.message : 'Search failed')
-      }
-      const mapped = res.data.map(mapGroup)
-      if (generation === searchGeneration) groups.value = mapped
-    }
-    catch (err) {
-      const message = err instanceof Error ? err.message : 'Search failed'
-      if (generation === searchGeneration) error.value = message
-    }
-    finally {
-      if (generation === searchGeneration) searching.value = false
-    }
+    await sourceSearch.search(payload)
   }
 
   /**
@@ -137,5 +112,5 @@ export function useMatchDiskProvider() {
     }
   }
 
-  return { sources, groups, searching, breakdown, breakdownLoading, error, loadSources, search, loadBreakdown }
+  return { sources, groups, searching, pendingSources, resetSearch, breakdown, breakdownLoading, error, loadSources, search, loadBreakdown }
 }

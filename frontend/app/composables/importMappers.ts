@@ -55,9 +55,8 @@ export function mapGroup(dto: SearchGroupDTO): SearchGroup {
 
 /**
  * Maps one backend ScanlatorCoverage DTO (from the per-scanlator breakdown
- * endpoint) onto the shared screen type. Reused by `useImport.loadBreakdowns`
- * (Adopt wizard auto-split) — the sole consumer today, kept here alongside the
- * other DTO mappers per this file's single-home convention.
+ * endpoint) onto the shared screen type. Shared by useSourceCoverage's cached
+ * configuration lifecycle and useMatchDiskProvider's single-result lookup.
  */
 export function mapScanlatorCoverage(dto: ScanlatorCoverageDTO): ScanlatorCoverage {
   return {

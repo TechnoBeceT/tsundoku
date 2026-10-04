@@ -1,3 +1,4 @@
+import { searchStream } from '../../test/sourceSearch'
 /**
  * Series-detail PAGE — the remove-source confirm dialog lifecycle.
  *
@@ -89,10 +90,10 @@ vi.mock('~/utils/api/client', () => ({
       }
       if (path === '/api/search') {
         return Promise.resolve({
-          data: [{
+          data: searchStream([{
             title: 'Solo Leveling',
             candidates: [{ source: 'asurascans', sourceName: 'Asura Scans', lang: 'en', mangaId: 42, title: 'Solo Leveling', url: malformedCandidate ? ' ' : '/comics/solo-leveling', thumbnailUrl: '', author: '', artist: '', description: '', genres: [] }],
-          }],
+          }]),
           error: null,
           response: new Response(),
         })

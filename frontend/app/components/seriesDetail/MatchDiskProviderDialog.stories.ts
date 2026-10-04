@@ -92,3 +92,7 @@ export const Saving: Story = {
     await userEvent.click(await canvas.findByText(scanlatorBreakdown[0]!.scanlator))
   },
 }
+
+export const ProgressiveResults: Story = {
+  args: { groups: searchResults, searching: true, pendingSourceCount: 2 },
+}

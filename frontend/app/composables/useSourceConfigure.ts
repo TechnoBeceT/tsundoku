@@ -71,7 +71,7 @@ export interface ProviderRef {
 }
 
 export function useSourceConfigure(opts: {
-  /** Per-scanlator breakdown cache, keyed by `source:mangaId` (owned by the consumer). */
+  /** Per-scanlator breakdown cache, keyed by exact source/address (owned by the consumer). */
   breakdowns: Ref<Record<string, ScanlatorCoverage[] | null>>
   /**
    * The SAME cache's snapshot-level metadata (GAP-140) — status/computedAt/
@@ -104,19 +104,19 @@ export function useSourceConfigure(opts: {
 } {
   const group = ref<SearchGroup | null>(null)
   // row key → selected?; `order` holds the selected keys in priority order. A row
-  // key is `source:mangaId` (unsplit) or `source:mangaId:scanlator` (once a
+  // key uses candKey (unsplit), with a scanlator suffix once a
   // candidate's breakdown resolves with 2+ scanlators — see the `breakdowns`
-  // watch below, which migrates the key(s) in place).
+  // watch below, which migrates the key(s) in place.
   const selected = ref<Record<string, boolean>>({})
   const order = ref<string[]>([])
-  // Candidates (by base `source:mangaId` key) whose breakdown has already been
+  // Candidates (by their exact source/address key) whose breakdown has already been
   // split into per-scanlator row keys — guards the watch below from re-splitting
   // (and duplicating) the same candidate on every unrelated `breakdowns` update.
   const splitApplied = new Set<string>()
 
   /**
    * Once a candidate's breakdown resolves with 2+ scanlators, migrate its single
-   * `source:mangaId` row key to one `source:mangaId:scanlator` key per group. A
+   * candidate row key to one scanlator-suffixed key per group. A
    * 0/1-scanlator or failed/unloaded breakdown never splits — `configRows` below
    * renders those straight off the unsplit key with no reconciliation needed.
    *
@@ -258,7 +258,7 @@ export function useSourceConfigure(opts: {
     for (const c of g.candidates) {
       const baseKey = candKey(c)
       const bd = opts.breakdowns.value[baseKey]
-      // The snapshot describes the WHOLE source's breakdown fetch, so every
+      // The snapshot describes this exact source/address breakdown, so every
       // row split out of it (one call, N scanlator rows) shares the same
       // status/computedAt/error (GAP-140). `snapshots` is optional — a
       // caller that never supplies it leaves every row's `coverageStatus`

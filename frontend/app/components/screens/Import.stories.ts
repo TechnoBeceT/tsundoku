@@ -1,3 +1,4 @@
+import { candKey } from './import.types'
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { ref } from 'vue'
 import { userEvent, within } from 'storybook/test'
@@ -127,16 +128,16 @@ export const ConfigureCoverageSnapshot: Story = {
     searched: true,
     categories,
     breakdowns: {
-      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: [],
-      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: [
+      [candKey(searchResults[0]!.candidates[0]!)]: [],
+      [candKey(searchResults[0]!.candidates[1]!)]: [
         { scanlator: searchResults[0]!.candidates[1]!.sourceName, count: 175, ranges: '1-175' },
       ],
-      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: [],
+      [candKey(searchResults[0]!.candidates[2]!)]: [],
     },
     breakdownSnapshots: {
-      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: { status: 'pending', computedAt: '', error: '' },
-      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
-      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
+      [candKey(searchResults[0]!.candidates[0]!)]: { status: 'pending', computedAt: '', error: '' },
+      [candKey(searchResults[0]!.candidates[1]!)]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
+      [candKey(searchResults[0]!.candidates[2]!)]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
     },
   },
   play: async ({ canvasElement }) => {
@@ -187,4 +188,8 @@ export const MobileViewport: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(await canvas.findByText(searchResults[0]!.title))
   },
+}
+
+export const ProgressiveResults: Story = {
+  args: { searchResults: searchResults, searching: true, pendingSourceCount: 2 },
 }

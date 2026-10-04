@@ -1,7 +1,7 @@
+import { candKey } from '../screens/import.types'
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { userEvent, within } from 'storybook/test'
 import MatchSourceDialog from './MatchSourceDialog.vue'
-import { candKey } from '../screens/import.types'
 import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
 
 /**
@@ -16,7 +16,8 @@ import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
  * candidate's coverage split across two scanlators), a search/attach failure,
  * and the saving (in-flight) state. Flip the theme toolbar for dark/light.
  */
-const firstCandidateKey = candKey(searchResults[0]!.candidates[0]!)
+const firstCandidate = searchResults[0]!.candidates[0]!
+const firstCandidateKey = candKey(firstCandidate)
 
 const meta = {
   title: 'SeriesDetail/MatchSourceDialog',
@@ -74,16 +75,16 @@ export const ConfigureMulti: Story = {
 export const ConfigureCoverageSnapshot: Story = {
   args: {
     breakdowns: {
-      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: [],
-      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: [
+      [candKey(searchResults[0]!.candidates[0]!)]: [],
+      [candKey(searchResults[0]!.candidates[1]!)]: [
         { scanlator: searchResults[0]!.candidates[1]!.sourceName, count: 175, ranges: '1-175' },
       ],
-      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: [],
+      [candKey(searchResults[0]!.candidates[2]!)]: [],
     },
     breakdownSnapshots: {
-      [`${searchResults[0]!.candidates[0]!.source}:${searchResults[0]!.candidates[0]!.mangaId}`]: { status: 'pending', computedAt: '', error: '' },
-      [`${searchResults[0]!.candidates[1]!.source}:${searchResults[0]!.candidates[1]!.mangaId}`]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
-      [`${searchResults[0]!.candidates[2]!.source}:${searchResults[0]!.candidates[2]!.mangaId}`]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
+      [candKey(searchResults[0]!.candidates[0]!)]: { status: 'pending', computedAt: '', error: '' },
+      [candKey(searchResults[0]!.candidates[1]!)]: { status: 'ready', computedAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), error: '' },
+      [candKey(searchResults[0]!.candidates[2]!)]: { status: 'failed', computedAt: '', error: 'upstream timed out' },
     },
   },
   play: async ({ canvasElement }) => {
@@ -128,4 +129,8 @@ export const RematchSaving: Story = {
     saving: true,
   },
   play: Rematch.play,
+}
+
+export const ProgressiveResults: Story = {
+  args: { groups: searchResults, searching: true, pendingSourceCount: 2 },
 }

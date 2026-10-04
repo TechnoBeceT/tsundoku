@@ -157,6 +157,9 @@ jobs:
       # backend-ci and frontend-ci do, because the step above deliberately reads
       # the repository-ROOT Dockerfile; declaring the module per Gradle step is
       # clearer than escaping out with `../`.
+      - name: Verify dependency preparation
+        run: sh engine-host/vendor/solver/prepare_test.sh "$RUNNER_TEMP/suwayomi"
+
       - name: Test
         working-directory: engine-host
         run: ./gradlew --no-daemon -PsuwayomiSrc="$RUNNER_TEMP/suwayomi" test
@@ -188,3 +191,7 @@ jobs:
             exit 1
           fi
           echo "engine-host: $tests tests across $classes classes"
+
+      - name: Build distribution
+        working-directory: engine-host
+        run: ./gradlew --no-daemon -PsuwayomiSrc="$RUNNER_TEMP/suwayomi" installDist

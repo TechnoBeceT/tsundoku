@@ -77,6 +77,7 @@ const props = withDefaults(defineProps<{
   /** Cross-source groups returned by the current search. */
   searchResults?: SearchGroup[]
   /** When true, a search is in flight — show the searching spinner. */
+  pendingSourceCount?: number
   searching?: boolean
   /** When true, a search has run — distinguishes "no matches" from "prompt". */
   searched?: boolean
@@ -89,7 +90,7 @@ const props = withDefaults(defineProps<{
   /** The owner's dynamic category list; the picker defaults to the first category (owner: first = default). */
   categories?: string[]
   /**
-   * Per-scanlator breakdown cache, keyed by `source:mangaId` (mirrors
+   * Per-scanlator breakdown cache, keyed by the exact source/address key (mirrors
    * `useImport`'s `breakdowns`). An absent key = not yet fetched (or still in
    * flight) — that candidate renders as a single unchanged row; `null` = the
    * fetch failed — a single row labelled "Coverage unavailable"; a populated
@@ -101,6 +102,7 @@ const props = withDefaults(defineProps<{
 }>(), {
   searchResults: () => [],
   searching: false,
+  pendingSourceCount: 0,
   searched: false,
   inspectChapters: null,
   adopting: false,
@@ -351,7 +353,7 @@ const submit = (): void => {
             <!-- Searching / empty / prompt states (§16) -->
             <div v-if="searching" class="imp-loading">
               <Spinner :size="16" tone="accent" />
-              Searching sources…
+              Searching sources… <span v-if="pendingSourceCount">{{ pendingSourceCount }} pending</span>
             </div>
             <p v-else-if="noResults" class="imp-note imp-note--center">No matches found. Try another title.</p>
             <p v-else-if="promptSearch" class="imp-note imp-note--center imp-note--faint">
@@ -367,7 +369,7 @@ const submit = (): void => {
             />
 
             <!-- Grouped results -->
-            <div v-if="!searching && groups.length" class="imp-groups">
+            <div v-if="groups.length" class="imp-groups">
               <SearchGroupCard
                 v-for="g in groups"
                 :key="g.title"

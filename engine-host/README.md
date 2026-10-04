@@ -8,7 +8,8 @@ state. There is **no Suwayomi server, no database, no GraphQL**. It replaces the
 working-set (installed APKs + per-source preferences) on a mounted volume.
 
 Built on Suwayomi-Server's own JVM-native code (AndroidCompat runtime + the `eu.kanade.tachiyomi`
-source API + extension loaders) via a Gradle **composite build** — no IKVM, no Suwayomi fork.
+source API + extension loaders) via a Gradle **composite build**. The pinned dependency receives
+a small repository-maintained solver correction in a disposable source copy.
 
 ## License
 
@@ -36,3 +37,39 @@ The composite build points at a local Suwayomi checkout; override with
 Frozen in `RPC-CONTRACT.md` (the P2 interface). Every source/manga/chapter call is addressed by
 `(sourceId, url)` — never an opaque engine id — so a DB rebuild + extension reinstall resolves the
 same series (killing the wrong-series bug).
+
+### Solver transport ownership
+
+Gradle settings call `vendor/solver/prepare.sh` for local, CI and Docker builds. It verifies the
+pinned original interceptor and dependency revision, copies sources into `build/suwayomi`, and
+applies the MPL-licensed correction there. The input checkout is never patched. Changed or
+unexpected prepared sources fail the build. Update the revision, original hash and patch together
+when upgrading the dependency.
+
+Only the exact empty session string selects disposable browser solves; whitespace-only names remain
+named sessions with their exact identity. Disposable solves can run independently. Cancelling an app request cancels their nested
+HTTP call, including response-body reads. A configured named session keeps its exact endpoint,
+name and TTL. Its browser lease remains exclusive while an active solve drains after caller
+cancellation; app source workers return promptly. A fully consumed, valid solver response permits
+reuse. Transport failure, timeout, malformed body or unsuccessful HTTP response leaves that named
+session unresolved and blocks further use in this process. There is no timer-based recovery.
+
+Ownership is bounded to eight physical solver transports, 128 app callers and 128 session entries.
+The challenge deadline includes admission and response reading, using the configured solver timeout
+plus the existing ten-second transport allowance. Existing cookie handling, user agent, response
+fallback and the configured network client's egress remain in use.
+Solver payloads and source retry headers share native cookie scope matching (domain,
+host-only, path and HTTPS) plus expiry checks; cookies outside that request's scope stay
+stored without being transmitted.
+
+Leases are process-local. Multiple hosts must not share a named browser without external
+serialization. Restarting a host clears local knowledge; it does **not** establish remote completion.
+After an unresolved solve, verify remote termination or recreate the remote browser before restarting
+or reusing that session. HTTP cancellation alone is not a remote browser cancellation acknowledgement.
+
+Verify preparation and runtime behavior with:
+
+```sh
+sh vendor/solver/prepare_test.sh /path/to/pinned/Suwayomi-Server
+./gradlew -PsuwayomiSrc=/path/to/pinned/Suwayomi-Server test installDist
+```

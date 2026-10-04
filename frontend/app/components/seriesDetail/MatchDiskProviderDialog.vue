@@ -76,6 +76,7 @@ const props = withDefaults(defineProps<{
   /** The current cross-source search results. */
   groups?: SearchGroup[]
   /** A search is in flight. */
+  pendingSourceCount?: number
   searching?: boolean
   /** The selected candidate's per-scanlator chapter-coverage breakdown, or null (not loaded / failed). */
   breakdown?: ScanlatorCoverage[] | null
@@ -93,6 +94,7 @@ const props = withDefaults(defineProps<{
   defaultImportance: 2,
   groups: () => [],
   searching: false,
+  pendingSourceCount: 0,
   breakdown: null,
   breakdownLoading: false,
   saving: false,
@@ -296,11 +298,11 @@ function confirm(): void {
 
       <div v-if="searching" class="match-loading">
         <Spinner :size="16" tone="accent" />
-        Searching sources…
+        Searching sources… <span v-if="pendingSourceCount">{{ pendingSourceCount }} pending</span>
       </div>
       <p v-else-if="noResults" class="match-note">No matches found. Try another title.</p>
 
-      <div v-if="!searching && groups.length" class="match-groups">
+      <div v-if="groups.length" class="match-groups">
         <SearchGroupCard
           v-for="g in groups"
           :key="g.title"

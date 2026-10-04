@@ -136,7 +136,8 @@ func New(
 	// responses are tiny and already newline-framed; compression adds no value.
 	e.Use(echomiddleware.GzipWithConfig(echomiddleware.GzipConfig{
 		Skipper: func(c echo.Context) bool {
-			return c.Request().URL.Path == "/api/progress"
+			path := c.Request().URL.Path
+			return path == "/api/progress" || (c.QueryParam("stream") == "true" && (path == "/api/search" || path == "/api/library/imports/match"))
 		},
 	}))
 	e.Use(echomiddleware.Logger())

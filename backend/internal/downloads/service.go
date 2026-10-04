@@ -231,7 +231,7 @@ func (s *Service) List(ctx context.Context, filter ListFilter) (DownloadListDTO,
 	}
 
 	seriesByID, seriesIDs := distinctSeries(rows)
-	provByID, provBySeries, err := s.loadProviders(ctx, seriesIDs)
+	provByID, provBySeries, err := s.loadProviders(ctx, seriesIDs, rows)
 	if err != nil {
 		return DownloadListDTO{}, err
 	}
@@ -414,19 +414,40 @@ func distinctSeries(rows []*ent.Chapter) (map[uuid.UUID]*ent.Series, []uuid.UUID
 	return byID, ids
 }
 
-// loadProviders batch-loads every SeriesProvider (with its ProviderChapter feed)
-// for the given series ids in ONE query, returning both a by-id index (for the
-// satisfied-by provider lookup) and a by-series grouping (for name/display/source
-// resolution). Returns empty maps when there are no ids.
-func (s *Service) loadProviders(ctx context.Context, seriesIDs []uuid.UUID) (byID map[uuid.UUID]*ent.SeriesProvider, bySeries map[uuid.UUID][]*ent.SeriesProvider, err error) {
+// loadProviders batch-loads every SeriesProvider with only the requested chapter
+// addresses and read-model feed fields (never page_links). It returns a by-id
+// index for the satisfier lookup and a by-series grouping for display/source
+// resolution. Returns empty maps when there are no ids.
+func (s *Service) loadProviders(ctx context.Context, seriesIDs []uuid.UUID, chapters []*ent.Chapter) (byID map[uuid.UUID]*ent.SeriesProvider, bySeries map[uuid.UUID][]*ent.SeriesProvider, err error) {
 	byID = map[uuid.UUID]*ent.SeriesProvider{}
 	bySeries = map[uuid.UUID][]*ent.SeriesProvider{}
 	if len(seriesIDs) == 0 {
 		return byID, bySeries, nil
 	}
+	// Keep each key tied to its series. A page can contain chapter "1" from one
+	// series and chapter "2" from another; a global key set would hydrate both
+	// unrequested cross-pairs too.
+	keysBySeries := make(map[uuid.UUID][]string, len(seriesIDs))
+	for _, ch := range chapters {
+		keysBySeries[ch.SeriesID] = append(keysBySeries[ch.SeriesID], ch.ChapterKey)
+	}
+	addresses := make([]predicate.ProviderChapter, 0, len(keysBySeries))
+	for sid, keys := range keysBySeries {
+		addresses = append(addresses, entproviderchapter.And(
+			entproviderchapter.ChapterKeyIn(keys...),
+			entproviderchapter.HasSeriesProviderWith(entseriesprovider.SeriesIDEQ(sid)),
+		))
+	}
 	providers, err := s.client.SeriesProvider.Query().
 		Where(entseriesprovider.SeriesIDIn(seriesIDs...)).
-		WithProviderChapters().
+		WithProviderChapters(func(q *ent.ProviderChapterQuery) {
+			q.Where(entproviderchapter.Or(addresses...)).Select(
+				entproviderchapter.FieldID, entproviderchapter.FieldSeriesProviderID,
+				entproviderchapter.FieldChapterKey, entproviderchapter.FieldNumber,
+				entproviderchapter.FieldName, entproviderchapter.FieldAttempts,
+				entproviderchapter.FieldLastError, entproviderchapter.FieldNextAttemptAt,
+			)
+		}).
 		All(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("downloads.List: load providers: %w", err)

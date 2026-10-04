@@ -319,11 +319,32 @@ _status_parse() {
             if (length(left) != length(right)) return length(left) < length(right)
             return ("x" left) < ("x" right)
         }
+        function compact_json(text,    i, char, quoted, escaped, out) {
+            for (i = 1; i <= length(text); i++) {
+                char = substr(text, i, 1)
+                if (quoted || char !~ /[[:space:]]/) out = out char
+                if (escaped) escaped = 0
+                else if (quoted && char == "\\") escaped = 1
+                else if (char == "\"") quoted = !quoted
+            }
+            return out
+        }
         {
-            input = input $0
+            input = input $0 "\n"
         }
         END {
-            gsub(/[[:space:]]/, "", input)
+            input = compact_json(input)
+            # The embedded-browser status is documented metadata, not physical
+            # source-work evidence. Validate it before reducing the snapshot.
+            if (index(input, "\"kcef\":")) {
+                # The native status contract appends this top-level member last.
+                if (!match(input, /,"kcef":\{"state":"(disabled|initializing|ready|failed)","errorCode":(null|"init_timeout"|"init_failed")\}\}$/)) {
+                    fail()
+                } else {
+                    input = substr(input, 1, RSTART - 1) "}"
+                    if (index(input, "\"kcef\":")) fail()
+                }
+            }
             if (input !~ /^\{.*\}$/ || input ~ /:"/) fail()
 
             marker = "\"busiest_sources\":["

@@ -1,0 +1,163 @@
+--- a/server/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/CloudflareInterceptor.kt
++++ b/server/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/CloudflareInterceptor.kt
+@@ -1,20 +1,23 @@
+ package eu.kanade.tachiyomi.network.interceptor
++
++/*
++ * Portions adapted from Suwayomi-Server contributors.
++ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
++ * If a copy of the MPL was not distributed with this file, obtain one at https://mozilla.org/MPL/2.0/.
++ */
+ 
+ import eu.kanade.tachiyomi.network.NetworkHelper
+ import eu.kanade.tachiyomi.network.POST
+-import eu.kanade.tachiyomi.network.awaitSuccess
+-import eu.kanade.tachiyomi.network.parseAs
+ import io.github.oshai.kotlinlogging.KotlinLogging
+ import kotlinx.coroutines.GlobalScope
+ import kotlinx.coroutines.flow.SharingStarted
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.stateIn
+ import kotlinx.coroutines.runBlocking
+-import kotlinx.coroutines.sync.Mutex
+-import kotlinx.coroutines.sync.withLock
+ import kotlinx.serialization.SerialName
+ import kotlinx.serialization.Serializable
+ import kotlinx.serialization.json.Json
++import okhttp3.Call
+ import okhttp3.Cookie
+ import okhttp3.FormBody
+ import okhttp3.HttpUrl
+@@ -61,7 +64,7 @@
+             val flareResponseFallback = serverConfig.flareSolverrAsResponseFallback.value
+             val flareResponse =
+                 runBlocking {
+-                    CFClearance.resolveWithFlareSolver(originalRequest, !flareResponseFallback)
++                    CFClearance.resolveWithFlareSolver(originalRequest, !flareResponseFallback, chain.call())
+                 }
+ 
+             if (flareResponse.message.contains("not detected", ignoreCase = true)) {
+@@ -129,7 +132,6 @@
+     }
+     private val json: Json by injectLazy()
+     private val jsonMediaType = "application/json".toMediaType()
+-    private val mutex = Mutex()
+ 
+     @Serializable
+     data class FlareSolverCookie(
+@@ -185,55 +187,64 @@
+         val version: String,
+     )
+ 
++    // Cookie.matches enforces domain, host-only, path and secure scope; expiry is separate.
++    private fun requestCookies(url: HttpUrl): List<Cookie> {
++        val now = System.currentTimeMillis()
++        return network.cookieStore.get(url).filter { it.matches(url) && it.expiresAt > now }
++    }
++
+     suspend fun resolveWithFlareSolver(
+         originalRequest: Request,
+         onlyCookies: Boolean,
++        outerCall: Call,
+     ): FlareSolverResponse {
+         val timeout = serverConfig.flareSolverrTimeout.value.seconds
++        val endpoint = serverConfig.flareSolverrUrl.value.removeSuffix("/")
++        val session = serverConfig.flareSolverrSessionName.value
++        val ttl = serverConfig.flareSolverrSessionTtl.value
+         return with(json) {
+-            mutex.withLock {
+-                client.value
+-                    .newCall(
+-                        POST(
+-                            url = serverConfig.flareSolverrUrl.value.removeSuffix("/") + "/v1",
+-                            body =
+-                                Json
+-                                    .encodeToString(
+-                                        FlareSolverRequest(
+-                                            "request.${originalRequest.method.lowercase()}",
+-                                            originalRequest.url.toString(),
+-                                            session = serverConfig.flareSolverrSessionName.value,
+-                                            sessionTtlMinutes = serverConfig.flareSolverrSessionTtl.value,
+-                                            cookies =
+-                                                network.cookieStore
+-                                                    .get(originalRequest.url)
+-                                                    .filter { it.name !in CloudflareInterceptor.COOKIE_NAMES }
+-                                                    .map { cookie ->
+-                                                        FlareSolverCookie(cookie.name, cookie.value)
+-                                                    },
+-                                            returnOnlyCookies = onlyCookies,
+-                                            maxTimeout = timeout.inWholeMilliseconds.toInt(),
+-                                            postData =
+-                                                if (originalRequest.method == "POST") {
+-                                                    when (val body = originalRequest.body) {
+-                                                        is FormBody -> {
+-                                                            Buffer()
+-                                                                .also { body.writeTo(it) }
+-                                                                .readUtf8()
+-                                                        }
+-
+-                                                        else -> {
+-                                                            ""
+-                                                        }
++            val nested = client.value
++                .newCall(
++                    POST(
++                        url = endpoint + "/v1",
++                        body =
++                            Json
++                                .encodeToString(
++                                    FlareSolverRequest(
++                                        "request.${originalRequest.method.lowercase()}",
++                                        originalRequest.url.toString(),
++                                        session = session,
++                                        sessionTtlMinutes = ttl,
++                                        cookies =
++                                            requestCookies(originalRequest.url)
++                                                .filter { it.name !in CloudflareInterceptor.COOKIE_NAMES }
++                                                .map { cookie ->
++                                                    FlareSolverCookie(cookie.name, cookie.value)
++                                                },
++                                        returnOnlyCookies = onlyCookies,
++                                        maxTimeout = timeout.inWholeMilliseconds.toInt(),
++                                        postData =
++                                            if (originalRequest.method == "POST") {
++                                                when (val body = originalRequest.body) {
++                                                    is FormBody -> {
++                                                        Buffer()
++                                                            .also { body.writeTo(it) }
++                                                            .readUtf8()
+                                                     }
+-                                                } else {
+-                                                    null
+-                                                },
+-                                        ),
+-                                    ).toRequestBody(jsonMediaType),
+-                        ),
+-                    ).awaitSuccess()
+-                    .parseAs<FlareSolverResponse>()
++
++                                                    else -> {
++                                                        ""
++                                                    }
++                                                }
++                                            } else {
++                                                null
++                                            },
++                                    ),
++                                ).toRequestBody(jsonMediaType),
++                    ),
++                )
++            SolverTransport.response(outerCall, nested, endpoint, session, timeout.plus(10.seconds).inWholeMilliseconds) {
++                decodeFromString<FlareSolverResponse>(it)
+             }
+         }
+     }
+@@ -278,7 +289,7 @@
+                     }
+             logger.trace { "New cookies\n${cookies.joinToString("; ")}" }
+             val finalCookies =
+-                network.cookieStore.get(originalRequest.url).joinToString("; ", postfix = "; ") {
++                requestCookies(originalRequest.url).joinToString("; ", postfix = "; ") {
+                     "${it.name}=${it.value}"
+                 }
+             logger.trace { "Final cookies\n$finalCookies" }

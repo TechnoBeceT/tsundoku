@@ -24,12 +24,12 @@ describe('useSourceConfigure', () => {
     const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1, 'Comix')])
-    breakdowns.value = { 'a:1': [
+    breakdowns.value = { '["a",""]': [
       { scanlator: 'Reset', count: 90, ranges: '1-90' },
       { scanlator: 'Asura', count: 10, ranges: '91-100' },
     ] }
     await nextTick()
-    expect(c.displayRows.value.map(r => r.key)).toEqual(['a:1:Reset', 'a:1:Asura'])
+    expect(c.displayRows.value.map(r => r.key)).toEqual(['["a",""]:Reset', '["a",""]:Asura'])
     // Owner-chosen: a split never inherits the pre-split "select all" default —
     // the user must explicitly pick which scanlator(s) to attach.
     expect(c.displayRows.value.every(r => !r.selected)).toBe(true)
@@ -41,36 +41,36 @@ describe('useSourceConfigure', () => {
     const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1, 'Comix')])
-    breakdowns.value = { 'a:1': [
+    breakdowns.value = { '["a",""]': [
       { scanlator: 'Reset', count: 90, ranges: '1-90' },
       { scanlator: 'Asura', count: 10, ranges: '91-100' },
     ] }
     await nextTick()
     expect(c.selectedCount.value).toBe(0)
 
-    c.toggleCand('a:1:Reset')
+    c.toggleCand('["a",""]:Reset')
     expect(c.selectedCount.value).toBe(1)
     expect(c.orderedProviders.value).toEqual<ProviderRef[]>([
       { source: 'a', mangaId: 1, url: '', addressMode: 'unknown', webUrl: undefined, scanlator: 'Reset' },
     ])
     const rows = c.displayRows.value
-    expect(rows.find(r => r.key === 'a:1:Reset')?.selected).toBe(true)
-    expect(rows.find(r => r.key === 'a:1:Asura')?.selected).toBe(false)
+    expect(rows.find(r => r.key === '["a",""]:Reset')?.selected).toBe(true)
+    expect(rows.find(r => r.key === '["a",""]:Asura')?.selected).toBe(false)
   })
 
   it('a source deselected before its breakdown resolves stays deselected after split', async () => {
     const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1, 'Comix'), cand('b', 2)])
-    c.toggleCand('a:1') // deselect before the breakdown resolves
+    c.toggleCand('["a",""]') // deselect before the breakdown resolves
     expect(c.selectedCount.value).toBe(1) // only 'b:2' remains selected
 
-    breakdowns.value = { 'a:1': [
+    breakdowns.value = { '["a",""]': [
       { scanlator: 'Reset', count: 90, ranges: '1-90' },
       { scanlator: 'Asura', count: 10, ranges: '91-100' },
     ] }
     await nextTick()
-    expect(c.displayRows.value.filter(r => r.key.startsWith('a:1')).every(r => !r.selected)).toBe(true)
+    expect(c.displayRows.value.filter(r => r.key.startsWith('["a",""]')).every(r => !r.selected)).toBe(true)
     expect(c.selectedCount.value).toBe(1)
     expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'b', mangaId: 2, url: '', addressMode: 'unknown', webUrl: undefined, scanlator: '' }])
   })
@@ -81,7 +81,7 @@ describe('useSourceConfigure', () => {
     c.enterConfigure([cand('a', 1, 'Comix')])
     expect(c.selectedCount.value).toBe(1)
 
-    breakdowns.value = { 'a:1': [{ scanlator: 'Comix', count: 100, ranges: '1-100' }] }
+    breakdowns.value = { '["a",""]': [{ scanlator: 'Comix', count: 100, ranges: '1-100' }] }
     await nextTick()
     expect(c.selectedCount.value).toBe(1)
     expect(c.displayRows.value[0]?.selected).toBe(true)
@@ -93,12 +93,12 @@ describe('useSourceConfigure', () => {
     c.enterConfigure([cand('a', 1), cand('b', 2)])
     expect(c.breakdownsResolving.value).toBe(true)
 
-    breakdowns.value = { ...breakdowns.value, 'a:1': [{ scanlator: 'a', count: 5, ranges: '1-5' }] }
+    breakdowns.value = { ...breakdowns.value, '["a",""]': [{ scanlator: 'a', count: 5, ranges: '1-5' }] }
     await nextTick()
     expect(c.breakdownsResolving.value).toBe(true) // 'b:2' still unresolved
 
     // A resolved-failed (null) entry still counts as resolved — it does not block.
-    breakdowns.value = { ...breakdowns.value, 'b:2': null }
+    breakdowns.value = { ...breakdowns.value, '["b",""]': null }
     await nextTick()
     expect(c.breakdownsResolving.value).toBe(false)
   })
@@ -107,7 +107,7 @@ describe('useSourceConfigure', () => {
     const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1, 'Comix')])
-    breakdowns.value = { 'a:1': [{ scanlator: 'Comix', count: 100, ranges: '1-100' }] }
+    breakdowns.value = { '["a",""]': [{ scanlator: 'Comix', count: 100, ranges: '1-100' }] }
     expect(c.orderedProviders.value).toEqual<ProviderRef[]>([{ source: 'a', mangaId: 1, url: '', addressMode: 'unknown', webUrl: undefined, scanlator: '' }])
   })
 
@@ -115,7 +115,7 @@ describe('useSourceConfigure', () => {
     const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
     const c = useSourceConfigure({ breakdowns, onLoadBreakdowns: vi.fn() })
     c.enterConfigure([cand('a', 1), cand('b', 2)])
-    c.moveCand('b:2', -1)
+    c.moveCand('["b",""]', -1)
     expect(c.orderedProviders.value[0]).toEqual({ source: 'b', mangaId: 2, url: '', addressMode: 'unknown', webUrl: undefined, scanlator: '' })
   })
 
@@ -139,15 +139,15 @@ describe('useSourceConfigure', () => {
 
       // The walk is still running server-side — no counts yet, but the row
       // must be told it's pending, not left silently blank.
-      snapshots.value = { 'a:1': { status: 'pending', computedAt: '', error: '' } }
+      snapshots.value = { '["a",""]': { status: 'pending', computedAt: '', error: '' } }
       await nextTick()
       expect(c.displayRows.value[0]?.coverageStatus).toBe('pending')
       expect(c.displayRows.value[0]?.coverageComputedAt).toBe('')
 
       // The walk lands — both caches update together, exactly as the SSE
       // refetch in useScanLibrary does.
-      breakdowns.value = { 'a:1': [{ scanlator: 'a', count: 12, ranges: '1-12' }] }
-      snapshots.value = { 'a:1': { status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' } }
+      breakdowns.value = { '["a",""]': [{ scanlator: 'a', count: 12, ranges: '1-12' }] }
+      snapshots.value = { '["a",""]': { status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' } }
       await nextTick()
       const row = c.displayRows.value[0]
       expect(row?.coverageStatus).toBe('ready')
@@ -161,8 +161,8 @@ describe('useSourceConfigure', () => {
       const c = useSourceConfigure({ breakdowns, snapshots, onLoadBreakdowns: vi.fn() })
       c.enterConfigure([cand('a', 1)])
 
-      breakdowns.value = { 'a:1': null }
-      snapshots.value = { 'a:1': { status: 'failed', computedAt: '', error: 'upstream timed out' } }
+      breakdowns.value = { '["a",""]': null }
+      snapshots.value = { '["a",""]': { status: 'failed', computedAt: '', error: 'upstream timed out' } }
       await nextTick()
 
       const row = c.displayRows.value[0]
@@ -177,5 +177,19 @@ describe('useSourceConfigure', () => {
 
       expect(c.displayRows.value[0]?.coverageStatus).toBeUndefined()
     })
+  })
+})
+
+
+describe('exact source addresses', () => {
+  it('keeps two serialized addresses separate even when manga IDs collide', () => {
+    const c = useSourceConfigure({ breakdowns: ref({}), onLoadBreakdowns: vi.fn() })
+    const first = { ...cand('a', 1), url: '/manga/one' }
+    const second = { ...cand('a', 1), url: '/manga/two' }
+    c.addGroup({ title: 'First', candidates: [first] })
+    c.addGroup({ title: 'Second', candidates: [second] })
+    expect(c.tray.value.map(value => value.url)).toEqual(['/manga/one', '/manga/two'])
+    c.configureTray()
+    expect(c.orderedProviders.value.map(value => value.url)).toEqual(['/manga/one', '/manga/two'])
   })
 })

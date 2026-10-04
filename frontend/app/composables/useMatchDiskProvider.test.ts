@@ -1,3 +1,4 @@
+import { searchStream } from '../test/sourceSearch'
 /**
  * useMatchDiskProvider — search + breakdown data layer for the "Match to
  * source" dialog.
@@ -50,7 +51,7 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: null, error: { message: 'search failed' }, response: new Response(null, { status: 500 }) })
         }
         return Promise.resolve({
-          data: [{
+          data: searchStream([{
             title: 'Solo Leveling',
             candidates: [{
               source: 'src-1',
@@ -65,7 +66,7 @@ vi.mock('~/utils/api/client', () => ({
               description: '',
               genres: [],
             }],
-          }],
+          }]),
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -123,7 +124,7 @@ describe('useMatchDiskProvider', () => {
 
     await search({ q: 'x', sources: ['a', 'b'] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', sources: 'a,b' }, params: undefined })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', sources: 'a,b', stream: true }, params: undefined })
   })
 
   it('search({q, sources}) omits the sources param when the list is empty', async () => {
@@ -131,7 +132,7 @@ describe('useMatchDiskProvider', () => {
 
     await search({ q: 'x', sources: [] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x' }, params: undefined })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', stream: true }, params: undefined })
   })
 
   it('search({q, sources}) GETs /api/search with q and maps the response into groups', async () => {
@@ -139,7 +140,7 @@ describe('useMatchDiskProvider', () => {
 
     await search({ q: 'Solo Leveling', sources: [] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'Solo Leveling' }, params: undefined })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'Solo Leveling', stream: true }, params: undefined })
     expect(groups.value).toEqual([
       {
         title: 'Solo Leveling',
@@ -173,7 +174,7 @@ describe('useMatchDiskProvider', () => {
     const searchOnePiece = search({ q: 'one piece', sources: [] }) // fast, started second
 
     resolveOnePiece({
-      data: [{ title: 'One Piece', candidates: [] }],
+      data: searchStream([{ title: 'One Piece', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })
@@ -182,7 +183,7 @@ describe('useMatchDiskProvider', () => {
     expect(groups.value).toEqual([{ title: 'One Piece', candidates: [] }])
 
     resolveNaruto({
-      data: [{ title: 'Naruto', candidates: [] }],
+      data: searchStream([{ title: 'Naruto', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })

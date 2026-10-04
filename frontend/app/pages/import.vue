@@ -28,6 +28,7 @@ const {
   categories,
   searchResults,
   searching,
+  pendingSources,
   searched,
   inspectChapters,
   adopting,
@@ -58,6 +59,7 @@ async function onAdopt(req: AdoptRequest): Promise<void> {
       :sources="sources"
       :search-results="searchResults"
       :searching="searching"
+      :pending-source-count="pendingSources.length"
       :searched="searched"
       :inspect-chapters="inspectChapters"
       :adopting="adopting"

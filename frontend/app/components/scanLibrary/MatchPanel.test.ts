@@ -34,7 +34,7 @@ import { searchResults } from '../../fixtures/import'
 // by default — so `breakdownsResolving` is false and the Configure-stage
 // Attach button is enabled out of the box, mirroring a settled real fetch.
 const resolvedBreakdowns = Object.fromEntries(
-  [...searchResults[0]!.candidates, ...searchResults[1]!.candidates].map(c => [`${c.source}:${c.mangaId}`, null]),
+  [...searchResults[0]!.candidates, ...searchResults[1]!.candidates].map(c => [JSON.stringify([c.source, c.url]), null]),
 )
 
 function mountPanel(props: Record<string, unknown> = {}) {
@@ -150,6 +150,16 @@ describe('MatchPanel', () => {
     expect(attach.attributes('disabled')).toBeDefined()
   })
 
+  it('retains configured picks while later sources finish', async () => {
+    const wrapper = mountPanel({ searching: true, pendingSourceCount: 2, searchGeneration: 1 })
+    await wrapper.find('.group').trigger('click')
+    await wrapper.setProps({ groups: [...searchResults], searching: false, pendingSourceCount: 0 })
+    const attach = wrapper.findAll('button').find(b => b.text().startsWith('Attach'))!
+    expect(attach).toBeDefined()
+    await attach.trigger('click')
+    expect(wrapper.emitted('confirm')?.[0]?.[0]).toMatchObject(searchResults[0]!.candidates.map(c => ({ source: c.source, url: c.url })))
+  })
+
   it('a fresh set of groups (a new match search) resets to the Groups stage', async () => {
     const wrapper = mountPanel()
     await wrapper.find('.group').trigger('click')
@@ -157,7 +167,7 @@ describe('MatchPanel', () => {
 
     // A new search's results replace `groups` — must not leave the stale
     // Configure selection showing.
-    await wrapper.setProps({ groups: [searchResults[1]!] })
+    await wrapper.setProps({ groups: [searchResults[1]!], searchGeneration: 1 })
 
     const attach = wrapper.findAll('button').find(b => b.text().startsWith('Attach'))
     expect(attach).toBeUndefined()
@@ -194,7 +204,7 @@ describe('MatchPanel', () => {
 
   it('re-emits a row\'s refresh click as refreshBreakdown with that candidate (GAP-140 follow-up)', async () => {
     const first = searchResults[0]!.candidates[0]!
-    const key = `${first.source}:${first.mangaId}`
+    const key = JSON.stringify([first.source, first.url])
     const wrapper = mountPanel({
       breakdowns: { ...resolvedBreakdowns, [key]: [{ scanlator: first.sourceName, count: 12, ranges: '1-12' }] },
       breakdownSnapshots: { [key]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },

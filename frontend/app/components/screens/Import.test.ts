@@ -34,15 +34,15 @@ const mangaDex = group.candidates[0]! // source '2499283573021220255', mangaId 1
 const asura = group.candidates[1]! // source '1024627298672457456', mangaId 1002, sourceName 'Asura Scans'
 const manganato = group.candidates[2]! // source '3437691801785968169', mangaId 1003
 
-const breakdownKey = (source: string, mangaId: number): string => `${source}:${mangaId}`
+const breakdownKey = (source: string, url: string): string => JSON.stringify([source, url])
 
 /** MangaDex: a genuine 2-scanlator split. Asura Scans: a single UNTAGGED group (named after the source itself). Manganato: no entry (breakdown never loaded/failed). */
 const breakdowns: Record<string, ScanlatorCoverage[] | null> = {
-  [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [
+  [breakdownKey(mangaDex.source, mangaDex.url)]: [
     { scanlator: 'ZScans', count: 90, ranges: '1-90' },
     { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
   ],
-  [breakdownKey(asura.source, asura.mangaId)]: [
+  [breakdownKey(asura.source, asura.url)]: [
     { scanlator: asura.sourceName, count: 50, ranges: '1-50' },
   ],
 }
@@ -90,8 +90,8 @@ describe('Import — coverage snapshot wiring (GAP-140 follow-up)', () => {
         searchResults: [group],
         searched: true,
         categories,
-        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [] },
-        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'pending', computedAt: '', error: '' } },
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.url)]: [] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.url)]: { status: 'pending', computedAt: '', error: '' } },
       },
     })
     await pickGroup(wrapper)
@@ -107,8 +107,8 @@ describe('Import — coverage snapshot wiring (GAP-140 follow-up)', () => {
         searchResults: [group],
         searched: true,
         categories,
-        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [{ scanlator: mangaDex.sourceName, count: 180, ranges: '1-180' }] },
-        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.url)]: [{ scanlator: mangaDex.sourceName, count: 180, ranges: '1-180' }] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.url)]: { status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' } },
       },
     })
     await pickGroup(wrapper)
@@ -127,8 +127,8 @@ describe('Import — coverage snapshot wiring (GAP-140 follow-up)', () => {
         searchResults: [group],
         searched: true,
         categories,
-        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [] },
-        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.mangaId)]: { status: 'pending', computedAt: '', error: '' } },
+        breakdowns: { [breakdownKey(mangaDex.source, mangaDex.url)]: [] },
+        breakdownSnapshots: { [breakdownKey(mangaDex.source, mangaDex.url)]: { status: 'pending', computedAt: '', error: '' } },
       },
     })
     await pickGroup(wrapper)
@@ -178,7 +178,7 @@ describe('Import — Stage 2 auto-split', () => {
   it('shows "Coverage unavailable" for a source whose breakdown fetch failed (non-fatal, still 1 row)', async () => {
     const wrapper = mountAtStage2({
       ...breakdowns,
-      [breakdownKey(manganato.source, manganato.mangaId)]: null,
+      [breakdownKey(manganato.source, manganato.url)]: null,
     })
     await pickGroup(wrapper)
 
@@ -193,7 +193,7 @@ describe('Import — adopt() with per-scanlator rows', () => {
     // MangaDex/Asura above — so `breakdownsResolving` is false and Review can proceed.
     const wrapper = mountAtStage2({
       ...breakdowns,
-      [breakdownKey(manganato.source, manganato.mangaId)]: null,
+      [breakdownKey(manganato.source, manganato.url)]: null,
     })
     await pickGroup(wrapper)
 
@@ -227,15 +227,15 @@ describe('Import — adopt() with per-scanlator rows', () => {
     // (matches the backend's untagged Chapter.Scanlator=="") — sending the
     // source name would filter to zero chapters (a silently-empty provider).
     const wrapper = mountAtStage2({
-      [breakdownKey(mangaDex.source, mangaDex.mangaId)]: [
+      [breakdownKey(mangaDex.source, mangaDex.url)]: [
         { scanlator: mangaDex.sourceName, count: 40, ranges: '1-40' }, // untagged bucket
         { scanlator: 'ZScans', count: 60, ranges: '41-100' }, // genuinely-named group
       ],
       // Asura + Manganato resolve failed (null) — settled lookups that keep
       // them unsplit and unblock `breakdownsResolving` — omit any coverage so
       // they don't clutter the assert.
-      [breakdownKey(asura.source, asura.mangaId)]: null,
-      [breakdownKey(manganato.source, manganato.mangaId)]: null,
+      [breakdownKey(asura.source, asura.url)]: null,
+      [breakdownKey(manganato.source, manganato.url)]: null,
     })
     await pickGroup(wrapper)
 
@@ -275,7 +275,7 @@ describe('Import — blanked-title adopt fallback uses the group title', () => {
         categories,
         // Resolved (failed) breakdown — unblocks `breakdownsResolving` so
         // Review can proceed; this test isn't exercising the split behavior.
-        breakdowns: { [`${groupTitleCand.source}:${groupTitleCand.mangaId}`]: null },
+        breakdowns: { [JSON.stringify([groupTitleCand.source, groupTitleCand.url])]: null },
       },
     })
     await wrapper.find('.group').trigger('click')

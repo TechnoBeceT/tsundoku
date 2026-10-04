@@ -203,21 +203,18 @@ func detectUpgradesScoped(ctx context.Context, client *ent.Client, gate *sourceg
 	return flagged, nil
 }
 
-// loadBreakerSnapshot reads every source's circuit-breaker state in ONE query for
-// the whole upgrade scan (the batched twin of the per-candidate gate.IsAvailable
-// used by the download path). A nil gate returns a nil map (no exclusion). A read
-// error is LOGGED AND SWALLOWED, returning a nil map so detection proceeds WITHOUT
-// gate exclusion — the same fail-OPEN direction as the per-candidate
-// gate.IsAvailable (which returns "available" on a read error), and safe because
-// the upgrade FETCH path (fetchAndRender.filterGated) re-checks the gate per source
-// and cleanly resolves any stale upgrade_available flag it produced.
+// loadBreakerSnapshot reads every source's circuit-breaker state in ONE query
+// for a scheduling or upgrade scan. A nil gate returns a nil map (no exclusion).
+// Read errors are logged and return a nil map, preserving IsAvailable's fail-open
+// direction. Actual download and upgrade dispatch still re-check availability
+// per source, so a later trip is never bypassed by this scheduling snapshot.
 func loadBreakerSnapshot(ctx context.Context, gate *sourcegate.Service) map[string]sourcegate.BreakerState {
 	if gate == nil {
 		return nil
 	}
 	snap, err := gate.Snapshot(ctx)
 	if err != nil {
-		slog.WarnContext(ctx, "download.DetectUpgrades: breaker snapshot read failed — proceeding without gate exclusion (the upgrade fetch re-checks the gate per source)",
+		slog.WarnContext(ctx, "download: breaker snapshot read failed — proceeding without scheduling exclusion (dispatch re-checks the gate per source)",
 			"err", err,
 		)
 		return nil

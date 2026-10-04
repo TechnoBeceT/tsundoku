@@ -42,7 +42,7 @@ import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGr
  *     under the search box (empty hides the row); the selection is reset on
  *     every re-open.
  *   - `groups`: the current cross-source search results.
- *   - `breakdowns`: per-scanlator coverage cache, keyed `source:mangaId`
+ *   - `breakdowns`: per-scanlator coverage cache, keyed the exact source/address key
  *     (mirrors `Import.vue`'s prop of the same name) — drives the
  *     composable's auto-split of a source into per-scanlator rows.
  *   - `breakdownSnapshots`: the same cache's snapshot lifecycle (GAP-140) —
@@ -80,11 +80,12 @@ const props = withDefaults(defineProps<{
   sources?: Source[]
   /** The current cross-source search results. */
   groups?: SearchGroup[]
-  /** Per-scanlator breakdown cache, keyed `source:mangaId` (see `useSourceConfigure`). */
+  /** Per-scanlator breakdown cache, keyed the exact source/address key (see `useSourceConfigure`). */
   breakdowns?: Record<string, ScanlatorCoverage[] | null>
   /** The same cache's snapshot lifecycle (status/computedAt/error), GAP-140. */
   breakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** A search is in flight. */
+  pendingSourceCount?: number
   searching?: boolean
   /** The batch-attach POST is in flight. */
   saving?: boolean
@@ -103,6 +104,7 @@ const props = withDefaults(defineProps<{
   breakdowns: () => ({}),
   breakdownSnapshots: () => ({}),
   searching: false,
+  pendingSourceCount: 0,
   saving: false,
   error: null,
   mode: 'add',
@@ -257,7 +259,7 @@ function confirm(): void {
 
       <div v-if="searching" class="match-loading">
         <Spinner :size="16" tone="accent" />
-        Searching sources…
+        Searching sources… <span v-if="pendingSourceCount">{{ pendingSourceCount }} pending</span>
       </div>
       <p v-else-if="noResults" class="match-note">No matches found. Try another title.</p>
 
@@ -269,7 +271,7 @@ function confirm(): void {
         @remove="removeCand"
       />
 
-      <div v-if="!searching && visibleGroups.length" class="match-groups">
+      <div v-if="visibleGroups.length" class="match-groups">
         <SearchGroupCard
           v-for="g in visibleGroups"
           :key="g.title"

@@ -23,7 +23,9 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/handler/searchstream"
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
+	"github.com/technobecet/tsundoku/internal/imports"
 	"github.com/technobecet/tsundoku/internal/library"
 	"github.com/technobecet/tsundoku/internal/series"
 )
@@ -106,6 +108,15 @@ func (h *Handler) Match(c echo.Context) error {
 		return err
 	}
 	sourceIDs := sourcefilter.Parse(c.QueryParam("sources"))
+	stream, err := searchstream.Requested(c)
+	if err != nil {
+		return err
+	}
+	if stream {
+		return searchstream.Serve(c, func(ctx context.Context, emit func(imports.SearchSnapshotDTO) error) error {
+			return mapServiceError(h.svc.MatchCandidatesProgress(ctx, path, sourceIDs, emit))
+		})
+	}
 	out, err := h.svc.MatchCandidates(c.Request().Context(), path, sourceIDs)
 	if err != nil {
 		return mapServiceError(err)

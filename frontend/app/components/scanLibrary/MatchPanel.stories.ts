@@ -1,7 +1,8 @@
+import { candKey } from '../screens/import.types'
+import { ref } from 'vue'
 import type { Meta, StoryObj } from '@storybook/vue3'
 import { expect, userEvent, within } from 'storybook/test'
 import MatchPanel from './MatchPanel.vue'
-import { candKey } from '../screens/import.types'
 import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
 
 /**
@@ -16,7 +17,8 @@ import { scanlatorBreakdown, searchResults } from '../../fixtures/import'
  * `refreshBreakdown` (GAP-140 follow-up) is logged in the Actions panel. Flip
  * the Storybook theme toolbar to confirm both dark and light.
  */
-const firstCandidateKey = candKey(searchResults[0]!.candidates[0]!)
+const firstCandidate = searchResults[0]!.candidates[0]!
+const firstCandidateKey = candKey(firstCandidate)
 
 const meta = {
   title: 'ScanLibrary/MatchPanel',
@@ -68,7 +70,7 @@ export const ConfigureMulti: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+    await userEvent.click(canvas.getAllByText(searchResults[0]!.title).at(-1)!)
 
     const firstCandidate = searchResults[0]!.candidates[0]!
     await expect(canvas.getByLabelText(`Toggle ${firstCandidate.sourceName}`)).toBeInTheDocument()
@@ -101,7 +103,7 @@ export const ConfigureCoverageSnapshot: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+    await userEvent.click(canvas.getAllByText(searchResults[0]!.title).at(-1)!)
   },
 }
 
@@ -139,7 +141,7 @@ export const Confirming: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(await canvas.findByText(searchResults[0]!.title))
+    await userEvent.click(canvas.getAllByText(searchResults[0]!.title).at(-1)!)
     const attach = await canvas.findByRole('button', { name: `Attach ${searchResults[0]!.candidates.length} sources` })
     await expect(attach).toBeDisabled()
   },
@@ -149,5 +151,26 @@ export const Confirming: Story = {
 export const ConfirmFailed: Story = {
   args: {
     error: 'Import failed — series already exists at that path.',
+  },
+}
+
+export const ProgressiveResults: Story = {
+  args: { groups: [searchResults[0]!], searching: true, pendingSourceCount: 2, searchGeneration: 1 },
+  render: args => ({
+    components: { MatchPanel },
+    setup() {
+      const groups = ref(args.groups)
+      const pending = ref(2)
+      function finish() { groups.value = searchResults; pending.value = 0 }
+      return { args, groups, pending, finish }
+    },
+    template: `<div><button type="button" @click="finish">Finish remaining sources</button><MatchPanel v-bind="args" :groups="groups" :searching="pending > 0" :pending-source-count="pending" /></div>`,
+  }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(canvas.getAllByText(searchResults[0]!.title).at(-1)!)
+    await expect(canvas.getByRole('button', { name: /Attach/ })).toBeInTheDocument()
+    await userEvent.click(canvas.getByRole('button', { name: 'Finish remaining sources' }))
+    await expect(canvas.getByRole('button', { name: /Attach/ })).toBeInTheDocument()
   },
 }

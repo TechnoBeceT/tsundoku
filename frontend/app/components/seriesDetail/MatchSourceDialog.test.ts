@@ -24,7 +24,7 @@ const DialogStub = { template: '<div class="dialog-stub"><slot /><slot name="act
 // Attach button is enabled out of the box, mirroring a settled real fetch.
 // Tests that care about the split behaviour override individual keys.
 const resolvedBreakdowns = Object.fromEntries(
-  searchResults[0]!.candidates.map(c => [`${c.source}:${c.mangaId}`, null]),
+  searchResults[0]!.candidates.map(c => [JSON.stringify([c.source, c.url]), null]),
 )
 
 function mountDialog(props: Record<string, unknown> = {}) {
@@ -164,7 +164,7 @@ describe('MatchSourceDialog', () => {
     const first = searchResults[0]!.candidates[0]! // MangaDex / 1001
     const breakdowns = {
       ...resolvedBreakdowns,
-      [`${first.source}:${first.mangaId}`]: [
+      [JSON.stringify([first.source, first.url])]: [
         { scanlator: first.sourceName, count: 100, ranges: '1-100' },
       ],
     }
@@ -295,7 +295,7 @@ describe('MatchSourceDialog', () => {
  */
 describe('MatchSourceDialog — coverage snapshot wiring (GAP-140 follow-up)', () => {
   const first = searchResults[0]!.candidates[0]!
-  const key = `${first.source}:${first.mangaId}`
+  const key = JSON.stringify([first.source, first.url])
 
   it('renders "Computing coverage…" for a pending row, not "Coverage unavailable"', async () => {
     const wrapper = mountDialog({

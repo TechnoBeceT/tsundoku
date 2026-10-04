@@ -1,3 +1,4 @@
+import { searchStream } from '../test/sourceSearch'
 /**
  * useMatchSource — data layer for the Series-Detail "Add a source" dialog.
  *
@@ -11,7 +12,7 @@
  *   2. search() failure sets `error` and leaves `groups` empty, never throws.
  *   3. loadBreakdowns(candidates) fetches every candidate's per-scanlator
  *      breakdown in parallel (each fetch carrying the candidate's `?url=`,
- *      required by the backend), caches by `source:mangaId`, and never
+ *      required by the backend), caches by `exact source/address`, and never
  *      touches `error` on a per-candidate failure (mirrors
  *      `useScanLibrary.loadBreakdowns`).
  *   4. batchAddProviders(providers) POSTs /api/series/{id}/providers/batch
@@ -67,7 +68,7 @@ vi.mock('~/utils/api/client', () => ({
           return Promise.resolve({ data: null, error: { message: 'search failed' }, response: new Response(null, { status: 500 }) })
         }
         return Promise.resolve({
-          data: [{
+          data: searchStream([{
             title: 'Solo Leveling',
             candidates: [{
               source: 'src-1',
@@ -82,7 +83,7 @@ vi.mock('~/utils/api/client', () => ({
               description: '',
               genres: [],
             }],
-          }],
+          }]),
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -200,7 +201,7 @@ describe('useMatchSource', () => {
     expect(groups.value).toEqual([])
     expect(searching.value).toBe(false)
     expect(error.value).toBeNull()
-    resolve({ data: [{ title: 'Old', candidates: [] }], error: null, response: new Response() })
+    resolve({ data: searchStream([{ title: 'Old', candidates: [] }]), error: null, response: new Response() })
     await pending
     expect(groups.value).toEqual([])
   })
@@ -224,7 +225,7 @@ describe('useMatchSource', () => {
 
     await search({ q: 'x', sources: ['a', 'b'] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', sources: 'a,b' } })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', sources: 'a,b', stream: true } })
   })
 
   it('search({q, sources}) omits the sources param when the list is empty', async () => {
@@ -232,7 +233,7 @@ describe('useMatchSource', () => {
 
     await search({ q: 'x', sources: [] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x' } })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'x', stream: true } })
   })
 
   it('search({q, sources}) GETs /api/search with q and maps the response into groups', async () => {
@@ -240,7 +241,7 @@ describe('useMatchSource', () => {
 
     await search({ q: 'Solo Leveling', sources: [] })
 
-    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'Solo Leveling' } })
+    expect(calls).toContainEqual({ method: 'GET', path: '/api/search', query: { q: 'Solo Leveling', stream: true } })
     expect(groups.value).toEqual([
       {
         title: 'Solo Leveling',
@@ -281,7 +282,7 @@ describe('useMatchSource', () => {
 
     // The LATER request ("one piece") resolves FIRST.
     resolveOnePiece({
-      data: [{ title: 'One Piece', candidates: [] }],
+      data: searchStream([{ title: 'One Piece', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })
@@ -292,7 +293,7 @@ describe('useMatchSource', () => {
     // The EARLIER request ("naruto") finally resolves AFTER "one piece"
     // already landed — its response must be discarded, not overwrite groups.
     resolveNaruto({
-      data: [{ title: 'Naruto', candidates: [] }],
+      data: searchStream([{ title: 'Naruto', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })
@@ -313,7 +314,7 @@ describe('useMatchSource', () => {
   })
 
   describe('loadBreakdowns (per-scanlator auto-split fetch, copied from useImport)', () => {
-    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by source:mangaId', async () => {
+    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by exact source/address', async () => {
       const breakdownGet = vi.fn((sourceId: string) => {
         if (sourceId === 'src-1') {
           return Promise.resolve({
@@ -348,11 +349,11 @@ describe('useMatchSource', () => {
       ])
 
       expect(breakdownGet).toHaveBeenCalledTimes(2)
-      expect(breakdowns.value['src-1:1']).toEqual([
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([
         { scanlator: 'ZScans', count: 90, ranges: '1-90' },
         { scanlator: 'HiveToons', count: 11, ranges: '92-101' },
       ])
-      expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+      expect(breakdowns.value['["src-2","https://src-2.example/title/2"]']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
       // Every breakdown fetch carries the candidate's url query (P2 Suwayomi-removal
       // — the backend 400s without it).
       const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
@@ -360,7 +361,7 @@ describe('useMatchSource', () => {
       expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-2.example/title/2' } }))
     })
 
-    it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
+    it('caches by exact source/address — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
       const breakdownGet = vi.fn(() => Promise.resolve({
         data: { total: 12, scanlators: [{ scanlator: 'src-1', count: 12, ranges: '1-12' }], status: 'ready' },
         error: null,
@@ -392,7 +393,7 @@ describe('useMatchSource', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
-      expect(breakdowns.value['src-1:1']).toBeNull()
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toBeNull()
       expect(error.value).toBeNull()
 
       await loadBreakdowns([candidate])
@@ -414,8 +415,8 @@ describe('useMatchSource', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
-      expect(breakdowns.value['src-1:1']).toEqual([])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'pending', computedAt: '', error: '' })
     })
 
     it('GAP-140: a failed snapshot caches as [] with a failed status and its reason', async () => {
@@ -433,8 +434,8 @@ describe('useMatchSource', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
-      expect(breakdowns.value['src-1:1']).toEqual([])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'failed', computedAt: '', error: 'upstream timed out' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'failed', computedAt: '', error: 'upstream timed out' })
     })
   })
 
@@ -455,7 +456,7 @@ describe('useMatchSource', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'pending', computedAt: '', error: '' })
 
       vi.mocked(apiClient.GET).mockImplementationOnce((path: string) => {
         calls.push({ method: 'GET', path })
@@ -476,8 +477,8 @@ describe('useMatchSource', () => {
       await vi.waitFor(() => {
         expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
       })
-      expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'ready', computedAt: '2026-07-31T09:00:00Z', error: '' })
     })
 
     it('ignores an event for a different (source, url) pair — no extra fetch fires', async () => {
@@ -515,7 +516,7 @@ describe('useMatchSource', () => {
       const { breakdowns, breakdownSnapshots, loadBreakdowns, refreshBreakdown } = mountUseMatchSource()
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
 
       vi.mocked(apiClient.GET).mockImplementationOnce((path: string, opts?: { params?: { query?: unknown } }) => {
         calls.push({ method: 'GET', path, query: opts?.params?.query })
@@ -532,8 +533,8 @@ describe('useMatchSource', () => {
       const refreshCall = calls.find(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
       expect(refreshCall).toBeDefined()
       expect(refreshCall!.query).toEqual({ url: 'https://src-1.example/title/1', refresh: true })
-      expect(breakdowns.value['src-1:1']).toEqual([])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'pending', computedAt: '', error: '' })
     })
 
     it('is a no-op while a fetch for the same candidate is already in flight', async () => {

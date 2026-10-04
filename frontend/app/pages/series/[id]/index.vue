@@ -211,6 +211,7 @@ const {
   breakdowns: matchBreakdowns,
   breakdownSnapshots: matchBreakdownSnapshots,
   searching: matchSearching,
+  pendingSources: matchPendingSources,
   saving: matchSaving,
   error: matchError,
   loadSources: matchLoadSources,
@@ -224,11 +225,13 @@ const {
 const matchOpen = ref(false)
 const rematchOpen = ref(false)
 const rematchTargetId = ref<string | null>(null)
+watch(rematchTargetId, resetMatchSearch)
 const rematchTarget = computed(() => series.value?.providers.find(provider => provider.id === rematchTargetId.value) ?? null)
 
 // Lazily load the source-filter list the first time the "Add a source" dialog
 // opens (useMatchSource.loadSources is guarded to fetch at most once).
 watch(matchOpen, (isOpen) => {
+  if (!isOpen) resetMatchSearch()
   if (isOpen) {
     resetMatchSearch()
     dismissError()
@@ -237,7 +240,7 @@ watch(matchOpen, (isOpen) => {
 })
 
 watch(rematchOpen, (isOpen) => {
-  if (!isOpen) return
+  if (!isOpen) { resetMatchSearch(); return }
   resetMatchSearch()
   dismissError()
 })
@@ -348,6 +351,8 @@ const {
   sources: linkSources,
   groups: linkGroups,
   searching: linkSearching,
+  pendingSources: linkPendingSources,
+  resetSearch: resetLinkSearch,
   breakdown: linkBreakdown,
   breakdownLoading: linkBreakdownLoading,
   error: linkSearchError,
@@ -358,10 +363,12 @@ const {
 
 const matchProviderOpen = ref(false)
 const matchTargetId = ref<string | null>(null)
+watch(matchTargetId, resetLinkSearch)
 
 // Lazily load the source-filter list the first time the "Match to source"
 // dialog opens (useMatchDiskProvider.loadSources is guarded to fetch at most once).
 watch(matchProviderOpen, (isOpen) => {
+  resetLinkSearch()
   if (isOpen) void linkLoadSources()
 })
 
@@ -777,6 +784,7 @@ function onResume(): void {
       :breakdowns="matchBreakdowns"
       :breakdown-snapshots="matchBreakdownSnapshots"
       :searching="matchSearching"
+      :pending-source-count="matchPendingSources.length"
       :saving="matchSaving"
       :error="matchError"
       @search="matchSearch"
@@ -794,6 +802,7 @@ function onResume(): void {
       :source-label="rematchTarget.providerName"
       :groups="matchGroups"
       :searching="matchSearching"
+      :pending-source-count="matchPendingSources.length"
       :saving="rematchBusy"
       :error="matchError ?? error"
       @search="matchSearch"
@@ -810,6 +819,7 @@ function onResume(): void {
       :default-importance="matchTarget?.importance ?? 2"
       :groups="linkGroups"
       :searching="linkSearching"
+      :pending-source-count="linkPendingSources.length"
       :breakdown="linkBreakdown"
       :breakdown-loading="linkBreakdownLoading"
       :saving="matchBusy"

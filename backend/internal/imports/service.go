@@ -451,38 +451,36 @@ func (s *Service) Search(ctx context.Context, query string, sourceIDs []string) 
 	// within the TTL returns the prior result and does ZERO upstream fan-out — the
 	// heaviest anti-bot amplifier. Nil cache (plain NewService) ⇒ always fan out.
 	if s.searchCache == nil {
-		return s.searchUncached(ctx, query, sourceIDs)
+		return s.searchUncached(ctx, query, sourceIDs, nil)
 	}
-	return s.searchCache.Get(ctx, query, sourceIDs, func() ([]SearchGroupDTO, error) {
-		return s.searchUncached(ctx, query, sourceIDs)
-	})
+	return s.searchCache.Get(ctx, query, sourceIDs, func(workCtx context.Context, emit func(SearchSnapshotDTO) error) ([]SearchGroupDTO, error) {
+		return s.searchUncached(workCtx, query, sourceIDs, emit)
+	}, nil)
 }
 
 // searchUncached is the live Search fan-out: it always queries upstream sources.
 // Search wraps it with the short-TTL result cache; every doc note on Search's
 // deadline / partial-results contract applies here.
-func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []string) ([]SearchGroupDTO, error) {
+func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []string, emit func(SearchSnapshotDTO) error) ([]SearchGroupDTO, error) {
+	sctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
+	defer cancel()
 	// Resolve the source set to query.
-	sources, err := s.resolveSources(ctx, sourceIDs)
+	sources, err := s.resolveSources(sctx, sourceIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Bound the whole fan-out below the CDN edge timeout so a hung source yields
-	// partial results rather than a gateway error.
-	sctx, cancel := context.WithTimeout(ctx, s.searchTimeout)
-	defer cancel()
-
 	// Fan out per-source searches with bounded concurrency.
 	sem := make(chan struct{}, searchConcurrency)
-	var mu sync.Mutex
-	var candidates []Candidate
+	state := &searchProgress{sources: sources, completed: make(map[int64]bool, len(sources)), updates: make(chan struct{}, 1)}
+	snapshot := func(done bool) SearchSnapshotDTO { return state.snapshot(query, done) }
+	if err := emitSearchSnapshot(emit, snapshot(false)); err != nil {
+		return nil, err
+	}
 	// samples accumulates one timing per source that actually ran (acquired a
 	// slot and called the client), success or failure. It is recorded ONCE after
 	// the fan-out (see below), not per goroutine, so metrics writes never race
 	// the deadline or add latency to the fan-out.
-	var samples []metrics.Sample
-
 	g, gctx := errgroup.WithContext(sctx)
 	for _, src := range sources {
 		g.Go(func() error {
@@ -505,14 +503,7 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 			local, err := s.searchOneSource(gctx, src, query)
 			latency := time.Since(start)
 
-			mu.Lock()
-			samples = append(samples, metrics.Sample{
-				SourceID: sourceIDString(src.ID), SourceName: src.Name, Latency: latency, Err: err,
-			})
-			if err == nil {
-				candidates = append(candidates, local...)
-			}
-			mu.Unlock()
+			state.complete(src, local, latency, err)
 
 			if err != nil {
 				slog.WarnContext(gctx, "imports: source search failed",
@@ -527,14 +518,14 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 	// error — it just joins all goroutines. Once it returns, every mutex-guarded
 	// write has happened-before, so candidates and samples are the complete sets
 	// as of the deadline and are safe to read.
-	_ = g.Wait()
+	emitErr := waitSearch(ctx, cancel, g, state.updates, snapshot, emit)
 
 	// Record the batch AFTER the fan-out on a deadline-detached, short-bounded
 	// context: a source dropped at the 85s deadline still records its slow
 	// latency (sctx is cancelled by now, so recording on it would drop exactly
 	// the datapoints that flag a source slow).
-	s.recordSamples(ctx, samples)
-	s.logSearchEvents(ctx, query, samples)
+	s.recordSamples(ctx, state.samples)
+	s.logSearchEvents(ctx, query, state.samples)
 
 	// If the PARENT request context was cancelled (client disconnected / navigated
 	// away), do NOT return — and therefore do NOT let Search cache — a truncated
@@ -544,10 +535,89 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 	// This is deliberately distinct from our OWN searchTimeout firing (that bounds
 	// sctx while ctx stays live — the documented partial-results contract, which IS
 	// safe to cache): only a cancelled PARENT ctx short-circuits here.
+	if emitErr != nil {
+		return nil, emitErr
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	final := snapshot(true)
+	if err := emitSearchSnapshot(emit, final); err != nil {
+		return nil, err
+	}
+	return final.Groups, ctx.Err()
+}
 
+// searchProgress owns the accumulated source results; only the search consumer emits them.
+type searchProgress struct {
+	mu         sync.Mutex
+	sources    []sourceengine.Source
+	completed  map[int64]bool
+	candidates []Candidate
+	samples    []metrics.Sample
+	updates    chan struct{}
+}
+
+func (p *searchProgress) snapshot(query string, done bool) SearchSnapshotDTO {
+	p.mu.Lock()
+	local := append([]Candidate(nil), p.candidates...)
+	pending := make([]SourceDTO, 0, len(p.sources))
+	if !done {
+		for _, src := range p.sources {
+			if !p.completed[src.ID] {
+				pending = append(pending, SourceDTO{ID: sourceIDString(src.ID), Name: src.Name, Lang: src.Lang})
+			}
+		}
+	}
+	p.mu.Unlock()
+	return SearchSnapshotDTO{Groups: searchGroups(query, local), PendingSources: pending, Done: done}
+}
+
+func (p *searchProgress) complete(src sourceengine.Source, local []Candidate, latency time.Duration, err error) {
+	p.mu.Lock()
+	p.completed[src.ID] = true
+	p.samples = append(p.samples, metrics.Sample{SourceID: sourceIDString(src.ID), SourceName: src.Name, Latency: latency, Err: err})
+	if err == nil {
+		p.candidates = append(p.candidates, local...)
+	}
+	p.mu.Unlock()
+	select {
+	case p.updates <- struct{}{}:
+	default:
+	}
+}
+
+func waitSearch(ctx context.Context, cancel context.CancelFunc, g *errgroup.Group, updates <-chan struct{}, snapshot func(bool) SearchSnapshotDTO, emit func(SearchSnapshotDTO) error) error {
+	if emit == nil {
+		return g.Wait()
+	}
+	finished := make(chan struct{})
+	go func() { _ = g.Wait(); close(finished) }()
+	for {
+		select {
+		case <-finished:
+			return nil
+		case <-updates:
+			if ctx.Err() != nil {
+				cancel()
+				<-finished
+				return nil
+			}
+			if err := emit(snapshot(false)); err != nil {
+				cancel()
+				<-finished
+				return err
+			}
+		case <-ctx.Done():
+			cancel()
+			<-finished
+			return nil
+		}
+	}
+}
+
+// searchGroups applies the same grouping and relevance order to every search snapshot.
+func searchGroups(query string, candidates []Candidate) []SearchGroupDTO {
 	// Group candidates by title similarity using the Task 2 matcher.
 	groups := groupCandidates(candidates)
 
@@ -566,7 +636,7 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 		}
 		out[i] = SearchGroupDTO{Title: grp.Title, Candidates: cdtos}
 	}
-	return out, nil
+	return out
 }
 
 // recordSamples writes the per-source search timings collected during a fan-out

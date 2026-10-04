@@ -77,6 +77,9 @@ const {
   loadBreakdowns,
   refreshBreakdown,
   matching,
+  pendingSources,
+  matchGeneration,
+  resetMatch,
   matchError,
   matchGroups,
   match,
@@ -138,11 +141,12 @@ watch(sourceFilter, () => {
  */
 async function onMatchConfirm({ path, matches }: { path: string, matches: ProviderRef[] }): Promise<void> {
   await importWithMatches(path, matches)
-  if (!error(path)) matchTarget.value = null
+  if (!error(path)) { resetMatch(); matchTarget.value = null }
 }
 
 /** Abandons the match flow — returns to the staging table, no mutation fires. */
 function onMatchBack(): void {
+  resetMatch()
   matchTarget.value = null
 }
 </script>
@@ -170,6 +174,8 @@ function onMatchBack(): void {
       :match-breakdowns="breakdowns"
       :match-breakdown-snapshots="breakdownSnapshots"
       :matching="matching"
+      :pending-source-count="pendingSources.length"
+      :match-generation="matchGeneration"
       :match-error="matchError"
       @update:source-filter="sourceFilter = $event"
       @start-scan="startScan"

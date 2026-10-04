@@ -153,12 +153,8 @@ export interface AdoptRequest {
   providers: AdoptProvider[]
 }
 
-/**
- * candKey — the stable identity for one candidate: `source:mangaId` (a source
- * can appear once per group). Shared by `Import.vue` (Stage 1 tray + Stage 2
- * selection) and `AdoptTray.vue` (chip keys) so both sides of the cross-search
- * adopt tray agree on identity without duplicating the string-join logic.
- */
-export function candKey(c: SearchCandidate): string {
-  return `${c.source}:${c.mangaId}`
+/** Exact source/address identity shared by selection and cross-search trays.
+ * The deprecated numeric manga ID is not unique enough to identify an address. */
+export function candKey(c: Pick<SearchCandidate, 'source' | 'url'>): string {
+  return JSON.stringify([c.source, c.url])
 }

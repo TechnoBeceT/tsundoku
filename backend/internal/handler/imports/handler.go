@@ -12,6 +12,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/handler/coverproxy"
 	"github.com/technobecet/tsundoku/internal/handler/httperr"
+	"github.com/technobecet/tsundoku/internal/handler/searchstream"
 	"github.com/technobecet/tsundoku/internal/handler/sourcefilter"
 	"github.com/technobecet/tsundoku/internal/imports"
 	seriessvc "github.com/technobecet/tsundoku/internal/series"
@@ -126,6 +127,15 @@ func (h *Handler) Search(c echo.Context) error {
 		return err
 	}
 	sourceIDs := sourcefilter.Parse(c.QueryParam("sources"))
+	stream, err := searchstream.Requested(c)
+	if err != nil {
+		return err
+	}
+	if stream {
+		return searchstream.Serve(c, func(ctx context.Context, emit func(imports.SearchSnapshotDTO) error) error {
+			return h.svc.SearchStream(ctx, q, sourceIDs, emit)
+		})
+	}
 
 	out, err := h.svc.Search(c.Request().Context(), q, sourceIDs)
 	if err != nil {

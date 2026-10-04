@@ -50,23 +50,9 @@
  * `match()` call) ensures only the MOST RECENTLY STARTED request's response
  * is ever written to the shared refs, regardless of resolution order.
  *
- * `breakdowns`/`loadBreakdowns` (Slice P) are copied verbatim from
- * `useMatchSource.loadBreakdowns` (§2 DRY — identical cache/in-flight-guard/
- * parallel-fetch shape): per-scanlator chapter-coverage for the Match panel's
- * Configure-stage auto-split, keyed `source:mangaId`, `null` = fetch failed,
- * an absent key = not yet attempted.
- *
- * `breakdownSnapshots` (GAP-140) carries the SAME cache's snapshot-level
- * metadata — `status`/`computedAt`/`error` — alongside `breakdowns`, since the
- * backend's breakdown endpoint is now a persisted, asynchronously-computed
- * snapshot rather than a synchronous live walk: a `pending` response means the
- * walk is still running in the background (small series still resolve inline;
- * large ones fall through to `pending` after a short bounded wait), and the
- * eventual outcome is announced over SSE as `imports.coverage.done`. This
- * composable subscribes to it and re-fetches the matching cache entry —
- * matched by (source, url), NOT the mangaId-keyed cache key, since that is
- * what the event payload carries — so a row stuck on "Computing…" updates
- * itself the moment the walk lands, without the owner retrying by hand.
+ * Coverage cache, snapshots, loadBreakdowns and refreshBreakdown delegate to
+ * useSourceCoverage, sharing the Import/Add-source lifecycle while retaining
+ * this screen's own exact-address state and independent scan subscriptions.
  *
  * `importWithMatches` (Slice P, was `importWithMatch`) POSTs `{path, matches}`
  * — a `ProviderRef[]` gathered via the shared `useSourceConfigure` Configure
@@ -76,13 +62,14 @@
  * the disk-origin provider's (decision E), in list order. An empty `matches`
  * array is a valid disk-only import (mirrors `importDiskOnly`).
  */
-import { ref, onUnmounted } from 'vue'
+import { useSourceSearch } from './useSourceSearch'
+import { useSourceCoverage } from './useSourceCoverage'
+import { ref, onUnmounted, watch } from 'vue'
 import { useProgressStream } from '~/composables/useProgressStream'
-import { mapCoverageSnapshot, mapGroup, mapScanlatorCoverage } from '~/composables/importMappers'
 import { apiClient } from '~/utils/api/client'
 import type { components } from '~/utils/api/schema.d.ts'
 import type { ProviderRef } from '~/composables/useSourceConfigure'
-import type { CoverageSnapshotView, ScanlatorCoverage, SearchCandidate, SearchGroup, Source } from '~/components/screens/import.types'
+import type { SearchGroup, Source } from '~/components/screens/import.types'
 
 type FoundSeriesDTO = components['schemas']['FoundSeries']
 type BatchImportFailureDTO = components['schemas']['BatchImportFailure']
@@ -96,11 +83,6 @@ type SourceDTO = components['schemas']['Source']
  */
 function mapSource(dto: SourceDTO): Source {
   return { id: dto.id, name: dto.name, lang: dto.lang, degraded: dto.degraded, degradedReason: dto.degradedReason }
-}
-
-/** Stable cache/in-flight key for one (source, mangaId) breakdown fetch (mirrors `useMatchSource`). */
-function breakdownKey(source: string, mangaId: number): string {
-  return `${source}:${mangaId}`
 }
 
 /** Page size for the staged-entries list (mirrors useLibrary's PAGE). */
@@ -164,16 +146,6 @@ interface ScanEventPayload {
   total?: number
   path?: string
   found?: number
-  error?: string
-}
-
-/** Shape of the imports.coverage.done SSE payload (GAP-140) — the TERMINAL
- * report of one background per-scanlator breakdown computation. */
-interface CoverageDoneEventPayload {
-  sourceId?: string
-  mangaUrl?: string
-  status?: string
-  total?: number
   error?: string
 }
 
@@ -411,198 +383,27 @@ export function useScanLibrary() {
     })
   }
 
-  // ── Per-scanlator breakdown cache (Configure-stage auto-split, Slice P) ──
-  // Keyed by `source:mangaId`. `null` = fetch attempted and failed (the panel
-  // falls back to a single unsplit row); an absent key = not yet attempted.
-  const breakdowns = ref<Record<string, ScanlatorCoverage[] | null>>({})
-  // The same cache's snapshot-level metadata (GAP-140) — status/computedAt/
-  // error, keyed identically. Populated alongside `breakdowns` by every fetch
-  // (initial or SSE-triggered refetch); an absent key mirrors `breakdowns`'
-  // "not yet attempted".
-  const breakdownSnapshots = ref<Record<string, CoverageSnapshotView>>({})
-  const breakdownsInFlight = new Set<string>()
-  // Maps a cache key back to the candidate coordinates that produced it.
-  // imports.coverage.done identifies its subject by (sourceId, mangaUrl), not
-  // the mangaId-keyed cache key, so the SSE handler needs this to resolve
-  // which cached entry (entries) to refetch.
-  interface AddressRef { source: string, mangaId: number, url: string, addressMode?: 'unknown' | 'direct' | 'url_search', webUrl?: string }
-  const breakdownRefs = new Map<string, AddressRef>()
-
-  /**
-   * Fetches one candidate's breakdown and writes both caches. Shared by the
-   * initial `loadBreakdowns` pass, the `imports.coverage.done` refetch below,
-   * and `refreshBreakdown` — a `pending` response is cached exactly like a
-   * `ready` one (the SSE event, not polling, is what unsticks it later).
-   * `opts.refresh` threads `?refresh=true` (GAP-140 follow-up): forces the
-   * backend to bypass its `ready`/`failed`-cooldown admission guards and
-   * recompute, while still never duplicating a walk already in flight (the
-   * backend's own guarantee — see the endpoint's own doc).
-   */
-  async function fetchBreakdown(ref: AddressRef, opts?: { refresh?: boolean }): Promise<void> {
-    const key = breakdownKey(ref.source, ref.mangaId)
-    try {
-      const res = await apiClient.GET('/api/sources/{sourceId}/manga/{mangaId}/breakdown', {
-        params: {
-          path: { sourceId: ref.source, mangaId: ref.mangaId },
-          query: { url: ref.url, addressMode: ref.addressMode, webUrl: ref.webUrl, refresh: opts?.refresh ? true : undefined },
-        },
-      })
-      if (res.error || !res.data) {
-        breakdowns.value = { ...breakdowns.value, [key]: null }
-        breakdownSnapshots.value = {
-          ...breakdownSnapshots.value,
-          [key]: { status: 'failed', computedAt: '', error: res.error && 'message' in res.error ? res.error.message : 'Failed to load breakdown' },
-        }
-        return
-      }
-      breakdowns.value = { ...breakdowns.value, [key]: res.data.scanlators.map(mapScanlatorCoverage) }
-      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: mapCoverageSnapshot(res.data) }
-    }
-    catch {
-      breakdowns.value = { ...breakdowns.value, [key]: null }
-      breakdownSnapshots.value = { ...breakdownSnapshots.value, [key]: { status: 'failed', computedAt: '', error: 'Failed to load breakdown' } }
-    }
-  }
-
-  /**
-   * Fetches the per-scanlator breakdown for every given candidate IN
-   * PARALLEL, skipping any candidate already cached (success or failure) or
-   * already in flight. Never throws — a per-candidate failure caches `null`
-   * and is otherwise swallowed (non-fatal; the Configure stage renders that
-   * source as a single unsplit row). Copied from `useMatchSource.
-   * loadBreakdowns` (§2 DRY — identical cache/in-flight-guard/parallel-fetch
-   * shape).
-   */
-  async function loadBreakdowns(candidates: SearchCandidate[]): Promise<void> {
-    const toFetch = candidates.filter((c) => {
-      const key = breakdownKey(c.source, c.mangaId)
-      return !(key in breakdowns.value) && !breakdownsInFlight.has(key)
-    })
-    if (toFetch.length === 0) return
-    for (const c of toFetch) {
-      const key = breakdownKey(c.source, c.mangaId)
-      breakdownsInFlight.add(key)
-      breakdownRefs.set(key, { source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
-    }
-    await Promise.all(toFetch.map(async (c) => {
-      const key = breakdownKey(c.source, c.mangaId)
-      try {
-        await fetchBreakdown({ source: c.source, mangaId: c.mangaId, url: c.url, addressMode: c.addressMode, webUrl: c.realUrl })
-      }
-      finally {
-        breakdownsInFlight.delete(key)
-      }
-    }))
-  }
-
-  /**
-   * Forces a recomputation of one already-resolved (or failed) candidate's
-   * breakdown (GAP-140 follow-up, the Configure-stage row's refresh control).
-   * Unlike `loadBreakdowns`, this deliberately does NOT check whether the key
-   * is already cached — that guard exists to avoid re-fetching a SETTLED
-   * result, which is exactly what an explicit refresh click means to override.
-   * It DOES still take the same `breakdownsInFlight` latch: a click landing
-   * while the initial fetch (or an SSE-triggered refetch) is still resolving
-   * is a no-op rather than a second concurrent request for the same key — the
-   * backend's own `?refresh=true` guarantee (never duplicate a live walk)
-   * covers the rest.
-   */
-  async function refreshBreakdown(candidate: SearchCandidate): Promise<void> {
-    const key = breakdownKey(candidate.source, candidate.mangaId)
-    if (breakdownsInFlight.has(key)) return
-    breakdownsInFlight.add(key)
-    breakdownRefs.set(key, { source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl })
-    try {
-      await fetchBreakdown({ source: candidate.source, mangaId: candidate.mangaId, url: candidate.url, addressMode: candidate.addressMode, webUrl: candidate.realUrl }, { refresh: true })
-    }
-    finally {
-      breakdownsInFlight.delete(key)
-    }
-  }
-
-  // A pending breakdown's eventual outcome arrives here, not by polling —
-  // match it against every cache entry sharing this (source, url) pair (in
-  // practice at most one) and re-fetch it in place.
-  //
-  // The re-fetch takes the SAME `breakdownsInFlight` latch `loadBreakdowns`
-  // does (§2 — one guard, not two) so a burst of events for one pair collapses
-  // into a single request instead of stacking N. The backend is what makes the
-  // loop impossible — a failed snapshot is served from the store for its
-  // cooldown rather than recomputed, so a re-fetch can no longer produce the
-  // event that triggered it — but an unlatched re-fetch is still an
-  // unnecessary request per event, and the latch is already here.
-  const unsubCoverageDone = on('imports.coverage.done', (data) => {
-    const payload = data as CoverageDoneEventPayload
-    if (!payload.sourceId || !payload.mangaUrl) return
-    for (const [key, ref] of breakdownRefs.entries()) {
-      if (ref.source !== payload.sourceId || ref.url !== payload.mangaUrl) continue
-      if (breakdownsInFlight.has(key)) continue
-      breakdownsInFlight.add(key)
-      void fetchBreakdown(ref).finally(() => breakdownsInFlight.delete(key))
-    }
-  })
-
-  onUnmounted(() => {
-    unsubCoverageDone()
-  })
+  const { breakdowns, breakdownSnapshots, loadBreakdowns, refreshBreakdown } = useSourceCoverage()
 
   // ── Cross-source match search ────────────────────────────────────────────
-  const matching = ref(false)
+  const sourceSearch = useSourceSearch()
+  const matching = sourceSearch.searching
+  const pendingSources = sourceSearch.pendingSources
+  const matchGeneration = sourceSearch.generation
+  const resetMatch = sourceSearch.reset
   const matchError = ref('')
   /** The active match target's cross-source candidate groups (see the
    * stale-response guard on `match()` below — this ref only ever reflects
    * the MOST RECENTLY STARTED request, never an earlier one that happens to
    * resolve later). */
-  const matchGroups = ref<SearchGroup[]>([])
-  /**
-   * Monotonic request-generation counter for `match()`'s stale-response
-   * guard (Task-7 review fix). The owner can click Match on series A (a
-   * slow cross-source search), go Back, then click Match on series B (a
-   * fast one) before A's promise settles — without a guard, A's response
-   * would land AFTER B's and clobber `matchGroups`/`matchError` with the
-   * WRONG series' candidates, letting the owner attach A's chosen source to
-   * B's on-disk path. A plain `path` equality check is not enough (the same
-   * path re-matched twice must ALSO discard the earlier response), so each
-   * call captures its own generation and only writes shared state back if
-   * it is still the most recent one when its `await` resolves.
-   */
-  let matchGeneration = 0
+  const matchGroups = sourceSearch.groups
+  watch(sourceSearch.error, value => { matchError.value = value ?? '' })
 
-  /**
-   * Searches Suwayomi sources for a staged entry's title, optionally
-   * restricted to `sourceIDs` (the page-level `SourceFilterChips` selection;
-   * empty = all sources, CSV-joined when set — same shape as the other search
-   * surfaces). Always returns this call's own mapped groups (even if stale) so
-   * a caller that wants the raw result directly still can — but the SHARED
-   * `matchGroups`/`matching`/`matchError` refs are only updated when this call
-   * is still the latest one in flight (see the generation-counter guard above).
-   */
+  /** Shares progressive snapshots, cancellation and stale-frame protection
+   * with the other search surfaces through useSourceSearch. */
   async function match(path: string, sourceIDs: string[]): Promise<SearchGroup[]> {
-    const generation = ++matchGeneration
-    matching.value = true
     matchError.value = ''
-    try {
-      // Omit sources param when empty (all sources searched); join as CSV when set.
-      const query: { path: string, sources?: string } = { path }
-      if (sourceIDs.length > 0) {
-        query.sources = sourceIDs.join(',')
-      }
-      const res = await apiClient.GET('/api/library/imports/match', { params: { query } })
-      if (res.error || !res.data) {
-        throw new Error(res.error && 'message' in res.error ? res.error.message : 'Match search failed')
-      }
-      const groups = res.data.map(mapGroup)
-      if (generation === matchGeneration) matchGroups.value = groups
-      return groups
-    }
-    catch (e) {
-      const message = e instanceof Error ? e.message : 'Match search failed'
-      if (generation === matchGeneration) matchError.value = message
-      return []
-    }
-    finally {
-      if (generation === matchGeneration) matching.value = false
-    }
+    return sourceSearch.search({ path, sources: sourceIDs })
   }
 
   // ── Bulk "import all remaining as disk-only" ─────────────────────────────
@@ -722,6 +523,9 @@ export function useScanLibrary() {
     loadBreakdowns,
     refreshBreakdown,
     matching,
+    pendingSources,
+    matchGeneration,
+    resetMatch,
     matchError,
     matchGroups,
     match,

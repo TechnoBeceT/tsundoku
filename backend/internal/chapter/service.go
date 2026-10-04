@@ -436,7 +436,32 @@ func liveCandidatesSorted(pcs []*ent.ProviderChapter, maxRetries int, now time.T
 // chapter. It is applied inside liveCandidatesSorted, which is why this path and
 // the single-chapter one cannot disagree about a paused source.
 func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (map[uuid.UUID][]Candidate, error) {
-	result := make(map[uuid.UUID][]Candidate, len(chapters))
+	resolutions, err := ResolveCandidatesForMany(ctx, client, chapters, maxRetries, now, disabled)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[uuid.UUID][]Candidate, len(resolutions))
+	for id, resolution := range resolutions {
+		result[id] = resolution.Candidates
+	}
+	return result, nil
+}
+
+// CandidateResolution contains candidacy and the no-candidate predicates from
+// the same loaded feed. HasProviders and AllExhausted include paused sources and
+// ignore cooldowns: pausing or waiting never spends a source's retry budget.
+// Before a terminal mutation callers must re-read current state; these snapshots
+// only avoid work for chapters that are waiting during this resolution.
+type CandidateResolution struct {
+	Candidates   []Candidate
+	HasProviders bool
+	AllExhausted bool
+}
+
+// ResolveCandidatesForMany resolves a bounded scheduling batch using the same
+// matching, fractional suppression and ranking rules as RankedLiveCandidates.
+func ResolveCandidatesForMany(ctx context.Context, client *ent.Client, chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (map[uuid.UUID]CandidateResolution, error) {
+	result := make(map[uuid.UUID]CandidateResolution, len(chapters))
 	if len(chapters) == 0 {
 		return result, nil
 	}
@@ -485,7 +510,18 @@ func RankedLiveCandidatesForMany(ctx context.Context, client *ent.Client, chapte
 		// fractional number) and purely in-memory over the loaded edge — exactly what
 		// providerChaptersForKey applies in the single-chapter path.
 		dropped := dropIgnoredFractionalSources(bucket, ch)
-		result[ch.ID] = liveCandidatesSorted(dropped, maxRetries, now, disabled)
+		resolution := CandidateResolution{
+			Candidates:   liveCandidatesSorted(dropped, maxRetries, now, disabled),
+			HasProviders: len(dropped) > 0,
+			AllExhausted: len(dropped) > 0,
+		}
+		for _, pc := range dropped {
+			if !isExhausted(pc, maxRetries) {
+				resolution.AllExhausted = false
+				break
+			}
+		}
+		result[ch.ID] = resolution
 	}
 	return result, nil
 }

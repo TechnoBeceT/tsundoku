@@ -19,7 +19,13 @@ rootProject.name = "tsundoku-engine-host"
 // project, so the host links against Suwayomi's real classes with NO Suwayomi server/DB.
 // NOTE: absolute path for local dev; the Docker build stage (Task 8) vendors the Suwayomi
 // source and overrides this via the `suwayomiSrc` gradle property.
-includeBuild(providers.gradleProperty("suwayomiSrc").getOrElse("/home/technobecet/Projects/Examples/Suwayomi-Server"))
+val dependencySource = providers.gradleProperty("suwayomiSrc").getOrElse("/home/technobecet/Projects/Examples/Suwayomi-Server")
+val preparedSource = file("build/suwayomi").absolutePath
+val prepare = ProcessBuilder("sh", file("vendor/solver/prepare.sh").absolutePath, dependencySource, preparedSource)
+    .redirectError(ProcessBuilder.Redirect.INHERIT).start()
+val preparationOutput = prepare.inputStream.bufferedReader().readText()
+check(prepare.waitFor() == 0) { "Pinned solver source preparation failed" }
+includeBuild(preparationOutput.trim())
 
 dependencyResolutionManagement {
     repositories {

@@ -188,3 +188,10 @@ type AdoptRequest struct {
 	// have at least one entry (validated by the HTTP handler, not the service).
 	Providers []AdoptProvider
 }
+
+// SearchSnapshotDTO is the accumulated search result and its remaining sources.
+type SearchSnapshotDTO struct {
+	Groups         []SearchGroupDTO `json:"groups"`
+	PendingSources []SourceDTO      `json:"pendingSources"`
+	Done           bool             `json:"done"`
+}

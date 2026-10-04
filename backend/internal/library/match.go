@@ -26,3 +26,13 @@ func (s *Service) MatchCandidates(ctx context.Context, path string, sourceIDs []
 	}
 	return s.imports.Search(ctx, entry.Title, sourceIDs)
 }
+
+// MatchCandidatesProgress searches using the staged entry's server-owned title and emits
+// accumulated candidates as sources finish. An unknown path is rejected before any snapshot.
+func (s *Service) MatchCandidatesProgress(ctx context.Context, path string, sourceIDs []string, emit func(imports.SearchSnapshotDTO) error) error {
+	entry, err := s.loadEntryByPath(ctx, path)
+	if err != nil {
+		return err
+	}
+	return s.imports.SearchStream(ctx, entry.Title, sourceIDs, emit)
+}

@@ -1,3 +1,4 @@
+import { searchStream } from '../test/sourceSearch'
 /**
  * useScanLibrary – data layer for the Scan Library wizard (Task 5).
  *
@@ -17,7 +18,7 @@
  *      `match`).
  *   7. loadBreakdowns(candidates) fetches every candidate's per-scanlator
  *      breakdown in parallel (each fetch carrying the candidate's `?url=`,
- *      required by the backend) and caches it by `source:mangaId` (Slice P,
+ *      required by the backend) and caches it by `exact source/address` (Slice P,
  *      copied from `useMatchSource.loadBreakdowns`).
  *   8. loadSources() GETs /api/sources once and maps via mapSource (drives the
  *      page-level "Limit matches to:" filter chips).
@@ -98,7 +99,7 @@ vi.mock('~/utils/api/client', () => ({
       }
       if (path === '/api/library/imports/match') {
         return Promise.resolve({
-          data: [{
+          data: searchStream([{
             title: 'Test Manga',
             candidates: [{
               source: 'src-1',
@@ -108,7 +109,7 @@ vi.mock('~/utils/api/client', () => ({
               title: 'Test Manga',
               thumbnailUrl: 'https://example.com/thumb.jpg',
             }],
-          }],
+          }]),
           error: null,
           response: new Response(null, { status: 200 }),
         })
@@ -409,7 +410,7 @@ describe('useScanLibrary', () => {
   })
 
   describe('loadBreakdowns (per-scanlator auto-split fetch, copied from useMatchSource)', () => {
-    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by source:mangaId', async () => {
+    it('fetches every candidate in parallel and caches the mapped scanlators, keyed by exact source/address', async () => {
       const { breakdowns, loadBreakdowns } = mountScanLibrary()
       calls = []
 
@@ -420,15 +421,15 @@ describe('useScanLibrary', () => {
 
       const breakdownCalls = calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown')
       expect(breakdownCalls.length).toBe(2)
-      expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
-      expect(breakdowns.value['src-2:2']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
+      expect(breakdowns.value['["src-2","https://src-2.example/title/2"]']).toEqual([{ scanlator: 'src-2', count: 12, ranges: '1-12' }])
       // Every breakdown fetch carries the candidate's url query (P2 Suwayomi-removal
       // — the backend 400s without it).
       expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-1.example/title/1' } }))
       expect(breakdownCalls).toContainEqual(expect.objectContaining({ query: { url: 'https://src-2.example/title/2' } }))
     })
 
-    it('caches by source:mangaId — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
+    it('caches by exact source/address — a second loadBreakdowns call for an already-loaded candidate does not re-fetch', async () => {
       const { loadBreakdowns } = mountScanLibrary()
       calls = []
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
@@ -450,7 +451,7 @@ describe('useScanLibrary', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
 
       await loadBreakdowns([candidate])
-      expect(breakdowns.value['src-1:1']).toBeNull()
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toBeNull()
 
       await loadBreakdowns([candidate])
       expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
@@ -476,8 +477,8 @@ describe('useScanLibrary', () => {
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
 
-      expect(breakdowns.value['src-1:1']).toEqual([])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'pending', computedAt: '', error: '' })
       expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
 
       // The background walk finishes — the event identifies its subject by
@@ -494,8 +495,8 @@ describe('useScanLibrary', () => {
       await vi.waitFor(() => {
         expect(calls.filter(c => c.path === '/api/sources/{sourceId}/manga/{mangaId}/breakdown').length).toBe(1)
       })
-      expect(breakdowns.value['src-1:1']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([{ scanlator: 'src-1', count: 12, ranges: '1-12' }])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
     })
 
     it('ignores an event for a different (source, url) pair — no extra fetch fires', async () => {
@@ -564,7 +565,7 @@ describe('useScanLibrary', () => {
       const { breakdowns, breakdownSnapshots, loadBreakdowns, refreshBreakdown } = mountScanLibrary()
       const candidate = { source: 'src-1', mangaId: 1, url: 'https://src-1.example/title/1' } as never
       await loadBreakdowns([candidate])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'ready', computedAt: '2026-07-30T00:00:00Z', error: '' })
 
       calls = []
       vi.mocked(apiClient.GET).mockImplementationOnce((path: string, opts?: { params?: { query?: unknown } }) => {
@@ -583,8 +584,8 @@ describe('useScanLibrary', () => {
       expect(refreshCall!.query).toEqual({ url: 'https://src-1.example/title/1', refresh: true })
       // The row reflects that work restarted — a large series' forced walk
       // falls through to pending exactly like a first-ever fetch would.
-      expect(breakdowns.value['src-1:1']).toEqual([])
-      expect(breakdownSnapshots.value['src-1:1']).toEqual({ status: 'pending', computedAt: '', error: '' })
+      expect(breakdowns.value['["src-1","https://src-1.example/title/1"]']).toEqual([])
+      expect(breakdownSnapshots.value['["src-1","https://src-1.example/title/1"]']).toEqual({ status: 'pending', computedAt: '', error: '' })
     })
 
     it('is a no-op while a fetch for the same candidate is already in flight', async () => {
@@ -642,7 +643,7 @@ describe('useScanLibrary', () => {
 
     const matchCall = calls.find(c => c.path === '/api/library/imports/match')
     expect(matchCall).toBeDefined()
-    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo', sources: 'a' })
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo', sources: 'a', stream: true })
   })
 
   it('match(path, []) omits the sources param when the list is empty', async () => {
@@ -653,7 +654,7 @@ describe('useScanLibrary', () => {
 
     const matchCall = calls.find(c => c.path === '/api/library/imports/match')
     expect(matchCall).toBeDefined()
-    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo' })
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo', stream: true })
   })
 
   it('match(path) GETs the match endpoint with that path and returns mapped SearchGroups', async () => {
@@ -664,7 +665,7 @@ describe('useScanLibrary', () => {
 
     const matchCall = calls.find(c => c.path === '/api/library/imports/match')
     expect(matchCall).toBeDefined()
-    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo' })
+    expect(matchCall!.query).toEqual({ path: '/library/Manga/Foo', stream: true })
 
     expect(groups).toEqual([
       {
@@ -707,7 +708,7 @@ describe('useScanLibrary', () => {
 
     // B (the LATER request) resolves FIRST.
     resolveB({
-      data: [{ title: 'Series B', candidates: [] }],
+      data: searchStream([{ title: 'Series B', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })
@@ -717,7 +718,7 @@ describe('useScanLibrary', () => {
 
     // A (the EARLIER request) finally resolves AFTER B already landed.
     resolveA({
-      data: [{ title: 'Series A', candidates: [] }],
+      data: searchStream([{ title: 'Series A', candidates: [] }]),
       error: null,
       response: new Response(null, { status: 200 }),
     })

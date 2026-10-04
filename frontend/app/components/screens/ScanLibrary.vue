@@ -93,6 +93,8 @@ const props = withDefaults(defineProps<{
   matchBreakdownSnapshots?: Record<string, CoverageSnapshotView>
   /** True while the match search itself (not the confirm mutation) is in flight. */
   matching?: boolean
+  pendingSourceCount?: number
+  matchGeneration?: number
   /** A match-search failure message, or "" for none. */
   matchError?: string
 }>(), {
@@ -114,6 +116,8 @@ const props = withDefaults(defineProps<{
   matchBreakdowns: () => ({}),
   matchBreakdownSnapshots: () => ({}),
   matching: false,
+  pendingSourceCount: 0,
+  matchGeneration: 0,
   matchError: '',
 })
 
@@ -214,6 +218,8 @@ const matchRowError = computed(() => (props.matchPath != null ? (props.rowErrors
             :breakdowns="matchBreakdowns"
             :breakdown-snapshots="matchBreakdownSnapshots"
             :searching="matching"
+            :pending-source-count="pendingSourceCount"
+            :search-generation="matchGeneration"
             :search-error="matchError"
             :busy="matchBusy"
             :error="matchRowError"

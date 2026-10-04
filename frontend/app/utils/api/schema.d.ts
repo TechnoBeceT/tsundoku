@@ -3704,6 +3704,12 @@ export interface components {
             /** @description The 1-based page number returned. */
             page: number;
         };
+        SearchSnapshot: {
+            groups: components["schemas"]["SearchGroup"][];
+            pendingSources: components["schemas"]["Source"][];
+            /** @description True for the terminal snapshot; pendingSources is then empty. */
+            done: boolean;
+        };
         SearchGroup: {
             /** @description Representative display title chosen by the grouping logic. */
             title: string;
@@ -7985,6 +7991,8 @@ export interface operations {
     searchManga: {
         parameters: {
             query: {
+                /** @description Return progressive request-scoped search events instead of a JSON array. */
+                stream?: boolean;
                 /** @description Search query string; must be non-empty. */
                 q: string;
                 /**
@@ -8005,6 +8013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "text/event-stream": string;
                     "application/json": components["schemas"]["SearchGroup"][];
                 };
             };
@@ -9230,6 +9239,8 @@ export interface operations {
     matchImport: {
         parameters: {
             query: {
+                /** @description Return progressive request-scoped search events instead of a JSON array. */
+                stream?: boolean;
                 /** @description The staged entry's on-disk path (as returned by scan/list). */
                 path: string;
                 /**
@@ -9250,6 +9261,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "text/event-stream": string;
                     "application/json": components["schemas"]["SearchGroup"][];
                 };
             };
@@ -9264,6 +9276,15 @@ export interface operations {
             };
             /** @description Missing or invalid Bearer token. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No staged entry exists for the supplied path. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
