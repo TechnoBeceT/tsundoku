@@ -56,6 +56,8 @@ func TestSearchDedupLastDepartureCancelsWithoutCaching(t *testing.T) {
 		done <- s.SearchStream(ctx, "alpha", nil, func(v imports.SearchSnapshotDTO) error { snapshots <- v; return nil })
 	}()
 	receiveHealthySearch(t, snapshots)
+	// A healthy snapshot does not prove the slow source has entered its call.
+	waitSearchCalls(t, c, 2)
 	cancel()
 	<-done
 	select {
@@ -158,6 +160,8 @@ func checkLateJoinCancellation(t *testing.T, ttl time.Duration) {
 		done <- s.SearchStream(ctx, " Alpha ", []string{"2", "1"}, func(v imports.SearchSnapshotDTO) error { first <- v; return nil })
 	}()
 	receiveHealthySearch(t, first)
+	// Establish both physical source calls before testing shared-demand cancellation.
+	waitSearchCalls(t, c, 2)
 	joined := make(chan imports.SearchSnapshotDTO, 8)
 	second := make(chan error, 1)
 	go func() {
@@ -191,7 +195,7 @@ func waitSearchCalls(t *testing.T, c *dedupClient, want int32) {
 	for c.calls.Load() < want {
 		select {
 		case <-limit:
-			t.Fatal("JSON fanout did not start")
+			t.Fatal("search fanout did not start")
 		default:
 			time.Sleep(time.Millisecond)
 		}
