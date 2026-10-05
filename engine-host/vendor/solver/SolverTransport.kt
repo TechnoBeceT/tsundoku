@@ -66,17 +66,21 @@ internal object SolverTransport {
                 if (!permitHeld) delay(20)
             }
             checkCaller()
-            nested.timeout().deadlineNanoTime(deadline)
             val result = CompletableFuture<T>()
             val ownedLease = lease
             executor.execute {
                 var terminal = false
                 try {
                     // Cancellation before registration must not start a remote browser.
-                    if (outer.isCanceled()) {
+                    if (outer.isCanceled() || System.nanoTime() >= deadline) {
                         terminal = true
-                        throw IOException("Source request cancelled before solver transport")
+                        throw IOException("Source request cancelled or expired before solver transport")
                     }
+                    // A named solve drains under its own bounded clock; lease waiting only
+                    // consumes the caller budget, not the admitted browser transport budget.
+                    val transportDeadline = if (session.isEmpty()) deadline else
+                        System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(budgetMillis)
+                    nested.timeout().deadlineNanoTime(transportDeadline)
                     nested.execute().use { response ->
                         val body = response.body.string()
                         if (!response.isSuccessful) throw IOException("Solver HTTP ${response.code}")

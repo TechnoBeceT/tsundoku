@@ -383,6 +383,47 @@ class SolverIsolationIntegrationTest {
         }
     }
 
+    @Test
+    fun `named transport gets full drain budget after waiting for previous solve`() = fixture("queued drain budget") { source, solver, client ->
+        serverConfig.flareSolverrTimeout.value = 8
+        val firstEntered = CountDownLatch(1)
+        val secondEntered = CountDownLatch(1)
+        val thirdEntered = CountDownLatch(1)
+        solver.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                val url = jacksonObjectMapper().readTree(request.body!!.utf8())["url"].asText()
+                if (url.endsWith("/first")) { firstEntered.countDown(); Thread.sleep(12000); return solution(url) }
+                if (url.endsWith("/second")) {
+                    secondEntered.countDown()
+                    return solution(url).newBuilder().bodyDelay(7, TimeUnit.SECONDS).build()
+                }
+                thirdEntered.countDown()
+                return solution(url)
+            }
+        }
+        val pool = Executors.newFixedThreadPool(3)
+        val calls = listOf("/first", "/second", "/third").map { client.newCall(Request.Builder().url(source.url(it)).build()) }
+        try {
+            val first = pool.submit<String> { calls[0].execute().use { it.body.string() } }
+            assertTrue(firstEntered.await(2, TimeUnit.SECONDS))
+            val started = System.nanoTime()
+            val second = pool.submit<String> { calls[1].execute().use { it.body.string() } }
+            assertEquals("healthy result", first.get(15, TimeUnit.SECONDS))
+            assertTrue(secondEntered.await(1, TimeUnit.SECONDS))
+            assertFailsWith<ExecutionException> { second.get(8, TimeUnit.SECONDS) }
+            val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+            assertTrue(elapsedMillis in 17000..19500, "caller must keep original 18-second admission budget: $elapsedMillis")
+            val third = pool.submit<String> { calls[2].execute().use { it.body.string() } }
+            assertTrue(!thirdEntered.await(200, TimeUnit.MILLISECONDS), "browser reused while second response body still draining")
+            assertEquals("healthy result", third.get(3, TimeUnit.SECONDS))
+            assertTrue(thirdEntered.await(1, TimeUnit.SECONDS))
+            assertEquals(3, solver.requestCount)
+        } finally {
+            calls.forEach(Call::cancel)
+            pool.shutdownNow(); pool.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
     private fun solution(url: String): MockResponse = MockResponse.Builder().body(solutionBody(url)).build()
 
     private fun solutionBody(url: String): String = jacksonObjectMapper().writeValueAsString(mapOf(

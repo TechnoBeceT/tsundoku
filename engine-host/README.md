@@ -55,8 +55,10 @@ reuse. Transport failure, timeout, malformed body or unsuccessful HTTP response 
 session unresolved and blocks further use in this process. There is no timer-based recovery.
 
 Ownership is bounded to eight physical solver transports, 128 app callers and 128 session entries.
-The challenge deadline includes admission and response reading, using the configured solver timeout
-plus the existing ten-second transport allowance. Existing cookie handling, user agent, response
+The caller deadline includes admission and response reading, using the configured solver timeout
+plus the existing ten-second transport allowance. Once admitted, a named solve receives its own full
+transport allowance to drain safely even if its caller expires. Disposable solves retain the caller
+deadline and cancel with their caller. Existing cookie handling, user agent, response
 fallback and the configured network client's egress remain in use.
 Solver payloads and source retry headers share native cookie scope matching (domain,
 host-only, path and HTTPS) plus expiry checks; cookies outside that request's scope stay
