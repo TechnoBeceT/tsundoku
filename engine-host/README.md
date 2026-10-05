@@ -52,7 +52,12 @@ HTTP call, including response-body reads. A configured named session keeps its e
 name and TTL. Its browser lease remains exclusive while an active solve drains after caller
 cancellation; app source workers return promptly. A fully consumed, valid solver response permits
 reuse. Transport failure, timeout, malformed body or unsuccessful HTTP response leaves that named
-session unresolved and blocks further use in this process. There is no timer-based recovery.
+session unresolved. If the solver advertises `fenced-drain-close-v1`, the host confirms an
+authoritative drain-and-close for the exact session name and recreates it with an opaque
+process-incarnation generation token; the replacement starts with fresh cookies. A capability
+probe, prepare or confirmation failure never falls back to an untagged solve. Unresolved sessions
+on solvers without that explicit capability remain blocked for manual recovery; HTTP status, socket closure and
+elapsed time do not establish remote completion.
 
 Ownership is bounded to eight physical solver transports, 128 app callers and 128 session entries.
 The caller deadline includes admission and response reading, using the configured solver timeout
@@ -67,7 +72,8 @@ stored without being transmitted.
 Leases are process-local. Multiple hosts must not share a named browser without external
 serialization. Restarting a host clears local knowledge; it does **not** establish remote completion.
 After an unresolved solve, verify remote termination or recreate the remote browser before restarting
-or reusing that session. HTTP cancellation alone is not a remote browser cancellation acknowledgement.
+or reusing that session. HTTP cancellation alone is not a remote browser cancellation acknowledgement;
+unsupported solvers require verified remote termination or manual recreation before reuse.
 
 Verify preparation and runtime behavior with:
 

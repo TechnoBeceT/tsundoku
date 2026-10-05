@@ -49,6 +49,7 @@ class SolverIsolationIntegrationTest {
                 }
                 solver.dispatcher = object : Dispatcher() {
                     override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().code(404).build()
                         val payload = mapper.readTree(request.body!!.utf8())
                         val url = payload["url"].asText()
                         if (url.endsWith("/a")) {
@@ -108,6 +109,7 @@ class SolverIsolationIntegrationTest {
         val seen = java.util.concurrent.CopyOnWriteArrayList<String>()
         solver.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().code(404).build()
                 val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
                 assertEquals(session, payload["session"].asText())
                 assertEquals(3000, payload["maxTimeout"].asInt())
@@ -148,12 +150,12 @@ class SolverIsolationIntegrationTest {
 
     @Test
     fun `disposable cancellation after headers closes nested body transport`() = fixture("") { source, solver, client ->
-        solver.enqueue(solution(source.url("/body").toString()).newBuilder().bodyDelay(5, TimeUnit.SECONDS).build())
+        solver.enqueueSolve(solution(source.url("/body").toString()).newBuilder().bodyDelay(5, TimeUnit.SECONDS).build())
         val pool = Executors.newSingleThreadExecutor()
         val call = client.newCall(Request.Builder().url(source.url("/body")).build())
         try {
             val result = pool.submit<String> { call.execute().use { it.body.string() } }
-            assertTrue(solver.takeRequest(2, TimeUnit.SECONDS) != null)
+            assertTrue(solver.takeSolveRequest(2, TimeUnit.SECONDS) != null)
             Thread.sleep(150)
             call.cancel()
             assertFailsWith<ExecutionException> { result.get(1, TimeUnit.SECONDS) }
@@ -168,16 +170,16 @@ class SolverIsolationIntegrationTest {
 
     @Test
     fun `malformed terminal body cannot establish named browser completion`() = fixture("poisoned") { source, solver, client ->
-        solver.enqueue(MockResponse.Builder().body("not a solver response").build())
-        solver.enqueue(solution(source.url("/second").toString()))
+        solver.enqueueSolve(MockResponse.Builder().body("not a solver response").build())
+        solver.enqueueSolve(solution(source.url("/second").toString()))
         assertFailsWith<java.io.IOException> {
             client.newCall(Request.Builder().url(source.url("/first")).build()).execute().close()
         }
-        assertTrue(solver.takeRequest(1, TimeUnit.SECONDS) != null)
+        assertTrue(solver.takeSolveRequest(1, TimeUnit.SECONDS) != null)
         assertFailsWith<java.io.IOException>("unresolved browser must not be reused") {
             client.newCall(Request.Builder().url(source.url("/second")).build()).execute().close()
         }
-        assertEquals(null, solver.takeRequest(100, TimeUnit.MILLISECONDS))
+        assertEquals(null, solver.takeSolveRequest(100, TimeUnit.MILLISECONDS))
     }
 
     @Test
@@ -186,6 +188,7 @@ class SolverIsolationIntegrationTest {
         val release = CountDownLatch(1)
         solver.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().code(404).build()
                 entered.countDown(); release.await(5, TimeUnit.SECONDS)
                 return solution(source.url("/deadline").toString())
             }
@@ -227,7 +230,7 @@ class SolverIsolationIntegrationTest {
                 mapOf("name" to "cf_clearance", "value" to "fresh", "domain" to target.host, "path" to "/", "httpOnly" to true),
                 mapOf("name" to "other_path", "value" to "excluded", "domain" to target.host, "path" to "/different"),
             )))
-            solver.enqueue(MockResponse.Builder().body(payload.toString()).build())
+            solver.enqueueSolve(MockResponse.Builder().body(payload.toString()).build())
             val client = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("X-Extension", "preserved").build())
             }.addInterceptor(CloudflareInterceptor { userAgent = it }).build()
@@ -235,7 +238,7 @@ class SolverIsolationIntegrationTest {
             client.newCall(Request.Builder().url(target).header("X-Original", "keep").post(body).build()).execute().use {
                 assertEquals("healthy result", it.body.string())
             }
-            val request = solver.takeRequest(1, TimeUnit.SECONDS)!!
+            val request = solver.takeSolveRequest(1, TimeUnit.SECONDS)!!
             assertEquals("/v1", request.url.encodedPath)
             val sent = jacksonObjectMapper().readTree(request.body!!.utf8())
             assertEquals("request.post", sent["cmd"].asText())
@@ -288,11 +291,11 @@ class SolverIsolationIntegrationTest {
                 val target = "$scheme://books.example.test/scope/chapter".toHttpUrl()
                 val original = Request.Builder().url(target).build()
                 val outer = client.newCall(original)
-                solver.enqueue(solution(target.toString()))
+                solver.enqueueSolve(solution(target.toString()))
                 val resolved = kotlinx.coroutines.runBlocking {
                     eu.kanade.tachiyomi.network.interceptor.CFClearance.resolveWithFlareSolver(original, true, outer)
                 }
-                val payload = jacksonObjectMapper().readTree(solver.takeRequest(1, TimeUnit.SECONDS)!!.body!!.utf8())
+                val payload = jacksonObjectMapper().readTree(solver.takeSolveRequest(1, TimeUnit.SECONDS)!!.body!!.utf8())
                 val expected = setOf("domain_ok", "host_ok", "path_ok") + if (scheme == "https") setOf("secure_only") else emptySet()
                 assertEquals(expected, payload["cookies"].map { it["name"].asText() }.toSet(), "solver cookie scope for $scheme")
                 val retry = eu.kanade.tachiyomi.network.interceptor.CFClearance.requestWithFlareSolverr(resolved, {}, original)
@@ -311,14 +314,14 @@ class SolverIsolationIntegrationTest {
         val payload = jacksonObjectMapper().readTree(solutionBody(source.url("/fallback").toString())) as com.fasterxml.jackson.databind.node.ObjectNode
         payload.put("message", "Cloudflare not detected")
         (payload["solution"] as com.fasterxml.jackson.databind.node.ObjectNode).put("response", "<html>fallback content</html>")
-        solver.enqueue(MockResponse.Builder().body(payload.toString()).build())
+        solver.enqueueSolve(MockResponse.Builder().body(payload.toString()).build())
         var userAgent = ""
         val client = OkHttpClient.Builder().addInterceptor(CloudflareInterceptor { userAgent = it }).build()
         client.newCall(Request.Builder().url(source.url("/fallback")).build()).execute().use {
             assertEquals(200, it.code)
             assertEquals("<html>fallback content</html>", it.body.string())
         }
-        val request = solver.takeRequest(1, TimeUnit.SECONDS)!!
+        val request = solver.takeSolveRequest(1, TimeUnit.SECONDS)!!
         assertEquals(false, jacksonObjectMapper().readTree(request.body!!.utf8())["returnOnlyCookies"].asBoolean())
         assertEquals(1, source.requestCount)
         assertEquals("Fixture solver UA", userAgent)
@@ -331,6 +334,7 @@ class SolverIsolationIntegrationTest {
         val count = java.util.concurrent.atomic.AtomicInteger()
         solver.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().code(404).build()
                 count.incrementAndGet(); entered.countDown()
                 release.await(5, TimeUnit.SECONDS)
                 return solution(source.url("/bounded").toString())
@@ -361,11 +365,15 @@ class SolverIsolationIntegrationTest {
             serverConfig.flareSolverrUrl.value = "http://127.0.0.1:${socket.localPort}"
             val pool = Executors.newFixedThreadPool(2)
             val response = pool.submit {
-                socket.accept().use { connection ->
-                    val input = connection.getInputStream().bufferedReader()
-                    while (!input.readLine().isNullOrEmpty()) { }
-                    connection.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{}".toByteArray())
-                    connection.getOutputStream().flush()
+                repeat(2) { attempt ->
+                    socket.accept().use { connection ->
+                        val input = connection.getInputStream().bufferedReader()
+                        while (!input.readLine().isNullOrEmpty()) { }
+                        val response = if (attempt == 0) "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n" else
+                            "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n{}"
+                        connection.getOutputStream().write(response.toByteArray())
+                        connection.getOutputStream().flush()
+                    }
                 }
             }
             val first = client.newCall(Request.Builder().url(source.url("/broken")).build())
@@ -391,6 +399,7 @@ class SolverIsolationIntegrationTest {
         val thirdEntered = CountDownLatch(1)
         solver.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().code(404).build()
                 val url = jacksonObjectMapper().readTree(request.body!!.utf8())["url"].asText()
                 if (url.endsWith("/first")) { firstEntered.countDown(); Thread.sleep(12000); return solution(url) }
                 if (url.endsWith("/second")) {
@@ -417,10 +426,200 @@ class SolverIsolationIntegrationTest {
             assertTrue(!thirdEntered.await(200, TimeUnit.MILLISECONDS), "browser reused while second response body still draining")
             assertEquals("healthy result", third.get(3, TimeUnit.SECONDS))
             assertTrue(thirdEntered.await(1, TimeUnit.SECONDS))
-            assertEquals(3, solver.requestCount)
+            assertEquals(4, solver.requestCount)
         } finally {
             calls.forEach(Call::cancel)
             pool.shutdownNow(); pool.awaitTermination(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `confirmed recovery retains ownership after caller cancellation and fences exact generation`() = fixture("managed name") { source, solver, client ->
+        val old = "a".repeat(32)
+        val replacement = "b".repeat(32)
+        val confirmEntered = CountDownLatch(1)
+        val allowConfirmation = CountDownLatch(1)
+        val solves = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val confirms = java.util.concurrent.atomic.AtomicInteger()
+        solver.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "GET") return MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1"}""").build()
+                val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                assertEquals("managed name", payload["session"].asText())
+                return when (payload["cmd"].asText()) {
+                    "sessions.recovery.prepare" -> MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"managed name","generation":"$old","outcome":"prepared"}""").build()
+                    "sessions.recovery.confirm" -> {
+                        confirms.incrementAndGet()
+                        assertEquals(old, payload["sessionGeneration"].asText())
+                        confirmEntered.countDown(); allowConfirmation.await(5, TimeUnit.SECONDS)
+                        MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"managed name","generation":"$replacement","previousGeneration":"$old","outcome":"drained-closed"}""").build()
+                    }
+                    else -> {
+                        val generation = request.headers["X-Byparr-Session-Generation"]!!
+                        solves += generation
+                        if (generation == old) MockResponse.Builder().code(500).body("ambiguous failure").build()
+                        else { assertEquals(replacement,generation); solution(payload["url"].asText()) }
+                    }
+                }
+            }
+        }
+        val pool = Executors.newFixedThreadPool(2)
+        val recovering = client.newCall(Request.Builder().url(source.url("/recovering")).build())
+        try {
+            assertFailsWith<java.io.IOException> { client.newCall(Request.Builder().url(source.url("/first")).build()).execute().close() }
+            val result = pool.submit<String> { recovering.execute().use { it.body.string() } }
+            assertTrue(confirmEntered.await(2, TimeUnit.SECONDS), "supported unresolved session never attempted confirmed recovery")
+            recovering.cancel()
+            assertFailsWith<ExecutionException> { result.get(1, TimeUnit.SECONDS) }
+            val next = pool.submit<String> { client.newCall(Request.Builder().url(source.url("/next")).build()).execute().use { it.body.string() } }
+            Thread.sleep(100)
+            assertEquals(listOf(old),solves.toList(), "replacement used before authoritative closure")
+            allowConfirmation.countDown()
+            assertEquals("healthy result",next.get(2,TimeUnit.SECONDS))
+            assertEquals(listOf(old,replacement),solves.toList())
+            assertEquals(1,confirms.get())
+        } finally {
+            recovering.cancel();allowConfirmation.countDown()
+            pool.shutdownNow();pool.awaitTermination(5,TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    fun `malformed confirmed acknowledgements cannot clear a managed session`() {
+        for (failure in listOf("numeric-generation", "numeric-session", "numeric-previous", "wrong-session", "same-generation", "http-failure")) {
+            fixture("123") { source, solver, client ->
+                val old = "1".repeat(32)
+                val replacement = "2".repeat(32)
+                val solves = java.util.concurrent.atomic.AtomicInteger()
+                solver.dispatcher = object : Dispatcher() {
+                    override fun dispatch(request: RecordedRequest): MockResponse {
+                        if (request.method == "GET") return MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1"}""").build()
+                        val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                        return when (payload["cmd"].asText()) {
+                            "sessions.recovery.prepare" -> MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"123","generation":"$old","outcome":"prepared"}""").build()
+                            "sessions.recovery.confirm" -> {
+                                val body = jacksonObjectMapper().readTree("""{"protocol":"fenced-drain-close-v1","session":"123","generation":"$replacement","previousGeneration":"$old","outcome":"drained-closed"}""") as com.fasterxml.jackson.databind.node.ObjectNode
+                                when (failure) {
+                                    "numeric-generation" -> body.put("generation", java.math.BigInteger(replacement))
+                                    "numeric-session" -> body.put("session",123)
+                                    "numeric-previous" -> body.put("previousGeneration", java.math.BigInteger(old))
+                                    "wrong-session" -> body.put("session","another-name")
+                                    "same-generation" -> body.put("generation",old)
+                                }
+                                MockResponse.Builder().code(if (failure == "http-failure") 500 else 200).body(body.toString()).build()
+                            }
+                            else -> { solves.incrementAndGet(); MockResponse.Builder().code(500).body("ambiguous failure").build() }
+                        }
+                    }
+                }
+                repeat(3) { attempt ->
+                    assertFailsWith<java.io.IOException>("$failure attempt $attempt admitted invalid recovery") {
+                        client.newCall(Request.Builder().url(source.url("/request-$attempt")).build()).execute().close()
+                    }
+                }
+                assertEquals(1,solves.get(),"$failure allowed a new browser solve")
+            }
+        }
+    }
+
+    @Test
+    fun `slow confirmed recovery does not consume admitted solve drain budget`() = fixture("slow confirmation") { source, solver, client ->
+        serverConfig.flareSolverrTimeout.value = 8
+        val old = "a".repeat(32)
+        val replacement = "b".repeat(32)
+        val solves = java.util.concurrent.atomic.AtomicInteger()
+        val thirdEntered = CountDownLatch(1)
+        solver.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "GET") return MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1"}""").build()
+                val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                return when(payload["cmd"].asText()) {
+                    "sessions.recovery.prepare" -> MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"slow confirmation","generation":"$old","outcome":"prepared"}""").build()
+                    "sessions.recovery.confirm" -> { Thread.sleep(12000); MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"slow confirmation","generation":"$replacement","previousGeneration":"$old","outcome":"drained-closed"}""").build() }
+                    else -> {
+                        val attempt = solves.incrementAndGet()
+                        if (attempt == 1) MockResponse.Builder().code(500).body("ambiguous failure").build()
+                        else {
+                            assertEquals(replacement, request.headers["X-Byparr-Session-Generation"])
+                            if (attempt == 3) thirdEntered.countDown()
+                            solution(payload["url"].asText()).newBuilder().bodyDelay(if (attempt == 2) 7 else 0,TimeUnit.SECONDS).build()
+                        }
+                    }
+                }
+            }
+        }
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            assertFailsWith<java.io.IOException> { client.newCall(Request.Builder().url(source.url("/first")).build()).execute().close() }
+            val started = System.nanoTime()
+            val second = pool.submit<String> { client.newCall(Request.Builder().url(source.url("/second")).build()).execute().use { it.body.string() } }
+            assertFailsWith<ExecutionException> { second.get(20,TimeUnit.SECONDS) }
+            val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started)
+            assertTrue(elapsed in 17000..19500,"caller budget changed: $elapsed")
+            val third = pool.submit<String> { client.newCall(Request.Builder().url(source.url("/third")).build()).execute().use { it.body.string() } }
+            assertTrue(!thirdEntered.await(200,TimeUnit.MILLISECONDS),"replacement reused before solve body drained")
+            assertEquals("healthy result",third.get(3,TimeUnit.SECONDS))
+            assertEquals(3,solves.get())
+        } finally { pool.shutdownNow();pool.awaitTermination(5,TimeUnit.SECONDS) }
+    }
+
+    @Test
+    fun `discovery-only failure remains retryable without resetting or admitting a solve`() = fixture("discovery retry") { source, solver, client ->
+        val discoveries = java.util.concurrent.atomic.AtomicInteger()
+        val prepares = java.util.concurrent.atomic.AtomicInteger()
+        val solves = java.util.concurrent.atomic.AtomicInteger()
+        val generation = "c".repeat(32)
+        solver.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "GET") return if (discoveries.incrementAndGet() == 1) MockResponse.Builder().code(500).body("temporary discovery outage").build()
+                    else MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1"}""").build()
+                val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                return when(payload["cmd"].asText()) {
+                    "sessions.recovery.prepare" -> { prepares.incrementAndGet(); MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1","session":"discovery retry","generation":"$generation","outcome":"prepared"}""").build() }
+                    "request.get" -> { solves.incrementAndGet(); assertEquals(generation,request.headers["X-Byparr-Session-Generation"]); solution(payload["url"].asText()) }
+                    else -> throw AssertionError("discovery-only failure attempted session reset")
+                }
+            }
+        }
+        assertFailsWith<java.io.IOException> { client.newCall(Request.Builder().url(source.url("/first")).build()).execute().close() }
+        assertEquals(0,solves.get())
+        assertEquals(0,prepares.get())
+        client.newCall(Request.Builder().url(source.url("/retry")).build()).execute().use { assertEquals("healthy result",it.body.string()) }
+        assertEquals(2,discoveries.get())
+        assertEquals(1,prepares.get())
+        assertEquals(1,solves.get())
+    }
+
+    @Test
+    fun `ambiguous prepare acknowledgement never permits untagged fallback`() = fixture("prepare failure") { source, solver, client ->
+        val controls = java.util.concurrent.atomic.AtomicInteger()
+        val solves = java.util.concurrent.atomic.AtomicInteger()
+        solver.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.method == "GET") return MockResponse.Builder().body("""{"protocol":"fenced-drain-close-v1"}""").build()
+                val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                if (payload["cmd"].asText() == "sessions.recovery.prepare") { controls.incrementAndGet(); return MockResponse.Builder().body("lost prepare acknowledgment").build() }
+                solves.incrementAndGet()
+                return solution(payload["url"].asText())
+            }
+        }
+        repeat(2) { assertFailsWith<java.io.IOException> { client.newCall(Request.Builder().url(source.url("/attempt-$it")).build()).execute().close() } }
+        assertEquals(1,controls.get(),"ambiguous mutating control was retried without a known generation")
+        assertEquals(0,solves.get())
+    }
+
+    private fun MockWebServer.enqueueSolve(response: MockResponse) {
+        if (serverConfig.flareSolverrSessionName.value.isNotEmpty()) enqueue(MockResponse.Builder().code(404).build())
+        enqueue(response)
+    }
+
+    private fun MockWebServer.takeSolveRequest(timeout: Long, unit: TimeUnit): RecordedRequest? {
+        val deadline = System.nanoTime() + unit.toNanos(timeout)
+        while (true) {
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) return null
+            val request = takeRequest(remaining, TimeUnit.NANOSECONDS) ?: return null
+            if (request.method != "GET") return request
         }
     }
 

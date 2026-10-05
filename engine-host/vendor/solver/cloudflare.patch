@@ -147,7 +147,7 @@
 +                                ).toRequestBody(jsonMediaType),
 +                    ),
 +                )
-+            SolverTransport.response(outerCall, nested, endpoint, session, timeout.plus(10.seconds).inWholeMilliseconds) {
++            SolverTransport.response(outerCall, nested, client.value, endpoint, session, timeout.plus(10.seconds).inWholeMilliseconds) {
 +                decodeFromString<FlareSolverResponse>(it)
              }
          }
