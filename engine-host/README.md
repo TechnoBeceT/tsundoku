@@ -81,3 +81,22 @@ Verify preparation and runtime behavior with:
 sh vendor/solver/prepare_test.sh /path/to/pinned/Suwayomi-Server
 ./gradlew -PsuwayomiSrc=/path/to/pinned/Suwayomi-Server test installDist
 ```
+
+### Comix 1.6.42 compatibility
+
+The verified official APK is kept unchanged. During APK preparation, the derived JVM jar receives
+an exact package/version correction for chapter responses that omit `pages.baseUrl`: every image
+must have an absolute HTTP(S) URL before the parser supplies an empty base. Relative URLs without a
+base fail explicitly; the original required `items` field, page order, scrambling and image headers
+remain in use. Unexpected DTO bytecode fails preparation. Other packages and later versions bypass
+the correction, and official package identity, version, source IDs and signer continuity remain
+unchanged, so normal official updates remain available.
+
+Existing installed jars are reused on startup and preference reload. After deploying this correction,
+use the existing prepared reinstall and activation flow for the same official 1.6.42 APK to regenerate
+its jar safely; restarting alone does not regenerate it. Activation publishes a new jar generation and
+keeps replaced loaders available to in-flight calls.
+
+The corrected jar calls the host URL validator. If reverting to an engine build that predates this
+correction, regenerate Comix from the preserved official APK through that build's protected reinstall
+flow as well; an image rollback alone retains the corrected jar on the shared volume.

@@ -144,6 +144,7 @@ class ExtensionLoader internal constructor(
             // extension APKs, which otherwise fails class verification with "Expecting a stackmap frame
             // at branch target N" (GAP-100 — e.g. Asura Scans 1.6.66). See DexStackFrameRewriter.
             DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
+            ComixCompatibility.apply(jarFile.toPath(), inspected.pkgName, inspected.versionName, inspected.versionCode)
 
             return PreparedExtension(
                 pkgName = inspected.pkgName,
