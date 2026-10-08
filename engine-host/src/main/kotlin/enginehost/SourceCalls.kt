@@ -225,6 +225,10 @@ object SourceCalls {
      * Resolution (calling getImageUrl when imageUrl is null) is deferred to [image], which
      * reconstructs the exact Page and fetches the bytes, so the page list stays a cheap metadata call.
      *
+     * Kayn Scans (source 6622233282902198923) requires its authoritative chapter memo on every
+     * page call. It hydrates through the source series and exact chapter-url match first; missing or
+     * source-hidden chapters fail without a page request. Other sources use GAP-109 below.
+     *
      * GAP-109 — bare-seed FIRST, warm-and-match ONLY on failure. The page fetch first calls
      * [Source.getPageList] with a bare [SChapter] reconstructed from [chapterUrl] alone. For the vast
      * majority of sources this succeeds with ZERO extra requests — a url-only seed is everything their
@@ -258,24 +262,31 @@ object SourceCalls {
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): PagesResponse =
         cancellation.run {
-            val bareSeed = SChapter.create().apply { this.url = chapterUrl }
-            val pageResult: Pair<List<Page>, AddressMode> =
-                try {
-                    source.getPageList(bareSeed) to addressMode
-                } catch (bareError: Exception) {
-                    // Only keiyoushi's pre-network memo signal may enter stale-offer recovery. A
-                    // genuine source failure must preserve its original source-wide classification.
-                    if (!isRefreshChapterListSignal(bareError) || mangaUrl.isBlank()) throw bareError
+            suspend fun hydratedPages(): Pair<List<Page>, AddressMode> {
+                val (_, warmUpdate, resolvedMode) = source.mangaUpdate(mangaUrl, addressMode = addressMode, webUrl = webUrl, fetchDetails = false, fetchChapters = true)
+                val warmChapter =
+                    warmUpdate.chapters.firstOrNull { it.url == chapterUrl }
+                        ?: throw NoSuchElementException("chapter not found in refreshed chapter list: $chapterUrl")
+                return source.getPageList(warmChapter) to resolvedMode
+            }
 
-                    val (_, warmUpdate, resolvedMode) = source.mangaUpdate(mangaUrl, addressMode = addressMode, webUrl = webUrl, fetchDetails = false, fetchChapters = true)
-                    val warmChapter =
-                        warmUpdate
-                            .chapters
-                            .firstOrNull { it.url == chapterUrl }
-                            ?: throw NoSuchElementException(
-                                "chapter not found in refreshed chapter list: $chapterUrl",
-                            )
-                    source.getPageList(warmChapter) to resolvedMode
+            val pageResult: Pair<List<Page>, AddressMode> =
+                if (source.id == 6622233282902198923L) {
+                    // Kayn Scans' VineTheme chapter address is opaque; its current extension requires
+                    // source-produced slug/number memo and throws an NPE for a bare chapter. Hydrate
+                    // before pages rather than treating arbitrary parser NPEs as refresh signals.
+                    // The source's chapter list remains authoritative, including hidden/locked offers.
+                    require(mangaUrl.isNotBlank()) { "Kayn Scans pages require a source series address" }
+                    hydratedPages()
+                } else {
+                    val bareSeed = SChapter.create().apply { this.url = chapterUrl }
+                    try {
+                        source.getPageList(bareSeed) to addressMode
+                    } catch (bareError: Exception) {
+                        // Genuine source failures preserve their classification and never trigger refresh.
+                        if (!isRefreshChapterListSignal(bareError) || mangaUrl.isBlank()) throw bareError
+                        hydratedPages()
+                    }
                 }
             val (pages, resolvedMode) = pageResult
             PagesResponse(

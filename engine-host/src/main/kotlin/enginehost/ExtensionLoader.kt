@@ -145,6 +145,7 @@ class ExtensionLoader internal constructor(
             // at branch target N" (GAP-100 — e.g. Asura Scans 1.6.66). See DexStackFrameRewriter.
             DexStackFrameRewriter.repairStackFrames(jarFile.toPath(), javaClass.classLoader)
             ComixCompatibility.apply(jarFile.toPath(), inspected.pkgName, inspected.versionName, inspected.versionCode)
+            BlankCompatibility.apply(jarFile.toPath(), inspected.pkgName, inspected.versionName, inspected.versionCode, inspected.signature.currentSignerFingerprints)
 
             return PreparedExtension(
                 pkgName = inspected.pkgName,

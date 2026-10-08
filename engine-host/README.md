@@ -100,3 +100,26 @@ keeps replaced loaders available to in-flight calls.
 The corrected jar calls the host URL validator. If reverting to an engine build that predates this
 correction, regenerate Comix from the preserved official APK through that build's protected reinstall
 flow as well; an image rollback alone retains the corrected jar on the shared volume.
+
+
+### Kayn Scans chapter metadata
+
+Kayn Scans uses opaque chapter addresses and requires metadata from its own chapter list. Page
+resolution hydrates the source manga and selects the exact matching chapter before calling the
+extension. Hidden chapters stay unavailable, and visible locked chapters keep the extension's
+refusal. Other sources retain the existing bare-chapter path and explicit chapter-refresh signal.
+
+### The Blank 1.6.1 compatibility
+
+The verified official APK stays unchanged. Its derived JVM jar adapts the reader's shuffled
+semantic/export-name pairs to the object table expected by this release. The original WASM export
+resolution, restricted host imports, signing, chapter authorization and image decryption remain in
+use. Incomplete or ambiguous pair tables fail explicitly. Preparation applies this correction only
+to the official package, signer and exact version; later official versions bypass it.
+
+After deployment, regenerate the existing jar through the prepared same-version reinstall and
+activation flow. Profile hosts share that jar on disk but keep their own loaded classes; after
+activation, drain and restart the app so every host loads the corrected generation. A restart alone
+reuses the installed jar. When reverting to an engine build without
+this adapter, regenerate from the preserved official APK through that build's protected reinstall
+flow too; the adapted jar references a host helper absent from older builds.

@@ -1139,6 +1139,26 @@ class DexStackFrameRewriterTest {
     }
 
     @Test
+    fun `constructor provenance repair computes stale dex2jar stack bounds before analysis`() {
+        val allocation = "StaleStackChild"
+        val caller = "StaleStackCaller"
+        val raw = wrongDirectSuperCtorUser(caller, allocation, "java/lang/Exception")
+        val node = ClassNode()
+        ClassReader(raw).accept(node, 0)
+        node.methods.single { it.name == "make" }.maxStack = 1
+        val writer = ClassWriter(0)
+        node.accept(writer)
+        val jar = jarWithClasses(allocation to ctorlessDirectSubclass(allocation, "java/lang/Exception"), caller to writer.toByteArray())
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+        assertEquals(listOf(allocation), constructorOwners(jar, caller, "make"))
+        val loader = BytesLoader()
+        loader.define(allocation, classBytesFromJar(jar, allocation))
+        val made = loader.define(caller, classBytesFromJar(jar, caller))
+            .getDeclaredMethod("make", String::class.java).invoke(null, "reader") as Exception
+        assertEquals("reader", made.message)
+    }
+
+    @Test
     fun `repairStackFrames retargets a non-adjacent direct-super constructor call and makes it load`() {
         val allocationType = "CtorOwnerChild"
         val caller = "CtorOwnerCaller"
@@ -1247,6 +1267,67 @@ class DexStackFrameRewriterTest {
             )
 
         assertConstructorOwnerRepairSkipsByteExactly(jar, child, multiple, missing)
+    }
+
+    private fun nonFinal(bytes: ByteArray): ByteArray {
+        val node = ClassNode()
+        ClassReader(bytes).accept(node, 0)
+        node.access = node.access and Opcodes.ACC_FINAL.inv()
+        return ClassWriter(0).also { node.accept(it) }.toByteArray()
+    }
+
+    @Test
+    fun `constructor-owner repair restores an allocated existing trivial ancestor chain`() {
+        val middle = "ExistingAncestorMiddle"
+        val child = "ExistingAncestorChild"
+        val caller = "ExistingAncestorCaller"
+        val jar = jarWithClasses(
+            middle to nonFinal(directSubclassWithStringCtor(middle, "java/lang/Exception", trivial = true)),
+            child to directSubclassWithStringCtor(child, middle, trivial = true),
+            caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+        )
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+        assertEquals(listOf(child), constructorOwners(jar, caller, "make"))
+        val loader = BytesLoader()
+        loader.define(middle, classBytesFromJar(jar, middle))
+        loader.define(child, classBytesFromJar(jar, child))
+        val made = loader.define(caller, classBytesFromJar(jar, caller))
+            .getDeclaredMethod("make", String::class.java).invoke(null, "signer") as Exception
+        assertEquals("signer", made.message)
+    }
+
+    @Test
+    fun `constructor backfill precedes allocated ancestor provenance proof`() {
+        val middle = "BackfilledAncestorMiddle"
+        val child = "BackfilledAncestorChild"
+        val caller = "BackfilledAncestorCaller"
+        val jar = jarWithClasses(
+            middle to nonFinal(directSubclassWithStringCtor(middle, "java/lang/Exception", trivial = true)),
+            child to ctorlessDirectSubclass(child, middle),
+            "BackfillAnchor" to wrongDirectSuperCtorUser("BackfillAnchor", child, child),
+            caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+        )
+        DexStackFrameRewriter.repairStackFrames(jar, javaClass.classLoader)
+        assertEquals(listOf(child), constructorOwners(jar, caller, "make"))
+        val loader = BytesLoader()
+        loader.define(middle, classBytesFromJar(jar, middle))
+        loader.define(child, classBytesFromJar(jar, child))
+        val made = loader.define(caller, classBytesFromJar(jar, caller))
+            .getDeclaredMethod("make", String::class.java).invoke(null, "backfilled") as Exception
+        assertEquals("backfilled", made.message)
+    }
+
+    @Test
+    fun `constructor-owner repair preserves nontrivial allocated ancestor chains`() {
+        val middle = "NontrivialAncestorMiddle"
+        val child = "NontrivialAncestorChild"
+        val caller = "NontrivialAncestorCaller"
+        val jar = jarWithClasses(
+            middle to directSubclassWithStringCtor(middle, "java/lang/Exception", trivial = false),
+            child to directSubclassWithStringCtor(child, middle, trivial = true),
+            caller to wrongDirectSuperCtorUser(caller, child, "java/lang/Exception"),
+        )
+        assertConstructorOwnerRepairSkipsByteExactly(jar, middle, child, caller)
     }
 
     @Test

@@ -44,8 +44,9 @@ import kotlin.streams.asSequence
  *  - **wrong direct-super constructor owners** — R8 can leave `new X` followed by
  *    `invokespecial X.super.<init>(d)`. Android accepts that optimized form, but the JVM requires the
  *    uninitialized value from `new X` to enter `X.<init>`. [repairInvalidConstructorOwners] retargets only
- *    an exact, unmerged allocation-to-initializer pair whose direct-super relationship and trivial forwarding
- *    constructor are both proven across the whole jar;
+ *    an exact, unmerged allocation-to-initializer pair whose hierarchy and trivial forwarding
+ *    constructor are both proven across the whole jar. A NEW that skips further ancestors is restored
+ *    only when every skipped in-jar constructor already forwards its arguments without behavior;
  *  - **skipped constructor ancestors** — R8 can leave `Leaf.<init>` invoking an ancestor constructor above
  *    its direct superclass. [repairInvalidConstructorOwners] restores the direct chain only when every skipped
  *    in-jar class can use an exact-descriptor, behavior-free forwarder;
@@ -124,14 +125,12 @@ object DexStackFrameRewriter {
         // it rewrites instructions, so it must land before the per-class COMPUTE_FRAMES walk recomputes
         // frames from the instruction stream. It guards itself, so it can never abort this pass.
         repairObjectCollapse(jarFile)
-        // A `new X` paired with `X.super.<init>` is a distinct whole-jar defect: the allocation already names
-        // the right type, but JVM initialization rules require the call to name X. Prove the exact receiver and
-        // constructor availability atomically before the universal backfill and final frame recomputation.
-        repairInvalidConstructorOwners(jarFile, referenceClassLoader)
-        // Then the universal ctor backfill: whole-jar, right AFTER (c) so it composes with (c)'s retargeted
-        // allocations, and BEFORE the per-class walk so its added constructors get frames recomputed by the
-        // COMPUTE_FRAMES step below. It guards itself, so it can never abort this pass either.
+        // Reconstruct dangling in-jar constructors before proving existing forwarding chains. R8 can
+        // drop those constructors in the same class whose NEW bypasses an ancestor.
         backfillMissingCtors(jarFile, referenceClassLoader)
+        // A `new X` paired with an ancestor initializer must enter X. Retain exact receiver provenance
+        // and behavior-free constructor proofs before the final frame recomputation.
+        repairInvalidConstructorOwners(jarFile, referenceClassLoader)
         try {
             val jarUrl = jarFile.toUri().toURL()
             // This resolver is PARENT-FIRST (a plain URLClassLoader), whereas the runtime loads the
@@ -752,7 +751,9 @@ object DexStackFrameRewriter {
                             if (initializer.itf) continue
                             val target = inJar[allocation.desc] ?: continue
                             if (!isInstantiable(target)) continue
-                            if (target.superName != initializer.owner) continue
+                            if (target.superName != initializer.owner &&
+                                !hasExistingTrivialAncestorChain(target, node, initializer, inJar)
+                            ) continue
 
                             val matchingCtors =
                                 target.methods.filter { it.name == "<init>" && it.desc == initializer.desc }
@@ -889,7 +890,8 @@ object DexStackFrameRewriter {
         ownerName: String,
         method: MethodNode,
     ): ConstructorInitCandidates {
-        val frames = Analyzer(ConstructorSourceInterpreter).analyze(ownerName, method)
+        // dex2jar can understate maxStack; provenance needs computed bounds before frame repair.
+        val frames = Analyzer(ConstructorSourceInterpreter).analyzeAndComputeMaxs(ownerName, method)
         val insns = method.instructions.toArray()
         val found = ConstructorInitCandidates()
         for (i in insns.indices) {
@@ -910,6 +912,27 @@ object DexStackFrameRewriter {
             }
         }
         return found
+    }
+
+    /** NEW may bypass ancestors only when every skipped constructor already forwards unchanged. */
+    private fun hasExistingTrivialAncestorChain(
+        target: ClassNode,
+        caller: ClassNode,
+        initializer: MethodInsnNode,
+        inJar: Map<String, ClassNode>,
+    ): Boolean {
+        var current = target
+        var descendant = caller
+        val visited = mutableSetOf<String>()
+        while (current.name != initializer.owner) {
+            if (!visited.add(current.name)) return false
+            val ctor = current.methods.singleOrNull { it.name == "<init>" && it.desc == initializer.desc } ?: return false
+            if (!isTrivialForwardingCtor(current, ctor) || !isConstructorAccessibleFrom(current, ctor, descendant)) return false
+            if (current.superName == initializer.owner) return true
+            descendant = current
+            current = inJar[current.superName] ?: return false
+        }
+        return false
     }
 
     /**
