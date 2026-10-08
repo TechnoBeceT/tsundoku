@@ -37,9 +37,9 @@ func (r *recordingImageDelayResolver) callCount() int {
 	return len(r.calls)
 }
 
-// flakyImageClient wraps a fake.Client, failing the first failCount Image calls
+// flakyImageClient wraps a fake.Client, failing the first failCount ReaderImage calls
 // with failErr before delegating to the embedded client for the rest. imageCalls
-// records every Image call so a test can assert exactly how many attempts the
+// records every ReaderImage call so a test can assert exactly how many attempts the
 // per-image retry loop made. Every other Client method is inherited unchanged from
 // the embedded fake.
 type flakyImageClient struct {
@@ -49,14 +49,14 @@ type flakyImageClient struct {
 	imageCalls int
 }
 
-// Image fails the first failCount times, then delegates to the embedded fake so a
+// ReaderImage fails the first failCount times, then delegates to the embedded fake so a
 // seeded WithImage entry is returned once the transient failures are exhausted.
-func (c *flakyImageClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+func (c *flakyImageClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
 	c.imageCalls++
 	if c.imageCalls <= c.failCount {
 		return nil, "", c.failErr
 	}
-	return c.Client.Image(ctx, sourceID, pageURL, imageURL)
+	return c.Client.ReaderImage(ctx, sourceID, pageURL, imageURL)
 }
 
 type timedImageClient struct {
@@ -65,11 +65,11 @@ type timedImageClient struct {
 	starts []time.Time
 }
 
-func (c *timedImageClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+func (c *timedImageClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
 	c.mu.Lock()
 	c.starts = append(c.starts, time.Now())
 	c.mu.Unlock()
-	return c.Client.Image(ctx, sourceID, pageURL, imageURL)
+	return c.Client.ReaderImage(ctx, sourceID, pageURL, imageURL)
 }
 
 func (c *timedImageClient) requestStarts() []time.Time {
@@ -100,7 +100,7 @@ func TestStagePages_TransientImage_SucceedsOnRetry(t *testing.T) {
 		t.Fatalf("PageCount/len(Pages) = %d/%d, want 1/1", got.PageCount, len(got.Pages))
 	}
 	if client.imageCalls != 3 {
-		t.Errorf("Image called %d times, want 3 (2 transient failures + 1 success, ≤3 retries)", client.imageCalls)
+		t.Errorf("ReaderImage called %d times, want 3 (2 transient failures + 1 success, ≤3 retries)", client.imageCalls)
 	}
 }
 
@@ -168,7 +168,7 @@ func TestStagePages_DelayResolutionFailureUsesFallbackAndWarns(t *testing.T) {
 	}
 	starts := client.requestStarts()
 	if len(starts) != 2 {
-		t.Fatalf("Image calls = %d, want 2", len(starts))
+		t.Fatalf("ReaderImage calls = %d, want 2", len(starts))
 	}
 	if spacing := starts[1].Sub(starts[0]); spacing < fallback {
 		t.Fatalf("request-start spacing = %v, want at least fallback %v", spacing, fallback)
@@ -201,7 +201,7 @@ func TestStagePages_TransientImage_ExhaustsRetries_WrapsErrImageFetch(t *testing
 		t.Errorf("err %v does not wrap ErrImageFetch — the dispatcher would trip the breaker on a flaky page", err)
 	}
 	if client.imageCalls != 4 {
-		t.Errorf("Image called %d times, want 4 (1 initial + 3 retries)", client.imageCalls)
+		t.Errorf("ReaderImage called %d times, want 4 (1 initial + 3 retries)", client.imageCalls)
 	}
 }
 
@@ -212,7 +212,7 @@ func TestStagePages_TransientImage_PreservesTypedUpstreamError(t *testing.T) {
 	}
 	inner := fake.New(
 		fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
-		fake.WithError("Image", want),
+		fake.WithError("ReaderImage", want),
 	)
 	f := sourceengine.NewFetcher(inner, t.TempDir())
 
@@ -245,7 +245,7 @@ func TestStagePages_BanImage_NotRetried_StaysSourceWide(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := fake.New(
 				fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
-				fake.WithError("Image", errors.New(tc.errMsg)),
+				fake.WithError("ReaderImage", errors.New(tc.errMsg)),
 			)
 			f := sourceengine.NewFetcher(inner, t.TempDir())
 
@@ -256,8 +256,8 @@ func TestStagePages_BanImage_NotRetried_StaysSourceWide(t *testing.T) {
 			if errors.Is(err, sourceengine.ErrImageFetch) {
 				t.Errorf("a %s image error must NOT be wrapped in ErrImageFetch (it stays source-wide → breaker): %v", tc.name, err)
 			}
-			if n := inner.CallCount("Image"); n != 1 {
-				t.Errorf("Image called %d times, want 1 (a ban must never be hammered by retries)", n)
+			if n := inner.CallCount("ReaderImage"); n != 1 {
+				t.Errorf("ReaderImage called %d times, want 1 (a ban must never be hammered by retries)", n)
 			}
 		})
 	}
@@ -270,7 +270,7 @@ func TestStagePages_BanImage_NotRetried_StaysSourceWide(t *testing.T) {
 func TestStagePages_ChapterSpecificImage_NotRetried(t *testing.T) {
 	inner := fake.New(
 		fake.WithPages(7, "/ch/1", []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0"}}),
-		fake.WithError("Image", errors.New("404 not found")),
+		fake.WithError("ReaderImage", errors.New("404 not found")),
 	)
 	f := sourceengine.NewFetcher(inner, t.TempDir())
 
@@ -281,8 +281,8 @@ func TestStagePages_ChapterSpecificImage_NotRetried(t *testing.T) {
 	if errors.Is(err, sourceengine.ErrImageFetch) {
 		t.Errorf("a not_found image error must not be wrapped in ErrImageFetch (it is already chapter-specific): %v", err)
 	}
-	if n := inner.CallCount("Image"); n != 1 {
-		t.Errorf("Image called %d times, want 1 (a chapter-specific error won't fix on retry)", n)
+	if n := inner.CallCount("ReaderImage"); n != 1 {
+		t.Errorf("ReaderImage called %d times, want 1 (a chapter-specific error won't fix on retry)", n)
 	}
 }
 
@@ -304,8 +304,8 @@ func TestStagePages_BrokenImage_NotRetried(t *testing.T) {
 	if errors.Is(err, sourceengine.ErrImageFetch) {
 		t.Errorf("a broken-page validation failure must not be wrapped in ErrImageFetch: %v", err)
 	}
-	if n := inner.CallCount("Image"); n != 1 {
-		t.Errorf("Image called %d times, want 1 (a validation failure won't fix on retry)", n)
+	if n := inner.CallCount("ReaderImage"); n != 1 {
+		t.Errorf("ReaderImage called %d times, want 1 (a validation failure won't fix on retry)", n)
 	}
 }
 
@@ -325,7 +325,7 @@ func TestResolveLinks_PagesError_NotImageFetch(t *testing.T) {
 	if errors.Is(err, sourceengine.ErrImageFetch) {
 		t.Errorf("a page-resolution (Pages) failure must NOT be wrapped in ErrImageFetch — ban detection at the session stage must be preserved: %v", err)
 	}
-	if inner.CallCount("Image") != 0 {
-		t.Errorf("Image called %d times, want 0 (a Pages failure fails before any image fetch)", inner.CallCount("Image"))
+	if inner.CallCount("ReaderImage") != 0 {
+		t.Errorf("ReaderImage called %d times, want 0 (a Pages failure fails before any image fetch)", inner.CallCount("ReaderImage"))
 	}
 }

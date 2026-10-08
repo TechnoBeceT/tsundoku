@@ -162,7 +162,7 @@ class SourceCallDeadlineTest {
         val result =
             assertIs<Submission.Accepted<Pair<ByteArray, String>>>(
                 scheduler.submit(source.id, cancellation::cancel) {
-                    SourceCalls.image(source, pageUrl = "", imageUrl = server.url("/page.jpg").toString(), cancellation)
+                    SourceCalls.image(source, pageUrl = "", imageUrl = server.url("/page.jpg").toString(), cancellation, reader = true)
                 },
             ).future
         try {

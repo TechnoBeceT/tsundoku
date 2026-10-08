@@ -82,7 +82,7 @@ func (f *Fetcher) fetchImageRetrying(ctx context.Context, sourceID int64, link f
 		if waitErr := f.waitForImagePacing(ctx, sourceID); waitErr != nil {
 			return nil, "", waitErr
 		}
-		data, contentType, err = f.client.Image(ctx, sourceID, link.URL, link.ImageURL)
+		data, contentType, err = f.client.ReaderImage(ctx, sourceID, link.URL, link.ImageURL)
 		if err == nil {
 			return data, contentType, nil
 		}

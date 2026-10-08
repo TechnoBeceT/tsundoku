@@ -11,7 +11,7 @@ import (
 )
 
 // TestFetcher_Fetch_Success proves Fetch parses ref.Provider as the numeric
-// sourceID, calls Pages then Image per page, and assembles ChapterPages in
+// sourceID, calls Pages then ReaderImage per page, and assembles ChapterPages in
 // page order with the extension derived from each page's content type.
 //
 // The two pages carry REAL, fully-decodable image bytes: since the
@@ -49,8 +49,8 @@ func TestFetcher_Fetch_Success(t *testing.T) {
 	if client.CallCount("Pages") != 1 {
 		t.Errorf("Pages called %d times, want 1", client.CallCount("Pages"))
 	}
-	if client.CallCount("Image") != 2 {
-		t.Errorf("Image called %d times, want 2", client.CallCount("Image"))
+	if client.CallCount("ReaderImage") != 2 {
+		t.Errorf("ReaderImage called %d times, want 2", client.CallCount("ReaderImage"))
 	}
 }
 
@@ -103,7 +103,7 @@ func TestFetcher_Fetch_NonNumericProvider(t *testing.T) {
 }
 
 // TestFetcher_Fetch_PagesError proves a Pages failure is propagated and no
-// Image call is attempted.
+// ReaderImage call is attempted.
 func TestFetcher_Fetch_PagesError(t *testing.T) {
 	wantErr := errors.New("boom")
 	client := fake.New(fake.WithError("Pages", wantErr))
@@ -113,8 +113,8 @@ func TestFetcher_Fetch_PagesError(t *testing.T) {
 	if err == nil || !errors.Is(err, wantErr) {
 		t.Fatalf("Fetch error = %v, want wrapping %v", err, wantErr)
 	}
-	if client.CallCount("Image") != 0 {
-		t.Errorf("Image called %d times, want 0", client.CallCount("Image"))
+	if client.CallCount("ReaderImage") != 0 {
+		t.Errorf("ReaderImage called %d times, want 0", client.CallCount("ReaderImage"))
 	}
 }
 
@@ -140,7 +140,7 @@ func TestFetcher_Fetch_ImageError(t *testing.T) {
 	pages := []sourceengine.Page{{Index: 0, URL: "/ch/1/page/0", ImageURL: "https://x/p0.jpg"}}
 	client := fake.New(
 		fake.WithPages(7, "/ch/1", pages),
-		fake.WithError("Image", wantErr),
+		fake.WithError("ReaderImage", wantErr),
 	)
 	f := sourceengine.NewFetcher(client, t.TempDir())
 
@@ -192,8 +192,8 @@ func TestFetcher_Fetch_BrokenPageFailsWholeChapter(t *testing.T) {
 			}
 			// Only the two pages up to and including the broken one are ever
 			// fetched — the loop must not continue past a failure.
-			if got := client.CallCount("Image"); got != 2 {
-				t.Errorf("Image called %d times, want 2 (stop at the broken page)", got)
+			if got := client.CallCount("ReaderImage"); got != 2 {
+				t.Errorf("ReaderImage called %d times, want 2 (stop at the broken page)", got)
 			}
 		})
 	}
@@ -254,7 +254,7 @@ func TestFetcher_ExtFromContentType(t *testing.T) {
 }
 
 // cancelAfterFirstImage wraps a sourceengine.Client and cancels a captured
-// context.CancelFunc right after its FIRST Image call returns — used to
+// context.CancelFunc right after its FIRST ReaderImage call returns — used to
 // exercise Fetch's mid-loop ctx.Err() re-check (the second/third/... page of
 // a multi-page chapter), which a pre-cancelled context cannot reach.
 type cancelAfterFirstImage struct {
@@ -265,8 +265,8 @@ type cancelAfterFirstImage struct {
 
 // Image delegates to the wrapped Client, then cancels the context after the
 // first call so the NEXT loop iteration's ctx.Err() check fires.
-func (w *cancelAfterFirstImage) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
-	data, contentType, err := w.Client.Image(ctx, sourceID, pageURL, imageURL)
+func (w *cancelAfterFirstImage) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	data, contentType, err := w.Client.ReaderImage(ctx, sourceID, pageURL, imageURL)
 	w.calls++
 	if w.calls == 1 {
 		w.cancel()
@@ -297,7 +297,7 @@ func TestFetcher_Fetch_ContextCancelledMidLoop(t *testing.T) {
 		t.Fatal("Fetch: want error after a mid-loop cancellation, got nil")
 	}
 	if wrapped.calls != 1 {
-		t.Errorf("Image called %d times, want exactly 1 (the loop must abort before the second page)", wrapped.calls)
+		t.Errorf("ReaderImage called %d times, want exactly 1 (the loop must abort before the second page)", wrapped.calls)
 	}
 }
 

@@ -49,7 +49,7 @@ func (b *brokenPageClient) Pages(_ context.Context, _ int64, _, _ string) ([]sou
 	return b.pages, nil
 }
 
-func (b *brokenPageClient) Image(_ context.Context, _ int64, pageURL, _ string) ([]byte, string, error) {
+func (b *brokenPageClient) ReaderImage(_ context.Context, _ int64, pageURL, _ string) ([]byte, string, error) {
 	return b.pageData[pageURL], "image/jpeg", nil
 }
 

@@ -187,6 +187,11 @@ func (r *Router) PagesRef(ctx context.Context, ref sourceengine.ProviderRef, cha
 	return sourceengine.PagesFor(ctx, r.clientFor(ref.SourceID), ref, chapterURL)
 }
 
+// ReaderImage routes reader-page images to the source-bound engine.
+func (r *Router) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	return r.clientFor(sourceID).ReaderImage(ctx, sourceID, pageURL, imageURL)
+}
+
 // Image routes to sourceID's instance — the load-bearing egress: a bound
 // source's page bytes are fetched by its own instance (over its VPN/proxy),
 // which is the whole point of the feature.

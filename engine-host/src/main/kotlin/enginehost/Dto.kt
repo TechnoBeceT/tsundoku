@@ -130,7 +130,7 @@ data class ChaptersRequest(val sourceId: Long, val url: String, val mangaTitle: 
 data class PagesRequest(val sourceId: Long, val chapterUrl: String, val mangaUrl: String = "", val addressMode: AddressMode = AddressMode.UNKNOWN, val webUrl: String? = null)
 
 /** [pageUrl] = the page's [PageDto.url]; [imageUrl] = the page's [PageDto.imageUrl] (may be null). */
-data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: String? = null)
+data class ImageRequest(val sourceId: Long, val pageUrl: String, val imageUrl: String? = null, val reader: Boolean = false)
 
 // ---- Response wrappers ----
 

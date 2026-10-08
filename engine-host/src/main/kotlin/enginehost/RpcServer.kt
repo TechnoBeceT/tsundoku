@@ -125,7 +125,7 @@ class RpcServer(
         }
         registerContext("/image") { exchange, response ->
             submitSource(exchange, response, ImageRequest::sourceId, "image request") { request, cancellation ->
-                val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl, cancellation)
+                val (bytes, contentType) = SourceCalls.image(request.source(), request.pageUrl, request.imageUrl, cancellation, reader = request.reader)
                 response.respondBytes(200, bytes, contentType)
             }
         }

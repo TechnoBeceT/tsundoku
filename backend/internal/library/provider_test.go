@@ -587,3 +587,7 @@ func TestAddProvider_ReleasesTheMergeLatchWhenTheFoldFails(t *testing.T) {
 	}
 	svc.ReleaseMerge(ser.ID)
 }
+
+func (f *fakeAddProviderClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	return f.Image(ctx, sourceID, pageURL, imageURL)
+}

@@ -281,3 +281,7 @@ func TestProgressWithoutBearerReturns401(t *testing.T) {
 		t.Fatalf("401 response is not JSON: %v (body: %s)", err, rec.Body.String())
 	}
 }
+
+func (nullEngineClient) ReaderImage(context.Context, int64, string, string) ([]byte, string, error) {
+	panic("nullEngineClient.ReaderImage called in test")
+}

@@ -2115,3 +2115,7 @@ func TestService_Adopt_InvalidCategory(t *testing.T) {
 		t.Fatal("Adopt: expected error for invalid category, got nil")
 	}
 }
+
+func (f *fakeClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	return f.Image(ctx, sourceID, pageURL, imageURL)
+}

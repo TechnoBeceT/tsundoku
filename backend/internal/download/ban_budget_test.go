@@ -207,7 +207,7 @@ func TestFetchFailure_StructuredThrottleUsesLaterRecoveryHorizonWithoutAttempts(
 	gate := sourcegate.NewService(client, rs)
 	engineClient := enginefake.New(
 		enginefake.WithPages(7, "/ch/c1", []sourceengine.Page{{Index: 0, URL: "u0"}}),
-		enginefake.WithError("Image", &sourceengine.UpstreamError{
+		enginefake.WithError("ReaderImage", &sourceengine.UpstreamError{
 			Status: http.StatusBadGateway, Msg: "temporarily unavailable",
 			UpstreamStatus: http.StatusTooManyRequests, RetryAfter: 3 * time.Hour,
 		}),
@@ -224,8 +224,8 @@ func TestFetchFailure_StructuredThrottleUsesLaterRecoveryHorizonWithoutAttempts(
 	if got.Attempts != 0 {
 		t.Fatalf("attempts = %d, want 0", got.Attempts)
 	}
-	if calls := engineClient.CallCount("Image"); calls != 1 {
-		t.Fatalf("Image calls = %d, want 1 (typed 429 must bypass transient retries)", calls)
+	if calls := engineClient.CallCount("ReaderImage"); calls != 1 {
+		t.Fatalf("ReaderImage calls = %d, want 1 (typed 429 must bypass transient retries)", calls)
 	}
 	// PostgreSQL stores this timestamp at microsecond precision, while started
 	// carries Go's nanoseconds; allow only that representation loss.
@@ -480,7 +480,7 @@ func TestFetchFailure_TransientImage_ChapterSpecific_NoBreaker(t *testing.T) {
 	gate := sourcegate.NewService(client, rs)
 	engineClient := enginefake.New(
 		enginefake.WithPages(7, "/ch/c1", []sourceengine.Page{{Index: 0, URL: "u0"}}),
-		enginefake.WithError("Image", errors.New("502 bad gateway")), // transient, on every attempt
+		enginefake.WithError("ReaderImage", errors.New("502 bad gateway")), // transient, on every attempt
 	)
 	d := download.New(client, sourceengine.NewFetcher(engineClient, mustTempDir(t)), sse.NewHub(),
 		download.Config{Storage: mustTempDir(t)}, rs, gate)
@@ -495,8 +495,8 @@ func TestFetchFailure_TransientImage_ChapterSpecific_NoBreaker(t *testing.T) {
 	if !gate.IsAvailable(ctx, "7", time.Now()) {
 		t.Error("breaker tripped on a per-image failure — one flaky page must never pause a healthy source")
 	}
-	if n := engineClient.CallCount("Image"); n != 4 {
-		t.Errorf("Image called %d times, want 4 (1 initial + 3 retries against the flaky source)", n)
+	if n := engineClient.CallCount("ReaderImage"); n != 4 {
+		t.Errorf("ReaderImage called %d times, want 4 (1 initial + 3 retries against the flaky source)", n)
 	}
 }
 
@@ -531,8 +531,8 @@ func TestFetchFailure_PagesResolution_SourceWide_TripsBreaker(t *testing.T) {
 	if gate.IsAvailable(ctx, "7", time.Now()) {
 		t.Error("breaker did NOT trip on a page-resolution failure — a real ban at the session stage must pause the source")
 	}
-	if n := engineClient.CallCount("Image"); n != 0 {
-		t.Errorf("Image called %d times, want 0 (a Pages failure fails before any image fetch)", n)
+	if n := engineClient.CallCount("ReaderImage"); n != 0 {
+		t.Errorf("ReaderImage called %d times, want 0 (a Pages failure fails before any image fetch)", n)
 	}
 }
 

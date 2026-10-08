@@ -158,3 +158,19 @@ func TestRouter_SetRoutesClears(t *testing.T) {
 		t.Fatalf("after clear, Search(1) = %q, want default", got.Manga[0].URL)
 	}
 }
+
+func TestRouter_ReaderImageRoutesEmptyPageURL(t *testing.T) {
+	def := fake.New(fake.WithImage(1, "", []byte("default"), "image/webp"))
+	inst := fake.New(fake.WithImage(1, "", []byte("instance"), "image/webp"))
+	router := engineroute.NewRouter(def)
+	router.SetRoutes(map[int64]sourceengine.Client{1: inst})
+	got, _, err := router.ReaderImage(context.Background(), 1, "", "https://images.test/page.webp")
+	if err != nil || string(got) != "instance" {
+		t.Fatalf("image=%q error=%v", got, err)
+	}
+	router.Degrade([]int64{1})
+	got, _, err = router.ReaderImage(context.Background(), 1, "", "https://images.test/page.webp")
+	if err != nil || string(got) != "default" {
+		t.Fatalf("degraded image=%q error=%v", got, err)
+	}
+}

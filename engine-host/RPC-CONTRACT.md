@@ -65,6 +65,14 @@ The impersonate gateway remains first: a gateway success returns before source-c
 selection. On the fallback path, listed sources use the normal source client through the
 cacheless call API; all others derive the existing no-idle-pool client.
 
+## Reader image context
+
+`POST /image` accepts optional `reader: true` for reader pages. The host passes the exact
+`pageUrl`/`imageUrl` pair through the source's image-request override, including a blank `pageUrl`.
+A reader request with both addresses blank fails before any network request. Without the flag,
+legacy classification remains: blank `pageUrl` fetches a cover with plain GET and source headers;
+nonblank `pageUrl` fetches a reader page. Covers bypass reader-only request validation.
+
 ## Image upstream failures
 
 `POST /image` continues to return HTTP 502 when the source image server rejects the request. Its

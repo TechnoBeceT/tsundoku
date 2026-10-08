@@ -24,7 +24,7 @@ import (
 // (so both attempts share the same on-disk staging dir). Attempt 1 serves pages 0-1
 // but not 2 (a missing image → broken → the chapter fails, staging pages 0-1);
 // attempt 2 serves all three (page 2 is now available). Assertions are on the SECOND
-// attempt's counting client: 0 Pages calls (links reused) and exactly 1 Image call
+// attempt's counting client: 0 Pages calls (links reused) and exactly 1 ReaderImage call
 // (only the missing page 2).
 func TestFetcher_Resume_StoredLinksAndPartialStaging(t *testing.T) {
 	stagingRoot := t.TempDir()
@@ -58,13 +58,13 @@ func TestFetcher_Resume_StoredLinksAndPartialStaging(t *testing.T) {
 		t.Errorf("attempt 1: Pages called %d times, want 0 (stored links must be re-used)", n)
 	}
 	// Pages 0 and 1 were downloaded; page 2 was attempted and failed.
-	if n := client1.CallCount("Image"); n != 3 {
-		t.Errorf("attempt 1: Image called %d times, want 3 (pages 0,1 staged; page 2 attempted+failed)", n)
+	if n := client1.CallCount("ReaderImage"); n != 3 {
+		t.Errorf("attempt 1: ReaderImage called %d times, want 3 (pages 0,1 staged; page 2 attempted+failed)", n)
 	}
 	assertStagedIndexes(t, filepath.Join(stagingRoot, pcID.String()), []int{0, 1})
 
 	// Attempt 2: page 2 is now serveable. The retry must re-use the two staged pages
-	// (no Image call for them) and re-fetch ONLY page 2 — and still never call Pages.
+	// (no ReaderImage call for them) and re-fetch ONLY page 2 — and still never call Pages.
 	client2 := fake.New(
 		fake.WithImage(7, "/ch/1/page/0", jpg, "image/jpeg"),
 		fake.WithImage(7, "/ch/1/page/1", jpg, "image/jpeg"),
@@ -78,8 +78,8 @@ func TestFetcher_Resume_StoredLinksAndPartialStaging(t *testing.T) {
 	if n := client2.CallCount("Pages"); n != 0 {
 		t.Errorf("attempt 2: Pages called %d times, want 0 (stored links, zero re-resolution)", n)
 	}
-	if n := client2.CallCount("Image"); n != 1 {
-		t.Errorf("attempt 2: Image called %d times, want 1 (ONLY the missing page 2 re-fetched)", n)
+	if n := client2.CallCount("ReaderImage"); n != 1 {
+		t.Errorf("attempt 2: ReaderImage called %d times, want 1 (ONLY the missing page 2 re-fetched)", n)
 	}
 	if got.PageCount != 3 || len(got.Pages) != 3 {
 		t.Fatalf("attempt 2: PageCount/len(Pages) = %d/%d, want 3/3", got.PageCount, len(got.Pages))

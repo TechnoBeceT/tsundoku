@@ -59,7 +59,7 @@ func (c *throughputIntegrationClient) PagesRef(ctx context.Context, ref sourceen
 	return c.Client.PagesRef(ctx, ref, chapterURL)
 }
 
-func (c *throughputIntegrationClient) Image(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+func (c *throughputIntegrationClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
 	c.mu.Lock()
 	c.imageStarts[sourceID] = append(c.imageStarts[sourceID], time.Now())
 	if sourceID == 101 && !c.retryInjected {
@@ -68,7 +68,7 @@ func (c *throughputIntegrationClient) Image(ctx context.Context, sourceID int64,
 		return nil, "", errors.New("502 bad gateway")
 	}
 	c.mu.Unlock()
-	return c.Client.Image(ctx, sourceID, pageURL, imageURL)
+	return c.Client.ReaderImage(ctx, sourceID, pageURL, imageURL)
 }
 
 func TestStoredSourceThroughputPolicyDrivesDispatcherAndImagePacer(t *testing.T) {

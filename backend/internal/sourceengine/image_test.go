@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/sourceengine"
 )
 
@@ -139,5 +141,74 @@ func TestImage_NetworkFailure_IsWrapped(t *testing.T) {
 	c := sourceengine.New("http://engine-host.invalid", failingDoer{}, "test-engine-control-token")
 	if _, _, err := c.Image(context.Background(), 1, "/p", ""); err == nil {
 		t.Fatal("Image: want error from a failing doer, got nil")
+	}
+}
+
+func TestFetcher_EmptyPageURLUsesReaderContext(t *testing.T) {
+	want := validJPEG(t)
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/pages" {
+			writeJSON(t, w, http.StatusOK, map[string]any{"pages": []map[string]any{{"index": 0, "url": "", "imageUrl": "https://images.test/reader.jpg"}}})
+			return
+		}
+		var body map[string]any
+		decodeBody(t, r, &body)
+		if body["reader"] != true || body["pageUrl"] != "" || body["imageUrl"] != "https://images.test/reader.jpg" {
+			t.Errorf("reader request did not preserve context/address pair: %+v", body)
+		}
+		attempts++
+		if attempts == 1 {
+			writeJSON(t, w, http.StatusBadGateway, map[string]string{"error": "HTTP error 503"})
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(want)
+	}))
+	defer srv.Close()
+	got, err := sourceengine.NewFetcher(newTestClient(t, srv), t.TempDir()).Fetch(context.Background(), fetcher.FetchRef{Provider: "7", URL: "/chapter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || len(got.Pages) != 1 || !bytes.Equal(got.Pages[0].Data, want) {
+		t.Fatalf("unexpected pages: %+v", got)
+	}
+}
+
+func TestReaderImage_CancelsHTTP(t *testing.T) {
+	entered := make(chan struct{})
+	stopped := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(entered)
+		<-r.Context().Done()
+		close(stopped)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := newTestClient(t, srv).ReaderImage(ctx, 7, "", "https://images.test/reader.jpg")
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("request not received")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("request did not cancel")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not observe cancellation")
 	}
 }

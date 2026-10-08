@@ -108,18 +108,22 @@ type Client interface {
 	Chapters(ctx context.Context, sourceID int64, url string, mangaTitle string) ([]Chapter, error)
 
 	// Pages fetches the page list for the chapter at chapterURL on sourceID.
-	// Each Page's own (URL, ImageURL) address pair must be fed back to Image
+	// Each Page's own (URL, ImageURL) address pair must be fed back to ReaderImage
 	// verbatim — this call does not resolve image URLs itself. mangaURL is the
 	// series' provider-side URL; when non-empty the engine runs a series-scoped
 	// fetch to repopulate per-chapter state (memo) some extensions require in
 	// getPageList (GAP-109), and is safe to pass as "" when unknown.
 	Pages(ctx context.Context, sourceID int64, chapterURL, mangaURL string) ([]Page, error)
 
-	// Image downloads the raw bytes for one page, identified by the SAME
-	// (pageURL, imageURL) pair a Pages call returned. imageURL may be empty
-	// when the source only set url (some sources encode routing in url and
-	// resolve the real image address server-side).
+	// Image retains legacy address classification: a blank pageURL fetches a
+	// cover from imageURL; a nonblank pageURL fetches a reader page. Use
+	// ReaderImage for every address pair returned by Pages, including blank URLs.
 	Image(ctx context.Context, sourceID int64, pageURL, imageURL string) (data []byte, contentType string, err error)
+
+	// ReaderImage downloads a reader page using the exact address pair returned
+	// by Pages, even when pageURL is empty. An empty imageURL lets the source
+	// resolve the image address from pageURL.
+	ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) (data []byte, contentType string, err error)
 
 	// Sources lists every source the engine host has loaded from its
 	// installed extensions.

@@ -284,8 +284,8 @@ object SourceCalls {
         }
 
     /**
-     * Fetch the raw image bytes + content type for a page or a cover, distinguished by [pageUrl]:
-     * blank = COVER, non-blank = reader PAGE.
+     * Fetch image bytes for a reader page when [reader] is explicit. Legacy calls
+     * classify blank [pageUrl] as a cover and non-blank as a reader page.
      *
      * Reader pages reconstruct the source's exact Page(url, imageUrl) and resolve imageUrl first via
      * getImageUrl (Suwayomi's getTrueImageUrl pattern) when absent — this covers sources whose
@@ -340,6 +340,7 @@ object SourceCalls {
         pageUrl: String,
         imageUrl: String?,
         cancellation: SourceCallCancellation = SourceCallCancellation(),
+        reader: Boolean = false,
     ): Pair<ByteArray, String> =
         cancellation.run {
             val http = source as? HttpSource
@@ -350,11 +351,14 @@ object SourceCalls {
             // the gateway attempt and the okhttp fallback below use this one request + page.
             val page: Page
             val request: Request
-            if (pageUrl.isBlank()) {
+            if (!reader && pageUrl.isBlank()) {
                 val coverUrl = imageUrl ?: error("cover fetch: imageUrl is required when pageUrl is blank")
                 page = Page(index = 0, url = "", imageUrl = coverUrl)
                 request = GET(coverUrl, http.headers)
             } else {
+                require(pageUrl.isNotBlank() || !imageUrl.isNullOrBlank()) {
+                    "reader fetch: pageUrl or imageUrl is required"
+                }
                 page = Page(index = 0, url = pageUrl, imageUrl = imageUrl)
                 if (page.imageUrl == null) page.imageUrl = http.getImageUrl(page)
                 request = imageRequestFor(http, page)

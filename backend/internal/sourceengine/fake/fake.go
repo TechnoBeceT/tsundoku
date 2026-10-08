@@ -329,7 +329,7 @@ func WithPagesResult(sourceID int64, chapterURL string, result sourceengine.Page
 
 // WithImage seeds the raw bytes + content type returned for (sourceID,
 // pageURL) — keyed the same way the real engine host addresses a page,
-// ignoring the imageURL argument Image() is called with (mirroring the real
+// ignoring the imageURL argument Image() or ReaderImage() is called with (mirroring the real
 // host, which resolves imageURL itself when the caller omits it).
 func WithImage(sourceID int64, pageURL string, data []byte, contentType string) Option {
 	return func(c *Client) {
@@ -541,6 +541,18 @@ func (c *Client) Image(_ context.Context, sourceID int64, pageURL, imageURL stri
 		entry := c.coverImages[contentKey{sourceID, imageURL}]
 		return entry.data, entry.contentType, nil
 	}
+	entry := c.images[contentKey{sourceID, pageURL}]
+	return entry.data, entry.contentType, nil
+}
+
+// ReaderImage returns a WithImage entry even when the reader page URL is empty.
+func (c *Client) ReaderImage(_ context.Context, sourceID int64, pageURL, _ string) ([]byte, string, error) {
+	c.record("ReaderImage")
+	if err := c.errFor("ReaderImage"); err != nil {
+		return nil, "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	entry := c.images[contentKey{sourceID, pageURL}]
 	return entry.data, entry.contentType, nil
 }

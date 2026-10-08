@@ -1346,3 +1346,7 @@ func TestAdopt_TriggersConvergeOnSuccess(t *testing.T) {
 		t.Errorf("trigger fired %d times on failure, want 0", *env.triggered)
 	}
 }
+
+func (f *fakeEngineClient) ReaderImage(ctx context.Context, sourceID int64, pageURL, imageURL string) ([]byte, string, error) {
+	return f.Image(ctx, sourceID, pageURL, imageURL)
+}
