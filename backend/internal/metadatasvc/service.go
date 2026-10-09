@@ -34,6 +34,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -421,15 +422,17 @@ func sourceProviderLabel(p *ent.SeriesProvider) string {
 // ref, coverURL} — independent of metadata_source (QCAT-228: cover selection
 // is never coupled to the rich-metadata merge). Unlike persist's best-effort
 // cover step, a fetch/cache failure here IS returned: the whole point of the
-// call is to change the cover, so the owner must see it fail.
+// call is to change the cover, so the owner must see it fail. An explicit
+// selection creates the normal series directory after fetching the image,
+// even before a chapter downloads; passive caching and identify never do.
 //
 // The bytes come from one of two places depending on kind: a "metadata"
 // candidate is fetched by an ordinary HTTP GET of coverURL (a public
-// provider/CDN URL — saveCoverFromURL); a "source" candidate's bytes live on
+// provider/CDN URL — fetchCoverBytes); a "source" candidate's bytes live on
 // the Suwayomi server, not at coverURL (which is the browser-loadable PROXY
 // path CoverCandidates handed back — see sourceCoverCandidates), so it is
 // resolved + fetched through the SourceCoverFetcher port instead
-// (saveCoverFromSource).
+// (fetchCoverFromSource).
 func (s *Service) SetCover(ctx context.Context, seriesID uuid.UUID, kind, ref, coverURL string) error {
 	row, err := s.client.Series.Query().
 		Where(entseries.IDEQ(seriesID)).
@@ -443,10 +446,22 @@ func (s *Service) SetCover(ctx context.Context, seriesID uuid.UUID, kind, ref, c
 	}
 	categoryName := category.NameOf(row)
 
+	var data []byte
+	var ext string
 	if kind == "source" {
-		return s.saveCoverFromSource(ctx, row, categoryName, ref, coverURL)
+		data, ext, err = s.fetchCoverFromSource(ctx, row, ref)
+	} else {
+		data, ext, err = s.fetchCoverBytes(ctx, coverURL)
 	}
-	return s.saveCoverFromURL(ctx, row, categoryName, kind, ref, coverURL)
+	if err != nil {
+		return err
+	}
+	// Only an explicit selection creates a cover-only directory. Fetch first
+	// so a rejected URL or upstream failure leaves the library untouched.
+	if err := os.MkdirAll(disk.SeriesDir(s.storage, categoryName, row.Title), 0o750); err != nil {
+		return fmt.Errorf("metadatasvc: create cover directory for series %s: %w", row.ID, err)
+	}
+	return s.finalizeCover(ctx, row, categoryName, kind, ref, coverURL, data, ext)
 }
 
 // persist writes the merged rich metadata (Description/Status/Genres/Tags/
@@ -533,35 +548,22 @@ func (s *Service) saveCoverFromURL(
 	return s.finalizeCover(ctx, row, categoryName, kind, ref, coverURL, data, ext)
 }
 
-// saveCoverFromSource resolves ref (a SeriesProvider UUID string) through the
-// attached SourceCoverFetcher and hands the fetched bytes to finalizeCover.
-// coverURL here is the browser-loadable proxy path CoverCandidates handed
-// back (see sourceCoverCandidates) — recorded as provenance, never fetched
-// directly (the real bytes live on the Suwayomi server, resolved by the
-// SourceCoverFetcher via the SeriesProvider's own cover_url).
-//
-// Returns ErrSourceCoverFetcherNotConfigured when no port is attached, an
-// invalid-UUID error when ref does not parse, or whatever the port itself
-// reports (e.g. series.ErrProviderNotInSeries when ref does not belong to
-// row's series).
-func (s *Service) saveCoverFromSource(
-	ctx context.Context,
-	row *ent.Series,
-	categoryName, ref, coverURL string,
-) error {
+// fetchCoverFromSource resolves ref (a SeriesProvider UUID string) through the
+// attached SourceCoverFetcher. The proxy URL is provenance only; the port
+// enforces series/provider ownership and resolves the source's actual URL.
+func (s *Service) fetchCoverFromSource(ctx context.Context, row *ent.Series, ref string) ([]byte, string, error) {
 	if s.sourceCoverFetcher == nil {
-		return fmt.Errorf("metadatasvc: set source cover for series %s: %w", row.ID, ErrSourceCoverFetcherNotConfigured)
+		return nil, "", fmt.Errorf("metadatasvc: set source cover for series %s: %w", row.ID, ErrSourceCoverFetcherNotConfigured)
 	}
 	providerID, err := uuid.Parse(ref)
 	if err != nil {
-		return fmt.Errorf("metadatasvc: invalid source provider id %q: %w", ref, err)
+		return nil, "", fmt.Errorf("metadatasvc: invalid source provider id %q: %w", ref, err)
 	}
-
 	data, ext, err := s.sourceCoverFetcher.SourceCoverBytes(ctx, row.ID, providerID)
 	if err != nil {
-		return fmt.Errorf("metadatasvc: fetch source cover for series %s provider %s: %w", row.ID, providerID, err)
+		return nil, "", fmt.Errorf("metadatasvc: fetch source cover for series %s provider %s: %w", row.ID, providerID, err)
 	}
-	return s.finalizeCover(ctx, row, categoryName, "source", ref, coverURL, data, ext)
+	return data, ext, nil
 }
 
 // finalizeCover is the shared tail of both cover-set paths: caches data via

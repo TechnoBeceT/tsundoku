@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"testing"
 
 	"github.com/technobecet/tsundoku/internal/database/testdb"
@@ -27,18 +29,17 @@ func coverServer(t *testing.T, body []byte) *httptest.Server {
 	return srv
 }
 
-// TestSetCover_FetchesCachesAndSetsCoverSource is the owner-picked-cover
+// TestSetCover_MetadataCreatesSeriesDirAndPersistsCover is the owner-picked-cover
 // round-trip: SetCover fetches the given URL's bytes, caches them on disk via
 // the Local Cover Cache, and records cover_source independently of any
 // metadata_source (QCAT-228: cover selection is never coupled to the
 // rich-metadata merge).
-func TestSetCover_FetchesCachesAndSetsCoverSource(t *testing.T) {
+func TestSetCover_MetadataCreatesSeriesDirAndPersistsCover(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
 
 	id := seedSeries(ctx, t, db, "Cover Series", "cover-series")
-	withSeriesDir(t, storage, "Cover Series")
 
 	body := []byte("fake-png-bytes")
 	srv := coverServer(t, body)
@@ -56,6 +57,7 @@ func TestSetCover_FetchesCachesAndSetsCoverSource(t *testing.T) {
 
 	row := db.Series.GetX(ctx, id)
 	assertCoverSourceColumns(t, row, coverURL)
+	assertDurableCover(t, storage, row, body)
 
 	data, ext, err := disk.ReadCoverFile(storage, "Manga", "Cover Series", row.CoverFile)
 	if err != nil {
@@ -90,29 +92,71 @@ func assertCoverSourceColumns(t *testing.T, row *ent.Series, coverURL string) {
 	}
 }
 
-// TestSetCover_NoSeriesDirPropagatesError confirms SetCover — unlike
-// persist's best-effort cover step inside AutoIdentify/Identify — RETURNS a
-// cover failure to the caller: the whole point of the call is to change the
-// cover, so a series with no folder on disk (SaveCover never creates one)
-// must surface, not silently no-op.
-func TestSetCover_NoSeriesDirPropagatesError(t *testing.T) {
+// A file occupying the normal series path is a real disk failure; an
+// explicit selection must report it without indexing a cover or replacing it.
+func TestSetCover_BlockedSeriesDirPropagatesError(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
-
-	id := seedSeries(ctx, t, db, "No Folder Series", "no-folder-series")
-	// Deliberately no withSeriesDir call.
-
-	srv := coverServer(t, []byte("bytes"))
-	registry := metadata.NewRegistry()
-	svc := metadatasvc.NewService(db, registry, storage, metadatasvc.WithHTTPClient(&http.Client{}))
-
-	err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png")
-	if err == nil {
-		t.Fatal("SetCover with no series folder: want an error, got nil")
+	id := seedSeries(ctx, t, db, "Blocked Series", "blocked-series")
+	withSeriesDir(t, storage, "parent")
+	path := disk.SeriesDir(storage, "Manga", "Blocked Series")
+	if err := os.WriteFile(path, []byte("owner-file"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if !errors.Is(err, disk.ErrNoSeriesDir) {
-		t.Fatalf("SetCover error = %v, want it to wrap disk.ErrNoSeriesDir", err)
+	srv := coverServer(t, []byte("bytes"))
+	svc := metadatasvc.NewService(db, metadata.NewRegistry(), storage, metadatasvc.WithHTTPClient(&http.Client{}))
+	if err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png"); err == nil {
+		t.Fatal("SetCover with a blocked series path succeeded")
+	}
+	row := db.Series.GetX(ctx, id)
+	if row.CoverSource != nil || row.CoverFile != "" {
+		t.Fatalf("failed selection indexed cover: %+v", row)
+	}
+	// The path is a fixed fixture below the test-owned storage directory.
+	//nolint:gosec
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "owner-file" {
+		t.Fatalf("owner file changed: %q, %v", data, err)
+	}
+}
+
+// assertDurableCover checks both the rebuild seed and the direct disk read.
+func assertDurableCover(t *testing.T, storage string, row *ent.Series, body []byte) {
+	t.Helper()
+	if row.CoverSource == nil {
+		t.Fatal("cover source missing")
+	}
+	data, _, prov, err := disk.ReadCover(storage, "Manga", row.Title)
+	if err != nil || string(data) != string(body) {
+		t.Fatalf("ReadCover = %q, %v; want %q", data, err, body)
+	}
+	if prov.SourceURL != row.CoverSource.RemoteURL || prov.Provider != row.CoverSource.Ref || prov.File != row.CoverFile {
+		t.Fatalf("cover provenance = %+v; want %+v", prov, row.CoverSource)
+	}
+	assertCoverSidecar(t, storage, row)
+}
+
+func assertCoverSidecar(t *testing.T, storage string, row *ent.Series) {
+	t.Helper()
+	sidecar, err := disk.ReadSidecar(disk.SeriesDir(storage, "Manga", row.Title))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sidecar == nil || sidecar.Metadata == nil {
+		t.Fatal("sidecar metadata missing")
+	}
+	if !reflect.DeepEqual(sidecar.Metadata.CoverSource, row.CoverSource) {
+		t.Fatalf("sidecar cover source = %+v, want %+v", sidecar.Metadata.CoverSource, row.CoverSource)
+	}
+	entries, err := os.ReadDir(disk.SeriesDir(storage, "Manga", row.Title))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != row.CoverFile && entry.Name() != "tsundoku.json" {
+			t.Errorf("unexpected created file %s", entry.Name())
+		}
 	}
 }
 
@@ -253,18 +297,17 @@ func TestCoverCandidates_SourceLabelFallsBackToProviderKey(t *testing.T) {
 	}
 }
 
-// TestSetCover_SourceFetchesViaPortAndSaves is Feature 2's SetCover
+// TestSetCover_SourceCreatesSeriesDirAndPersistsCover is Feature 2's SetCover
 // round-trip: a "source"-kind pick resolves the SeriesProvider UUID through
 // the attached SourceCoverFetcher (NOT an HTTP GET of coverURL — the proxy
 // path is not independently fetchable), caches the returned bytes, and
 // records cover_source = {source, <providerID>, coverURL}.
-func TestSetCover_SourceFetchesViaPortAndSaves(t *testing.T) {
+func TestSetCover_SourceCreatesSeriesDirAndPersistsCover(t *testing.T) {
 	ctx := context.Background()
 	db := testdb.New(t)
 	storage := t.TempDir()
 
 	id := seedSeries(ctx, t, db, "Source Cover Series", "source-cover-series")
-	withSeriesDir(t, storage, "Source Cover Series")
 	providerID := seedSeriesProviderWithCover(ctx, t, db, id, "42", "Comix", "/api/v1/manga/42/thumbnail")
 
 	body := []byte("fake-source-cover-bytes")
@@ -282,6 +325,7 @@ func TestSetCover_SourceFetchesViaPortAndSaves(t *testing.T) {
 	}
 
 	row := db.Series.GetX(ctx, id)
+	assertDurableCover(t, storage, row, body)
 	if row.CoverSource == nil || row.CoverSource.Kind != "source" || row.CoverSource.Ref != providerID.String() {
 		t.Fatalf("Series.CoverSource = %+v, want {source %s ...}", row.CoverSource, providerID)
 	}
@@ -356,7 +400,6 @@ func TestSetCover_SourcePortFailurePropagates(t *testing.T) {
 	storage := t.TempDir()
 
 	id := seedSeries(ctx, t, db, "Port Failure Series", "port-failure-series")
-	withSeriesDir(t, storage, "Port Failure Series")
 	providerID := seedSeriesProviderWithCover(ctx, t, db, id, "42", "Comix", "/api/v1/manga/42/thumbnail")
 
 	scf := &fakeSourceCoverFetcher{err: errors.New("boom")}
@@ -367,6 +410,7 @@ func TestSetCover_SourcePortFailurePropagates(t *testing.T) {
 	if err == nil {
 		t.Fatal("SetCover(source, failing port): want an error, got nil")
 	}
+	assertNoCoverDirectory(t, storage, "Port Failure Series")
 }
 
 // TestCoverCandidates_UnknownSeriesReturnsErrSeriesNotFound confirms the
@@ -486,7 +530,6 @@ func TestSetCover_NonImageContentTypeRejected(t *testing.T) {
 	storage := t.TempDir()
 
 	id := seedSeries(ctx, t, db, "HTML Series", "html-series")
-	withSeriesDir(t, storage, "HTML Series")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -502,6 +545,7 @@ func TestSetCover_NonImageContentTypeRejected(t *testing.T) {
 	if err == nil {
 		t.Fatal("SetCover with a text/html response: want an error (not an image), got nil")
 	}
+	assertNoCoverDirectory(t, storage, "HTML Series")
 }
 
 // TestSetCover_MissingContentTypeStillAcceptedWhenBytesSniffAsImage confirms
@@ -532,5 +576,33 @@ func TestSetCover_MissingContentTypeStillAcceptedWhenBytesSniffAsImage(t *testin
 
 	if err := svc.SetCover(ctx, id, "metadata", "anilist", srv.URL+"/cover.png"); err != nil {
 		t.Fatalf("SetCover with a headerless-but-real-PNG response: want success, got %v", err)
+	}
+}
+
+func assertNoCoverDirectory(t *testing.T, storage, title string) {
+	t.Helper()
+	if _, err := os.Stat(disk.SeriesDir(storage, "Manga", title)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("series directory exists or unexpected stat error: %v", err)
+	}
+}
+
+func TestAutoIdentify_CoverDoesNotCreateSeriesDir(t *testing.T) {
+	ctx := context.Background()
+	db := testdb.New(t)
+	storage := t.TempDir()
+	id := seedSeries(ctx, t, db, "Automatic Cover", "automatic-cover")
+	srv := coverServer(t, []byte("automatic-cover"))
+	provider := &fakeProvider{key: "anilist", matchResult: &metadata.SearchResult{Provider: "anilist", RemoteID: "1", CoverURL: srv.URL + "/cover.png"}, metas: map[string]metadata.SeriesMetadata{"1": {Title: "Automatic Cover", Description: "identified"}}}
+	svc := metadatasvc.NewService(db, metadata.NewRegistry(provider), storage, metadatasvc.WithHTTPClient(&http.Client{}))
+	if err := svc.AutoIdentify(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	assertNoCoverDirectory(t, storage, "Automatic Cover")
+	row := db.Series.GetX(ctx, id)
+	if row.Description != "identified" || row.MetadataSource == nil {
+		t.Fatal("automatic metadata did not persist")
+	}
+	if row.CoverSource != nil || row.CoverFile != "" {
+		t.Fatal("automatic cover was indexed without a directory")
 	}
 }
