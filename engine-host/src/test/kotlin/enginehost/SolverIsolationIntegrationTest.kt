@@ -23,6 +23,102 @@ import java.util.concurrent.ExecutionException
 
 /** Exercises the dependency interceptor, including the nested solver transport. */
 class SolverIsolationIntegrationTest {
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+    @Test
+    fun `first solver request honors configured budget before timeout subscriptions emit`() = fixture("cold configured budget") { source, solver, _ ->
+        val network = uy.kohesive.injekt.Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+        val originalClient = network.client
+        val clientDelegate = network.javaClass.getDeclaredField("client\$delegate").apply { isAccessible = true }.get(network)
+        val clientValue = clientDelegate.javaClass.getDeclaredField("_value").apply { isAccessible = true }
+        val timeoutDelegateField = serverConfig.javaClass.getDeclaredField("flareSolverrTimeout\$delegate").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val timeoutDelegate = timeoutDelegateField.get(serverConfig) as suwayomi.tachidesk.server.settings.SettingDelegate<Int>
+        val originalTimeout = timeoutDelegate.flow!!
+        val releaseSubscription = kotlinx.coroutines.CompletableDeferred<Unit>()
+        // The configured value is available immediately; asynchronous subscribers
+        // may legally be delayed. Do not alter the interceptor's computed client.
+        val heldTimeout = object : kotlinx.coroutines.flow.MutableStateFlow<Int> by originalTimeout {
+            override suspend fun collect(collector: kotlinx.coroutines.flow.FlowCollector<Int>): Nothing {
+                releaseSubscription.await()
+                throw kotlinx.coroutines.CancellationException("fixture subscription finished")
+            }
+        }
+        val shortClient = originalClient.newBuilder().readTimeout(25, TimeUnit.MILLISECONDS).build()
+        val location = CloudflareInterceptor::class.java.protectionDomain.codeSource.location
+        val isolated = object : java.net.URLClassLoader(arrayOf(location), CloudflareInterceptor::class.java.classLoader) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> = synchronized(getClassLoadingLock(name)) {
+                if (name.startsWith("eu.kanade.tachiyomi.network.interceptor.CFClearance") ||
+                    name.startsWith("eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor")) {
+                    val loaded = findLoadedClass(name) ?: findClass(name)
+                    if (resolve) resolveClass(loaded)
+                    loaded
+                } else super.loadClass(name, resolve)
+            }
+        }
+        var call: Call? = null
+        try {
+            clientValue.set(clientDelegate, shortClient)
+            timeoutDelegate.flow = heldTimeout
+            solver.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.method == "GET") return MockResponse.Builder().code(404).build()
+                    val payload = jacksonObjectMapper().readTree(request.body!!.utf8())
+                    assertEquals(3_000, payload["maxTimeout"].asInt())
+                    return solution(payload["url"].asText()).newBuilder().headersDelay(100, TimeUnit.MILLISECONDS).build()
+                }
+            }
+            val interceptorType = isolated.loadClass("eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor")
+            val setUserAgent: (String) -> Unit = { }
+            val interceptor = interceptorType.constructors.single().newInstance(setUserAgent) as okhttp3.Interceptor
+            val sourceClient = OkHttpClient.Builder().addInterceptor(interceptor).build()
+            call = sourceClient.newCall(Request.Builder().url(source.url("/cold-budget")).build())
+            call.execute().use { assertEquals("healthy result", it.body.string()) }
+            assertEquals(2, solver.requestCount) // capability404 + successful named solve
+            assertEquals(25, shortClient.readTimeoutMillis)
+            assertTrue(shortClient.cookieJar === originalClient.cookieJar)
+            assertTrue(shortClient.connectionPool === originalClient.connectionPool)
+        } finally {
+            call?.cancel()
+            timeoutDelegate.flow = originalTimeout
+            clientValue.set(clientDelegate, originalClient)
+            releaseSubscription.complete(Unit)
+            isolated.close()
+        }
+    }
+
+    @Test
+    fun `solver client snapshots configured timeout before its first HTTP request`() {
+        EngineRuntimeIntegrationTestSetup.ensureReady()
+        // Give the source client a short socket timeout so actual delayed solver
+        // headers prove the configured transport budget applies on first use.
+        val network = uy.kohesive.injekt.Injekt.get<eu.kanade.tachiyomi.network.NetworkHelper>()
+        val clearance = Class.forName("eu.kanade.tachiyomi.network.interceptor.CFClearance")
+        val select = clearance.getDeclaredMethod("solverClient", OkHttpClient::class.java, Long::class.javaPrimitiveType)
+            .apply { isAccessible = true }
+        val instance = clearance.getField("INSTANCE").get(null)
+        val base = network.client.newBuilder().readTimeout(25, TimeUnit.MILLISECONDS).build()
+        val first = select.invoke(instance, base, 2_000L) as OkHttpClient
+        val changed = select.invoke(instance, base, 4_000L) as OkHttpClient
+        assertEquals(7_000, first.readTimeoutMillis)
+        assertEquals(12_000, first.callTimeoutMillis)
+        assertEquals(9_000, changed.readTimeoutMillis)
+        assertEquals(14_000, changed.callTimeoutMillis)
+        assertTrue(first.cookieJar === network.client.cookieJar)
+        assertTrue(first.connectionPool === network.client.connectionPool)
+        assertEquals(network.client.interceptors, first.interceptors)
+        // A previously selected client keeps its captured budget after another selection.
+        assertEquals(7_000, first.readTimeoutMillis)
+        assertEquals(25, base.readTimeoutMillis)
+        MockWebServer().use { solver ->
+            solver.enqueue(MockResponse.Builder().headersDelay(100, TimeUnit.MILLISECONDS).body("complete response").build())
+            solver.start()
+            first.newCall(Request.Builder().url(solver.url("/v1")).build()).execute().use {
+                assertEquals("complete response", it.body.string())
+            }
+            assertEquals(1, solver.requestCount)
+        }
+    }
+
     @Test
     fun `a blocked disposable solve does not serialize another browser`() {
         EngineRuntimeIntegrationTestSetup.ensureReady()
