@@ -1,0 +1,58 @@
+
+                    (function () {
+                        const payloadKey = '__comixChapterPayload';
+                        const mangaId = ;
+                        const mainScriptUrl = ;
+                        const latestChapterId = ;
+                        if (window[payloadKey]) return null;
+                        window[payloadKey] = true;
+
+                        (async () => {
+                            try {
+                                if (!mainScriptUrl) throw new Error('Could not find main bundle');
+                                const mainResponse = await fetch(mainScriptUrl);
+                                if (!mainResponse.ok) throw new Error('Could not load main bundle');
+                                const mainJavaScript = await mainResponse.text();
+                                const environmentFile = mainJavaScript.match(
+                                    /from\s*["']\.\/(env-[^"']+\.js)["']/
+                                )?.[1];
+                                if (!environmentFile) throw new Error('Could not find environment bundle');
+
+                                const importBundle = new Function('url', 'return import(url)');
+                                const environment = await importBundle(
+                                    new URL(environmentFile, mainScriptUrl).href
+                                );
+                                const mangaApi = Object.values(environment).find(value =>
+                                    value &&
+                                    typeof value === 'object' &&
+                                    typeof value.chapters === 'function'
+                                );
+                                if (!mangaApi) throw new Error('Could not find manga API');
+
+                                const items = [];
+                                let page = 1;
+                                while (page <= 200) {
+                                    const response = await mangaApi.chapters(mangaId, {
+                                        page,
+                                        limit: 100,
+                                        order: { number: 'desc' }
+                                    });
+                                    const pageItems = response?.items;
+                                    if (!Array.isArray(pageItems) || pageItems.length === 0) break;
+
+                                    items.push(...pageItems);
+                                    if (pageItems.some(item => item.id === latestChapterId)) break;
+
+                                    const meta = response.meta || response.pagination || {};
+                                    const lastPage = meta.lastPage || meta.last_page || page;
+                                    if (!(meta.hasNext || page < lastPage)) break;
+                                    page++;
+                                }
+                                window.(JSON.stringify(items));
+                            } catch (error) {
+                                window.(error);
+                            }
+                        })();
+                        return null;
+                    })();
+                

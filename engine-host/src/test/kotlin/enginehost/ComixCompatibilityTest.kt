@@ -1,6 +1,9 @@
 package enginehost
 
+import org.objectweb.asm.ClassReader
 import org.objectweb.asm.ClassWriter
+import org.objectweb.asm.tree.ClassNode
+import org.objectweb.asm.tree.LdcInsnNode
 import org.objectweb.asm.Opcodes.*
 import java.net.URLClassLoader
 import java.lang.reflect.InvocationTargetException
@@ -48,6 +51,79 @@ class ComixCompatibilityTest {
         } finally {
             root.toFile().deleteRecursively()
         }
+    }
+
+    @Test
+    fun `released chapter bootstrap supports renamed bundles for both official versions`() {
+        for (version in listOf(42, 43)) {
+            val root = createTempDirectory("comix-chapter-script")
+            try {
+                val jar = root.resolve("fixture.jar")
+                if (version == 42) fixture(jar) else JarOutputStream(Files.newOutputStream(jar)).use { }
+                addChapterBootstrap(jar, releasedChapterTemplate())
+                ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.$version", 106000L + version)
+                val corrected = chapterTemplate(jar)
+                assertTrue(!corrected.contains("env-["))
+                assertTrue(corrected.contains("Object.values(environment)"))
+                assertTrue(corrected.contains("url.origin !== mainUrl.origin"))
+                assertTrue(corrected.contains("bundleFiles.length > 32"))
+                assertEquals(5, corrected.count { it == '\u0001' })
+                assertEquals(releasedChapterTemplate().substringAfter("const items = [];"), corrected.substringAfter("const items = [];"))
+                assertEquals(releasedChapterTemplate().substringBefore("if (!mainScriptUrl)"), corrected.substringBefore("if (!mainScriptUrl)"))
+            } finally {
+                root.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun `unexpected released bootstrap refuses without changing jar contents`() {
+        val root = createTempDirectory("comix-chapter-shape")
+        try {
+            val jar = root.resolve("fixture.jar")
+            JarOutputStream(Files.newOutputStream(jar)).use { }
+            addChapterBootstrap(jar, releasedChapterTemplate().replace("page <= 200", "page <= 201"))
+            val original = Files.readAllBytes(jar)
+            assertFailsWith<IllegalArgumentException> {
+                ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.43", 106043)
+            }
+            assertContentEquals(original, Files.readAllBytes(jar))
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    private fun releasedChapterTemplate() = javaClass.getResource("/comix-chapter-template.txt")!!.readText()
+
+    private fun addChapterBootstrap(jar: java.nio.file.Path, template: String) {
+        val writer = ClassWriter(0)
+        writer.visit(V11, ACC_PUBLIC, "ChapterBootstrap", null, "java/lang/Object", null)
+        writer.visitMethod(ACC_PUBLIC, "invoke", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", null, null).apply {
+            visitCode()
+            val fragments = template.split('\u0001')
+            visitTypeInsn(NEW, "java/lang/StringBuilder")
+            visitInsn(DUP)
+            visitLdcInsn(fragments.first())
+            visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "(Ljava/lang/String;)V", false)
+            for (fragment in fragments.drop(1)) {
+                visitVarInsn(ALOAD, 1)
+                visitTypeInsn(CHECKCAST, "java/lang/String")
+                visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)
+                visitLdcInsn(fragment)
+                visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)
+            }
+            visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false)
+            visitInsn(ARETURN)
+            visitMaxs(3, 3)
+            visitEnd()
+        }
+        writer.visitEnd()
+        java.nio.file.FileSystems.newFileSystem(jar).use { zip -> Files.write(zip.getPath("/ChapterBootstrap.class"), writer.toByteArray()) }
+    }
+
+    private fun chapterTemplate(jar: java.nio.file.Path): String = java.nio.file.FileSystems.newFileSystem(jar).use { zip ->
+        val node = ClassNode().also { ClassReader(Files.readAllBytes(zip.getPath("/ChapterBootstrap.class"))).accept(it, 0) }
+        node.methods.flatMap { it.instructions.toArray().toList() }.filterIsInstance<LdcInsnNode>().map { it.cst as String }.joinToString("\u0001")
     }
 
     // Mirrors the independent Kotlin serialization contract: bit 1 requires base, bit 2 items.
@@ -111,6 +187,7 @@ class ComixCompatibilityTest {
         JarOutputStream(Files.newOutputStream(jar)).use { out ->
             classes.forEach { (name, bytes) -> out.putNextEntry(JarEntry("$name.class")); out.write(bytes); out.closeEntry() }
         }
+        addChapterBootstrap(jar, releasedChapterTemplate())
     }
 
     @Test
@@ -133,7 +210,7 @@ class ComixCompatibilityTest {
             }
             val original = Files.readAllBytes(jar)
             ComixCompatibility.apply(jar, "other", "1.6.42", 106042)
-            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.43", 106043)
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.44", 106044)
             assertContentEquals(original, Files.readAllBytes(jar))
             assertFailsWith<IllegalArgumentException> {
                 ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.42", 106042)
