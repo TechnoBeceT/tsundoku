@@ -21,22 +21,29 @@ import java.nio.file.Path
 import java.security.MessageDigest
 
 /**
- * Comix 1.6.42/43 discover the chapter API by an obsolete bundle filename prefix.
+ * Comix 1.6.42–44 discover the chapter API by obsolete bundle and property names.
  * Version 1.6.42 also requires a base URL when the site returns only absolute page URLs.
+ * Version 1.6.44 observes JSON parsing for pages, which the current signed client no longer exposes.
  * Correct only its verified APK's derived jar; package/version/signing identity stay official.
  * Serialization names and constructor shapes identify the DTOs without depending on R8 names.
  */
 internal object ComixCompatibility {
     fun apply(jar: Path, packageName: String, versionName: String, versionCode: Long) {
         if (packageName != "eu.kanade.tachiyomi.extension.en.comix" ||
-            !((versionName == "1.6.42" && versionCode == 106042L) || (versionName == "1.6.43" && versionCode == 106043L))) return
+            !((versionName == "1.6.42" && versionCode == 106042L) ||
+                (versionName == "1.6.43" && versionCode == 106043L) ||
+                (versionName == "1.6.44" && versionCode == 106044L))) return
         FileSystems.newFileSystem(jar).use { zip ->
             val nodes = Files.walk(zip.getPath("/")).use { paths ->
                 paths.filter { it.toString().endsWith(".class") }.toList().associateWith { read(Files.readAllBytes(it)) }
             }
-            val chapterEntry = patchChapterDiscovery(nodes)
-            if (versionCode == 106043L) {
-                Files.write(chapterEntry.key, writeChapter(chapterEntry.value))
+            val chapterEntry = patchChapterDiscovery(nodes, versionCode)
+            val pageEntry = if (versionCode == 106044L) patchPageDiscovery(nodes) else null
+            if (versionCode != 106042L) {
+                val chapterBytes = writeChapter(chapterEntry.value)
+                val pageBytes = pageEntry?.let { write(it.value) }
+                Files.write(chapterEntry.key, chapterBytes)
+                if (pageEntry != null) Files.write(pageEntry.key, pageBytes!!)
                 return@use
             }
             fun serializerFor(serialName: String): Map.Entry<Path, ClassNode> = nodes.entries.singleOrNull { (_, node) ->
@@ -95,11 +102,11 @@ internal object ComixCompatibility {
         }
     }
 
-    private fun patchChapterDiscovery(nodes: Map<Path, ClassNode>): Map.Entry<Path, ClassNode> {
+    private fun patchChapterDiscovery(nodes: Map<Path, ClassNode>, versionCode: Long): Map.Entry<Path, ClassNode> {
         val entries = nodes.entries.flatMap { entry ->
             entry.value.methods.flatMap { method ->
                 method.instructions.toArray().filterIsInstance<LdcInsnNode>().filter {
-                    it.cst is String && (it.cst as String).contains("Could not find environment bundle")
+                    it.cst is String && (it.cst as String).contains("Could not find manga API")
                 }.map { Triple(entry, method, it) }
             }
         }
@@ -113,19 +120,82 @@ internal object ComixCompatibility {
             append.desc == "(Ljava/lang/String;)Ljava/lang/StringBuilder;" && append.opcode == Opcodes.INVOKEVIRTUAL &&
             method.instructions.toArray().filterIsInstance<MethodInsnNode>().count { it.owner == "java/lang/StringBuilder" && it.name == "append" } == 10 &&
             MessageDigest.getInstance("SHA-256").digest(original.toByteArray()).joinToString("") { "%02x".format(it) } ==
-                "a1480635925cdd0b993fc81fa9f6c908e071404a13bdd64e592d72fae56b0388") {
+                if (versionCode == 106044L) "888d837ac1310c2070c433de704add0386259518e07eae35aa1bc68336bab28e"
+                else "a1480635925cdd0b993fc81fa9f6c908e071404a13bdd64e592d72fae56b0388") {
             "Comix compatibility: unexpected released chapter discovery ABI"
         }
-        // The host's dex conversion lowers both released templates to StringBuilder fragments.
+        // The host's dex conversion lowers the released templates to StringBuilder fragments.
         // Change only the discovery fragment, preserving all five substitutions and pagination.
         val template = instruction.cst as String
         val start = template.indexOf("if (!mainScriptUrl)")
         val end = template.indexOf("const items = [];")
-        instruction.cst = template.substring(0, start) + chapterDiscovery + template.substring(end)
+        instruction.cst = template.substring(0, start) + chapterDiscovery() + template.substring(end)
         return entry
     }
 
-    private val chapterDiscovery = """
+    private fun patchPageDiscovery(nodes: Map<Path, ClassNode>): Map.Entry<Path, ClassNode> {
+        val entries = nodes.entries.flatMap { entry -> entry.value.methods.flatMap { method ->
+            method.instructions.toArray().filterIsInstance<LdcInsnNode>().filter {
+                it.cst is String && (it.cst as String).contains("__comixPagePayload")
+            }.map { Triple(entry, method, it) }
+        } }
+        require(entries.size == 1) { "Comix 1.6.44 compatibility: unexpected page discovery template" }
+        val (entry, method, first) = entries.single()
+        val fragments = method.instructions.toArray().filterIsInstance<LdcInsnNode>()
+        val template = fragments.joinToString("\u0001") { it.cst as String }
+        val ctor = first.next as? MethodInsnNode
+        val builderStore = ctor?.next as? VarInsnNode
+        val tail = fragments.last()
+        val tailAppend = tail.next as? MethodInsnNode
+        val builderLoad = tail.previous as? VarInsnNode
+        require(method.name == "invoke" && method.desc == "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;" &&
+            fragments.size == 2 && ctor?.owner == "java/lang/StringBuilder" && ctor.name == "<init>" &&
+            ctor.desc == "(Ljava/lang/String;)V" && builderStore?.opcode == Opcodes.ASTORE && builderStore.`var` == 2 &&
+            builderLoad?.opcode == Opcodes.ALOAD && builderLoad.`var` == 2 && tailAppend?.owner == "java/lang/StringBuilder" &&
+            tailAppend.name == "append" && tailAppend.desc == "(Ljava/lang/String;)Ljava/lang/StringBuilder;" && tailAppend.next.opcode == Opcodes.POP &&
+            first.previous.opcode == Opcodes.DUP && first.previous.previous.opcode == Opcodes.NEW &&
+            MessageDigest.getInstance("SHA-256").digest(template.toByteArray()).joinToString("") { "%02x".format(it) } ==
+                "4a659a96e3341601aff9a42d0913d025f4ba7be8a336723d4d14dbb8891037e3") {
+            "Comix 1.6.44 compatibility: unexpected released page discovery ABI"
+        }
+        // The callback receives both bridge names; local 2 is then reused for StringBuilder.
+        // Retain the rejection name before that overwrite, leaving the other lambda mode intact.
+        method.instructions.insertBefore(first.previous.previous, InsnList().apply {
+            add(VarInsnNode(Opcodes.ALOAD, 2)); add(TypeInsnNode(Opcodes.CHECKCAST, "java/lang/String")); add(VarInsnNode(Opcodes.ASTORE, 3))
+        })
+        first.cst = "(function () { const pass = window."
+        tail.cst = "; const reject = window."
+        method.instructions.insert(tailAppend.next, InsnList().apply {
+            add(VarInsnNode(Opcodes.ALOAD, 2)); add(VarInsnNode(Opcodes.ALOAD, 3))
+            add(MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)); add(InsnNode(Opcodes.POP))
+            add(VarInsnNode(Opcodes.ALOAD, 2)); add(LdcInsnNode(pageDiscovery))
+            add(MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false)); add(InsnNode(Opcodes.POP))
+        })
+        return entry
+    }
+
+    private val pageDiscovery = """
+        ;
+        const mainScriptUrl = document.querySelector('script[type=module][src*="/dist/main-"]')?.src;
+        if (!mainScriptUrl || typeof pass !== 'function' || typeof reject !== 'function') return null;
+        const payloadKey = '__comixPagePayload';
+        if (window[payloadKey]) return null;
+        window[payloadKey] = true;
+        (async () => {
+            try {
+                const chapterId = location.pathname.split('/').pop().match(/^(\d+)-chapter-[^/]+${"$"}/)?.[1];
+                if (!chapterId) throw new Error('Invalid chapter URL');
+                ${chapterDiscovery("""/^([${"$"}A-Z_a-z][${"$"}\w]*)=>`\/chapters\/\${"$"}\{\1\}`${"$"}/""")}
+                const response = await mangaApi.chapters(chapterId, {});
+                if (!Array.isArray(response?.pages?.items)) throw new Error('Invalid chapter pages');
+                pass(JSON.stringify({ result: response }));
+            } catch (error) { reject(error); }
+        })();
+        return null;
+        })();
+    """.trimIndent()
+
+    private fun chapterDiscovery(routeShape: String = """/^([${"$"}A-Z_a-z][${"$"}\w]*)=>`\/manga\/\${"$"}\{\1\}\/chapters`${"$"}/""") = """
         if (!mainScriptUrl) throw new Error('Could not find main bundle');
         const mainUrl = new URL(mainScriptUrl, location.href);
         if (!/^https?:${"$"}/.test(mainUrl.protocol) || mainUrl.origin !== location.origin) {
@@ -147,10 +217,23 @@ internal object ComixCompatibility {
         let mangaApi;
         for (const url of bundleUrls) {
             const environment = await importBundle(url.href);
-            mangaApi = Object.values(environment).find(value =>
-                value && typeof value === 'object' && typeof value.chapters === 'function'
-            );
-            if (mangaApi) break;
+            // The site obfuscates API and DTO property names. Its raw signed GET wrapper
+            // and pure chapter route retain their function shapes, so keep the raw DTO.
+            const getShape = /^async\(([${"$"}A-Z_a-z][${"$"}\w]*),([${"$"}A-Z_a-z][${"$"}\w]*)\)=>\(await\s+([${"$"}A-Z_a-z][${"$"}\w]*)\.get\(\1,\2\)\)\.data${"$"}/;
+            const routeShape = $routeShape;
+            const hasShape = (value, shape) => typeof value === 'function' &&
+                shape.test(Function.prototype.toString.call(value));
+            const objects = Object.values(environment).filter(value => value && typeof value === 'object');
+            const getters = objects.flatMap(value => Object.values(value)).filter(value => hasShape(value, getShape));
+            const routes = objects.flatMap(value => Object.values(value))
+                .filter(value => value && typeof value === 'object')
+                .flatMap(value => Object.values(value)).filter(value => hasShape(value, routeShape));
+            if (getters.length > 1 || routes.length > 1) throw new Error('Ambiguous manga API');
+            if (getters.length === 1 && routes.length === 1) {
+                const get = getters[0], route = routes[0];
+                mangaApi = { chapters: (id, params) => get(route(id), { params }) };
+                break;
+            }
         }
         if (!mangaApi) throw new Error('Could not find manga API');
 

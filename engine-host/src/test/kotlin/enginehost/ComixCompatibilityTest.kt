@@ -55,12 +55,12 @@ class ComixCompatibilityTest {
 
     @Test
     fun `released chapter bootstrap supports renamed bundles for both official versions`() {
-        for (version in listOf(42, 43)) {
+        for (version in listOf(42, 43, 44)) {
             val root = createTempDirectory("comix-chapter-script")
             try {
                 val jar = root.resolve("fixture.jar")
                 if (version == 42) fixture(jar) else JarOutputStream(Files.newOutputStream(jar)).use { }
-                addChapterBootstrap(jar, releasedChapterTemplate())
+                addChapterBootstrap(jar, releasedChapterTemplate(version))
                 ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.$version", 106000L + version)
                 val corrected = chapterTemplate(jar)
                 assertTrue(!corrected.contains("env-["))
@@ -68,8 +68,8 @@ class ComixCompatibilityTest {
                 assertTrue(corrected.contains("url.origin !== mainUrl.origin"))
                 assertTrue(corrected.contains("bundleFiles.length > 32"))
                 assertEquals(5, corrected.count { it == '\u0001' })
-                assertEquals(releasedChapterTemplate().substringAfter("const items = [];"), corrected.substringAfter("const items = [];"))
-                assertEquals(releasedChapterTemplate().substringBefore("if (!mainScriptUrl)"), corrected.substringBefore("if (!mainScriptUrl)"))
+                assertEquals(releasedChapterTemplate(version).substringAfter("const items = [];"), corrected.substringAfter("const items = [];"))
+                assertEquals(releasedChapterTemplate(version).substringBefore("if (!mainScriptUrl)"), corrected.substringBefore("if (!mainScriptUrl)"))
             } finally {
                 root.toFile().deleteRecursively()
             }
@@ -77,23 +77,103 @@ class ComixCompatibilityTest {
     }
 
     @Test
-    fun `unexpected released bootstrap refuses without changing jar contents`() {
-        val root = createTempDirectory("comix-chapter-shape")
-        try {
-            val jar = root.resolve("fixture.jar")
-            JarOutputStream(Files.newOutputStream(jar)).use { }
-            addChapterBootstrap(jar, releasedChapterTemplate().replace("page <= 200", "page <= 201"))
-            val original = Files.readAllBytes(jar)
-            assertFailsWith<IllegalArgumentException> {
-                ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.43", 106043)
+    fun `released callback discovers signed raw client and route without obfuscated DTOs`() {
+        // GraalJS already ships on the engine runtime classpath. Reflection avoids introducing
+        // another compile dependency for this existing consumer's JavaScript regression.
+        val contextClass = Class.forName("org.graalvm.polyglot.Context")
+        val valueClass = Class.forName("org.graalvm.polyglot.Value")
+        for (version in listOf(42, 43, 44)) {
+            val root = createTempDirectory("comix-discovery-semantics")
+            try {
+                val jar = root.resolve("fixture.jar")
+                if (version == 42) fixture(jar) else JarOutputStream(Files.newOutputStream(jar)).use { }
+                addChapterBootstrap(jar, releasedChapterTemplate(version))
+                ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.$version", 106000L + version)
+                val slots = ArrayDeque(listOf("\"xkry7\"", "\"https://comix.to/dist/main.js\"", "null", "pass", "reject"))
+                val script = chapterTemplate(jar).split('\u0001').joinToString("") { fragment ->
+                    fragment + if (slots.isEmpty()) "" else slots.removeFirst()
+                }
+                val context = contextClass.getMethod("create", Array<String>::class.java).invoke(null, arrayOf("js"))
+                try {
+                    val bindings = contextClass.getMethod("getBindings", String::class.java).invoke(context, "js")
+                    valueClass.getMethod("putMember", String::class.java, Any::class.java).invoke(bindings, "callbackScript", script)
+                    val eval = contextClass.getMethod("eval", String::class.java, CharSequence::class.java)
+                    eval.invoke(context, "js", javaClass.getResource("/comix-chapter-discovery.js")!!.readText())
+                    val result = eval.invoke(context, "js", "discoveryResult")
+                    assertEquals("PASS", valueClass.getMethod("asString").invoke(result), "official $version")
+                } finally {
+                    contextClass.getMethod("close").invoke(context)
+                }
+            } finally {
+                root.toFile().deleteRecursively()
             }
-            assertContentEquals(original, Files.readAllBytes(jar))
-        } finally {
-            root.toFile().deleteRecursively()
         }
     }
 
-    private fun releasedChapterTemplate() = javaClass.getResource("/comix-chapter-template.txt")!!.readText()
+    @Test
+    fun `official 44 page callback uses signed raw response instead of parse observation`() {
+        val root = createTempDirectory("comix-page-discovery")
+        try {
+            val jar = root.resolve("fixture.jar")
+            JarOutputStream(Files.newOutputStream(jar)).use { }
+            addChapterBootstrap(jar, releasedChapterTemplate(44))
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.44", 106044)
+            val node = java.nio.file.FileSystems.newFileSystem(jar).use { zip ->
+                ClassNode().also { ClassReader(Files.readAllBytes(zip.getPath("/PageBootstrap.class"))).accept(it, 0) }
+            }
+            val fragments = node.methods.single().instructions.toArray().filterIsInstance<LdcInsnNode>().map { it.cst as String }
+            val slots = ArrayDeque(listOf("pass", "reject"))
+            val script = fragments.mapIndexed { index, text -> text + if (index == fragments.lastIndex) "" else slots.removeFirst() }.joinToString("")
+            val contextClass = Class.forName("org.graalvm.polyglot.Context")
+            val valueClass = Class.forName("org.graalvm.polyglot.Value")
+            val context = contextClass.getMethod("create", Array<String>::class.java).invoke(null, arrayOf("js"))
+            try {
+                val bindings = contextClass.getMethod("getBindings", String::class.java).invoke(context, "js")
+                valueClass.getMethod("putMember", String::class.java, Any::class.java).invoke(bindings, "callbackScript", script)
+                val eval = contextClass.getMethod("eval", String::class.java, CharSequence::class.java)
+                eval.invoke(context, "js", javaClass.getResource("/comix-page-discovery.js")!!.readText())
+                val result = eval.invoke(context, "js", "discoveryResult")
+                assertEquals("PASS", valueClass.getMethod("asString").invoke(result))
+            } finally { contextClass.getMethod("close").invoke(context) }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test
+    fun `unexpected released bootstrap refuses without changing jar contents`() {
+        for (version in listOf(43, 44)) {
+            val root = createTempDirectory("comix-chapter-shape")
+            try {
+                val jar = root.resolve("fixture.jar")
+                JarOutputStream(Files.newOutputStream(jar)).use { }
+                addChapterBootstrap(jar, releasedChapterTemplate(version).replace("page <= 200", "page <= 201"))
+                val original = Files.readAllBytes(jar)
+                assertFailsWith<IllegalArgumentException> {
+                    ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.$version", 106000L + version)
+                }
+                assertContentEquals(original, Files.readAllBytes(jar))
+            } finally {
+                root.toFile().deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun `unexpected official 44 page bootstrap refuses before writing either callback`() {
+        val root = createTempDirectory("comix-page-shape")
+        try {
+            val jar = root.resolve("fixture.jar")
+            JarOutputStream(Files.newOutputStream(jar)).use { }
+            addChapterBootstrap(jar, releasedChapterTemplate(44))
+            addPageBootstrap(jar, javaClass.getResource("/comix-page-template44.txt")!!.readText().replace("return false;", "return true;"))
+            val original = Files.readAllBytes(jar)
+            assertFailsWith<IllegalArgumentException> {
+                ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.44", 106044)
+            }
+            assertContentEquals(original, Files.readAllBytes(jar))
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    private fun releasedChapterTemplate(version: Int = 42) = javaClass.getResource(if (version == 44) "/comix-chapter-template44.txt" else "/comix-chapter-template.txt")!!.readText()
 
     private fun addChapterBootstrap(jar: java.nio.file.Path, template: String) {
         val writer = ClassWriter(0)
@@ -119,6 +199,27 @@ class ComixCompatibilityTest {
         }
         writer.visitEnd()
         java.nio.file.FileSystems.newFileSystem(jar).use { zip -> Files.write(zip.getPath("/ChapterBootstrap.class"), writer.toByteArray()) }
+        if (template.contains("const bundleFiles = Array.from(")) addPageBootstrap(jar)
+    }
+
+    private fun addPageBootstrap(jar: java.nio.file.Path, template: String = javaClass.getResource("/comix-page-template44.txt")!!.readText()) {
+        val fragments = template.split('\u0001')
+        val writer = ClassWriter(0)
+        writer.visit(V11, ACC_PUBLIC, "PageBootstrap", null, "java/lang/Object", null)
+        writer.visitMethod(ACC_PUBLIC, "invoke", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", null, null).apply {
+            visitCode()
+            visitTypeInsn(NEW, "java/lang/StringBuilder"); visitInsn(DUP); visitLdcInsn(fragments[0])
+            visitMethodInsn(INVOKESPECIAL, "java/lang/StringBuilder", "<init>", "(Ljava/lang/String;)V", false)
+            visitVarInsn(ASTORE, 2)
+            visitVarInsn(ALOAD, 2); visitVarInsn(ALOAD, 1); visitTypeInsn(CHECKCAST, "java/lang/String")
+            visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false); visitInsn(POP)
+            visitVarInsn(ALOAD, 2); visitLdcInsn(fragments[1])
+            visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "append", "(Ljava/lang/String;)Ljava/lang/StringBuilder;", false); visitInsn(POP)
+            visitVarInsn(ALOAD, 2); visitMethodInsn(INVOKEVIRTUAL, "java/lang/StringBuilder", "toString", "()Ljava/lang/String;", false)
+            visitInsn(ARETURN); visitMaxs(3, 4); visitEnd()
+        }
+        writer.visitEnd()
+        java.nio.file.FileSystems.newFileSystem(jar).use { zip -> Files.write(zip.getPath("/PageBootstrap.class"), writer.toByteArray()) }
     }
 
     private fun chapterTemplate(jar: java.nio.file.Path): String = java.nio.file.FileSystems.newFileSystem(jar).use { zip ->
@@ -210,7 +311,9 @@ class ComixCompatibilityTest {
             }
             val original = Files.readAllBytes(jar)
             ComixCompatibility.apply(jar, "other", "1.6.42", 106042)
-            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.44", 106044)
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.45", 106045)
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.44", 106043)
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.43", 106044)
             assertContentEquals(original, Files.readAllBytes(jar))
             assertFailsWith<IllegalArgumentException> {
                 ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.42", 106042)

@@ -82,19 +82,25 @@ sh vendor/solver/prepare_test.sh /path/to/pinned/Suwayomi-Server
 ./gradlew -PsuwayomiSrc=/path/to/pinned/Suwayomi-Server test installDist
 ```
 
-### Comix 1.6.42 and 1.6.43 compatibility
+### Comix 1.6.42–1.6.44 compatibility
 
 The verified official APK is kept unchanged. During APK preparation, the derived JVM jar receives
 an exact package/version correction for chapter responses that omit `pages.baseUrl`: every image
 must have an absolute HTTP(S) URL before the parser supplies an empty base. Relative URLs without a
 base fail explicitly; the original required `items` field, page order, scrambling and image headers
-remain in use. This response correction applies only to 1.6.42; the official 1.6.43 already defaults
+remain in use. This response correction applies only to 1.6.42; the official 1.6.43/44 already default
 the missing base.
 
-Both versions locate the chapter API among at most 32 same-origin static JavaScript imports instead
-of depending on the site's old `env-` bundle filename prefix. The existing site client performs the
-chapter requests, with original pagination and filtering. Unexpected released script or DTO bytecode
-fails preparation. Other packages and versions bypass these corrections. Official package identity,
+All three versions locate the chapter API among at most 32 same-origin static JavaScript imports instead
+of depending on the site's old `env-` bundle filename prefix. Discovery requires an unambiguous
+raw GET wrapper and pure chapter route builder in the same module, identified by their verified
+function shapes rather than obfuscated property names. The existing signed site client supplies raw
+chapter responses, with original pagination and filtering. Version 1.6.44 also discovers its raw
+chapter-detail route through the same bounded signed client, rather than waiting for an observable
+JSON parse. The page hook waits for the main script element and both response bridges before its
+single request. Its unchanged page builder receives the original response envelope; page ordering,
+alternate hosts, V3 flags and image processing remain in use. Discovery failures use the existing
+rejection bridge. Unexpected released script or DTO bytecode fails preparation. Other packages and versions bypass these corrections. Official package identity,
 version, source IDs and signer continuity remain unchanged, so normal official updates remain available.
 
 Existing installed jars are reused on startup and preference reload. After deploying this correction,

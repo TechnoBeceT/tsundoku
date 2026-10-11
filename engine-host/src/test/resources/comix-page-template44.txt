@@ -1,0 +1,37 @@
+
+                (function () {
+                    const payloadKey = '__comixPagePayload';
+                    const capture = parsed => {
+                        try {
+                            if (parsed && parsed.result && parsed.result.pages) {
+                                window[payloadKey] = JSON.stringify(parsed);
+                                window.(window[payloadKey]);
+                                return true;
+                            }
+                        } catch (e) {}
+                        return false;
+                    };
+
+                    if (window[payloadKey]) return window[payloadKey];
+
+                    try {
+                        const raw = document.querySelector('script#initial-data')?.textContent;
+                        const queries = raw && JSON.parse(raw).queries;
+                        if (queries) Object.values(queries).some(capture);
+                    } catch (e) {}
+
+                    if (window[payloadKey]) return window[payloadKey];
+                    if (JSON.parse.__comixPageCaptureInstalled) return null;
+                    const originalParse = JSON.parse;
+                    const proxiedParse = new Proxy(originalParse, {
+                        apply(target, thisArg, args) {
+                            const parsed = Reflect.apply(target, thisArg, args);
+                            capture(parsed);
+                            return parsed;
+                        }
+                    });
+                    proxiedParse.__comixPageCaptureInstalled = true;
+                    JSON.parse = proxiedParse;
+                    return window[payloadKey] || null;
+                })();
+                
