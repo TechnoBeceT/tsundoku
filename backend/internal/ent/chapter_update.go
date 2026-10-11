@@ -228,6 +228,20 @@ func (_u *ChapterUpdate) ClearFirstDownloadedAt() *ChapterUpdate {
 	return _u
 }
 
+// SetDownloadPriority sets the "download_priority" field.
+func (_u *ChapterUpdate) SetDownloadPriority(v bool) *ChapterUpdate {
+	_u.mutation.SetDownloadPriority(v)
+	return _u
+}
+
+// SetNillableDownloadPriority sets the "download_priority" field if the given value is not nil.
+func (_u *ChapterUpdate) SetNillableDownloadPriority(v *bool) *ChapterUpdate {
+	if v != nil {
+		_u.SetDownloadPriority(*v)
+	}
+	return _u
+}
+
 // SetRetries sets the "retries" field.
 func (_u *ChapterUpdate) SetRetries(v int) *ChapterUpdate {
 	_u.mutation.ResetRetries()
@@ -492,6 +506,9 @@ func (_u *ChapterUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.FirstDownloadedAtCleared() {
 		_spec.ClearField(chapter.FieldFirstDownloadedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.DownloadPriority(); ok {
+		_spec.SetField(chapter.FieldDownloadPriority, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)
@@ -801,6 +818,20 @@ func (_u *ChapterUpdateOne) ClearFirstDownloadedAt() *ChapterUpdateOne {
 	return _u
 }
 
+// SetDownloadPriority sets the "download_priority" field.
+func (_u *ChapterUpdateOne) SetDownloadPriority(v bool) *ChapterUpdateOne {
+	_u.mutation.SetDownloadPriority(v)
+	return _u
+}
+
+// SetNillableDownloadPriority sets the "download_priority" field if the given value is not nil.
+func (_u *ChapterUpdateOne) SetNillableDownloadPriority(v *bool) *ChapterUpdateOne {
+	if v != nil {
+		_u.SetDownloadPriority(*v)
+	}
+	return _u
+}
+
 // SetRetries sets the "retries" field.
 func (_u *ChapterUpdateOne) SetRetries(v int) *ChapterUpdateOne {
 	_u.mutation.ResetRetries()
@@ -1095,6 +1126,9 @@ func (_u *ChapterUpdateOne) sqlSave(ctx context.Context) (_node *Chapter, err er
 	}
 	if _u.mutation.FirstDownloadedAtCleared() {
 		_spec.ClearField(chapter.FieldFirstDownloadedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.DownloadPriority(); ok {
+		_spec.SetField(chapter.FieldDownloadPriority, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)

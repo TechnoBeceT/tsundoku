@@ -56,6 +56,8 @@ const {
   dismissError,
 } = useDownloads()
 
+const { snapshots: prioritySnapshots, busyIds: priorityBusyIds, error: priorityError, setPriority } = useDownloadPriority()
+
 // Live count of sources whose circuit-breaker is tripped (anti-ban cooldown) — feeds
 // the Active-tab "M sources cooling down" awareness banner so an empty Active list
 // reads as WAITING, not "up to date". connect() is idempotent (the layout connects too).
@@ -90,6 +92,10 @@ const { sources: sourceStatuses } = useEngineStatus()
       :run-error="runError"
       :cooling-down-sources="coolingDownSources"
       :source-statuses="sourceStatuses"
+      :priority-snapshots="prioritySnapshots"
+      :priority-busy-ids="priorityBusyIds"
+      :priority-error="priorityError"
+      @set-priority="setPriority"
       @set-tab="setTab"
       @retry="retry"
       @retry-all="retryAll"

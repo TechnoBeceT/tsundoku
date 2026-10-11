@@ -13,6 +13,7 @@ import (
 
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/ent/predicate"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	"github.com/technobecet/tsundoku/internal/pkg/chapterrange"
@@ -39,16 +40,40 @@ type Selection struct {
 // WantedChapters; the generation is selected in the same SQL statement, so it
 // cannot describe a newer row than the accompanying state/candidate work item.
 func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Selection, error) {
-	chapters, err := client.Chapter.Query().
+	return WantedSelectionsAfter(ctx, client, limit, nil)
+}
+
+// WantedSelectionsAfter advances a bounded scheduling scan in chapter-number
+// order. The cursor is the last observed row, including when that row is waiting
+// on a paused source, so an ineligible prefix cannot hide the rest of the library.
+func WantedSelectionsAfter(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter) ([]Selection, error) {
+	return wantedSelectionsAfter(ctx, client, limit, after, nil)
+}
+
+// WantedSelectionsInPriority scans only one scheduling partition. The scheduler
+// completes marked discovery before admitting ordinary work on any source.
+func WantedSelectionsInPriority(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority bool) ([]Selection, error) {
+	return wantedSelectionsAfter(ctx, client, limit, after, &priority)
+}
+
+func wantedSelectionsAfter(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority *bool) ([]Selection, error) {
+	query := client.Chapter.Query().
 		Where(entchapter.StateIn(
 			entchapter.StateWanted,
 			entchapter.StateFailed,
-		)).
-		Order(
-			entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
-			entchapter.ByID(),
-			selectChapterWorkGeneration,
-		).
+		))
+	if priority != nil {
+		query = query.Where(entchapter.DownloadPriorityEQ(*priority))
+	}
+	if after != nil {
+		query = query.Where(AfterInPriorityOrder(after))
+	}
+	chapters, err := query.Order(
+		entchapter.ByDownloadPriority(sql.OrderDesc()),
+		entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()),
+		entchapter.ByID(),
+		selectChapterWorkGeneration,
+	).
 		Limit(limit).
 		All(ctx)
 	if err != nil {
@@ -59,6 +84,35 @@ func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Sel
 		selections[i] = Selection{Chapter: ch, Generation: chapterWorkGeneration(ch)}
 	}
 	return selections, nil
+}
+
+// SelectionByID captures the chapter and its generation in one statement for
+// conditional decisions that must not affect a newer owner snapshot.
+func SelectionByID(ctx context.Context, client *ent.Client, id uuid.UUID) (Selection, error) {
+	ch, err := client.Chapter.Query().Where(entchapter.IDEQ(id)).Order(selectChapterWorkGeneration).Only(ctx)
+	if err != nil {
+		return Selection{}, err
+	}
+	return Selection{Chapter: ch, Generation: chapterWorkGeneration(ch)}, nil
+}
+
+// AfterInPriorityOrder advances fixed-snapshot priority before ordinary work,
+// keeping chapter number and ID ordering inside each partition.
+func AfterInPriorityOrder(after *ent.Chapter) predicate.Chapter {
+	within := entchapter.And(entchapter.DownloadPriorityEQ(after.DownloadPriority), AfterInNumberOrder(after))
+	if after.DownloadPriority {
+		return entchapter.Or(entchapter.DownloadPriorityEQ(false), within)
+	}
+	return within
+}
+
+// AfterInNumberOrder matches rows after a number-ascending, nulls-last cursor.
+func AfterInNumberOrder(after *ent.Chapter) predicate.Chapter {
+	if after.Number == nil {
+		return entchapter.And(entchapter.NumberIsNil(), entchapter.IDGT(after.ID))
+	}
+	return entchapter.Or(entchapter.NumberGT(*after.Number), entchapter.NumberIsNil(),
+		entchapter.And(entchapter.NumberEQ(*after.Number), entchapter.IDGT(after.ID)))
 }
 
 func selectChapterWorkGeneration(selector *sql.Selector) {
@@ -621,4 +675,26 @@ func BestProviderChapter(ctx context.Context, client *ent.Client, chapterID uuid
 	}
 
 	return best, bestImportance, nil
+}
+
+// UpgradeProvidersExhausted checks the retry budgets of structurally applicable
+// superior carriers, ignoring temporary cooldowns, breakers and owner pause.
+// No superior carrier is dormant work, not evidence of exhausted attempts.
+func UpgradeProvidersExhausted(ctx context.Context, client *ent.Client, ch *ent.Chapter, satisfiedImportance, maxRetries int) (bool, error) {
+	pcs, err := providerChaptersForKey(ctx, client, ch)
+	if err != nil {
+		return false, err
+	}
+	found := false
+	for _, pc := range pcs {
+		sp := pc.Edges.SeriesProvider
+		if sp.Importance <= satisfiedImportance || (ch.SatisfiedByProviderID != nil && sp.ID == *ch.SatisfiedByProviderID) {
+			continue
+		}
+		found = true
+		if !isExhausted(pc, maxRetries) {
+			return false, nil
+		}
+	}
+	return found, nil
 }

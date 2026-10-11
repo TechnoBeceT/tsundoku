@@ -150,6 +150,20 @@ func (_c *ChapterCreate) SetNillableFirstDownloadedAt(v *time.Time) *ChapterCrea
 	return _c
 }
 
+// SetDownloadPriority sets the "download_priority" field.
+func (_c *ChapterCreate) SetDownloadPriority(v bool) *ChapterCreate {
+	_c.mutation.SetDownloadPriority(v)
+	return _c
+}
+
+// SetNillableDownloadPriority sets the "download_priority" field if the given value is not nil.
+func (_c *ChapterCreate) SetNillableDownloadPriority(v *bool) *ChapterCreate {
+	if v != nil {
+		_c.SetDownloadPriority(*v)
+	}
+	return _c
+}
+
 // SetRetries sets the "retries" field.
 func (_c *ChapterCreate) SetRetries(v int) *ChapterCreate {
 	_c.mutation.SetRetries(v)
@@ -329,6 +343,10 @@ func (_c *ChapterCreate) defaults() {
 		v := chapter.DefaultFilename
 		_c.mutation.SetFilename(v)
 	}
+	if _, ok := _c.mutation.DownloadPriority(); !ok {
+		v := chapter.DefaultDownloadPriority
+		_c.mutation.SetDownloadPriority(v)
+	}
 	if _, ok := _c.mutation.Retries(); !ok {
 		v := chapter.DefaultRetries
 		_c.mutation.SetRetries(v)
@@ -373,6 +391,9 @@ func (_c *ChapterCreate) check() error {
 	}
 	if _, ok := _c.mutation.Filename(); !ok {
 		return &ValidationError{Name: "filename", err: errors.New(`ent: missing required field "Chapter.filename"`)}
+	}
+	if _, ok := _c.mutation.DownloadPriority(); !ok {
+		return &ValidationError{Name: "download_priority", err: errors.New(`ent: missing required field "Chapter.download_priority"`)}
 	}
 	if _, ok := _c.mutation.Retries(); !ok {
 		return &ValidationError{Name: "retries", err: errors.New(`ent: missing required field "Chapter.retries"`)}
@@ -459,6 +480,10 @@ func (_c *ChapterCreate) createSpec() (*Chapter, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstDownloadedAt(); ok {
 		_spec.SetField(chapter.FieldFirstDownloadedAt, field.TypeTime, value)
 		_node.FirstDownloadedAt = &value
+	}
+	if value, ok := _c.mutation.DownloadPriority(); ok {
+		_spec.SetField(chapter.FieldDownloadPriority, field.TypeBool, value)
+		_node.DownloadPriority = value
 	}
 	if value, ok := _c.mutation.Retries(); ok {
 		_spec.SetField(chapter.FieldRetries, field.TypeInt, value)
@@ -745,6 +770,18 @@ func (u *ChapterUpsert) UpdateFirstDownloadedAt() *ChapterUpsert {
 // ClearFirstDownloadedAt clears the value of the "first_downloaded_at" field.
 func (u *ChapterUpsert) ClearFirstDownloadedAt() *ChapterUpsert {
 	u.SetNull(chapter.FieldFirstDownloadedAt)
+	return u
+}
+
+// SetDownloadPriority sets the "download_priority" field.
+func (u *ChapterUpsert) SetDownloadPriority(v bool) *ChapterUpsert {
+	u.Set(chapter.FieldDownloadPriority, v)
+	return u
+}
+
+// UpdateDownloadPriority sets the "download_priority" field to the value that was provided on create.
+func (u *ChapterUpsert) UpdateDownloadPriority() *ChapterUpsert {
+	u.SetExcluded(chapter.FieldDownloadPriority)
 	return u
 }
 
@@ -1104,6 +1141,20 @@ func (u *ChapterUpsertOne) UpdateFirstDownloadedAt() *ChapterUpsertOne {
 func (u *ChapterUpsertOne) ClearFirstDownloadedAt() *ChapterUpsertOne {
 	return u.Update(func(s *ChapterUpsert) {
 		s.ClearFirstDownloadedAt()
+	})
+}
+
+// SetDownloadPriority sets the "download_priority" field.
+func (u *ChapterUpsertOne) SetDownloadPriority(v bool) *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetDownloadPriority(v)
+	})
+}
+
+// UpdateDownloadPriority sets the "download_priority" field to the value that was provided on create.
+func (u *ChapterUpsertOne) UpdateDownloadPriority() *ChapterUpsertOne {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateDownloadPriority()
 	})
 }
 
@@ -1648,6 +1699,20 @@ func (u *ChapterUpsertBulk) UpdateFirstDownloadedAt() *ChapterUpsertBulk {
 func (u *ChapterUpsertBulk) ClearFirstDownloadedAt() *ChapterUpsertBulk {
 	return u.Update(func(s *ChapterUpsert) {
 		s.ClearFirstDownloadedAt()
+	})
+}
+
+// SetDownloadPriority sets the "download_priority" field.
+func (u *ChapterUpsertBulk) SetDownloadPriority(v bool) *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.SetDownloadPriority(v)
+	})
+}
+
+// UpdateDownloadPriority sets the "download_priority" field to the value that was provided on create.
+func (u *ChapterUpsertBulk) UpdateDownloadPriority() *ChapterUpsertBulk {
+	return u.Update(func(s *ChapterUpsert) {
+		s.UpdateDownloadPriority()
 	})
 }
 

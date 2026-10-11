@@ -536,9 +536,12 @@ func registerRoutes(
 	downloadsH := downloadsh.NewHandler(downloadsSvc, trigger)
 	authed.GET("/downloads", downloadsH.List)
 	authed.GET("/downloads/summary", downloadsH.Summary)
+	authed.GET("/downloads/priorities", downloadsH.Priorities)
 	authed.POST("/downloads/retry-all", downloadsH.RetryAll)
 	authed.POST("/chapters/:id/retry", downloadsH.RetryChapter)
 	authed.POST("/downloads/run", downloadsH.Run)
+	authed.POST("/series/:id/download-priority", downloadsH.EnablePriority)
+	authed.DELETE("/series/:id/download-priority", downloadsH.CancelPriority)
 	authed.POST("/chapters/:id/redownload", downloadsH.RedownloadChapter)
 	authed.GET("/downloads/redownload", downloadsH.RedownloadPreview)
 	authed.POST("/downloads/redownload", downloadsH.RedownloadAll)
@@ -638,6 +641,7 @@ func registerRoutes(
 	//     (pkg, version) back out.
 	engineH := engineh.NewHandler(apkStore, client).
 		WithSourceStatus(downloadsSvc, gate, settingsSvc).
+		WithSourceCaps(sourceThroughputSvc).
 		WithPurge(purgeSvc).
 		WithSchedule(cycleSchedule)
 	authed.GET("/engine/topology-status", engineH.TopologyStatus)

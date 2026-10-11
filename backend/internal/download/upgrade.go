@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/disk"
@@ -435,7 +434,7 @@ func (d *Dispatcher) Upgrade(ctx context.Context, chapterID uuid.UUID) error {
 // source. completed reports whether this worker owned an engine attempt or stale
 // marker resolution; a lost conditional claim returns false with no error. See
 // Upgrade for the full flow + failure semantics.
-func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) (completed bool, err error) {
+func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem FetchSemaphore) (completed bool, err error) {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).
@@ -511,7 +510,7 @@ func (d *Dispatcher) upgradeWith(ctx context.Context, chapterID uuid.UUID, limit
 // UNCHANGED and no breaker (a better source withholding the chapter behind a
 // paywall is not a fault, and the working copy on disk is untouched meanwhile —
 // GAP-141). A render failure returns no pc (not the source's fault, so no charge).
-func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem *semaphore.Weighted) (upgradeResult, error) {
+func (d *Dispatcher) fetchAndRender(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, limiter *providerLimiter, disabled map[int64]bool, globalSem FetchSemaphore) (upgradeResult, error) {
 	now := time.Now()
 	cands, err := chapter.RankedLiveCandidates(ctx, d.client, chapterID, d.retry.MaxRetries(ctx), now, disabled)
 	if err != nil {
@@ -698,6 +697,9 @@ func (d *Dispatcher) finishUnstartedUpgrade(ctx context.Context, ch *ent.Chapter
 		return false, fmt.Errorf("download.Dispatcher.Upgrade: commit unstarted resolution for %s: %w", ch.ID, err)
 	}
 	committed = true
+	if err := d.clearExhaustedUpgradePriority(ctx, ch.ID); err != nil {
+		return true, err
+	}
 	d.broadcast("download.done", DownloadEvent{ChapterID: ch.ID, State: string(entchapter.StateDownloaded)})
 	return true, nil
 }
@@ -713,6 +715,7 @@ func (d *Dispatcher) persistUpgradeSuccess(ctx context.Context, chapterID uuid.U
 		SetFilename(res.newFilename).
 		SetPageCount(res.pageCount).
 		SetDownloadDate(time.Now()).
+		SetDownloadPriority(false).
 		SetLastError("").
 		Exec(ctx); err != nil {
 		// The new CBZ has already been rendered — route through handleUpgradeFailure
@@ -848,10 +851,33 @@ func (d *Dispatcher) handleUpgradeFailure(ctx context.Context, chapterID uuid.UU
 		)
 	}
 
+	if err := d.clearExhaustedUpgradePriority(ctx, chapterID); err != nil {
+		slog.ErrorContext(ctx, "download: could not resolve exhausted upgrade priority", "chapter_id", chapterID, "err", err)
+	}
+
 	d.broadcast("upgrade.fail", DownloadEvent{
 		ChapterID: chapterID,
 		State:     string(entchapter.StateDownloaded),
 		Error:     cause.Error(),
 	})
 	return nil
+}
+
+func (d *Dispatcher) clearExhaustedUpgradePriority(ctx context.Context, id uuid.UUID) error {
+	selection, err := chapter.SelectionByID(ctx, d.client, id)
+	if ent.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	ch := selection.Chapter
+	if !ch.DownloadPriority || ch.State != entchapter.StateDownloaded {
+		return nil
+	}
+	exhausted, err := chapter.UpgradeProvidersExhausted(ctx, d.client, ch, effectiveSatisfiedImportance(ctx, d.client, ch), d.retry.MaxRetries(ctx))
+	if err != nil || !exhausted {
+		return err
+	}
+	return d.client.Chapter.Update().Where(entchapter.IDEQ(id), entchapter.StateEQ(ch.State), chapter.GenerationEQ(selection.Generation)).SetDownloadPriority(false).Exec(ctx)
 }

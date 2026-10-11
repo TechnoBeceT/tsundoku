@@ -50,6 +50,10 @@ func (Chapter) Fields() []ent.Field {
 		// Nillable: chapters imported from disk have no known arrival time until
 		// reconcile fills it from the CBZ's mtime (a later task).
 		field.Time("first_downloaded_at").Optional().Nillable(),
+		// download_priority marks an owner-selected, fixed queued snapshot.
+		// It survives retries and readable upgrade fallback until fulfillment,
+		// exhausted applicable budgets, or explicit owner cancellation.
+		field.Bool("download_priority").Default(false),
 		field.Int("retries").Default(0),
 		field.Time("next_attempt_at").Optional().Nillable(),
 		field.String("last_error").Default(""),

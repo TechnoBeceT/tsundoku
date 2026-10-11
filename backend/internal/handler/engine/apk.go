@@ -47,6 +47,7 @@ type Handler struct {
 	activeCounts activeSourceCounter
 	breakers     breakerSnapshotter
 	concurrency  downloadConcurrencyProvider
+	sourceCaps   sourceCapProvider
 
 	// Optional source-purge service (WithPurge). Used only by the
 	// /api/engine/purge-* endpoints; nil for every other endpoint.

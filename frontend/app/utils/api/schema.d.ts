@@ -1516,6 +1516,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/downloads/priorities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List pending queued-series priority snapshots */
+        get: operations["listDownloadPriorities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/series/{id}/download-priority": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prioritize current queued chapters of a series
+         * @description Captures wanted, failed and upgrade_available chapters only. Repeated calls while members remain do not extend the snapshot. Already launched jobs continue; priority applies at the next scheduler launch slot without resetting source allowance, retry budgets, pause or cooldown. Multiple prioritized series share fair rotation. New chapters remain ordinary. Snapshot survives restart and retries, including readable failed upgrade fallback, until success, applicable budget exhaustion or explicit cancellation.
+         */
+        post: operations["enableDownloadPriority"];
+        /**
+         * Cancel a series priority snapshot
+         * @description Clears only scheduling priority membership. Chapter states, retry budgets, readable files and active jobs are preserved.
+         */
+        delete: operations["cancelDownloadPriority"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/downloads/run": {
         parameters: {
             query?: never;
@@ -2227,12 +2268,12 @@ export interface paths {
          *     connects mid-cycle sees no SSE boundary event and can only guess, which is
          *     how a running cycle came to be displayed as "Idle".
          *
-         *     `jobs.download_interval` / `jobs.refresh_interval` are TRUE PERIODS
-         *     measured from the previous cycle's START, so `nextRunAt` may already be in
-         *     the PAST while `running` is true — that is what an overrunning cycle looks
-         *     like, and `overdue` flags it. The missed tick is never queued: exactly one
-         *     cycle starts as soon as the current one returns. Compute a countdown
-         *     against `serverTime`, not the browser clock.
+         *     `jobs.download_interval` applies independently to each physical source's
+         *     start-based window. Downloads and upgrades share that source's allowance;
+         *     a slow source does not delay another source's renewal. Refresh remains a
+         *     non-overlapping start-based sweep. Missed renewals collapse and never queue
+         *     overlapping work for the same source. `nextRunAt` may be in the past while
+         *     a source or sweep is running. Compute countdowns against `serverTime`.
          */
         get: operations["getEngineSchedule"];
         put?: never;
@@ -3394,6 +3435,15 @@ export interface components {
             /** @description Ordered list of (provider id, importance) pairs to apply all-or-nothing. */
             providers: components["schemas"]["ProviderRank"][];
         };
+        DownloadPriorityStatus: {
+            /** @description Chapters remaining in the fixed priority snapshot, including waiting or dormant members. */
+            remaining: number;
+        };
+        DownloadPrioritySnapshot: components["schemas"]["DownloadPriorityStatus"] & {
+            /** Format: uuid */
+            seriesId: string;
+            seriesTitle: string;
+        };
         DownloadChapter: {
             /**
              * Format: uuid
@@ -4136,30 +4186,31 @@ export interface components {
             serverTime: string;
         };
         /**
-         * @description One background loop's schedule. The interval is a TRUE PERIOD measured from
-         *     the previous cycle's START, so `nextRunAt` can already have passed while
-         *     `running` is true (an overrunning cycle) — it is reported honestly rather
-         *     than replaced with a fabricated future timestamp, and `overdue` says so.
-         *     Cycles never overlap: a tick landing mid-cycle is skipped, never queued.
+         * @description One background coordinator's schedule. Refresh sweeps never overlap and
+         *     use a start-based interval. Download sources have independent start-based
+         *     windows: different sources may overlap, but one source never overlaps
+         *     itself. `nextRunAt` may have passed while a slow source is still running;
+         *     that does not prevent another idle source from renewing its allowance.
          */
         CycleSchedule: {
             /**
-             * @description Whether a cycle is executing right now.
+             * @description Whether a refresh sweep or any download/upgrade source window is executing right now.
              * @example true
              */
             running: boolean;
             /**
              * Format: date-time
-             * @description The EARLIEST instant the next cycle may start (the most recent cycle's
-             *     start + the configured interval). May be in the past — see `overdue`.
+             * @description The earliest source-window renewal deadline for active downloads,
+             *     or the next discovery opportunity while idle. Refresh uses its last
+             *     sweep start plus the configured interval. May be in the past.
              *     Null when the loop is not scheduled at all: it was never started, or
              *     its context was cancelled and the goroutine has exited.
              * @example 2026-07-25T12:01:30Z
              */
             nextRunAt: string | null;
             /**
-             * @description True when nextRunAt is known and has already passed: the next cycle is
-             *     due (it starts the moment the current one finishes, if any). Always
+             * @description True when nextRunAt is known and has already passed. A busy download
+             *     source renews after it finishes; other sources proceed independently. Always
              *     false when nextRunAt is null — "nothing is planned" is not "late".
              * @example false
              */
@@ -9013,6 +9064,133 @@ export interface operations {
             };
             /** @description The CBZ exists but a page could not be decoded. */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listDownloadPriorities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending snapshots, including dormant members outside activity pages. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPrioritySnapshot"][];
+                };
+            };
+            /** @description Missing or invalid owner session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    enableDownloadPriority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Remaining fixed-snapshot membership after the action. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPriorityStatus"];
+                };
+            };
+            /** @description Malformed series identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid owner session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown series. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    cancelDownloadPriority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Remaining fixed-snapshot membership after the action. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPriorityStatus"];
+                };
+            };
+            /** @description Malformed series identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Missing or invalid owner session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unknown series. */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

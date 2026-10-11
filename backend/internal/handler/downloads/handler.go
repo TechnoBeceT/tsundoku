@@ -147,7 +147,7 @@ func (h *Handler) Run(c echo.Context) error {
 // validator).
 func mapServiceError(err error) error {
 	switch {
-	case errors.Is(err, downloadssvc.ErrChapterNotFound):
+	case errors.Is(err, downloadssvc.ErrChapterNotFound), errors.Is(err, downloadssvc.ErrSeriesNotFound):
 		return echo.NewHTTPError(http.StatusNotFound, "chapter not found")
 	case errors.Is(err, downloadssvc.ErrNotRetryable):
 		return echo.NewHTTPError(http.StatusConflict, "chapter is not in a retryable state")
@@ -158,4 +158,32 @@ func mapServiceError(err error) error {
 	default:
 		return err
 	}
+}
+
+// EnablePriority captures the selected series' current queued chapter IDs.
+func (h *Handler) EnablePriority(c echo.Context) error { return h.setPriority(c, true) }
+
+// CancelPriority clears the owner's outstanding snapshot explicitly.
+func (h *Handler) CancelPriority(c echo.Context) error { return h.setPriority(c, false) }
+
+func (h *Handler) setPriority(c echo.Context, enabled bool) error {
+	id, err := validateID(c.Param("id"), "series id")
+	if err != nil {
+		return err
+	}
+	status, err := h.svc.SetPriority(c.Request().Context(), id, enabled)
+	if err != nil {
+		return mapServiceError(err)
+	}
+	h.trigger()
+	return c.JSON(http.StatusOK, status)
+}
+
+// Priorities returns pending snapshots including members waiting outside queue views.
+func (h *Handler) Priorities(c echo.Context) error {
+	result, err := h.svc.Priorities(c.Request().Context())
+	if err != nil {
+		return mapServiceError(err)
+	}
+	return c.JSON(http.StatusOK, result)
 }

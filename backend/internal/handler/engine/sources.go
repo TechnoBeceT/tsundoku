@@ -27,8 +27,9 @@ type breakerSnapshotter interface {
 // downloadConcurrencyProvider reports the current per-source download-concurrency
 // cap (the "N/cap" denominator), read at use-time so an owner's settings change
 // applies immediately. *settings.Service and settings.Static both satisfy it.
-type downloadConcurrencyProvider interface {
-	DownloadConcurrency(ctx context.Context) int
+type downloadConcurrencyProvider interface{ DownloadConcurrency(context.Context) int }
+type sourceCapProvider interface {
+	SourceDownloadConcurrencyFor(context.Context, []string) (map[string]int, error)
 }
 
 // WithSourceStatus attaches the three read ports the live source-status strip
@@ -65,5 +66,25 @@ func (h *Handler) Sources(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(http.StatusOK, buildSourceStatuses(active, breakers, h.concurrency.DownloadConcurrency(ctx), time.Now()))
+	globalCap := h.concurrency.DownloadConcurrency(ctx)
+	rows := buildSourceStatuses(active, breakers, globalCap, time.Now())
+	if h.sourceCaps != nil {
+		keys := make([]string, len(rows))
+		for i := range rows {
+			keys[i] = rows[i].SourceKey
+		}
+		caps, e := h.sourceCaps.SourceDownloadConcurrencyFor(ctx, keys)
+		if e != nil {
+			return e
+		}
+		for i := range rows {
+			if cap, ok := caps[rows[i].SourceKey]; ok {
+				rows[i].Cap = cap
+			}
+		}
+	}
+
+	return c.JSON(http.StatusOK, rows)
 }
+
+func (h *Handler) WithSourceCaps(p sourceCapProvider) *Handler { h.sourceCaps = p; return h }

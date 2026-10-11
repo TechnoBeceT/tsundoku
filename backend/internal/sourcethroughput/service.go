@@ -3,10 +3,15 @@ package sourcethroughput
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"entgo.io/ent/dialect/sql"
+
 	"github.com/technobecet/tsundoku/internal/ent"
+	entsp "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
 	entpolicy "github.com/technobecet/tsundoku/internal/ent/sourcethroughputpolicy"
+	"github.com/technobecet/tsundoku/internal/pkg/providerid"
 )
 
 // Override holds the independently optional values stored for one source.
@@ -252,4 +257,73 @@ func (s *Service) loadOverride(ctx context.Context, sourceID int64) (Override, e
 		return Override{}, fmt.Errorf("sourcethroughput.Update: query source %d: %w", sourceID, err)
 	}
 	return overrideFromRow(row), nil
+}
+
+// SourceDownloadConcurrencyFor resolves effective caps for canonical labels in one bounded read path.
+func (s *Service) SourceDownloadConcurrencyFor(ctx context.Context, keys []string) (map[string]int, error) {
+	out := make(map[string]int, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	wanted := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		wanted[strings.TrimSpace(key)] = true
+	}
+	type identity struct {
+		ProviderName string `json:"provider_name"`
+		Provider     string `json:"provider"`
+	}
+	var rows []identity
+	if err := s.client.SeriesProvider.Query().Where(func(selector *sql.Selector) {
+		selector.Where(canonicalLabelsIn(selector, keys))
+	}).Select(entsp.FieldProviderName, entsp.FieldProvider).Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("source throughput providers: %w", err)
+	}
+	defaults := s.Defaults(ctx)
+	stored, err := s.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		applyIdentityCap(out, wanted, stored, defaults, row.ProviderName, row.Provider)
+	}
+	for key := range wanted {
+		if _, ok := out[key]; !ok {
+			out[key] = defaults.DownloadConcurrency
+		}
+	}
+	return out, nil
+}
+
+func applyIdentityCap(out map[string]int, wanted map[string]bool, stored map[int64]Override, defaults Effective, name, provider string) {
+	key := name
+	if key == "" {
+		key = provider
+	}
+	key = strings.TrimSpace(key)
+	if !wanted[key] {
+		return
+	}
+	if id, ok := providerid.SourceID(provider); ok {
+		out[key] = ApplyDefaults(defaults, stored[id]).DownloadConcurrency
+	}
+}
+
+// canonicalLabelsIn mirrors the scheduler's TrimSpace(name, else raw ID).
+// PostgreSQL's default BTRIM removes only ASCII spaces; use Go's whitespace set
+// so imported labels with tabs or Unicode whitespace join the same source.
+func canonicalLabelsIn(selector *sql.Selector, keys []string) *sql.Predicate {
+	const whitespace = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+	return sql.P(func(builder *sql.Builder) {
+		builder.WriteString("BTRIM(COALESCE(NULLIF(").WriteString(selector.C(entsp.FieldProviderName)).
+			WriteString(", ''), ").WriteString(selector.C(entsp.FieldProvider)).WriteString("), ").Arg(whitespace).
+			WriteString(") IN (")
+		for i, key := range keys {
+			if i > 0 {
+				builder.WriteString(", ")
+			}
+			builder.Arg(strings.TrimSpace(key))
+		}
+		builder.WriteString(")")
+	})
 }

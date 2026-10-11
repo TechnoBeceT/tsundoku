@@ -35,6 +35,8 @@ const (
 	FieldDownloadDate = "download_date"
 	// FieldFirstDownloadedAt holds the string denoting the first_downloaded_at field in the database.
 	FieldFirstDownloadedAt = "first_downloaded_at"
+	// FieldDownloadPriority holds the string denoting the download_priority field in the database.
+	FieldDownloadPriority = "download_priority"
 	// FieldRetries holds the string denoting the retries field in the database.
 	FieldRetries = "retries"
 	// FieldNextAttemptAt holds the string denoting the next_attempt_at field in the database.
@@ -84,6 +86,7 @@ var Columns = []string{
 	FieldFilename,
 	FieldDownloadDate,
 	FieldFirstDownloadedAt,
+	FieldDownloadPriority,
 	FieldRetries,
 	FieldNextAttemptAt,
 	FieldLastError,
@@ -106,6 +109,8 @@ func ValidColumn(column string) bool {
 var (
 	// DefaultFilename holds the default value on creation for the "filename" field.
 	DefaultFilename string
+	// DefaultDownloadPriority holds the default value on creation for the "download_priority" field.
+	DefaultDownloadPriority bool
 	// DefaultRetries holds the default value on creation for the "retries" field.
 	DefaultRetries int
 	// DefaultLastError holds the default value on creation for the "last_error" field.
@@ -209,6 +214,11 @@ func ByDownloadDate(opts ...sql.OrderTermOption) OrderOption {
 // ByFirstDownloadedAt orders the results by the first_downloaded_at field.
 func ByFirstDownloadedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldFirstDownloadedAt, opts...).ToFunc()
+}
+
+// ByDownloadPriority orders the results by the download_priority field.
+func ByDownloadPriority(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDownloadPriority, opts...).ToFunc()
 }
 
 // ByRetries orders the results by the retries field.

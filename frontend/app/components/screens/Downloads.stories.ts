@@ -205,3 +205,15 @@ export const DownloadNowFailed: Story = {
     runError: 'Failed to start download cycle',
   },
 }
+
+/** Fixed snapshot status remains cancellable while its chapters wait. */
+export const QueuedPriority: Story = {
+  args: {
+    activeTab: 'queued',
+    counts: fixtureCounts,
+    prioritySnapshots: [
+      { seriesId: downloadItems.find(item => item.state === 'wanted')?.seriesId ?? 'priority-series', seriesTitle: 'Queued series', remaining: 12 },
+      { seriesId: 'dormant-priority', seriesTitle: 'A prioritized series waiting for its source', remaining: 3 },
+    ],
+  },
+}

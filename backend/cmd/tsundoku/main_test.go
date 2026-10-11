@@ -144,6 +144,11 @@ func (r shutdownRecorder) ShutdownRuntimeRetry(context.Context) error {
 	return nil
 }
 
+func (r shutdownRecorder) ShutdownDownloads(context.Context) error {
+	*r.steps = append(*r.steps, "downloads")
+	return nil
+}
+
 func (r shutdownRecorder) ShutdownRuntimeConvergence(context.Context) error {
 	*r.steps = append(*r.steps, r.step)
 	return nil
@@ -162,7 +167,7 @@ func TestGracefulShutdownJoinsConvergenceAndRuntimeRetryBeforeLauncherClose(t *t
 		shutdownRecorder{steps: &steps, step: "runtime"},
 		shutdownRecorder{steps: &steps, step: "launcher"},
 	)
-	if want := []string{"http", "convergence", "runtime", "launcher"}; !reflect.DeepEqual(steps, want) {
+	if want := []string{"http", "convergence", "runtime", "downloads", "launcher"}; !reflect.DeepEqual(steps, want) {
 		t.Fatalf("shutdown order = %v, want %v", steps, want)
 	}
 }

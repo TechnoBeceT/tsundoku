@@ -40,6 +40,8 @@ type Chapter struct {
 	DownloadDate *time.Time `json:"download_date,omitempty"`
 	// FirstDownloadedAt holds the value of the "first_downloaded_at" field.
 	FirstDownloadedAt *time.Time `json:"first_downloaded_at,omitempty"`
+	// DownloadPriority holds the value of the "download_priority" field.
+	DownloadPriority bool `json:"download_priority,omitempty"`
 	// Retries holds the value of the "retries" field.
 	Retries int `json:"retries,omitempty"`
 	// NextAttemptAt holds the value of the "next_attempt_at" field.
@@ -100,7 +102,7 @@ func (*Chapter) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case chapter.FieldSatisfiedByProviderID:
 			values[i] = &sql.NullScanner{S: new(uuid.UUID)}
-		case chapter.FieldRead:
+		case chapter.FieldDownloadPriority, chapter.FieldRead:
 			values[i] = new(sql.NullBool)
 		case chapter.FieldNumber:
 			values[i] = new(sql.NullFloat64)
@@ -198,6 +200,12 @@ func (_m *Chapter) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.FirstDownloadedAt = new(time.Time)
 				*_m.FirstDownloadedAt = value.Time
+			}
+		case chapter.FieldDownloadPriority:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field download_priority", values[i])
+			} else if value.Valid {
+				_m.DownloadPriority = value.Bool
 			}
 		case chapter.FieldRetries:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -330,6 +338,9 @@ func (_m *Chapter) String() string {
 		builder.WriteString("first_downloaded_at=")
 		builder.WriteString(v.Format(time.ANSIC))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("download_priority=")
+	builder.WriteString(fmt.Sprintf("%v", _m.DownloadPriority))
 	builder.WriteString(", ")
 	builder.WriteString("retries=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Retries))

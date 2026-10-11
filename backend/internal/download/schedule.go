@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
 	"github.com/technobecet/tsundoku/internal/ent"
@@ -22,6 +21,7 @@ import (
 // A queued item can therefore never claim a later failed generation with this
 // old slice or fall through to a source that became ineligible meanwhile.
 type resolvedChapter struct {
+	priority       bool
 	chapterID      uuid.UUID
 	seriesID       uuid.UUID
 	selectedState  entchapter.State
@@ -94,6 +94,7 @@ func (d *Dispatcher) groupBySource(ctx context.Context, selections []chapter.Sel
 		key := canonicalSourceKey(cands[0].SeriesProvider)
 		groups[key] = append(groups[key], resolvedChapter{
 			chapterID:      ch.ID,
+			priority:       ch.DownloadPriority,
 			seriesID:       ch.SeriesID,
 			selectedState:  ch.State,
 			workGeneration: selection.Generation,
@@ -252,7 +253,7 @@ func runQueuedItem[T any](ctx context.Context, it T, run func(context.Context, T
 // globalSem is the cycle-shared GLOBAL cap (nil ⇒ per-source only), passed to
 // downloadResolved so only an actual engine call acquires it after the source
 // politeness wait.
-func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, policy sourceConcurrencyPolicy, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem *semaphore.Weighted) {
+func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, policy sourceConcurrencyPolicy, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem FetchSemaphore) {
 	_ = runPerSourceQueues(ctx, groups, func(key string) int {
 		return policy.For(groups[key][0].sourceID)
 	},
@@ -274,7 +275,7 @@ func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]
 // transitioned wanted/failed→downloading (forward progress); false if the chapter
 // could not be loaded, the claim write failed, or a newer chapter/candidate/breaker
 // state invalidated the queued selection. runSourceQueue counts only claimed work.
-func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool) {
+func (d *Dispatcher) downloadResolved(ctx context.Context, it resolvedChapter, maxRetries int, now time.Time, limiter *providerLimiter, globalSem FetchSemaphore) (claimed bool) {
 	ch, err := d.client.Chapter.Query().
 		Where(entchapter.IDEQ(it.chapterID)).
 		WithSeries(func(sq *ent.SeriesQuery) { sq.WithCategory() }).

@@ -67,6 +67,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	authed.POST("/downloads/retry-all", h.RetryAll)
 	authed.POST("/chapters/:id/retry", h.RetryChapter)
 	authed.POST("/downloads/run", h.Run)
+	authed.POST("/series/:id/download-priority", h.EnablePriority)
+	authed.DELETE("/series/:id/download-priority", h.CancelPriority)
+	authed.GET("/downloads/priorities", h.Priorities)
 	authed.POST("/chapters/:id/redownload", h.RedownloadChapter)
 	authed.GET("/downloads/redownload", h.RedownloadPreview)
 	authed.POST("/downloads/redownload", h.RedownloadAll)
@@ -339,5 +342,84 @@ func TestRoutes_RequireAuth(t *testing.T) {
 				t.Fatalf("want 401, got %d", rec.Code)
 			}
 		})
+	}
+}
+
+func TestPriorityOwnerRoutesDenyUnauthorizedAndExposeDormantCancel(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+	env.seed(ctx, t)
+	ch := env.client.Chapter.GetX(ctx, env.wantedID)
+	path := "/api/series/" + ch.SeriesID.String() + "/download-priority"
+	assertPriorityUnauthorized(t, env, path)
+	request := httptest.NewRequest(http.MethodPost, path, nil)
+	request.Header.Set("Authorization", "Bearer "+env.token)
+	response := httptest.NewRecorder()
+	env.e.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("enable status%d: %s", response.Code, response.Body.String())
+	}
+	env.client.Chapter.UpdateOneID(env.wantedID).SetState(entchapter.StateIgnored).ExecX(ctx)
+	request = httptest.NewRequest(http.MethodGet, "/api/downloads/priorities", nil)
+	request.Header.Set("Authorization", "Bearer "+env.token)
+	response = httptest.NewRecorder()
+	env.e.ServeHTTP(response, request)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), ch.SeriesID.String()) {
+		t.Fatal("dormant snapshot vanished from cancellation view")
+	}
+	request = httptest.NewRequest(http.MethodDelete, path, nil)
+	request.Header.Set("Authorization", "Bearer "+env.token)
+	response = httptest.NewRecorder()
+	env.e.ServeHTTP(response, request)
+	if response.Code != 200 || env.client.Chapter.Query().Where(entchapter.DownloadPriority(true)).CountX(ctx) != 0 {
+		t.Fatal("explicit cancellation failed")
+	}
+	if env.client.Chapter.GetX(ctx, env.wantedID).State != entchapter.StateIgnored {
+		t.Fatal("cancel changed chapter state")
+	}
+	assertPriorityInvalidTargets(t, env)
+	if env.triggerCalls != 2 {
+		t.Fatalf("invalid targets triggered work: %d", env.triggerCalls)
+	}
+}
+
+func assertPriorityInvalidTargets(t *testing.T, env *testEnv) {
+	t.Helper()
+	for _, id := range []string{"bad-id", uuid.NewString()} {
+		request := httptest.NewRequest(http.MethodPost, "/api/series/"+id+"/download-priority", nil)
+		request.Header.Set("Authorization", "Bearer "+env.token)
+		response := httptest.NewRecorder()
+		env.e.ServeHTTP(response, request)
+		want := 400
+		if id != "bad-id" {
+			want = 404
+		}
+		if response.Code != want {
+			t.Fatalf("%s status%d want%d", id, response.Code, want)
+		}
+	}
+
+}
+
+func assertPriorityUnauthorized(t *testing.T, env *testEnv, path string) {
+	t.Helper()
+	ctx := context.Background()
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		request := httptest.NewRequest(method, path, nil)
+		response := httptest.NewRecorder()
+		env.e.ServeHTTP(response, request)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthorized status%d", method, response.Code)
+		}
+	}
+	if env.triggerCalls != 0 || env.client.Chapter.Query().Where(entchapter.DownloadPriority(true)).CountX(ctx) != 0 {
+		t.Fatal("unauthorized priority action had effects")
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/downloads/priorities", nil)
+	response := httptest.NewRecorder()
+	env.e.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatal("priority status lacked owner authorization")
 	}
 }

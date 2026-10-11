@@ -3,12 +3,12 @@
 // The dispatcher loads actionable chapters (state=wanted, or state=failed with
 // retry budget remaining), fetches their pages via the ChapterFetcher port,
 // renders them to disk via the disk.RenderChapter renderer, and advances
-// chapter state through the state machine. Per-provider concurrency is capped
-// via buffered-channel semaphores so that a single provider cannot monopolise
-// the worker pool. Since Slice 2 (responsiveness + fairness), RunOnce processes
+// chapter state through the state machine. Shared physical-source and global
+// fetch bounds protect actual engine admission. SourceScheduler gives the runner
+// independently renewable source windows. The fixed-pass RunOnce entry processes
 // one BOUNDED batch per source per call rather than draining a source's whole
-// backlog — see RunOnce's doc comment and job.Runner.RunDownloadCycle, which
-// loops it to drain a cycle while staying responsive to newly-wanted chapters.
+// backlog. Runtime scheduling uses bounded keyset discovery and rotates across
+// series while independently feeding ready sources.
 // A fetch holds shared ProviderChapter feed ownership from admission through
 // page-link persistence and staging cleanup, allowing ordinary fetch concurrency
 // while making an address-changing reconcile wait for every old-address owner.
@@ -35,6 +35,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/disk"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	entdisabledsource "github.com/technobecet/tsundoku/internal/ent/disabledsource"
 	entpredicate "github.com/technobecet/tsundoku/internal/ent/predicate"
 	entproviderchapter "github.com/technobecet/tsundoku/internal/ent/providerchapter"
 	entseriesprovider "github.com/technobecet/tsundoku/internal/ent/seriesprovider"
@@ -423,26 +424,22 @@ func (d *Dispatcher) fetchWithAdmission(
 	sourceKey string,
 	ref fetcher.FetchRef,
 	limiter *providerLimiter,
-	globalSem *semaphore.Weighted,
+	globalSem FetchSemaphore,
 	onAdmitted func() (bool, error),
 ) (fetchAdmissionResult, error) {
+	// Fixed-pass callers historically use a nil *Weighted for no global bound.
+	// Preserve that meaning when it is carried by the shared capacity interface.
+	globalSem = optionalFetchSemaphore(globalSem)
 	d.gateWait(ctx, sourceKey)
 	if err := ctx.Err(); err != nil {
 		return fetchAdmissionResult{}, err
 	}
 
-	if globalSem != nil {
-		if err := globalSem.Acquire(ctx, 1); err != nil {
-			return fetchAdmissionResult{}, err
-		}
-		defer globalSem.Release(1)
-	}
-	sourceID, _ := providerid.SourceID(ref.Provider)
-	releaseSource := limiter.acquire(sourceKey, sourceID)
-	defer releaseSource()
-	if err := ctx.Err(); err != nil {
+	releaseCapacity, err := acquireFetchCapacity(ctx, sourceKey, ref.Provider, limiter, globalSem)
+	if err != nil {
 		return fetchAdmissionResult{}, err
 	}
+	defer releaseCapacity()
 	feedLease, err := chapter.AcquireProviderChapterFetchLease(ctx, ref.ProviderChapterID)
 	if err != nil {
 		return fetchAdmissionResult{}, err
@@ -462,6 +459,38 @@ func (d *Dispatcher) fetchWithAdmission(
 	pages, err := d.f.Fetch(ctx, ref)
 	transferred = true
 	return fetchAdmissionResult{pages: pages, fetched: true, owned: true, releaseFeed: feedLease.Release}, err
+}
+
+func acquireFetchCapacity(ctx context.Context, key, provider string, limiter *providerLimiter, global FetchSemaphore) (func(), error) {
+	sourceID, _ := providerid.SourceID(provider)
+	releaseSource, err := limiter.acquire(ctx, key, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	if global != nil {
+		if err := global.Acquire(ctx, 1); err != nil {
+			releaseSource()
+			return nil, err
+		}
+	}
+	release := func() {
+		if global != nil {
+			global.Release(1)
+		}
+		releaseSource()
+	}
+	if err := ctx.Err(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func optionalFetchSemaphore(bound FetchSemaphore) FetchSemaphore {
+	if fixed, ok := bound.(*semaphore.Weighted); ok && fixed == nil {
+		return nil
+	}
+	return bound
 }
 
 // admitChapterFetch conditionally claims one exact eligible→in-flight edge in a
@@ -506,7 +535,8 @@ func (d *Dispatcher) admitChapterFetch(
 // as the chapter transition. The exact selected attempts/next_attempt_at snapshot
 // must still match and remain live, the ProviderChapter must still carry this
 // chapter in the same series, and a wired breaker must not have a future
-// cooldown. This removes the application-level revalidation→claim gap without
+// cooldown. A wired owner-pause store is checked in that same statement. This
+// removes the application-level revalidation→claim gap without
 // holding the transaction across politeness or the engine call.
 func (d *Dispatcher) currentFetchCandidate(cand chapter.Candidate, maxRetries int, now time.Time) entpredicate.Chapter {
 	return entpredicate.Chapter(func(selector *sql.Selector) {
@@ -538,6 +568,14 @@ func (d *Dispatcher) currentFetchCandidate(cand chapter.Candidate, maxRetries in
 		selector.Where(sql.Exists(
 			candidateQuery.Where(sql.And(candidateConditions...)),
 		))
+
+		// A queued window may outlive an owner pause. Check its persisted flag in
+		// the same admission statement, without another per-chapter store read.
+		if d.disabled != nil {
+			paused := sql.Table(entdisabledsource.Table)
+			selector.Where(sql.NotExists(sql.Select().From(paused).
+				Where(sql.EQ(paused.C(entdisabledsource.FieldSourceID), linkedSourceID(cand.SeriesProvider)))))
+		}
 
 		if d.gate == nil {
 			return
@@ -1020,7 +1058,7 @@ func (d *Dispatcher) processChapter(ctx context.Context, chapterID uuid.UUID, ma
 // scheduler's MVCC selection token; Process passes an empty token because it does
 // not retain a queued selection, while still using the exact state and atomic
 // candidate eligibility guard.
-func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, selectedState entchapter.State, workGeneration string, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem *semaphore.Weighted) (claimed bool, err error) {
+func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, selectedState entchapter.State, workGeneration string, cands []chapter.Candidate, maxRetries int, now time.Time, limiter *providerLimiter, globalSem FetchSemaphore) (claimed bool, err error) {
 	onAdmitted := func(cand chapter.Candidate) (bool, error) {
 		admitted, newlyClaimed, admitErr := d.admitDownloadCandidate(
 			ctx, chapterID, selectedState, workGeneration, cand, maxRetries, now, claimed,
@@ -1092,7 +1130,7 @@ func (d *Dispatcher) runCandidates(ctx context.Context, ch *ent.Chapter, chapter
 //     a persistent infra fault can never drain the library. The staging dir is KEPT
 //     so the retry resumes.
 //   - On SUCCESS the staging dir is deleted (its bytes are now in the CBZ).
-func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem *semaphore.Weighted, onAdmitted func(chapter.Candidate) (bool, error)) (done, fetched bool, cause error) {
+func (d *Dispatcher) tryCandidate(ctx context.Context, ch *ent.Chapter, chapterID uuid.UUID, cand chapter.Candidate, limiter *providerLimiter, now time.Time, globalSem FetchSemaphore, onAdmitted func(chapter.Candidate) (bool, error)) (done, fetched bool, cause error) {
 	// Carry a per-chapter progress sink so the fetcher can report live per-page
 	// progress; the sink throttles + broadcasts download.progress.
 	pctx := fetcher.WithProgress(ctx, d.progressSink(chapterID, string(entchapter.StateDownloading)))
@@ -1415,6 +1453,7 @@ func (d *Dispatcher) finishDownload(ctx context.Context, ch *ent.Chapter, chapte
 		SetFilename(filename).
 		SetPageCount(pages.PageCount).
 		SetDownloadDate(time.Now()).
+		SetDownloadPriority(false).
 		SetLastError("").
 		Exec(ctx); err != nil {
 		return fmt.Errorf("persist provenance for chapter %s: %w", chapterID, err)
@@ -1564,6 +1603,10 @@ func (d *Dispatcher) deferSource(ctx context.Context, pc *ent.ProviderChapter, c
 // resting state.
 func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, ch *ent.Chapter, maxRetries int, cause error) error {
 	chapterID := ch.ID
+	selection, err := chapter.SelectionByID(ctx, d.client, chapterID)
+	if err != nil {
+		return err
+	}
 	exhausted, err := chapter.AllProvidersExhausted(ctx, d.client, chapterID, maxRetries)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.finalizeAfterAllFailed: exhaustion check for chapter %s: %w", chapterID, err)
@@ -1573,21 +1616,12 @@ func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, ch *ent.Chapter
 	if exhausted {
 		final = entchapter.StatePermanentlyFailed
 	}
-	if setErr := chapter.SetState(ctx, d.client, chapterID, final); setErr != nil {
-		// Defensive path: only reachable on DB failure between the downloading
-		// transition and this one — not reachable under normal operation.
-		return fmt.Errorf("download.Dispatcher.finalizeAfterAllFailed: transition chapter %s to %s: %w", chapterID, final, setErr)
-	}
-
 	msg := "all live sources failed this cycle"
 	if cause != nil {
 		msg = cause.Error()
 	}
-	if err := d.client.Chapter.UpdateOneID(chapterID).SetLastError(msg).Exec(ctx); err != nil {
-		slog.WarnContext(ctx, "download.finalizeAfterAllFailed: could not persist chapter last_error",
-			"chapter_id", chapterID,
-			"err", err,
-		)
+	if resolved, err := d.finishFailedChapter(ctx, selection, final, msg, exhausted); err != nil || !resolved {
+		return err
 	}
 
 	// Terminal state → the chapter's partial staged pages are dead weight; free them.
@@ -1601,6 +1635,25 @@ func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, ch *ent.Chapter
 		Error:     msg,
 	})
 	return nil
+}
+
+// finishFailedChapter commits terminal state and priority resolution together.
+// Owner retry can never observe an exhausted state with its old clear pending.
+func (d *Dispatcher) finishFailedChapter(ctx context.Context, selection chapter.Selection, state entchapter.State, message string, exhausted bool) (bool, error) {
+	id := selection.Chapter.ID
+	from := selection.Chapter.State
+	if !chapter.CanTransition(from, state) {
+		return false, fmt.Errorf("download: illegal failure transition %s to %s", from, state)
+	}
+	update := d.client.Chapter.Update().Where(entchapter.IDEQ(id), entchapter.StateEQ(from), chapter.GenerationEQ(selection.Generation)).SetState(state).SetLastError(message)
+	if exhausted {
+		update.SetDownloadPriority(false)
+	}
+	affected, err := update.Save(ctx)
+	if err != nil {
+		return false, fmt.Errorf("download: persist chapter failure: %w", err)
+	}
+	return affected == 1, nil
 }
 
 // handleNoCandidates handles a chapter that has no LIVE source to try this cycle.
@@ -1617,6 +1670,11 @@ func (d *Dispatcher) finalizeAfterAllFailed(ctx context.Context, ch *ent.Chapter
 //     leave the chapter as-is (no state change, no event) and let a later cycle
 //     retry the survivors once their backoff elapses.
 func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, maxRetries int) error {
+	selection, err := chapter.SelectionByID(ctx, d.client, ch.ID)
+	if err != nil {
+		return err
+	}
+	ch = selection.Chapter
 	hasAny, err := chapter.HasAnyProviderChapter(ctx, d.client, ch.ID)
 	if err != nil {
 		return fmt.Errorf("download.Dispatcher.handleNoCandidates: provider check for chapter %s: %w", ch.ID, err)
@@ -1641,15 +1699,9 @@ func (d *Dispatcher) handleNoCandidates(ctx context.Context, ch *ent.Chapter, ma
 		return nil
 	}
 
-	if err := chapter.SetState(ctx, d.client, ch.ID, entchapter.StatePermanentlyFailed); err != nil {
-		return fmt.Errorf("download.Dispatcher.handleNoCandidates: transition chapter %s to permanently_failed: %w", ch.ID, err)
-	}
 	const msg = "all sources exhausted their retry budget"
-	if err := d.client.Chapter.UpdateOneID(ch.ID).SetLastError(msg).Exec(ctx); err != nil {
-		slog.WarnContext(ctx, "download.handleNoCandidates: could not persist chapter last_error",
-			"chapter_id", ch.ID,
-			"err", err,
-		)
+	if resolved, err := d.finishFailedChapter(ctx, selection, entchapter.StatePermanentlyFailed, msg, true); err != nil || !resolved {
+		return err
 	}
 	// Terminal state → free any staged pages left by this chapter's sources.
 	d.cleanupChapterStaging(ctx, ch)
@@ -1702,10 +1754,10 @@ func (d *Dispatcher) handleSourcelessChapter(ctx context.Context, ch *ent.Chapte
 }
 
 // providerLimiter caps how many chapters may be FETCHED concurrently from the
-// same physical source. It hands out one buffered-channel semaphore per source
+// same physical source. It hands out one shared fetch-capacity bound per source
 // KEY (canonicalSourceKey = name-else-id, so both stored representations of one
-// physical source share a single semaphore), each of capacity = the per-cycle
-// DownloadConcurrency, so a single busy source can never monopolise the fetch pool
+// physical source share a single bound), initially sized from the captured
+// DownloadConcurrency, so a single busy source cannot multiply its own capacity
 // while other sources proceed in parallel. Safe for concurrent use by the
 // per-chapter goroutines.
 //
@@ -1719,10 +1771,11 @@ func (d *Dispatcher) handleSourcelessChapter(ctx context.Context, ch *ent.Chapte
 // at once, and the scheduler's start channel is a separate object, so no
 // self-deadlock is possible.
 type providerLimiter struct {
-	mu     sync.Mutex
-	cap    int
-	policy *sourceConcurrencyPolicy
-	sems   map[string]chan struct{}
+	mu        sync.Mutex
+	cap       int
+	policy    *sourceConcurrencyPolicy
+	sems      map[string]*fetchCapacity
+	sourceIDs map[string]int64
 }
 
 // newProviderLimiter builds a limiter whose per-source concurrency is capacity
@@ -1731,20 +1784,20 @@ func newProviderLimiter(capacity int) *providerLimiter {
 	if capacity < 1 {
 		capacity = 1
 	}
-	return &providerLimiter{cap: capacity, sems: make(map[string]chan struct{})}
+	return &providerLimiter{cap: capacity, sems: make(map[string]*fetchCapacity), sourceIDs: make(map[string]int64)}
 }
 
 func newPolicyProviderLimiter(policy sourceConcurrencyPolicy) *providerLimiter {
 	return &providerLimiter{
 		cap:    policy.For(0),
 		policy: &policy,
-		sems:   make(map[string]chan struct{}),
+		sems:   make(map[string]*fetchCapacity), sourceIDs: make(map[string]int64),
 	}
 }
 
 // acquire blocks until a concurrency slot for the given source key is free, then
 // returns a release func the caller must invoke (once) to free the slot.
-func (l *providerLimiter) acquire(sourceKey string, sourceID int64) (release func()) {
+func (l *providerLimiter) acquire(ctx context.Context, sourceKey string, sourceID int64) (release func(), err error) {
 	l.mu.Lock()
 	sem, ok := l.sems[sourceKey]
 	if !ok {
@@ -1752,13 +1805,16 @@ func (l *providerLimiter) acquire(sourceKey string, sourceID int64) (release fun
 		if l.policy != nil {
 			capacity = l.policy.For(sourceID)
 		}
-		sem = make(chan struct{}, capacity)
+		sem = newFetchCapacity(capacity)
 		l.sems[sourceKey] = sem
+		l.sourceIDs[sourceKey] = sourceID
 	}
 	l.mu.Unlock()
 
-	sem <- struct{}{}
-	return func() { <-sem }
+	if err := sem.Acquire(ctx, 1); err != nil {
+		return nil, err
+	}
+	return func() { sem.Release(1) }, nil
 }
 
 // broadcast emits an SSE event of the given type with data as the JSON payload.
@@ -1921,4 +1977,16 @@ func maxChapterNumber(ctx context.Context, client *ent.Client, seriesID uuid.UUI
 		return nil
 	}
 	return result[0].Max
+}
+
+// setPolicy retains every outstanding permit while changing admission ceilings.
+// A decrease drains existing calls and admits nothing further until below the
+// new limit; an increase wakes waiting healthy-source fetches immediately.
+func (l *providerLimiter) setPolicy(policy sourceConcurrencyPolicy) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.policy = &policy
+	for key, sem := range l.sems {
+		sem.setLimit(policy.For(l.sourceIDs[key]))
+	}
 }

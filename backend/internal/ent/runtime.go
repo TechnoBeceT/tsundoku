@@ -80,24 +80,28 @@ func init() {
 	chapterDescFilename := chapterFields[8].Descriptor()
 	// chapter.DefaultFilename holds the default value on creation for the filename field.
 	chapter.DefaultFilename = chapterDescFilename.Default.(string)
+	// chapterDescDownloadPriority is the schema descriptor for download_priority field.
+	chapterDescDownloadPriority := chapterFields[11].Descriptor()
+	// chapter.DefaultDownloadPriority holds the default value on creation for the download_priority field.
+	chapter.DefaultDownloadPriority = chapterDescDownloadPriority.Default.(bool)
 	// chapterDescRetries is the schema descriptor for retries field.
-	chapterDescRetries := chapterFields[11].Descriptor()
+	chapterDescRetries := chapterFields[12].Descriptor()
 	// chapter.DefaultRetries holds the default value on creation for the retries field.
 	chapter.DefaultRetries = chapterDescRetries.Default.(int)
 	// chapterDescLastError is the schema descriptor for last_error field.
-	chapterDescLastError := chapterFields[13].Descriptor()
+	chapterDescLastError := chapterFields[14].Descriptor()
 	// chapter.DefaultLastError holds the default value on creation for the last_error field.
 	chapter.DefaultLastError = chapterDescLastError.Default.(string)
 	// chapterDescErrorCategory is the schema descriptor for error_category field.
-	chapterDescErrorCategory := chapterFields[14].Descriptor()
+	chapterDescErrorCategory := chapterFields[15].Descriptor()
 	// chapter.DefaultErrorCategory holds the default value on creation for the error_category field.
 	chapter.DefaultErrorCategory = chapterDescErrorCategory.Default.(string)
 	// chapterDescRead is the schema descriptor for read field.
-	chapterDescRead := chapterFields[15].Descriptor()
+	chapterDescRead := chapterFields[16].Descriptor()
 	// chapter.DefaultRead holds the default value on creation for the read field.
 	chapter.DefaultRead = chapterDescRead.Default.(bool)
 	// chapterDescLastReadPage is the schema descriptor for last_read_page field.
-	chapterDescLastReadPage := chapterFields[16].Descriptor()
+	chapterDescLastReadPage := chapterFields[17].Descriptor()
 	// chapter.DefaultLastReadPage holds the default value on creation for the last_read_page field.
 	chapter.DefaultLastReadPage = chapterDescLastReadPage.Default.(int)
 	// chapterDescID is the schema descriptor for id field.

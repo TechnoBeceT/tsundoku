@@ -84,6 +84,9 @@ const props = withDefaults(defineProps<{
   coolingDownSources?: number
   /** The live per-source status strip (sources downloading / cooling right now). */
   sourceStatuses?: SourceStatus[]
+  prioritySnapshots?: { seriesId: string; seriesTitle: string; remaining: number }[]
+  priorityBusyIds?: string[]
+  priorityError?: string
 }>(), {
   activeTab: 'active',
   downloadCycle: null,
@@ -101,6 +104,9 @@ const props = withDefaults(defineProps<{
   runError: '',
   coolingDownSources: 0,
   sourceStatuses: () => [],
+  prioritySnapshots: () => [],
+  priorityBusyIds: () => [],
+  priorityError: '',
 })
 
 const emit = defineEmits<{
@@ -120,6 +126,7 @@ const emit = defineEmits<{
   'run-now': []
   /** Open the source-health view (from the Active-tab cooling-down banner). */
   'open-health': []
+  'set-priority': [seriesId: string, enabled: boolean]
 }>()
 
 // ---- Local view state (presentation only, never round-trips) ----------------
@@ -181,6 +188,18 @@ const queuedRows = computed(() => {
   if (upgradesOnly.value) list = list.filter((i) => i.state === 'upgrade_available')
   return applySearch(list)
 })
+
+const queuedGroups = computed(() => {
+  const groups = new Map<string, { seriesId: string; title: string; items: DownloadItem[] }>()
+  for (const row of queuedRows.value) {
+    const group = groups.get(row.seriesId) ?? { seriesId: row.seriesId, title: row.seriesTitle, items: [] }
+    group.items.push(row)
+    groups.set(row.seriesId, group)
+  }
+  return [...groups.values()]
+})
+const priorityRemaining = (id: string): number => props.prioritySnapshots.find(snapshot => snapshot.seriesId === id)?.remaining ?? 0
+const dormantPriorities = computed(() => props.prioritySnapshots.filter(snapshot => !queuedGroups.value.some(group => group.seriesId === snapshot.seriesId)))
 
 // ---- Honest cycle pill: deferral summary ------------------------------------
 // A shared ticking clock so the summary drops elapsed cooldowns and the pill's ETA
@@ -408,6 +427,15 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           </div>
         </div>
 
+        <p class="queued-priority-note">Priority covers the chapters queued now. Active downloads continue; source limits and cooldowns still apply.</p>
+        <ErrorBanner v-if="priorityError" :message="priorityError" />
+        <div v-if="dormantPriorities.length" class="queued-priorities">
+          <div v-for="snapshot in dormantPriorities" :key="snapshot.seriesId" class="queued-series__header">
+            <span class="queued-series__title">{{ snapshot.seriesTitle }}</span>
+            <span class="queued-series__status">Priority · {{ snapshot.remaining }} remaining · waiting</span>
+            <AppButton variant="mini" size="sm" :loading="priorityBusyIds.includes(snapshot.seriesId)" :disabled="priorityBusyIds.includes(snapshot.seriesId)" @click="emit('set-priority', snapshot.seriesId, false)">Cancel priority</AppButton>
+          </div>
+        </div>
         <div class="downloads__list">
           <EmptyState
             v-if="queuedRows.length === 0"
@@ -424,8 +452,16 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
           </EmptyState>
 
           <div v-else class="rows">
+            <section v-for="group in queuedGroups" :key="group.seriesId" class="queued-series">
+              <div class="queued-series__header">
+                <span class="queued-series__title">{{ group.title }}</span>
+                <span v-if="priorityRemaining(group.seriesId)" class="queued-series__status" role="status">Priority · {{ priorityRemaining(group.seriesId) }} remaining</span>
+                <AppButton variant="mini" size="sm" :loading="priorityBusyIds.includes(group.seriesId)" :disabled="priorityBusyIds.includes(group.seriesId)" @click="emit('set-priority', group.seriesId, priorityRemaining(group.seriesId) === 0)">
+                  {{ priorityRemaining(group.seriesId) ? 'Cancel priority' : 'Prioritize queued chapters' }}
+                </AppButton>
+              </div>
             <ChapterDownloadRow
-              v-for="row in queuedRows"
+              v-for="row in group.items"
               :key="row.chapterId"
               :item="row"
               @open-series="emit('open-series', $event)"
@@ -454,6 +490,7 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
                 </span>
               </template>
             </ChapterDownloadRow>
+            </section>
           </div>
         </div>
       </template>
@@ -480,6 +517,12 @@ const skeletons = Array.from({ length: 5 }, (_, i) => i)
 </template>
 
 <style scoped>
+.queued-series__header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-base); }
+.queued-series__title { flex: 1 1 12rem; font-weight: var(--weight-semibold); overflow-wrap: anywhere; }
+.queued-series__status, .queued-priority-note { color: var(--muted); font-size: var(--text-xs); }
+.queued-priority-note { padding: 0 var(--space-base) var(--space-sm); }
+.queued-series { border-top: 1px solid var(--border); }
+
 /* The old QCAT-231 letterbox (`height: calc(100dvh - 64px)` + a flex-fill chain
  * bounding `.downloads__body`/`.downloads__list` into an inner-scroll region)
  * was experience drift (§0.1): on a large screen the owner was working inside a

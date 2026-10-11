@@ -101,6 +101,11 @@ func FirstDownloadedAt(v time.Time) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldFirstDownloadedAt, v))
 }
 
+// DownloadPriority applies equality check predicate on the "download_priority" field. It's identical to DownloadPriorityEQ.
+func DownloadPriority(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldDownloadPriority, v))
+}
+
 // Retries applies equality check predicate on the "retries" field. It's identical to RetriesEQ.
 func Retries(v int) predicate.Chapter {
 	return predicate.Chapter(sql.FieldEQ(FieldRetries, v))
@@ -584,6 +589,16 @@ func FirstDownloadedAtIsNil() predicate.Chapter {
 // FirstDownloadedAtNotNil applies the NotNil predicate on the "first_downloaded_at" field.
 func FirstDownloadedAtNotNil() predicate.Chapter {
 	return predicate.Chapter(sql.FieldNotNull(FieldFirstDownloadedAt))
+}
+
+// DownloadPriorityEQ applies the EQ predicate on the "download_priority" field.
+func DownloadPriorityEQ(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldEQ(FieldDownloadPriority, v))
+}
+
+// DownloadPriorityNEQ applies the NEQ predicate on the "download_priority" field.
+func DownloadPriorityNEQ(v bool) predicate.Chapter {
+	return predicate.Chapter(sql.FieldNEQ(FieldDownloadPriority, v))
 }
 
 // RetriesEQ applies the EQ predicate on the "retries" field.

@@ -635,6 +635,7 @@ type serverShutdowner interface {
 
 type runtimeRetryShutdowner interface {
 	ShutdownRuntimeRetry(context.Context) error
+	ShutdownDownloads(context.Context) error
 }
 
 type runtimeConvergenceRunner interface {
@@ -706,6 +707,14 @@ func gracefulShutdown(e serverShutdowner, convergence runtimeConvergenceShutdown
 		return false
 	}
 	cancelRetry()
+
+	downloadCtx, cancelDownloads := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := runner.ShutdownDownloads(downloadCtx); err != nil {
+		log.Printf("tsundoku: chapter scheduler shutdown: %v", err)
+		cancelDownloads()
+		return false
+	}
+	cancelDownloads()
 
 	if err := engineHostLauncher.Close(); err != nil {
 		log.Printf("tsundoku: engine-host launcher close: %v", err)

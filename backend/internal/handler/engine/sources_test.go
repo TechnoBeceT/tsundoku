@@ -21,6 +21,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/pkg/auth"
 	"github.com/technobecet/tsundoku/internal/settings"
 	"github.com/technobecet/tsundoku/internal/sourcegate"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 )
 
 // sourcesCap is the fixed per-source download-concurrency cap the test wires, so
@@ -42,7 +43,8 @@ func newSourcesEnv(t *testing.T) *sourcesEnv {
 	authSvc := auth.NewService(testSecret)
 	static := settings.Static{DownloadConc: sourcesCap}
 	h := handler.NewHandler(apkcache.New(t.TempDir()), client).
-		WithSourceStatus(downloads.NewService(client), sourcegate.NewService(client, static), static)
+		WithSourceStatus(downloads.NewService(client), sourcegate.NewService(client, static), static).
+		WithSourceCaps(sourcethroughput.NewService(client, static))
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.ErrorHandler
@@ -162,5 +164,74 @@ func assertCoolingRow(t *testing.T, cool handler.SourceStatusDTO) {
 	}
 	if cool.Reason != "rate_limit" {
 		t.Errorf("The Blank reason = %q, want rate_limit", cool.Reason)
+	}
+}
+
+func TestSources_EffectivePersistedSourceCap(t *testing.T) {
+	env := newSourcesEnv(t)
+	ctx := context.Background()
+	s := env.client.Series.Create().SetTitle("Comix cap").SetSlug("comix-cap").SaveX(ctx)
+	sp := env.client.SeriesProvider.Create().SetSeries(s).SetProvider("7537715367149829912").SetProviderName("Comix").SetImportance(10).SaveX(ctx)
+	env.client.ProviderChapter.Create().SetSeriesProvider(sp).SetChapterKey("1").SetURL("https://example.test/1").SaveX(ctx)
+	env.client.Chapter.Create().SetSeries(s).SetChapterKey("1").SetState(entchapter.StateDownloading).SaveX(ctx)
+	env.client.SourceCircuitState.Create().SetSourceKey("Inherited").SetCooldownUntil(time.Now().Add(time.Hour)).SaveX(ctx)
+	svc := sourcethroughput.NewService(env.client, settings.Static{DownloadConc: sourcesCap})
+	assertEffectiveCaps(t, ctx, env, svc)
+}
+
+func assertEffectiveCaps(t *testing.T, ctx context.Context, env *sourcesEnv, svc *sourcethroughput.Service) {
+	t.Helper()
+	for _, want := range []int{3, 2, sourcesCap} {
+		assertEffectiveCap(t, ctx, env, svc, want)
+	}
+}
+func assertEffectiveCap(t *testing.T, ctx context.Context, env *sourcesEnv, svc *sourcethroughput.Service, want int) {
+	t.Helper()
+	patch := sourcethroughput.Patch{DownloadConcurrency: sourcethroughput.Set(want)}
+	if want == sourcesCap {
+		patch.DownloadConcurrency = sourcethroughput.Clear[int]()
+	}
+	if _, err := svc.Update(ctx, 7537715367149829912, patch); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.get(t, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var rows []handler.SourceStatusDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows=%+v", rows)
+	}
+	if rows[0].SourceKey != "Comix" || rows[0].ActiveCount != 1 || rows[0].Cap != want || rows[1].Cap != sourcesCap {
+		t.Fatalf("rows=%+v want cap=%d", rows, want)
+	}
+}
+
+func TestSources_EffectivePersistedSourceCap_TrimsProviderIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, provider, key string }{
+		{" Comix ", "7537715367149829912", "Comix"},
+		{"\t\u00a0Comix\u2003\n", "7537715367149829912", "Comix"},
+		{"", "\t\u00a07537715367149829912\u2003\n", "7537715367149829912"},
+	} {
+		t.Run(tc.key+tc.name, func(t *testing.T) {
+			env := newSourcesEnv(t)
+			ctx := context.Background()
+			s := env.client.Series.Create().SetTitle("Padded Comix").SetSlug("padded-comix").SaveX(ctx)
+			sp := env.client.SeriesProvider.Create().SetSeries(s).SetProvider(tc.provider).SetProviderName(tc.name).SetImportance(10).SaveX(ctx)
+			env.client.ProviderChapter.Create().SetSeriesProvider(sp).SetChapterKey("1").SetURL("https://example.test/1").SaveX(ctx)
+			env.client.Chapter.Create().SetSeries(s).SetChapterKey("1").SetState(entchapter.StateDownloading).SaveX(ctx)
+			env.client.SourceThroughputPolicy.Create().SetSourceID(7537715367149829912).SetDownloadConcurrency(3).SaveX(ctx)
+			rec := env.get(t, true)
+			var rows []handler.SourceStatusDTO
+			if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 || rows[0].SourceKey != tc.key || rows[0].Cap != 3 {
+				t.Fatalf("rows=%+v, want canonical %q cap3", rows, tc.key)
+			}
+		})
 	}
 }

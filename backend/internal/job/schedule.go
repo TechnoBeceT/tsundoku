@@ -18,23 +18,17 @@ type Schedule struct {
 
 // LoopSchedule is one periodic loop's schedule state.
 //
-// # The NextRunAt contract (read this before rendering a countdown)
+// # The NextRunAt contract
 //
-// NextRunAt is the EARLIEST instant the next cycle may start: the start of the
-// most recent cycle plus the interval that was in force when it started. Because
-// the interval is a TRUE PERIOD measured from the previous cycle's START, this
-// instant can already be IN THE PAST while Running is true — that is what an
-// overrunning cycle looks like (a 90s period with a 113s cycle), and it is
-// reported honestly rather than papered over with a fabricated future timestamp.
-// A past NextRunAt means "due now": the next cycle starts the moment the current
-// one returns (the tick is collapsed, never queued).
-//
-// NextRunAt is the zero Time when the loop is not scheduled at all — it was never
-// started, or its context has been cancelled and the goroutine has exited.
+// Refresh reports the previous sweep start plus its interval. Download reports
+// the earliest source-window renewal deadline while work is active, or the next
+// discovery opportunity while idle. Sources renew independently: an overdue busy
+// source does not prevent another idle source from starting. Each physical source
+// has at most one active window, and all windows share one global fetch bound.
+// NextRunAt is zero only when the corresponding coordinator is unscheduled.
 type LoopSchedule struct {
-	// Running reports whether a cycle is executing RIGHT NOW. Cycles never
-	// overlap: each loop runs its cycles on a single goroutine, so a tick that
-	// lands while Running is true is skipped rather than run concurrently.
+	// Running reports an active refresh sweep or any active download/upgrade
+	// source window. Download windows from different sources may overlap.
 	Running bool
 	// NextRunAt is the earliest instant the next cycle may start. See the type
 	// doc — it may be in the past (due/overdue) and is zero when unscheduled.

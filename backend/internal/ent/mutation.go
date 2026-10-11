@@ -843,6 +843,7 @@ type ChapterMutation struct {
 	filename                *string
 	download_date           *time.Time
 	first_downloaded_at     *time.Time
+	download_priority       *bool
 	retries                 *int
 	addretries              *int
 	next_attempt_at         *time.Time
@@ -1467,6 +1468,42 @@ func (m *ChapterMutation) ResetFirstDownloadedAt() {
 	delete(m.clearedFields, chapter.FieldFirstDownloadedAt)
 }
 
+// SetDownloadPriority sets the "download_priority" field.
+func (m *ChapterMutation) SetDownloadPriority(b bool) {
+	m.download_priority = &b
+}
+
+// DownloadPriority returns the value of the "download_priority" field in the mutation.
+func (m *ChapterMutation) DownloadPriority() (r bool, exists bool) {
+	v := m.download_priority
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDownloadPriority returns the old "download_priority" field's value of the Chapter entity.
+// If the Chapter object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ChapterMutation) OldDownloadPriority(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDownloadPriority is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDownloadPriority requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDownloadPriority: %w", err)
+	}
+	return oldValue.DownloadPriority, nil
+}
+
+// ResetDownloadPriority resets all changes to the "download_priority" field.
+func (m *ChapterMutation) ResetDownloadPriority() {
+	m.download_priority = nil
+}
+
 // SetRetries sets the "retries" field.
 func (m *ChapterMutation) SetRetries(i int) {
 	m.retries = &i
@@ -1886,7 +1923,7 @@ func (m *ChapterMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ChapterMutation) Fields() []string {
-	fields := make([]string, 0, 17)
+	fields := make([]string, 0, 18)
 	if m.series != nil {
 		fields = append(fields, chapter.FieldSeriesID)
 	}
@@ -1916,6 +1953,9 @@ func (m *ChapterMutation) Fields() []string {
 	}
 	if m.first_downloaded_at != nil {
 		fields = append(fields, chapter.FieldFirstDownloadedAt)
+	}
+	if m.download_priority != nil {
+		fields = append(fields, chapter.FieldDownloadPriority)
 	}
 	if m.retries != nil {
 		fields = append(fields, chapter.FieldRetries)
@@ -1966,6 +2006,8 @@ func (m *ChapterMutation) Field(name string) (ent.Value, bool) {
 		return m.DownloadDate()
 	case chapter.FieldFirstDownloadedAt:
 		return m.FirstDownloadedAt()
+	case chapter.FieldDownloadPriority:
+		return m.DownloadPriority()
 	case chapter.FieldRetries:
 		return m.Retries()
 	case chapter.FieldNextAttemptAt:
@@ -2009,6 +2051,8 @@ func (m *ChapterMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldDownloadDate(ctx)
 	case chapter.FieldFirstDownloadedAt:
 		return m.OldFirstDownloadedAt(ctx)
+	case chapter.FieldDownloadPriority:
+		return m.OldDownloadPriority(ctx)
 	case chapter.FieldRetries:
 		return m.OldRetries(ctx)
 	case chapter.FieldNextAttemptAt:
@@ -2101,6 +2145,13 @@ func (m *ChapterMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetFirstDownloadedAt(v)
+		return nil
+	case chapter.FieldDownloadPriority:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDownloadPriority(v)
 		return nil
 	case chapter.FieldRetries:
 		v, ok := value.(int)
@@ -2343,6 +2394,9 @@ func (m *ChapterMutation) ResetField(name string) error {
 		return nil
 	case chapter.FieldFirstDownloadedAt:
 		m.ResetFirstDownloadedAt()
+		return nil
+	case chapter.FieldDownloadPriority:
+		m.ResetDownloadPriority()
 		return nil
 	case chapter.FieldRetries:
 		m.ResetRetries()

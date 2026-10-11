@@ -825,6 +825,25 @@ components:
           items:
             $ref: "#/components/schemas/ProviderRank"
 
+    DownloadPriorityStatus:
+      type: object
+      required: [remaining]
+      properties:
+        remaining:
+          type: integer
+          minimum: 0
+          description: Chapters remaining in the fixed priority snapshot, including waiting or dormant members.
+    DownloadPrioritySnapshot:
+      allOf:
+        - $ref: "#/components/schemas/DownloadPriorityStatus"
+        - type: object
+          required: [seriesId, seriesTitle]
+          properties:
+            seriesId:
+              type: string
+              format: uuid
+            seriesTitle:
+              type: string
     DownloadChapter:
       type: object
       required:
@@ -2243,31 +2262,32 @@ components:
     CycleSchedule:
       type: object
       description: |
-        One background loop's schedule. The interval is a TRUE PERIOD measured from
-        the previous cycle's START, so `nextRunAt` can already have passed while
-        `running` is true (an overrunning cycle) — it is reported honestly rather
-        than replaced with a fabricated future timestamp, and `overdue` says so.
-        Cycles never overlap: a tick landing mid-cycle is skipped, never queued.
+        One background coordinator's schedule. Refresh sweeps never overlap and
+        use a start-based interval. Download sources have independent start-based
+        windows: different sources may overlap, but one source never overlaps
+        itself. `nextRunAt` may have passed while a slow source is still running;
+        that does not prevent another idle source from renewing its allowance.
       required: [running, nextRunAt, overdue]
       properties:
         running:
           type: boolean
-          description: Whether a cycle is executing right now.
+          description: Whether a refresh sweep or any download/upgrade source window is executing right now.
           example: true
         nextRunAt:
           type: [string, "null"]
           format: date-time
           description: |
-            The EARLIEST instant the next cycle may start (the most recent cycle's
-            start + the configured interval). May be in the past — see `overdue`.
+            The earliest source-window renewal deadline for active downloads,
+            or the next discovery opportunity while idle. Refresh uses its last
+            sweep start plus the configured interval. May be in the past.
             Null when the loop is not scheduled at all: it was never started, or
             its context was cancelled and the goroutine has exited.
           example: "2026-07-25T12:01:30Z"
         overdue:
           type: boolean
           description: |
-            True when nextRunAt is known and has already passed: the next cycle is
-            due (it starts the moment the current one finishes, if any). Always
+            True when nextRunAt is known and has already passed. A busy download
+            source renews after it finishes; other sources proceed independently. Always
             false when nextRunAt is null — "nothing is planned" is not "late".
           example: false
 
@@ -8291,6 +8311,110 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/downloads/priorities:
+    get:
+      operationId: listDownloadPriorities
+      summary: List pending queued-series priority snapshots
+      tags: [downloads]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Pending snapshots, including dormant members outside activity pages.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DownloadPrioritySnapshot"
+        "401":
+          description: Missing or invalid owner session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /api/series/{id}/download-priority:
+    post:
+      operationId: enableDownloadPriority
+      summary: Prioritize current queued chapters of a series
+      description: >-
+        Captures wanted, failed and upgrade_available chapters only. Repeated calls while members remain do not extend the snapshot. Already launched jobs continue; priority applies at the next scheduler launch slot without resetting source allowance, retry budgets, pause or cooldown. Multiple prioritized series share fair rotation. New chapters remain ordinary. Snapshot survives restart and retries, including readable failed upgrade fallback, until success, applicable budget exhaustion or explicit cancellation.
+      tags: [downloads]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Remaining fixed-snapshot membership after the action.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadPriorityStatus"
+        "400":
+          description: Malformed series identifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid owner session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: cancelDownloadPriority
+      summary: Cancel a series priority snapshot
+      description: >-
+        Clears only scheduling priority membership. Chapter states, retry budgets, readable files and active jobs are preserved.
+      tags: [downloads]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Remaining fixed-snapshot membership after the action.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadPriorityStatus"
+        "400":
+          description: Malformed series identifier.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid owner session.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Unknown series.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /api/downloads/run:
     post:
       operationId: runDownloads
@@ -9620,12 +9744,12 @@ paths:
         connects mid-cycle sees no SSE boundary event and can only guess, which is
         how a running cycle came to be displayed as "Idle".
 
-        `jobs.download_interval` / `jobs.refresh_interval` are TRUE PERIODS
-        measured from the previous cycle's START, so `nextRunAt` may already be in
-        the PAST while `running` is true — that is what an overrunning cycle looks
-        like, and `overdue` flags it. The missed tick is never queued: exactly one
-        cycle starts as soon as the current one returns. Compute a countdown
-        against `serverTime`, not the browser clock.
+        `jobs.download_interval` applies independently to each physical source's
+        start-based window. Downloads and upgrades share that source's allowance;
+        a slow source does not delay another source's renewal. Refresh remains a
+        non-overlapping start-based sweep. Missed renewals collapse and never queue
+        overlapping work for the same source. `nextRunAt` may be in the past while
+        a source or sweep is running. Compute countdowns against `serverTime`.
       tags:
         - engine
       security:

@@ -8,12 +8,10 @@
 //   - disk.Reconcile (lossless library scan, Task 7)
 //
 // It adds only the orchestration layer:
-//   - RunDownloadCycle: one pass of RunOnce → DetectUpgrades → Upgrade per
-//     flagged chapter, with cycle-level SSE events.
-//   - Start / StartRefresh: goroutines that run their cycle on a TRUE PERIOD
-//     (period_loop.go) until the context is cancelled — a cycle starts every
-//     interval measured from the previous cycle's START, ticks landing mid-cycle
-//     are skipped, and cycles never overlap.
+//   - RunDownloadCycle: one bounded source-window drain with cycle-level events.
+//   - Start: independent, start-based source windows sharing one global fetch
+//     bound. A slow source does not delay discovery or another source's renewal.
+//   - StartRefresh: the non-overlapping true-period discovery loop.
 //   - SetRuntimeReconciler: a bounded durable runtime-intent scan dispatched
 //     asynchronously from that same download cadence through one epoch-owned,
 //     cap-1 worker. Multiple live Start loops share it, shutdown joins it, and
@@ -106,11 +104,19 @@ type Runner struct {
 	intervals  Intervals
 	// trigger requests an immediate download cycle. Buffered (cap 1) so a
 	// request coalesces: if one is already pending, further Trigger() calls are
-	// dropped. Drained only by the Start loop, so all cycles run in one
-	// goroutine and never overlap.
+	// dropped. The one admitted coordinator discovers ready work; physical-source
+	// windows never overlap themselves.
 	trigger chan struct{}
-	// notifier runs the best-effort new-readable-chapter pass at the end of each
-	// download cycle (internal/notify). Optional (nil when unset) and held as a
+	// downloadOwner serializes coordinator lifetimes, including manual drains.
+	// A second Start waits for the first owner's shutdown rather than creating
+	// another set of source/global permits.
+	downloadOwner    chan struct{}
+	downloadMu       sync.Mutex
+	downloadDone     chan struct{}
+	downloadCancel   context.CancelFunc
+	downloadStopping bool
+	// notifier runs the best-effort new-readable-chapter pass after a drain or
+	// a completed-work batch on the download cadence (internal/notify). Optional (nil when unset) and held as a
 	// narrow interface so job never imports internal/notify. Set via SetNotifier.
 	notifier interface {
 		NotifyNewChapters(context.Context) error
@@ -194,163 +200,34 @@ func (r *Runner) SetRuntimeReconciler(reconciler interface {
 // periods, read at the top of each loop iteration (hot reload).
 func NewRunner(dispatcher *download.Dispatcher, client *ent.Client, hub *sse.Hub, storage string, intervals Intervals) *Runner {
 	return &Runner{
-		dispatcher: dispatcher,
-		client:     client,
-		hub:        hub,
-		storage:    storage,
-		intervals:  intervals,
-		trigger:    make(chan struct{}, 1),
+		dispatcher:    dispatcher,
+		client:        client,
+		hub:           hub,
+		storage:       storage,
+		intervals:     intervals,
+		trigger:       make(chan struct{}, 1),
+		downloadOwner: make(chan struct{}, 1),
 	}
 }
 
-// RunDownloadCycle executes one full download + upgrade DRAIN pass:
-//  1. Broadcasts cycle.start.
-//  2. Drains the dispatcher in BOUNDED PASSES (drainDownloads) — each call to
-//     dispatcher.RunOnce dispatches only a bounded batch per source, so the
-//     drain loop re-scans the actionable-chapter set between passes and picks
-//     up chapters that became wanted mid-cycle (e.g. a fresh adopt) instead of
-//     waiting out one giant unbounded drain.
-//  3. Calls dispatcher.UpgradeAll UNCONDITIONALLY — it processes every chapter
-//     already in upgrade_available. Detection (which flags downloaded chapters
-//     into upgrade_available) is DELIBERATELY NOT run here: it is a library-wide
-//     read-only scan whose cost scales with library size, so running it every
-//     download cycle blocked the actual downloads (GAP-112). Detection now runs
-//     once after each discovery sweep instead (see runRefreshSweep) — refresh is
-//     what surfaces the new provider chapters that create upgrade candidates.
-//     UpgradeAll still runs every cycle so a chapter flagged by an earlier
-//     detection whose target source was then down converges once it recovers; it
-//     early-returns after one indexed query (zero source calls) when nothing is
-//     upgrade_available, so the unconditional call is a cheap no-op.
-//  4. Calls dispatcher.DetectSupersededParts — fractional-part suppression:
-//     supersedes split parts of a downloaded whole (and reverts when the whole
-//     is gone or the setting is off).
-//  5. Broadcasts cycle.done (with error info if any prior step failed).
-//
-// cycle.start/cycle.done fire exactly ONCE per RunDownloadCycle call — NOT once
-// per bounded pass — so the SSE cadence is unchanged even though downloading now
-// happens in several internal passes. CycleEvent.Flagged is no longer set by this
-// cycle (detection moved out); it stays zero (omitted) here.
-//
-// Per-chapter errors are handled inside the dispatcher and upgrade engine
-// (they record last_error and transition state machine appropriately).
-// RunDownloadCycle only propagates hard infrastructure errors that prevented
-// the cycle from completing at all.
+// RunDownloadCycle performs one bounded drain with independent source windows.
+// Downloads and upgrades share each source's allowance; newly wanted work from
+// other sources can join while an existing window is still running. Periodic
+// allowance renewal belongs to Start, so this manual drain remains bounded.
 func (r *Runner) RunDownloadCycle(ctx context.Context) error {
-	r.broadcastCycle("cycle.start", CycleEvent{})
-
-	slog.InfoContext(ctx, "job.Runner: download cycle started")
-
-	cycleCtx, err := r.dispatcher.BeginCycle(ctx)
-	if err != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
-		return fmt.Errorf("job.Runner.RunDownloadCycle: source throughput policy: %w", err)
-	}
-	ctx = cycleCtx
-
-	// Size the ONE global concurrency semaphore for this cycle from the runtime
-	// tunable (read once, clamped to >= 1 by the dispatcher accessor). It bounds the
-	// TOTAL number of concurrent chapter fetches across ALL sources — the aggregate
-	// ceiling the per-source cap cannot express (with N active sources the per-source
-	// caps alone permit download_concurrency×N fetches, which overwhelms a shared
-	// solver). The SAME semaphore is threaded into every download drain pass AND the
-	// upgrade pass below, so downloads and upgrades draw from one aggregate budget
-	// this cycle.
-	globalSem := semaphore.NewWeighted(int64(r.dispatcher.MaxConcurrentDownloads(ctx)))
-
-	// Step 1: drain all actionable chapters via bounded passes. It returns the
-	// per-source dispatch tally for the cycle (canonicalSourceKey → chapters
-	// fetched), which the upgrade pass consumes so downloads + upgrades share ONE
-	// per-source per-cycle fetch budget (an upgrade fetch hits the same protected
-	// endpoint as a download fetch).
-	consumed, err := r.drainDownloads(ctx, globalSem)
-	if err != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
-		return fmt.Errorf("job.Runner.RunDownloadCycle: RunOnce: %w", err)
-	}
-
-	// Step 2: upgrade every chapter currently in upgrade_available. Called
-	// UNCONDITIONALLY: the set is flagged by the post-refresh detection pass, and a
-	// chapter flagged on an earlier pass whose target source was then down must
-	// still be re-driven here once it recovers. UpgradeAll early-returns after one
-	// indexed query (zero source calls) when nothing is upgrade_available.
-	upgraded, err := r.upgradeAll(ctx, consumed, globalSem)
-	if err != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Error: err.Error()})
-		return fmt.Errorf("job.Runner.RunDownloadCycle: upgrade: %w", err)
-	}
-
-	// Step 3: fractional-part suppression — supersede split parts of downloaded
-	// wholes (and revert when the whole is gone or the setting is off).
-	if _, _, serr := r.dispatcher.DetectSupersededParts(ctx); serr != nil {
-		r.broadcastCycle("cycle.done", CycleEvent{Upgraded: upgraded, Error: serr.Error()})
-		return fmt.Errorf("job.Runner.RunDownloadCycle: DetectSupersededParts: %w", serr)
-	}
-
-	// Step 4: best-effort new-readable-chapter notification. It keys on
-	// first_downloaded_at (upgrade-safe) and never affects the cycle result — a
-	// notify failure is logged inside the pass and swallowed here.
-	if r.notifier != nil {
-		if nerr := r.notifier.NotifyNewChapters(ctx); nerr != nil {
-			slog.WarnContext(ctx, "job.Runner: notify pass error (ignored)", "err", nerr)
-		}
-	}
-
-	r.broadcastCycle("cycle.done", CycleEvent{Upgraded: upgraded})
-	slog.InfoContext(ctx, "job.Runner: download cycle finished",
-		"upgraded", upgraded,
-	)
-	return nil
+	return r.runSourceSchedule(ctx, false)
 }
 
-// drainDownloads repeatedly calls dispatcher.RunOnce — each call is ONE BOUNDED
-// PASS that dispatches at most a batch per source — until a pass dispatches
-// nothing (dispatched == 0) or ctx is cancelled. This keeps a single
-// RunDownloadCycle call single-threaded and non-overlapping (the caller still
-// serialises cycles) while letting a mid-cycle change to the actionable-chapter
-// set (e.g. a fresh adopt inserting new wanted chapters) join within the same
-// cycle: because RunOnce re-queries chapter.WantedChapters on every pass, a
-// chapter that became wanted after pass N is visible to pass N+1.
-//
-// NO BUSY-SPIN: a pass dispatches 0 exactly when every remaining wanted/failed
-// chapter has no live candidate this pass (no source, all sources exhausted, or
-// every source on cooldown) — cooldown chapters are simply not re-selected until
-// their backoff elapses on a LATER cycle, so the loop cannot spin forever on
-// them. A hard error from RunOnce (chapter-list load failure) stops the drain
-// immediately and is returned to the caller.
-//
-// now is snapshotted ONCE for the whole cycle (not re-read per pass) and passed
-// to every RunOnceAt call: without this, a slow-timeout source's per-source
-// backoff (next_attempt_at) set on an early pass could already be in the past
-// by a later pass of the SAME cycle, re-qualifying the source and burning its
-// whole retry budget in one cycle instead of one attempt per cycle.
-//
-// It returns the cycle-scoped per-source dispatch tally (canonicalSourceKey →
-// chapters dispatched this cycle). The same map is passed to EVERY RunOnceAt pass
-// (so a source is capped at batchPerSource(concurrency) dispatches across the
-// whole cycle, not merely per pass) and then handed to the upgrade pass, which
-// draws upgrades from the REMAINDER of that same per-source budget. Because the
-// cap is per source, other sources are unaffected and the drain still terminates:
-// a pass dispatches 0 exactly when every source is at its budget or has no live
-// candidate.
-//
-// globalSem is the cycle's single all-sources concurrency semaphore, forwarded
-// unchanged to every RunOnceAt pass so the aggregate fetch cap spans the whole
-// drain (and, reused by the upgrade pass, the whole cycle).
-func (r *Runner) drainDownloads(ctx context.Context, globalSem *semaphore.Weighted) (map[string]int, error) {
-	now := time.Now()
-	consumed := make(map[string]int)
-	for {
-		dispatched, err := r.dispatcher.RunOnceAt(ctx, now, consumed, globalSem)
-		if err != nil {
-			return consumed, err
-		}
-		if dispatched == 0 {
-			return consumed, nil
-		}
-		if ctx.Err() != nil {
-			return consumed, nil
+func (r *Runner) finishDownloadWork(ctx context.Context) error {
+	if _, _, err := r.dispatcher.DetectSupersededParts(ctx); err != nil {
+		return err
+	}
+	if r.notifier != nil {
+		if err := r.notifier.NotifyNewChapters(ctx); err != nil {
+			slog.WarnContext(ctx, "job.Runner: notify pass error (ignored)", "err", err)
 		}
 	}
+	return nil
 }
 
 // upgradeAll runs the convergence-upgrade pass over every chapter in
@@ -376,46 +253,17 @@ func (r *Runner) upgradeAll(ctx context.Context, downloadsConsumed map[string]in
 	return r.dispatcher.UpgradeAll(ctx, downloadsConsumed, globalSem)
 }
 
-// Start launches a background goroutine that calls RunDownloadCycle on a TRUE
-// PERIOD until ctx is cancelled: one cycle starts every jobs.download_interval
-// measured from the PREVIOUS CYCLE'S START (GAP-115). The interval is therefore
-// the cadence the owner configured, not a gap bolted onto the end of a cycle —
-// it used to be the latter, which turned a 90s setting into a ~203s real cadence
-// once cycles averaged 113s.
-//
-// A tick that would land while a cycle is still running is SKIPPED, never queued:
-// cycles run on this one goroutine, so they can never overlap, and missed ticks
-// collapse into a single immediate catch-up run. When cycles take longer than the
-// period they simply run back-to-back — the period caps how often a cycle STARTS.
-//
-// Each iteration re-reads the CURRENT download interval from the settings overlay
-// (intervals.DownloadInterval), so a runtime change to the cadence takes effect on
-// the very next wait — no restart, no captured ticker. Trigger() still forces an
-// immediate cycle and re-bases the schedule onto that cycle's start. Errors from
-// individual cycles are logged but do not stop the loop — a transient DB or
-// network failure should not kill the runner permanently. Start returns
-// immediately; the goroutine runs until ctx.Done() is closed.
-//
-// In main.go, Start is called in a background goroutine after pm.Start
-// succeeds (Suwayomi is ready). If Suwayomi fails to start, downloads are
-// simply suspended; the API server continues running. Reconcile does not use
-// the fetcher and is live since M1.
+// Start launches the source-window coordinator. Each idle physical source may
+// renew its allowance on its own start-based download interval; busy sources
+// never overlap. Coalesced triggers discover ready work while other sources run.
+// Refresh keeps its separate, non-overlapping periodLoop.
 func (r *Runner) Start(ctx context.Context) {
 	runtimeRegistration := r.startRuntimeRetry(ctx)
-	loop := periodLoop{
-		name:     "download",
-		interval: r.intervals.DownloadInterval,
-		trigger:  r.trigger,
-		run: func(ctx context.Context, triggered bool) {
-			r.runDownloadCycleLogging(ctx, triggered)
-		},
-		mark: r.schedule.markDownload,
-	}
 	go func() {
 		if runtimeRegistration != nil {
 			defer r.stopRuntimeRetry(runtimeRegistration)
 		}
-		loop.loop(ctx)
+		r.startSourceSchedule(ctx)
 	}()
 }
 
