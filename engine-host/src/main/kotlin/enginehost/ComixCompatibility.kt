@@ -231,7 +231,50 @@ internal object ComixCompatibility {
             if (getters.length > 1 || routes.length > 1) throw new Error('Ambiguous manga API');
             if (getters.length === 1 && routes.length === 1) {
                 const get = getters[0], route = routes[0];
-                mangaApi = { chapters: (id, params) => get(route(id), { params }) };
+                mangaApi = { chapters: async (id, params) => {
+                    const path = route(id);
+                    if (typeof XMLHttpRequest === 'undefined') return get(path, { params });
+                    const expected = new URL('/api/v1' + path, mainUrl.href);
+                    const prototype = XMLHttpRequest.prototype;
+                    const originalOpen = prototype.open;
+                    const listeners = new Map();
+                    let active = true, rejectCaptcha;
+                    const captcha = new Promise((_, reject) => { rejectCaptcha = reject; });
+                    const matches = url => url.origin === expected.origin && url.pathname === expected.pathname;
+                    // The site waits for CAPTCHA UI removed by the released chapter bootstrap.
+                    // Observe the completed transport, leaving the signed client's request intact.
+                    const guardedOpen = function (method, url, ...args) {
+                        const result = originalOpen.call(this, method, url, ...args);
+                        let target;
+                        try { target = new URL(url, location.href); } catch (_) { return result; }
+                        if (active && String(method).toUpperCase() === 'GET' && matches(target)) {
+                            const xhr = this;
+                            const completed = () => {
+                                try {
+                                    if (xhr.status !== 403 || !matches(new URL(xhr.responseURL, location.href)) ||
+                                        !(xhr.getResponseHeader('content-type') || '').toLowerCase().includes('application/json')) return;
+                                    const body = xhr.responseType === 'json' ? xhr.response :
+                                        !xhr.responseType || xhr.responseType === 'text' ? JSON.parse(xhr.responseText) : null;
+                                    if (body && typeof body === 'object' && !Array.isArray(body) && body.error === 'captcha_required') {
+                                        rejectCaptcha(new Error('Comix requires a human CAPTCHA verification'));
+                                    }
+                                } catch (_) { /* Other responses keep the signed client's error handling. */ }
+                            };
+                            xhr.addEventListener('loadend', completed);
+                            listeners.set(xhr, completed);
+                        }
+                        return result;
+                    };
+                    prototype.open = guardedOpen;
+                    try {
+                        return await Promise.race([get(path, { params }), captcha]);
+                    } finally {
+                        active = false;
+                        if (prototype.open === guardedOpen) prototype.open = originalOpen;
+                        for (const [xhr, listener] of listeners) xhr.removeEventListener('loadend', listener);
+                        listeners.clear();
+                    }
+                } };
                 break;
             }
         }

@@ -111,6 +111,43 @@ class ComixCompatibilityTest {
     }
 
     @Test
+    fun `released chapter callbacks reject a terminal captcha without waiting for site challenge`() {
+        for (version in listOf(44, 42, 43)) assertCaptchaResponse(version, false)
+    }
+
+    @Test
+    fun `released page callback rejects a terminal captcha without waiting for site challenge`() =
+        assertCaptchaResponse(44, true)
+
+    private fun assertCaptchaResponse(version: Int, pages: Boolean) {
+        val contextClass = Class.forName("org.graalvm.polyglot.Context")
+        val valueClass = Class.forName("org.graalvm.polyglot.Value")
+        val root = createTempDirectory("comix-captcha-response")
+        try {
+            val jar = root.resolve("fixture.jar")
+            if (version == 42) fixture(jar) else JarOutputStream(Files.newOutputStream(jar)).use { }
+            addChapterBootstrap(jar, releasedChapterTemplate(version))
+            ComixCompatibility.apply(jar, "eu.kanade.tachiyomi.extension.en.comix", "1.6.$version", 106000L + version)
+            val template = if (pages) java.nio.file.FileSystems.newFileSystem(jar).use { zip ->
+                val node = ClassNode().also { ClassReader(Files.readAllBytes(zip.getPath("/PageBootstrap.class"))).accept(it, 0) }
+                node.methods.single().instructions.toArray().filterIsInstance<LdcInsnNode>().joinToString("\u0001") { it.cst as String }
+            } else chapterTemplate(jar)
+            val slots = ArrayDeque(if (pages) listOf("pass", "reject") else listOf("\"xkry7\"", "\"https://comix.to/dist/main.js\"", "null", "pass", "reject"))
+            val script = template.split('\u0001').joinToString("") { fragment -> fragment + if (slots.isEmpty()) "" else slots.removeFirst() }
+            val context = contextClass.getMethod("create", Array<String>::class.java).invoke(null, arrayOf("js"))
+            try {
+                val bindings = contextClass.getMethod("getBindings", String::class.java).invoke(context, "js")
+                val put = valueClass.getMethod("putMember", String::class.java, Any::class.java)
+                put.invoke(bindings, "callbackScript", script)
+                put.invoke(bindings, "pageCallback", pages)
+                val eval = contextClass.getMethod("eval", String::class.java, CharSequence::class.java)
+                eval.invoke(context, "js", javaClass.getResource("/comix-captcha-response.js")!!.readText())
+                assertEquals("PASS", valueClass.getMethod("asString").invoke(eval.invoke(context, "js", "discoveryResult")), "official $version pages=$pages")
+            } finally { contextClass.getMethod("close").invoke(context) }
+        } finally { root.toFile().deleteRecursively() }
+    }
+
+    @Test
     fun `official 44 page callback uses signed raw response instead of parse observation`() {
         val root = createTempDirectory("comix-page-discovery")
         try {

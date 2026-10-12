@@ -121,6 +121,13 @@ alternate hosts, V3 flags and image processing remain in use. Discovery failures
 rejection bridge. Unexpected released script or DTO bytecode fails preparation. Other packages and versions bypass these corrections. Official package identity,
 version, source IDs and signer continuity remain unchanged, so normal official updates remain available.
 
+The signed client can leave a chapter request pending while it waits for human CAPTCHA UI that the
+chapter bootstrap does not mount. Feed and page callbacks observe only the matching same-origin GET
+transport. A completed HTTP 403 JSON response with `error: captcha_required` rejects through the
+existing bridge with a fixed human-verification message. This does not solve the challenge or expose
+its payload. Temporary observation hooks are removed after the getter completes or rejects; other
+requests and the signed client's request arguments and response handling remain unchanged.
+
 Existing installed jars are reused on startup and preference reload. After deploying this correction,
 use the existing prepared reinstall/update and activation flow with the official APK to regenerate
 its jar safely; restarting alone does not regenerate it. Activation publishes a new jar generation and
