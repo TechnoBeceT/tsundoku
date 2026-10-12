@@ -49,9 +49,9 @@ class RpcServer(
     private val ownsExecutors = executors == null
     private val rpcExecutors = executors ?: RpcExecutors()
     private val lifecycleLock = Any()
-    private val activeResponses = ConcurrentHashMap.newKeySet<ResponseGuard>()
-    private val frontDoorDispatches = ConcurrentHashMap.newKeySet<FrontDoorDispatch>()
-    private val submissions = ConcurrentHashMap.newKeySet<SubmittedExchange>()
+    private val activeResponses: MutableSet<ResponseGuard> = ConcurrentHashMap.newKeySet()
+    private val frontDoorDispatches: MutableSet<FrontDoorDispatch> = ConcurrentHashMap.newKeySet()
+    private val submissions: MutableSet<SubmittedExchange> = ConcurrentHashMap.newKeySet()
     private val stopped = CountDownLatch(1)
     private var stopping = false
 
@@ -177,9 +177,11 @@ class RpcServer(
             owner = !stopping
             if (owner) {
                 stopping = true
-                acceptedFrontDoor = frontDoorDispatches.toList()
-                acceptedTasks = submissions.toList()
-                acceptedResponses = activeResponses.toList()
+                // Completion can remove entries outside this lock. Collection copies use
+                // toArray, avoiding Kotlin toList's size-one check followed by iterator.next().
+                acceptedFrontDoor = ArrayList(frontDoorDispatches)
+                acceptedTasks = ArrayList(submissions)
+                acceptedResponses = ArrayList(activeResponses)
             } else {
                 acceptedFrontDoor = emptyList()
                 acceptedTasks = emptyList()

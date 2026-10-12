@@ -15,6 +15,7 @@ import java.net.http.HttpResponse
 import java.nio.file.Files
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
@@ -221,6 +222,46 @@ class RpcAdmissionAndShutdownTest {
             release.countDown()
             rpc.server.stop()
             executors.close()
+        }
+    }
+
+    /** Completed concurrent entries must not prevent shutdown from draining the remaining work. */
+    @Test
+    fun `server stop tolerates its last front door dispatch completing during snapshot`() =
+        assertStopWithCompletingRegistry("frontDoorDispatches")
+
+    @Test
+    fun `server stop tolerates its last submission completing during snapshot`() =
+        assertStopWithCompletingRegistry("submissions")
+
+    @Test
+    fun `server stop tolerates its last response completing during snapshot`() =
+        assertStopWithCompletingRegistry("activeResponses")
+
+    private fun assertStopWithCompletingRegistry(registry: String) {
+        val executors = testExecutors()
+        val workDir = Files.createTempDirectory("rpc-stop-snapshot").toFile()
+        val loader = ExtensionLoader(workDir)
+        val server = RpcServer(loader, ExtensionManager(loader, workDir), port = 0, executors = executors)
+        // A concurrent registry may report one entry, then become empty before iteration.
+        // Model that completed entry without relying on thread scheduling to hit the window.
+        val completedRegistry = object : AbstractSet<Any>() {
+            private val entries = ConcurrentHashMap.newKeySet<Any>().apply { add(Any()) }
+            override val size: Int get() = entries.size.also { entries.clear() }
+            override fun iterator(): Iterator<Any> {
+                entries.clear()
+                return entries.iterator()
+            }
+        }
+        val field = RpcServer::class.java.getDeclaredField(registry).apply { isAccessible = true }
+        try {
+            field.set(server, completedRegistry)
+            server.stop()
+            server.stop()
+            assertSchedulerOpen(executors.sourceScheduler)
+        } finally {
+            executors.close()
+            workDir.deleteRecursively()
         }
     }
 
