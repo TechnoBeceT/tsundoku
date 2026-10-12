@@ -25,6 +25,11 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.github.oshai.kotlinlogging.KotlinLogging
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.ConcurrentHashMap
 import okhttp3.ConnectionPool
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -126,6 +131,20 @@ private fun statusLabel(status: Int): String =
     }
 
 object SourceCalls {
+    /** Same-source/manga update exclusion; source identity and resolved seed URL define ownership. */
+    private val mangaUpdateGates = ConcurrentHashMap<MangaUpdateKey, MangaUpdateGate>()
+
+    private class MangaUpdateKey(val source: Source, val seedUrl: String) {
+        override fun equals(other: Any?): Boolean =
+            other is MangaUpdateKey && source === other.source && seedUrl == other.seedUrl
+        override fun hashCode(): Int = 31 * System.identityHashCode(source) + seedUrl.hashCode()
+    }
+
+    private class MangaUpdateGate {
+        val mutex = Mutex()
+        var users = 0
+    }
+
     /** Search the source; returns url-addressed manga entries. */
     fun search(
         source: Source,
@@ -585,7 +604,24 @@ object SourceCalls {
         require(address.isNotBlank()) { "malformed source candidate: missing source address" }
         val bare = SManga.create().apply { url = address; this.title = title }
         val (seed, resolvedMode) = selectMangaSeed(address, title, bare, addressMode, webUrl)
-        return Triple(seed, getMangaUpdate(seed, emptyList(), fetchDetails, fetchChapters), resolvedMode)
+        val key = MangaUpdateKey(this, seed.url)
+        // Register and retire users within the same keyed map operation. Splitting
+        // either step can remove a gate still held by a new caller and permit overlap.
+        val gate = requireNotNull(mangaUpdateGates.compute(key) { _, existing ->
+            (existing ?: MangaUpdateGate()).also { it.users++ }
+        })
+        return try {
+            gate.mutex.withLock {
+                currentCoroutineContext().ensureActive()
+                Triple(seed, getMangaUpdate(seed, emptyList(), fetchDetails, fetchChapters), resolvedMode)
+            }
+        } finally {
+            mangaUpdateGates.compute(key) { _, existing ->
+                check(existing === gate)
+                gate.users--
+                if (gate.users == 0) null else gate
+            }
+        }
     }
 
     private suspend fun Source.selectMangaSeed(address: String, title: String, bare: SManga, mode: AddressMode, webUrl: String?): Pair<SManga, AddressMode> =

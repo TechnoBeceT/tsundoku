@@ -82,6 +82,16 @@ sh vendor/solver/prepare_test.sh /path/to/pinned/Suwayomi-Server
 ./gradlew -PsuwayomiSrc=/path/to/pinned/Suwayomi-Server test installDist
 ```
 
+### Manga update concurrency
+
+Details, chapter/coverage reads and page-list hydration share the source's manga-update call.
+Updates for the same actual source instance and resolved seed URL run one at a time because
+some extensions reject overlapping updates for that manga. Different manga and source instances
+remain concurrent. A cancelled waiter never enters the source; an active call retains exclusion
+until the source actually returns, including when it ignores cancellation. Gate registration and
+retirement are atomic, and the final caller releases the source reference. Each request still
+executes its own update; no result cache or retry is introduced.
+
 ### Comix 1.6.42–1.6.44 compatibility
 
 The verified official APK is kept unchanged. During APK preparation, the derived JVM jar receives
