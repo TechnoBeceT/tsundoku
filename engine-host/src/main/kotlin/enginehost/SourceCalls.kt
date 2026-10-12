@@ -133,6 +133,8 @@ private fun statusLabel(status: Int): String =
 object SourceCalls {
     /** Same-source/manga update exclusion; source identity and resolved seed URL define ownership. */
     private val mangaUpdateGates = ConcurrentHashMap<MangaUpdateKey, MangaUpdateGate>()
+    // Separate phases prevent recursive acquisition when public and seed strings match.
+    private val mangaHydrationGates = ConcurrentHashMap<MangaUpdateKey, MangaUpdateGate>()
 
     private class MangaUpdateKey(val source: Source, val seedUrl: String) {
         override fun equals(other: Any?): Boolean =
@@ -153,7 +155,12 @@ object SourceCalls {
         cancellation: SourceCallCancellation = SourceCallCancellation(),
     ): SearchResponse =
         cancellation.run {
-            val result = source.getSearchManga(page, query, source.getFilterList())
+            suspend fun searchSource() = source.getSearchManga(page, query, source.getFilterList())
+            val publicUrl = if (source is HttpSource) query.toHttpUrlOrNull()?.toString() else null
+            val result = if (publicUrl == null) searchSource() else {
+                // URL search may update this manga inside the extension, just like hydration.
+                withMangaGate(mangaHydrationGates, MangaUpdateKey(source, publicUrl)) { searchSource() }
+            }
             SearchResponse(
                 manga = result.mangas.map { it.toEntryDto(source) },
                 hasNextPage = result.hasNextPage,
@@ -603,20 +610,49 @@ object SourceCalls {
     ): Triple<SManga, SMangaUpdate, AddressMode> {
         require(address.isNotBlank()) { "malformed source candidate: missing source address" }
         val bare = SManga.create().apply { url = address; this.title = title }
-        val (seed, resolvedMode) = selectMangaSeed(address, title, bare, addressMode, webUrl)
-        val key = MangaUpdateKey(this, seed.url)
+        suspend fun resolvedUpdate(): Triple<SManga, SMangaUpdate, AddressMode> {
+            val (seed, resolvedMode) = selectMangaSeed(address, title, bare, addressMode, webUrl)
+            return withMangaGate(mangaUpdateGates, MangaUpdateKey(this, seed.url)) {
+                Triple(seed, getMangaUpdate(seed, emptyList(), fetchDetails, fetchChapters), resolvedMode)
+            }
+        }
+        val publicUrl = mangaPublicIdentity(address, bare, addressMode, webUrl)
+        return if (publicUrl == null) resolvedUpdate() else {
+            // URL search can update the manga inside the extension, before returning its seed.
+            // Always acquire public identity before seed identity; no path reverses this order.
+            withMangaGate(mangaHydrationGates, MangaUpdateKey(this, publicUrl)) { resolvedUpdate() }
+        }
+    }
+
+    private fun Source.mangaPublicIdentity(address: String, bare: SManga, mode: AddressMode, webUrl: String?): String? {
+        if (this !is HttpSource) return null
+        return when (mode) {
+            AddressMode.DIRECT -> realMangaUrl(this, bare)
+            AddressMode.URL_SEARCH -> absoluteAddress(webUrl ?: address)
+            AddressMode.UNKNOWN -> {
+                if (!webUrl.isNullOrBlank() && realMangaUrl(this, bare) == webUrl) webUrl
+                else absoluteAddress(webUrl ?: address)
+            }
+        }
+    }
+
+    private suspend fun <T> withMangaGate(
+        gates: ConcurrentHashMap<MangaUpdateKey, MangaUpdateGate>,
+        key: MangaUpdateKey,
+        call: suspend () -> T,
+    ): T {
         // Register and retire users within the same keyed map operation. Splitting
         // either step can remove a gate still held by a new caller and permit overlap.
-        val gate = requireNotNull(mangaUpdateGates.compute(key) { _, existing ->
+        val gate = requireNotNull(gates.compute(key) { _, existing ->
             (existing ?: MangaUpdateGate()).also { it.users++ }
         })
         return try {
             gate.mutex.withLock {
                 currentCoroutineContext().ensureActive()
-                Triple(seed, getMangaUpdate(seed, emptyList(), fetchDetails, fetchChapters), resolvedMode)
+                call()
             }
         } finally {
-            mangaUpdateGates.compute(key) { _, existing ->
+            gates.compute(key) { _, existing ->
                 check(existing === gate)
                 gate.users--
                 if (gate.users == 0) null else gate

@@ -85,12 +85,20 @@ sh vendor/solver/prepare_test.sh /path/to/pinned/Suwayomi-Server
 ### Manga update concurrency
 
 Details, chapter/coverage reads and page-list hydration share the source's manga-update call.
-Updates for the same actual source instance and resolved seed URL run one at a time because
-some extensions reject overlapping updates for that manga. Different manga and source instances
-remain concurrent. A cancelled waiter never enters the source; an active call retains exclusion
-until the source actually returns, including when it ignores cancellation. Gate registration and
-retirement are atomic, and the final caller releases the source reference. Each request still
-executes its own update; no result cache or retry is introduced.
+An exact source-owned public URL excludes the whole hydration/update operation because URL search
+can perform an update inside the extension before returning its seed. Absolute HTTP(S) URL searches
+on HTTP sources share that exclusion; text searches remain concurrent and outbound queries stay
+unchanged. The existing resolved seed
+URL exclusion also remains around explicit updates. Public and seed gates use separate namespaces,
+acquired in that order, so matching identity strings cannot recursively lock or form a cycle.
+Different manga and source instances remain concurrent; no speculative aliases or URL component
+stripping are applied. Non-HTTP sources and calls without a usable public URL retain seed exclusion.
+A cancelled waiter never enters hydration or the explicit update. An active call retains exclusion
+until the source actually returns, including when it ignores cancellation. Registration and
+retirement are atomic, and the final caller releases its source reference. Each request executes
+its own hydration/update; no result cache or retry is introduced. Different public aliases that
+converge only inside extension code cannot be established as identical before hydration; the public
+gate protects the exact URL relation while the seed gate protects explicit updates.
 
 ### Comix 1.6.42–1.6.44 compatibility
 
