@@ -47,21 +47,26 @@ func WantedSelections(ctx context.Context, client *ent.Client, limit int) ([]Sel
 // order. The cursor is the last observed row, including when that row is waiting
 // on a paused source, so an ineligible prefix cannot hide the rest of the library.
 func WantedSelectionsAfter(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter) ([]Selection, error) {
-	return wantedSelectionsAfter(ctx, client, limit, after, nil)
+	return selectionsAfter(ctx, client, limit, after, nil, entchapter.StateWanted, entchapter.StateFailed)
 }
 
 // WantedSelectionsInPriority scans only one scheduling partition. The scheduler
 // completes marked discovery before admitting ordinary work on any source.
 func WantedSelectionsInPriority(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority bool) ([]Selection, error) {
-	return wantedSelectionsAfter(ctx, client, limit, after, &priority)
+	return selectionsAfter(ctx, client, limit, after, &priority, entchapter.StateWanted, entchapter.StateFailed)
 }
 
-func wantedSelectionsAfter(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority *bool) ([]Selection, error) {
+// QueuedSelectionsInPriority returns one bounded, chapter-number-ordered page
+// across fresh and upgrade work. Keeping both states in one cursor prevents one
+// work-kind's page from outrunning a lower-numbered row in the other kind.
+func QueuedSelectionsInPriority(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority bool) ([]Selection, error) {
+	return selectionsAfter(ctx, client, limit, after, &priority,
+		entchapter.StateWanted, entchapter.StateFailed, entchapter.StateUpgradeAvailable)
+}
+
+func selectionsAfter(ctx context.Context, client *ent.Client, limit int, after *ent.Chapter, priority *bool, states ...entchapter.State) ([]Selection, error) {
 	query := client.Chapter.Query().
-		Where(entchapter.StateIn(
-			entchapter.StateWanted,
-			entchapter.StateFailed,
-		))
+		Where(entchapter.StateIn(states...))
 	if priority != nil {
 		query = query.Where(entchapter.DownloadPriorityEQ(*priority))
 	}
@@ -77,7 +82,7 @@ func wantedSelectionsAfter(ctx context.Context, client *ent.Client, limit int, a
 		Limit(limit).
 		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("chapter.WantedSelections: query: %w", err)
+		return nil, fmt.Errorf("chapter.selections: query: %w", err)
 	}
 	selections := make([]Selection, len(chapters))
 	for i, ch := range chapters {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"entgo.io/ent/dialect/sql"
 	"github.com/google/uuid"
 
 	"github.com/technobecet/tsundoku/internal/chapter"
@@ -20,22 +19,22 @@ import (
 // No persistent queue or chapter-state owner is introduced here: admission still
 // goes through the exact-generation conditional claim at the engine boundary.
 type SourceScheduler struct {
-	d                         *Dispatcher
-	ctx                       context.Context
-	parent                    context.Context
-	cancel                    context.CancelFunc
-	global                    *fetchCapacity
-	limiter                   *providerLimiter
-	sources                   map[string]*sourceWindow
-	inFlight                  map[uuid.UUID]bool
-	done                      chan sourceCompletion
-	wake                      chan struct{}
-	wantedAfter, upgradeAfter *ent.Chapter
-	policy                    sourceConcurrencyPolicy
-	wantedDone, upgradeDone   bool
-	discovering               bool
-	ordinaryPhase             bool
-	pendingPriority           map[string]int64
+	d               *Dispatcher
+	ctx             context.Context
+	parent          context.Context
+	cancel          context.CancelFunc
+	global          *fetchCapacity
+	limiter         *providerLimiter
+	sources         map[string]*sourceWindow
+	inFlight        map[uuid.UUID]bool
+	done            chan sourceCompletion
+	wake            chan struct{}
+	queuedAfter     *ent.Chapter
+	policy          sourceConcurrencyPolicy
+	queuedDone      bool
+	discovering     bool
+	ordinaryPhase   bool
+	pendingPriority map[string]int64
 }
 
 type sourceWindow struct {
@@ -96,11 +95,9 @@ func (d *Dispatcher) NewSourceScheduler(ctx context.Context) (*SourceScheduler, 
 // RestartDiscovery observes newly changed owner scheduling inputs from the start
 // of the bounded priority ordering. Continuation cursors remain transient.
 func (s *SourceScheduler) RestartDiscovery() {
-	s.wantedAfter = nil
-	s.upgradeAfter = nil
+	s.queuedAfter = nil
 	s.ordinaryPhase = false
-	s.wantedDone = false
-	s.upgradeDone = false
+	s.queuedDone = false
 	s.discovering = true
 	s.pendingPriority = make(map[string]int64)
 	for _, window := range s.sources {
@@ -186,8 +183,7 @@ func (s *SourceScheduler) advanceDiscovery(result *SourceStep, more, priority bo
 	if !more {
 		if priority {
 			s.ordinaryPhase = true
-			s.wantedDone = false
-			s.upgradeDone = false
+			s.queuedDone = false
 			result.More = true
 		} else {
 			s.discovering = false
@@ -325,42 +321,72 @@ func markWindowDeadline(result *SourceStep, window *sourceWindow, now time.Time,
 }
 
 func (s *SourceScheduler) discover(now time.Time, maxRetries int, disabled map[int64]bool) (map[string][]sourceWork, map[string]int64, bool, error) {
-	var selections []chapter.Selection
 	var err error
-	if !s.wantedDone {
-		selections, err = chapter.WantedSelectionsInPriority(s.ctx, s.d.client, wantedScanLimit, s.wantedAfter, !s.ordinaryPhase)
+	var selections []chapter.Selection
+	if !s.queuedDone {
+		selections, err = chapter.QueuedSelectionsInPriority(s.ctx, s.d.client, wantedScanLimit, s.queuedAfter, !s.ordinaryPhase)
 	}
 	if err != nil {
 		return nil, nil, false, err
 	}
 	more := len(selections) == wantedScanLimit
 	if more {
-		s.wantedAfter = selections[len(selections)-1].Chapter
+		s.queuedAfter = selections[len(selections)-1].Chapter
 	} else {
-		s.wantedAfter = nil
-		s.wantedDone = true
+		s.queuedAfter = nil
+		s.queuedDone = true
 	}
-	groups := s.d.groupBySource(s.ctx, selections, maxRetries, now, disabled)
-	work := make(map[string][]sourceWork, len(groups))
-	sourceIDs := make(map[string]int64, len(groups))
-	for key, items := range groups {
-		sourceIDs[key] = items[0].sourceID
-		for i := range items {
-			it := items[i]
-			work[key] = append(work[key], sourceWork{id: it.chapterID, seriesID: it.seriesID, download: &it, priority: it.priority})
+	var wantedSelections []chapter.Selection
+	var upgrades []*ent.Chapter
+	for _, selection := range selections {
+		if selection.Chapter.State == entchapter.StateUpgradeAvailable {
+			upgrades = append(upgrades, selection.Chapter)
+		} else {
+			wantedSelections = append(wantedSelections, selection)
 		}
 	}
-	upgrades, upgradeMore, err := s.upgradeGroups(maxRetries, now, disabled)
+	groups := s.d.groupBySource(s.ctx, wantedSelections, maxRetries, now, disabled)
+	upgradeGroups, err := s.upgradeGroupsFor(upgrades, maxRetries, now, disabled)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	for key, items := range upgrades {
-		for _, it := range items {
-			sourceIDs[key] = it.sourceID
-			work[key] = append(work[key], sourceWork{id: it.chapterID, seriesID: it.seriesID, priority: it.priority})
+	work, sourceIDs := mergeSourceWork(selections, groups, upgradeGroups)
+	return work, sourceIDs, more, nil
+}
+
+func mergeSourceWork(selections []chapter.Selection, groups, upgradeGroups map[string][]resolvedChapter) (map[string][]sourceWork, map[string]int64) {
+	work := make(map[string][]sourceWork, len(groups)+len(upgradeGroups))
+	sourceIDs := make(map[string]int64, len(work))
+	byID := make(map[uuid.UUID]sourceWork, len(selections))
+	keys := make(map[uuid.UUID]string, len(selections))
+	for key, items := range groups {
+		for i := range items {
+			it := items[i]
+			byID[it.chapterID] = sourceWork{id: it.chapterID, seriesID: it.seriesID, download: &it, priority: it.priority}
+			keys[it.chapterID] = key
+			if _, ok := sourceIDs[key]; !ok {
+				sourceIDs[key] = it.sourceID
+			}
 		}
 	}
-	return work, sourceIDs, more || upgradeMore, nil
+	for key, items := range upgradeGroups {
+		for i := range items {
+			it := items[i]
+			byID[it.chapterID] = sourceWork{id: it.chapterID, seriesID: it.seriesID, priority: it.priority}
+			keys[it.chapterID] = key
+			if _, ok := sourceIDs[key]; !ok {
+				sourceIDs[key] = it.sourceID
+			}
+		}
+	}
+	for _, selection := range selections {
+		item, ok := byID[selection.Chapter.ID]
+		if !ok {
+			continue
+		}
+		work[keys[selection.Chapter.ID]] = append(work[keys[selection.Chapter.ID]], item)
+	}
+	return work, sourceIDs
 }
 
 func (s *SourceScheduler) windowFor(key string, sourceID int64, now time.Time, interval time.Duration) *sourceWindow {
@@ -481,18 +507,7 @@ func (s *SourceScheduler) Close() {
 }
 
 func rotateSourceSeries(items []sourceWork, after uuid.UUID) []sourceWork {
-	if after == uuid.Nil {
-		return items
-	}
-	var downloads, upgrades []sourceWork
-	for _, it := range items {
-		if it.download != nil {
-			downloads = append(downloads, it)
-		} else {
-			upgrades = append(upgrades, it)
-		}
-	}
-	return append(rotateWorkKind(downloads, after), rotateWorkKind(upgrades, after)...)
+	return rotateWorkKind(items, after)
 }
 
 func rotateWorkKind(items []sourceWork, after uuid.UUID) []sourceWork {
@@ -523,28 +538,10 @@ func rotateWorkKind(items []sourceWork, after uuid.UUID) []sourceWork {
 	return result
 }
 
-func (s *SourceScheduler) upgradeGroups(maxRetries int, now time.Time, disabled map[int64]bool) (map[string][]resolvedChapter, bool, error) {
-	if s.upgradeDone {
-		return nil, false, nil
-	}
-	query := s.d.client.Chapter.Query().Where(entchapter.StateEQ(entchapter.StateUpgradeAvailable), entchapter.DownloadPriorityEQ(!s.ordinaryPhase))
-	if s.upgradeAfter != nil {
-		query = query.Where(chapter.AfterInPriorityOrder(s.upgradeAfter))
-	}
-	chapters, err := query.Order(entchapter.ByDownloadPriority(sql.OrderDesc()), entchapter.ByNumber(sql.OrderAsc(), sql.OrderNullsLast()), entchapter.ByID()).Limit(wantedScanLimit).All(s.ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	more := len(chapters) == wantedScanLimit
-	if more {
-		s.upgradeAfter = chapters[len(chapters)-1]
-	} else {
-		s.upgradeAfter = nil
-		s.upgradeDone = true
-	}
+func (s *SourceScheduler) upgradeGroupsFor(chapters []*ent.Chapter, maxRetries int, now time.Time, disabled map[int64]bool) (map[string][]resolvedChapter, error) {
 	candidates, err := chapter.RankedLiveCandidatesForMany(s.ctx, s.d.client, chapters, maxRetries, now, disabled)
 	if err != nil {
-		return nil, more, fmt.Errorf("rank upgrade scheduling page: %w", err)
+		return nil, fmt.Errorf("rank upgrade scheduling page: %w", err)
 	}
 	snapshot := loadBreakerSnapshot(s.ctx, s.d.gate)
 	groups := make(map[string][]resolvedChapter)
@@ -560,5 +557,5 @@ func (s *SourceScheduler) upgradeGroups(maxRetries int, now time.Time, disabled 
 	for key, items := range groups {
 		groups[key] = roundRobinBySeries(items)
 	}
-	return groups, more, nil
+	return groups, nil
 }

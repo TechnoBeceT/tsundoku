@@ -335,6 +335,93 @@ func TestWantedChapters_null_number_sorts_last(t *testing.T) {
 	}
 }
 
+func TestQueuedSelectionsInPriority_ordersMixedStatesAndPartitions(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	s := client.Series.Create().SetTitle("Queued Selection Order").SetSlug("queued-selection-order").SaveX(ctx)
+
+	decimal := client.Chapter.Create().SetSeries(s).SetChapterKey("1.5").SetNumber(1.5).
+		SetState(entchapter.StateUpgradeAvailable).SetDownloadPriority(true).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("2-wanted").SetNumber(2).
+		SetState(entchapter.StateWanted).SetDownloadPriority(true).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("2-failed").SetNumber(2).
+		SetState(entchapter.StateFailed).SetDownloadPriority(true).SaveX(ctx)
+	null := client.Chapter.Create().SetSeries(s).SetChapterKey("null").
+		SetState(entchapter.StateFailed).SetDownloadPriority(true).SaveX(ctx)
+	ordinary := client.Chapter.Create().SetSeries(s).SetChapterKey("ordinary").SetNumber(.5).
+		SetState(entchapter.StateWanted).SetDownloadPriority(false).SaveX(ctx)
+	client.Chapter.Create().SetSeries(s).SetChapterKey("downloaded").SetNumber(.25).
+		SetState(entchapter.StateDownloaded).SetDownloadPriority(true).SaveX(ctx)
+
+	firstPage, err := chapter.QueuedSelectionsInPriority(ctx, client, 2, nil, true)
+	if err != nil {
+		t.Fatalf("QueuedSelectionsInPriority(marked page 1): %v", err)
+	}
+	if len(firstPage) != 2 {
+		t.Fatalf("marked page 1 count = %d, want 2", len(firstPage))
+	}
+	secondPage, err := chapter.QueuedSelectionsInPriority(ctx, client, 2, firstPage[len(firstPage)-1].Chapter, true)
+	if err != nil {
+		t.Fatalf("QueuedSelectionsInPriority(marked page 2): %v", err)
+	}
+	if len(secondPage) != 2 {
+		t.Fatalf("marked page 2 count = %d, want 2", len(secondPage))
+	}
+	terminalPage, err := chapter.QueuedSelectionsInPriority(ctx, client, 2, secondPage[len(secondPage)-1].Chapter, true)
+	if err != nil {
+		t.Fatalf("QueuedSelectionsInPriority(marked terminal page): %v", err)
+	}
+	if len(terminalPage) != 0 {
+		t.Fatalf("marked terminal page count = %d, want 0", len(terminalPage))
+	}
+	marked := make([]chapter.Selection, 0, len(firstPage)+len(secondPage))
+	marked = append(marked, firstPage...)
+	marked = append(marked, secondPage...)
+	assertQueuedMarkedOrder(t, marked, decimal.ID, null.ID)
+
+	ordinarySelections, err := chapter.QueuedSelectionsInPriority(ctx, client, 100, nil, false)
+	if err != nil {
+		t.Fatalf("QueuedSelectionsInPriority(ordinary): %v", err)
+	}
+	assertQueuedOrdinaryPartition(t, ordinarySelections, ordinary.ID)
+}
+
+func assertQueuedMarkedOrder(t *testing.T, selections []chapter.Selection, decimalID, nullID uuid.UUID) {
+	t.Helper()
+	if selections[0].Chapter.ID != decimalID || selections[1].Chapter.Number == nil || *selections[1].Chapter.Number != 2 {
+		t.Fatalf("marked order begins %+v, want 1.5 then 2", selections)
+	}
+	if selections[2].Chapter.Number == nil || *selections[2].Chapter.Number != 2 {
+		t.Fatalf("equal-number row at position 2 = %v, want 2", selections[2].Chapter.Number)
+	}
+	if bytes.Compare(selections[1].Chapter.ID[:], selections[2].Chapter.ID[:]) >= 0 {
+		t.Fatalf("equal-number IDs not ascending: %s then %s", selections[1].Chapter.ID, selections[2].Chapter.ID)
+	}
+	if selections[3].Chapter.ID != nullID || selections[3].Chapter.Number != nil {
+		t.Fatalf("null-number row = %+v, want last", selections[3].Chapter)
+	}
+	assertQueuedSelectionMetadata(t, selections)
+}
+
+func assertQueuedSelectionMetadata(t *testing.T, selections []chapter.Selection) {
+	t.Helper()
+	for i, selection := range selections {
+		if selection.Generation == "" {
+			t.Fatalf("selection %d has empty generation", i)
+		}
+		if selection.Chapter.State != entchapter.StateWanted && selection.Chapter.State != entchapter.StateFailed && selection.Chapter.State != entchapter.StateUpgradeAvailable {
+			t.Fatalf("selection %d state = %s, not queued", i, selection.Chapter.State)
+		}
+	}
+}
+
+func assertQueuedOrdinaryPartition(t *testing.T, selections []chapter.Selection, ordinaryID uuid.UUID) {
+	t.Helper()
+	if len(selections) != 1 || selections[0].Chapter.ID != ordinaryID {
+		t.Fatalf("ordinary selections = %+v, want only %s", selections, ordinaryID)
+	}
+}
+
 // TestBestProviderChapter_picks_highest_importance verifies that
 // BestProviderChapter selects the ProviderChapter belonging to the
 // SeriesProvider with the highest importance when multiple providers offer the
