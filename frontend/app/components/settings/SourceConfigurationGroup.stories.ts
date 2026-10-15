@@ -65,3 +65,24 @@ export const Error: Story = {
     },
   },
 }
+
+/** Effective SOCKS routing prevents Required while retaining the confirmed policy. */
+export const SocksConflict: Story = {
+  args: {
+    configuration: {
+      ...fullyInheritedSourceConfiguration,
+      kcef: { override: 'required', global: 'auto', effective: 'required', inherited: false, enabled: false },
+      routing: {
+        ...fullyInheritedSourceConfiguration.routing,
+        stored: {
+          ...fullyInheritedSourceConfiguration.routing.stored,
+          configured: true,
+          socksMode: 'endpoint',
+          socks: { endpointId: 'ep-vpn-socks', name: 'VPN SOCKS' },
+        },
+        socksMode: 'endpoint',
+        socks: { endpointId: 'ep-vpn-socks', name: 'VPN SOCKS' },
+      },
+    },
+  },
+}

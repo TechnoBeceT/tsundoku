@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -41,6 +42,9 @@ func (s *Service) Record(ctx context.Context, sourceID, sourceName string, laten
 // metrics bookkeeping must never break or slow the caller).
 func (s *Service) RecordBatch(ctx context.Context, samples []Sample) {
 	for _, sample := range samples {
+		if errors.Is(sample.Err, context.Canceled) {
+			continue
+		}
 		if err := s.recordOne(ctx, sample); err != nil {
 			slog.WarnContext(ctx, "metrics: record failed (best-effort, skipping)",
 				"source", sample.SourceID, "err", err)

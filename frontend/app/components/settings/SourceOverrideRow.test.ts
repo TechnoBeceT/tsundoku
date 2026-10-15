@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SourceOverrideRow from './SourceOverrideRow.vue'
+import AppButton from '../ui/AppButton.vue'
 import SourceProxyOptInRow from './SourceProxyOptInRow.vue'
 import SourceApplyStatus from './SourceApplyStatus.vue'
 
@@ -26,6 +27,35 @@ const overrideProps = {
 }
 
 describe('SourceOverrideRow', () => {
+
+  it('refuses a selected option that becomes disabled without replacing the draft or confirmed value', async () => {
+    const options = [{ value: 'auto', label: 'Auto' }, { value: 'required', label: 'Required' }]
+    const wrapper = mount(SourceOverrideRow, {
+      props: { ...overrideProps, settingKey: 'kcefPolicy', name: 'Embedded browser', control: 'select', modelValue: 'auto', globalValue: 'auto', options },
+    })
+    await wrapper.get('select').setValue('required')
+    await wrapper.setProps({ options: options.map(option => ({ ...option, disabled: option.value === 'required' })) })
+    expect((wrapper.get('select').element as HTMLSelectElement).value).toBe('required')
+    expect(wrapper.get('[data-testid="confirmed-value"]').text()).toBe('auto')
+    expect(wrapper.get('[data-testid="set-override"]').attributes('disabled')).toBeDefined()
+    // Exercise the handler as well as the disabled native button boundary.
+    wrapper.getComponent(AppButton).vm.$emit('click')
+    expect(wrapper.emitted('set-override')).toBeUndefined()
+  })
+
+  it('refuses restoring a global value whose option is disabled', () => {
+    const wrapper = mount(SourceOverrideRow, {
+      props: {
+        ...overrideProps, settingKey: 'kcefPolicy', name: 'Embedded browser', control: 'select',
+        modelValue: 'disabled', globalValue: 'required', inherited: false,
+        options: [{ value: 'disabled', label: 'Disabled' }, { value: 'required', label: 'Required', disabled: true }],
+      },
+    })
+    expect(wrapper.get('[data-testid="use-global"]').attributes('disabled')).toBeDefined()
+    wrapper.findAllComponents(AppButton)[1]!.vm.$emit('click')
+    expect(wrapper.emitted('use-global')).toBeUndefined()
+  })
+
   it('emits a keyed numeric override from the explicit save action', async () => {
     const wrapper = mount(SourceOverrideRow, { props: overrideProps })
 

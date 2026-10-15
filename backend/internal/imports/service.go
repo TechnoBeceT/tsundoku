@@ -505,10 +505,7 @@ func (s *Service) searchUncached(ctx context.Context, query string, sourceIDs []
 
 			state.complete(src, local, latency, err)
 
-			if err != nil {
-				slog.WarnContext(gctx, "imports: source search failed",
-					"source", src.ID, "source_name", src.Name, "err", err)
-			}
+			logSearchFailure(gctx, src, err)
 			return nil // per-source failures and the deadline both drop that source
 		})
 	}
@@ -573,10 +570,20 @@ func (p *searchProgress) snapshot(query string, done bool) SearchSnapshotDTO {
 	return SearchSnapshotDTO{Groups: searchGroups(query, local), PendingSources: pending, Done: done}
 }
 
+func logSearchFailure(ctx context.Context, src sourceengine.Source, err error) {
+	if err != nil && !errors.Is(err, context.Canceled) {
+		slog.WarnContext(ctx, "imports: source search failed",
+			"source", src.ID, "source_name", src.Name, "err", err)
+	}
+}
+
 func (p *searchProgress) complete(src sourceengine.Source, local []Candidate, latency time.Duration, err error) {
 	p.mu.Lock()
 	p.completed[src.ID] = true
-	p.samples = append(p.samples, metrics.Sample{SourceID: sourceIDString(src.ID), SourceName: src.Name, Latency: latency, Err: err})
+	// Cancellation completes progress but says nothing about source health.
+	if !errors.Is(err, context.Canceled) {
+		p.samples = append(p.samples, metrics.Sample{SourceID: sourceIDString(src.ID), SourceName: src.Name, Latency: latency, Err: err})
+	}
 	if err == nil {
 		p.candidates = append(p.candidates, local...)
 	}

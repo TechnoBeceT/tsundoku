@@ -3,6 +3,7 @@ package imports_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -94,5 +95,62 @@ func TestSearch_LogsSearchEvents(t *testing.T) {
 	}
 	if got := byKey["Bad"]; got.Status != sourceevents.StatusFailed || got.Err == nil {
 		t.Fatalf("Bad search event = %+v, want failed with cause", got)
+	}
+}
+
+func TestSearch_CancellationIsNotASourceOutcome(t *testing.T) {
+	t.Parallel()
+	fc := &fakeClient{
+		sources: []sourceengine.Source{
+			{ID: 1, Name: "Canceled", Lang: "en"},
+			{ID: 2, Name: "Wrapped cancellation", Lang: "en"},
+			{ID: 3, Name: "Deadline", Lang: "en"},
+			{ID: 4, Name: "Success", Lang: "en"},
+			{ID: 5, Name: "Text only", Lang: "en"},
+		},
+		searchErrs: map[int64]error{
+			1: context.Canceled,
+			2: fmt.Errorf("request stopped: %w", context.Canceled),
+			3: context.DeadlineExceeded,
+			5: errors.New("context canceled"),
+		},
+	}
+	metrics := &captureRecorder{}
+	events := &eventCaptureRecorder{}
+	svc := imports.NewService(fc, nil, nil, "", testSearchTimeout, metrics).WithEventRecorder(events)
+	if _, err := svc.Search(context.Background(), "solo", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both recorders receive a single completed fan-out batch, so these snapshots
+	// include every observation without relying on a delay to prove absence.
+	batches := metrics.waitForBatches(t, 1)
+	if len(batches) != 1 || len(batches[0]) != 3 {
+		t.Fatalf("metric batches = %+v, want only deadline, success and text-only failure", batches)
+	}
+	for _, sample := range batches[0] {
+		if errors.Is(sample.Err, context.Canceled) {
+			t.Errorf("canceled source recorded as a metric: %+v", sample)
+		}
+	}
+	assertSearchOutcomeEvents(t, events.waitForEvents(t, 3))
+}
+
+func assertSearchOutcomeEvents(t *testing.T, logged []sourceevents.Event) {
+	t.Helper()
+	if len(logged) != 3 {
+		t.Fatalf("events = %+v, want exactly 3", logged)
+	}
+	byID := map[string]sourceevents.Event{}
+	for _, event := range logged {
+		byID[event.SourceID] = event
+	}
+	for _, id := range []string{"3", "5"} {
+		if event := byID[id]; event.Status != sourceevents.StatusFailed || event.Err == nil {
+			t.Errorf("genuine source failure %s lost: %+v", id, event)
+		}
+	}
+	if event := byID["4"]; event.Status != sourceevents.StatusSuccess {
+		t.Errorf("success lost: %+v", event)
 	}
 }

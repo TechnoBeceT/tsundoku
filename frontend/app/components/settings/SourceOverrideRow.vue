@@ -60,6 +60,12 @@ const textDraft = computed({
 
 const selectDraft = computed(() => String(draft.value))
 const toggleDraft = computed(() => Boolean(draft.value))
+const draftDisabled = computed(() => optionDisabled(draft.value))
+const globalDisabled = computed(() => optionDisabled(props.globalValue))
+
+function optionDisabled(value: SourceConfigurationRowValue): boolean {
+  return props.control === 'select' && props.options.some(option => option.value === String(value) && option.disabled)
+}
 
 function displayValue(value: SourceConfigurationRowValue): string {
   if (typeof value === 'boolean') return value ? 'On' : 'Off'
@@ -75,12 +81,18 @@ function updateToggle(value: boolean): void {
 }
 
 function setOverride(): void {
+  if (props.saving || draftDisabled.value) return
   if (props.control === 'number') {
     const value = Number(draft.value)
     if (Number.isFinite(value)) emit('set-override', props.settingKey, value)
     return
   }
   emit('set-override', props.settingKey, draft.value)
+}
+
+function useGlobal(): void {
+  if (props.saving || props.inherited || globalDisabled.value) return
+  emit('use-global', props.settingKey)
 }
 </script>
 
@@ -137,6 +149,7 @@ function setOverride(): void {
               variant="mini"
               size="xs"
               :loading="saving"
+              :disabled="draftDisabled"
               @click="setOverride"
             >
               Set override
@@ -145,8 +158,8 @@ function setOverride(): void {
               data-testid="use-global"
               variant="text"
               size="xs"
-              :disabled="saving || inherited"
-              @click="emit('use-global', settingKey)"
+              :disabled="saving || inherited || globalDisabled"
+              @click="useGlobal"
             >
               Use global
             </AppButton>

@@ -65,13 +65,13 @@ const DIAGNOSES: Record<ErrorCategoryKey, DiagnosisText> = {
     ],
   },
   server_error: {
-    title: 'Source returned a server error',
+    title: 'Source request failed',
     explanation:
-      'The source itself failed with a 5xx error. This is a fault on the source’s side, not with your setup or network.',
+      'The request failed with a server error. This may come from the source website, the engine, or the source extension; the error details help identify where it failed.',
     suggestions: [
-      'Usually transient — the retry cycle will pick it up automatically',
-      'Check the source’s own status if it persists',
-      'If it stays down for hours, the source may be offline',
+      'Check the error details for an upstream HTTP error, timeout, or extension failure',
+      'Check whether the source website is reachable',
+      'If the website works but requests keep failing, check for a source extension update',
     ],
   },
   network: {

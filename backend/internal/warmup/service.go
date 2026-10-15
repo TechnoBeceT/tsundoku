@@ -181,6 +181,9 @@ func (s *Service) warmSources(ctx context.Context, sources []sourceengine.Source
 	warmed := 0
 	for _, src := range sources {
 		if err := s.warmOne(ctx, src); err != nil {
+			if errors.Is(err, context.Canceled) {
+				continue
+			}
 			slog.WarnContext(ctx, "warmup: source warm failed (skipping)",
 				"source", src.ID, "source_name", src.Name, "err", err)
 			continue
@@ -196,7 +199,7 @@ func (s *Service) warmSources(ctx context.Context, sources []sourceengine.Source
 // error so warmSources logs + skips it without a wasted Popular call —
 // repeatedly warming a source that is already tripped would only prolong the
 // block), then enforces the politeness delay, then records the timing +
-// outcome as a metrics sample regardless of success (a slow/failed warm is
+// outcome as a metrics sample unless canceled (a slow/failed warm is
 // itself signal), then stamps last_warmed_at ONLY on success (a failed warm
 // did not actually warm the session). Returns the Popular (or gate) error so
 // warmSources can skip + log it.
@@ -209,6 +212,10 @@ func (s *Service) warmOne(ctx context.Context, src sourceengine.Source) error {
 
 	start := time.Now()
 	_, err := s.client.Popular(ctx, src.ID, 1)
+	// Cancellation is neither a failed source nor a completed warm session.
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
 	now := time.Now()
 	sid := sourceIDString(src.ID)
 	latency := now.Sub(start)

@@ -272,6 +272,9 @@ object SourceCalls {
      * for keiyoushi. Because the series fetch reuses the same getMangaUpdate path [chapters] runs, the
      * matched chapter's url is byte-identical to the [chapterUrl] Tsundoku stored.
      *
+     * Kayn Scans and WitchScans instead hydrate before the first page call: their extensions require
+     * slug/number memo but throw an NPE rather than a refresh signal for a bare chapter.
+     *
      * The warm fetch is authoritative once attempted. Every other bare-seed exception is rethrown
      * unchanged, including source-wide timeout, rate-limit, and challenge errors. A blank [mangaUrl]
      * also rethrows the refresh signal because there is no refresh boundary to consult. With a non-blank
@@ -297,12 +300,11 @@ object SourceCalls {
             }
 
             val pageResult: Pair<List<Page>, AddressMode> =
-                if (source.id == 6622233282902198923L) {
-                    // Kayn Scans' VineTheme chapter address is opaque; its current extension requires
-                    // source-produced slug/number memo and throws an NPE for a bare chapter. Hydrate
-                    // before pages rather than treating arbitrary parser NPEs as refresh signals.
+                if (source.id == 6622233282902198923L || source.id == 3119719730967642939L) {
+                    // Hydrate known memo-dependent sources before pages rather than treating
+                    // arbitrary parser NPEs as refresh signals.
                     // The source's chapter list remains authoritative, including hidden/locked offers.
-                    require(mangaUrl.isNotBlank()) { "Kayn Scans pages require a source series address" }
+                    require(mangaUrl.isNotBlank()) { "${source.name} pages require a source series address" }
                     hydratedPages()
                 } else {
                     val bareSeed = SChapter.create().apply { this.url = chapterUrl }

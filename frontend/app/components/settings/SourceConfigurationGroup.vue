@@ -64,6 +64,7 @@ const statusRuntime = computed(() => ({
   // The diagnostic is deliberately revealed only by Advanced diagnostics.
   lastApplyError: '',
 }))
+const effectiveSocks = computed(() => props.configuration.routing.socksMode === 'endpoint')
 const socksEndpoints = computed(() => props.endpoints.filter(endpoint => endpoint.kind === 'socks'))
 const flareEndpoints = computed(() => props.endpoints.filter(endpoint => endpoint.kind === 'flaresolverr'))
 const source = computed(() => ({
@@ -224,14 +225,14 @@ function useGlobal(key: SourceConfigurationRowKey): void {
         :class="{ 'source-setting-target--highlighted': focusTarget === 'kcefPolicy' }"
         setting-key="kcefPolicy"
         name="Embedded browser"
-        :hint="`Effective embedded browser: ${configuration.kcef.enabled ? 'On' : 'Off'}. Required is incompatible with SOCKS routing.`"
+        :hint="`Effective embedded browser: ${configuration.kcef.enabled ? 'On' : 'Off'}. ${effectiveSocks ? 'Required is unavailable because this source uses SOCKS routing. The embedded browser cannot use that route.' : 'Required is incompatible with SOCKS routing.'}`"
         control="select"
         :model-value="configuration.kcef.effective"
         :global-value="configuration.kcef.global"
         :inherited="configuration.kcef.inherited"
         :options="[
           { value: 'auto', label: 'Auto' },
-          { value: 'required', label: 'Required' },
+          { value: 'required', label: 'Required', disabled: effectiveSocks },
           { value: 'disabled', label: 'Disabled' },
         ]"
         :saving="rowSaving('kcefPolicy')"

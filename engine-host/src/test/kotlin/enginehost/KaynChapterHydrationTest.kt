@@ -128,3 +128,62 @@ class KaynChapterHydrationTest {
         assertEquals(0, source.searches.size)
     }
 }
+
+
+class WitchChapterHydrationTest {
+    private fun source() = KaynMemoSource(id = 3119719730967642939L)
+    private fun pages(source: KaynMemoSource) = SourceCalls.pages(
+        source, "kayn-c-1938", "kayn-s-24", AddressMode.URL_SEARCH,
+        "https://kayn.fixture/series/comic/food-truck",
+    )
+
+    @Test
+    fun `Witch resolves public manga and preserves exact source chapter memo`() {
+        val source = source()
+        val result = pages(source)
+        assertEquals(listOf("https://kayn.fixture/series/comic/food-truck"), source.searches)
+        assertEquals(1, source.updates)
+        assertSame(source.authoritative, source.pageInputs.single())
+        assertEquals(AddressMode.URL_SEARCH, result.addressMode)
+        assertEquals(listOf("https://images.fixture/first.webp", "https://images.fixture/second.webp"), result.pages.map { it.imageUrl })
+    }
+
+    @Test
+    fun `Witch missing or different chapter cannot reach pages`() {
+        for (offered in listOf(emptyList(), listOf(SChapter.create().apply { url = "other-chapter" }))) {
+            val source = source().apply { this.offered = offered }
+            assertFailsWith<NoSuchElementException> { pages(source) }
+            assertEquals(1, source.updates)
+            assertEquals(0, source.pageInputs.size)
+        }
+    }
+
+    @Test
+    fun `Witch requires series identity before source calls`() {
+        val source = source()
+        assertFailsWith<IllegalArgumentException> { SourceCalls.pages(source, "kayn-c-1938") }
+        assertEquals(0, source.searches.size)
+        assertEquals(0, source.updates)
+        assertEquals(0, source.pageInputs.size)
+    }
+
+    @Test
+    fun `Witch refresh failures propagate without pages or retry`() {
+        for (failure in listOf(java.io.IOException("HTTP 429"), java.io.IOException("HTTP 403 challenge"), java.net.SocketTimeoutException("timeout"))) {
+            val source = source().apply { updateFailure = failure }
+            assertSame(failure, assertFailsWith<Exception> { pages(source) })
+            assertEquals(1, source.updates)
+            assertEquals(0, source.pageInputs.size)
+        }
+    }
+
+    @Test
+    fun `Witch locked chapters and parser faults preserve original refusal`() {
+        for (failure in listOf(IllegalStateException("This chapter is locked and requires coins to read"), NullPointerException("unrelated parser fault"))) {
+            val source = source().apply { pageFailure = failure }
+            assertSame(failure, assertFailsWith<Exception> { pages(source) })
+            assertEquals(1, source.updates)
+            assertSame(source.authoritative, source.pageInputs.single())
+        }
+    }
+}

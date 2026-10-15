@@ -20,7 +20,7 @@ describe('useErrorDiagnosis', () => {
       captcha: 'Blocked by anti-bot protection',
       rate_limit: 'Rate limited by the source',
       not_found: 'Resource not found',
-      server_error: 'Source returned a server error',
+      server_error: 'Source request failed',
       network: 'Network failure',
       timeout: 'Request timed out',
       parse: 'Response could not be read',
@@ -34,6 +34,14 @@ describe('useErrorDiagnosis', () => {
       expect(d.suggestions.length).toBeGreaterThan(0)
       expect(d.explanation.length).toBeGreaterThan(0)
     }
+  })
+
+  it('does not treat an engine 502 as proof of a website outage', () => {
+    const d = diagnose('server_error', 'engine: HTTP 502: NullPointerException')
+    expect(d.category).toBe('server_error')
+    expect(d.explanation).toMatch(/engine|extension/i)
+    expect(d.explanation).not.toContain('The source itself failed')
+    expect(d.explanation).not.toContain('not with your setup or network')
   })
 
   it('carries the shared category label', () => {

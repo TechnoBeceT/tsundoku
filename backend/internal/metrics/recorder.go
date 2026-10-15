@@ -30,7 +30,8 @@ type Recorder interface {
 // Sample is one source's observed search outcome: how long the call took and
 // whether it failed. Err is nil on success. A deadline-dropped source still
 // carries its (long) latency — that long latency is exactly the signal that
-// flags the source slow, so it is fed into the EWMA regardless of Err.
+// flags the source slow, so it is fed into the EWMA. Explicit context cancellation
+// is not a source outcome and is ignored, including wrapped context.Canceled.
 type Sample struct {
 	SourceID   string
 	SourceName string

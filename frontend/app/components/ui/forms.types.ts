@@ -10,6 +10,7 @@
 export interface SelectOption {
   value: string
   label: string
+  disabled?: boolean
 }
 
 /** The time unit a `DurationInput` edits: hours / minutes / seconds. */

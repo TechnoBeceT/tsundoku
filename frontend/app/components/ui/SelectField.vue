@@ -44,7 +44,7 @@ function onChange(event: Event) {
       :aria-label="ariaLabel"
       @change="onChange"
     >
-      <option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+      <option v-for="opt in options" :key="opt.value" :value="opt.value" :disabled="opt.disabled">{{ opt.label }}</option>
     </select>
     <svg class="select__chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="m6 9 6 6 6-6" />

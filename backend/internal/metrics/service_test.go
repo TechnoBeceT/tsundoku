@@ -4,7 +4,9 @@ package metrics_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -183,4 +185,52 @@ func TestRecord_BestEffortOnClosedClient(t *testing.T) {
 	// Must not panic; there is no error to observe (best-effort).
 	svc.Record(context.Background(), "x", "X", time.Second, nil)
 	svc.RecordBatch(context.Background(), []metrics.Sample{{SourceID: "y", SourceName: "Y", Latency: time.Second}})
+}
+
+func TestRecord_CancellationDoesNotChangeSourceMetrics(t *testing.T) {
+	client := testdb.New(t)
+	svc := metrics.NewService(client)
+	ctx := context.Background()
+	svc.Record(ctx, "existing", "Existing", 2*time.Second, errors.New("HTTP 522"))
+	before, err := json.Marshal(rowFor(t, client, "existing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc.Record(ctx, "existing", "Existing", 90*time.Second, context.Canceled)
+	svc.RecordBatch(ctx, []metrics.Sample{
+		{SourceID: "existing", SourceName: "Existing", Latency: time.Minute, Err: fmt.Errorf("search stopped: %w", context.Canceled)},
+		{SourceID: "canceled-only", SourceName: "Canceled", Latency: time.Minute, Err: context.Canceled},
+		{SourceID: "deadline", SourceName: "Deadline", Latency: 30 * time.Second, Err: context.DeadlineExceeded},
+		{SourceID: "text-only", SourceName: "Text", Latency: time.Second, Err: errors.New("context canceled")},
+		{SourceID: "success", SourceName: "Success", Latency: time.Second},
+	})
+
+	after, err := json.Marshal(rowFor(t, client, "existing"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("cancellation changed counters, latency, error or timestamps:\nbefore %s\nafter  %s", before, after)
+	}
+	if exists := client.SourceMetric.Query().Where(entsourcemetric.SourceIDEQ("canceled-only")).ExistX(ctx); exists {
+		t.Error("cancellation created a metric row")
+	}
+	assertGenuineMetricOutcomes(t, client)
+}
+
+func assertGenuineMetricOutcomes(t *testing.T, client *ent.Client) {
+	t.Helper()
+	for _, id := range []string{"deadline", "text-only"} {
+		m := rowFor(t, client, id)
+		if m.SearchCount != 1 || m.FailCount != 1 || m.SuccessCount != 0 || m.LastErrorAt == nil {
+			t.Errorf("genuine failure %s was not recorded: %+v", id, m)
+		}
+	}
+	if m := rowFor(t, client, "deadline"); m.EwmaLatencyMs != 30000 || m.LastError != context.DeadlineExceeded.Error() {
+		t.Errorf("deadline latency/cause lost: %+v", m)
+	}
+	if m := rowFor(t, client, "success"); m.SuccessCount != 1 || m.FailCount != 0 {
+		t.Errorf("success was not recorded: %+v", m)
+	}
 }
