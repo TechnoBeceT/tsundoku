@@ -1301,6 +1301,8 @@ func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) { 
 	r := job.NewRunner(d, client, hub, storage, settings.Static{Download: time.Hour})
 	probe := &generationRuntimeReconciler{started: make(chan int, 3)}
 	r.SetRuntimeReconciler(probe)
+	events, unsubscribe := hub.Subscribe()
+	defer unsubscribe()
 
 	firstCtx, cancelFirst := context.WithCancel(context.Background())
 	r.Start(firstCtx)
@@ -1313,15 +1315,17 @@ func TestRunnerRuntimeRetryRestartDropsCanceledGenerationSignal(t *testing.T) { 
 	case <-time.After(5 * time.Second):
 		t.Fatal("first generation retry did not start")
 	}
-	firstCycle := waitForSchedule(t, r, func(s job.Schedule) bool {
-		return !s.Download.Running && !s.Download.NextRunAt.IsZero()
-	}, "the first cycle to finish before buffering generation-1 retry 2")
+	cycleStart, cycleDone := collectCycleEvents(events, 2*time.Second)
+	if !cycleStart || !cycleDone {
+		t.Fatalf("first cycle events start/done = %v/%v, want both before buffering generation-1 retry 2", cycleStart, cycleDone)
+	}
 	// Complete another existing-cadence cycle while retry 1 is blocked, which
 	// leaves one coalesced retry signal buffered for generation 1.
 	r.Trigger()
-	waitForSchedule(t, r, func(s job.Schedule) bool {
-		return !s.Download.Running && s.Download.NextRunAt.After(firstCycle.Download.NextRunAt)
-	}, "the second cycle to buffer a generation-1 runtime retry")
+	cycleStart, cycleDone = collectCycleEvents(events, 2*time.Second)
+	if !cycleStart || !cycleDone {
+		t.Fatalf("second cycle events start/done = %v/%v, want both before generation shutdown", cycleStart, cycleDone)
+	}
 
 	cancelFirst()
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1442,7 +1446,6 @@ func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) { /
 		t.Fatal("first generation retry did not start")
 	}
 
-	cancelFirst()
 	shutdownDone := make(chan error, 1)
 	go func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1452,8 +1455,9 @@ func TestRunnerStartDuringShutdownCreatesFreshJoinedGeneration(t *testing.T) { /
 	select {
 	case <-probe.tailStarted:
 	case <-time.After(2 * time.Second):
-		t.Fatal("runtime retry did not enter metadata tail during shutdown")
+		t.Fatal("runtime retry did not enter metadata tail after shutdown cancellation")
 	}
+	cancelFirst()
 
 	secondCtx, cancelSecond := context.WithCancel(context.Background())
 	defer cancelSecond()
