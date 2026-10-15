@@ -1,63 +1,16 @@
 /**
- * useChapterPrefetch — Mihon/Komikku-style whole-chapter prefetch.
+ * Warms every page of the current chapter, then its successor, using the same
+ * versioned URLs as the reader images. Detached images reach chapters outside
+ * the strip's mounted window without a second cache or object URLs.
  *
- * PROBLEM (measured, not theorised): every reader page request costs a flat
- * ~135ms server-side (the backend re-opens the CBZ per page over NFS) —
- * independent of bandwidth. `ReaderPage`'s `PRELOAD_RADIUS` only ever runs a
- * few pages ahead of the reader's eyes, so a fast scroll outruns it and the
- * reader visibly waits on that 135ms tax.
- *
- * FIX: the owner's ask — open a chapter, fetch ALL its pages in the
- * background, then prefetch the NEXT chapter. The tax doesn't disappear, it
- * just happens ahead of the reader while they're still reading, so they never
- * see it. This is ONLY worth doing because the companion backend change makes
- * a `?v=<pageVersion>`-matched request cache for a full day (`private,
- * max-age=86400`) instead of the old 5-minute window — without that, a
- * prefetched 165-page chapter would expire mid-read and every page would be
- * re-fetched from scratch anyway.
- *
- * 🔴 It does NOT depend on what `ReaderStrip` has mounted. The strip only
- * ever mounts `MAX_MOUNTED` (3) chapters, and the chapter AFTER the one
- * that's mounted is frequently not in the DOM at all — a DOM-based approach
- * (e.g. rendering hidden `<img>` tags for the next chapter) structurally
- * cannot reach it. Instead this warms the browser's OWN image cache directly
- * via `new Image()` — the same cache the real `<img loading="lazy">` tags hit
- * once the reader scrolls there, so warming it is enough; there is no
- * separate cache to plumb data through.
- *
- * WHY `new Image()` over `fetch()`: it is the simplest thing that shares the
- * exact cache `<img>` consumption reads from with zero extra plumbing (no
- * blob handling, no manual cache-storage writes) — a `fetch()` response would
- * populate the HTTP cache too, but would also require pulling the whole body
- * into memory in this composable for no benefit over letting the `<img>`
- * decode pipeline do that later.
- *
- * BOUNDED CONCURRENCY: `PREFETCH_CONCURRENCY` caps in-flight page requests —
- * firing all ~165 requests for a chapter at once would saturate the browser's
- * per-origin connection pool and starve the pages the reader is ACTUALLY
- * looking at right now, defeating the whole point. The cap is PER DRAIN, not a
- * hard ceiling on the whole composable instance: abandonment (see
- * `generation` below) stops a stale drain's worker loop from ENQUEUING more
- * pages, but its already-`await`ed `loadImage` calls are left to resolve
- * rather than aborted, and a fresh drain starts its own batch immediately —
- * so a rapid chapter flip can transiently run up to ~2x this cap (more across
- * several flips in quick succession). That overlap is harmless (cache-warming,
- * never cache-poisoning) and deliberately not worth an AbortController to
- * close — see `generation`'s doc comment.
- *
- * TAIL-404 TOLERANCE: `pageCount` is a DECLARED count that may exceed the
- * CBZ's real image count (Kaizoku imports — see `ReaderChapter`'s doc
- * comment). A prefetch 404 on a trailing page is therefore expected and
- * harmless (the strip already tolerates trailing 404s — `trimTrailingFailures`
- * in `ReaderStrip.logic.ts`); `loadImage` below treats `onerror` exactly like
- * `onload` — it resolves either way and is never retried.
+ * Pending work follows the live reading position. Already-started requests keep
+ * their slots across chapter changes, bounding background transfers to five.
+ * Low fetch priority lets visible reader images compete for the connection.
+ * Errors advance the queue without retrying: imported page counts can include
+ * missing trailing images, which the strip handles separately.
  */
 import { watch, type Ref } from 'vue'
 
-/** The bound on in-flight page requests WITHIN one drain (see the file
- *  header's BOUNDED CONCURRENCY note) — NOT a hard ceiling across the whole
- *  composable instance; an abandoned drain's already-in-flight requests can
- *  transiently overlap a freshly-started one. */
 const PREFETCH_CONCURRENCY = 5
 
 /** The slice of a reader chapter the prefetcher needs. `ReaderChapter` (from
@@ -73,14 +26,14 @@ export interface PrefetchChapter {
 /**
  * loadImage — fires ONE page request by pointing a detached `Image` at `url`,
  * warming the browser's image cache. Resolves on EITHER `load` or `error` —
- * see the file header's tail-404 note for why a failure must never reject
- * (that would stall the pool worker awaiting it) or trigger a retry.
+ * missing trailing pages must advance the queue without retries.
  */
 function loadImage(url: string): Promise<void> {
   return new Promise((resolve) => {
     const img = new Image()
     img.onload = () => resolve()
     img.onerror = () => resolve()
+    img.fetchPriority = 'low'
     img.src = url
   })
 }
@@ -107,31 +60,10 @@ function pageOrder(pageCount: number, center: number): number[] {
 }
 
 /**
- * useChapterPrefetch — see the file header.
- *
- * `currentChapter` / `nextChapter` are the reader route's own resolved
- * chapter refs (current = the chapter the reader has open, falling back to
- * the deep-linked chapter before the strip reports a centred position; next =
- * its number-order successor). `currentPage` is the reader's live 0-based
- * page within the current chapter, read ONCE per chapter change to seed the
- * "nearest first" fetch order (not re-read continuously — the order is
- * decided when the chapter becomes current, not re-shuffled mid-flight).
- * `pageUrl` is `useReader.pageUrl` — reused so the prefetcher and the
- * rendered `<img>` tags build IDENTICAL URLs (same `?v=`, same cache entry).
- *
- * Behaviour:
- *   - A `currentChapter` change enqueues ALL of its pages, nearest-to-
- *     `currentPage` first, through the bounded pool.
- *   - Once that queue drains, `nextChapter`'s pages are enqueued (ascending —
- *     nobody is centred inside it yet).
- *   - A LATER `currentChapter` change abandons whichever queue (current-chapter
- *     or next-chapter) was still running — see `generation` below.
- *   - A URL already requested by THIS composable instance is never re-fired
- *     (re-entering an already-warmed chapter, e.g. scrolling back, is a no-op).
- *
- * Returns `dispose()` — the route calls it `onBeforeUnmount` so a still-running
- * queue stops silently instead of continuing to fire requests for a reader
- * that's no longer open.
+ * Prefetches all current pages nearest the live centre first, then all next
+ * pages in ascending order. A page or chapter change replaces pending work;
+ * started URLs remain deduplicated, including failures. Dispose stops admission
+ * and watches while allowing the bounded in-flight requests to finish.
  */
 export function useChapterPrefetch(
   currentChapter: Ref<PrefetchChapter | null>,
@@ -139,57 +71,45 @@ export function useChapterPrefetch(
   currentPage: Ref<number>,
   pageUrl: (chapterId: string, page: number) => string,
 ): { dispose: () => void } {
-  // URLs already requested this composable's lifetime — the "don't re-fire"
-  // dedup set. Never cleared; a warmed page stays warmed for the session.
   const requested = new Set<string>()
+  const inFlight = new Set<string>()
+  let currentUrls = new Set<string>()
+  let currentQueue: string[] = []
+  let nextQueue: string[] = []
+  let disposed = false
 
-  // Bumped on every `currentChapter` change (including dispose). A running
-  // `drain` loop checks its OWN captured generation before each page it
-  // enqueues and stops the moment it goes stale — this is the abandonment
-  // mechanism (no AbortController plumbing needed: a stale worker just quietly
-  // stops asking for more pages; any request already in flight is left to
-  // resolve, which is harmless — it's cache-warming, not cache-poisoning).
-  let generation = 0
-
-  /**
-   * drain — runs `order` (page indices for `chapterId`) through the bounded
-   * pool. Each worker pulls the next un-fetched index off the shared cursor
-   * until the order is exhausted or `gen` is superseded. Resolves once every
-   * worker stops (queue exhausted OR abandoned).
-   */
-  async function drain(chapterId: string, order: number[], gen: number): Promise<void> {
-    let cursor = 0
-    async function worker(): Promise<void> {
-      while (cursor < order.length) {
-        if (gen !== generation) return // superseded — a newer chapter took over
-        const n = order[cursor]!
-        cursor += 1
-        const url = pageUrl(chapterId, n)
-        if (requested.has(url)) continue
-        requested.add(url)
-        await loadImage(url)
-      }
+  function pump(): void {
+    while (!disposed && inFlight.size < PREFETCH_CONCURRENCY) {
+      // The next chapter starts only after the current chapter's requests have
+      // settled, including requests started before the latest position change.
+      const currentPending = [...inFlight].some(url => currentUrls.has(url))
+      const url = currentQueue.shift() ?? (!currentPending ? nextQueue.shift() : undefined)
+      if (!url) return
+      if (requested.has(url)) continue
+      requested.add(url)
+      inFlight.add(url)
+      void loadImage(url).then(() => {
+        inFlight.delete(url)
+        pump()
+      })
     }
-    const workerCount = Math.min(PREFETCH_CONCURRENCY, order.length)
-    await Promise.all(Array.from({ length: workerCount }, worker))
   }
 
-  watch(currentChapter, (chapter) => {
-    generation += 1
-    const gen = generation
-    if (!chapter) return
-    const order = pageOrder(chapter.pageCount, currentPage.value)
-    void drain(chapter.id, order, gen).then(() => {
-      if (gen !== generation) return // this chapter is no longer current — don't chase a stale "next"
-      const next = nextChapter.value
-      if (!next) return
-      void drain(next.id, pageOrder(next.pageCount, 0), gen)
-    })
+  const stop = watch([currentChapter, nextChapter, currentPage], ([chapter, next, page]) => {
+    const urls = chapter ? pageOrder(chapter.pageCount, page).map(n => pageUrl(chapter.id, n)) : []
+    currentUrls = new Set(urls)
+    currentQueue = urls.filter(url => !requested.has(url))
+    nextQueue = chapter && next
+      ? pageOrder(next.pageCount, 0).map(n => pageUrl(next.id, n)).filter(url => !requested.has(url))
+      : []
+    pump()
   }, { immediate: true })
 
-  /** Abandons any in-flight queue. The route calls this `onBeforeUnmount`. */
   function dispose(): void {
-    generation += 1
+    disposed = true
+    stop()
+    currentQueue = []
+    nextQueue = []
   }
 
   return { dispose }

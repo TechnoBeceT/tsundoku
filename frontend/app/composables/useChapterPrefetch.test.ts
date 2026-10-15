@@ -3,11 +3,10 @@
  *
  * Pins:
  *   1. A `currentChapter` change enqueues ALL its pages (not a small radius).
- *   2. The fetch order is nearest-to-`currentPage` first.
- *   3. In-flight requests never exceed the bounded concurrency cap.
+ *   2. Pending fetch order follows the live `currentPage`.
+ *   3. In-flight requests never exceed five, including chapter changes.
  *   4. The `nextChapter` is only enqueued once the current chapter's queue drains.
- *   5. A LATER `currentChapter` change abandons whichever queue was running
- *      (current OR next), including a next-chapter queue already in flight.
+ *   5. Chapter changes replace pending work without cancelling active requests.
  *   6. Every requested URL carries `pageUrl`'s `?v=` cache buster verbatim.
  *   7. A page load failure (`onerror` — the tail-404 case) resolves like a
  *      success: it neither stalls nor kills the queue, and is never retried.
@@ -31,6 +30,7 @@ import { useChapterPrefetch, type PrefetchChapter } from './useChapterPrefetch'
 class FakeImage {
   onload: (() => void) | null = null
   onerror: (() => void) | null = null
+  fetchPriority = ''
   private _src = ''
   get src(): string { return this._src }
   set src(v: string) {
@@ -178,9 +178,8 @@ describe('useChapterPrefetch — abandonment on chapter change', () => {
     next.value = null
     await flushPromises()
 
-    // Resolve everything still parked (the abandoned ch-a in-flight requests +
-    // ch-c's own). No FURTHER ch-a pages should be requested beyond what was
-    // already in flight at the moment of the jump.
+    // Resolve old ch-a requests; ch-c uses each freed shared slot. No further
+    // ch-a pages should be requested beyond those already in flight.
     for (let i = 0; i < 10 && pending.length > 0; i++) {
       resolveOldest()
       await flushPromises()
@@ -274,5 +273,72 @@ describe('useChapterPrefetch — dispose', () => {
       await flushPromises()
     }
     expect(requestedUrls.length).toBe(5)
+  })
+})
+
+describe('useChapterPrefetch — live reading priority', () => {
+  it('uses the next free slot for the new centre after a same-chapter seek', async () => {
+    const current = ref<PrefetchChapter | null>({ id: 'long', pageCount: 100 })
+    const page = ref(0)
+    useChapterPrefetch(current, ref(null), page, pageUrl)
+    expect(requestedUrls.map(pageIndexOf)).toEqual(['0', '1', '2', '3', '4'])
+    page.value = 80
+    await flushPromises()
+    expect(pending).toHaveLength(5)
+    resolveOldest()
+    await flushPromises()
+    expect(pageIndexOf(requestedUrls.at(-1)!)).toBe('80')
+    expect(pending).toHaveLength(5)
+    resolveOldest()
+    await flushPromises()
+    expect(pageIndexOf(requestedUrls.at(-1)!)).toBe('81')
+
+    // Reordering changes admission priority, not the eventual whole-chapter set.
+    while (pending.length > 0) {
+      resolveOldest()
+      await flushPromises()
+    }
+    expect(requestedUrls).toHaveLength(100)
+    expect(new Set(requestedUrls).size).toBe(100)
+  })
+
+  it('shares five slots across chapter changes and replaces only pending work', async () => {
+    const current = ref<PrefetchChapter | null>(chA)
+    useChapterPrefetch(current, ref(null), ref(0), pageUrl)
+    expect(pending).toHaveLength(5)
+    current.value = { id: 'new', pageCount: 10 }
+    await flushPromises()
+    expect(pending).toHaveLength(5)
+    expect(requestedUrls).toHaveLength(5)
+    resolveOldest()
+    await flushPromises()
+    expect(pending).toHaveLength(5)
+    expect(requestedUrls.at(-1)).toBe(pageUrl('new', 0))
+    expect(requestedUrls.filter(url => url.includes('/ch-a/'))).toHaveLength(5)
+  })
+
+  it('gives detached background images low fetch priority', () => {
+    useChapterPrefetch(ref(chA), ref(null), ref(0), pageUrl)
+    expect(pending).toHaveLength(5)
+    expect(pending.every(image => image.fetchPriority === 'low')).toBe(true)
+  })
+})
+
+describe('useChapterPrefetch — stopped lifecycle', () => {
+  it('does not restart after disposal when page or chapter refs change', async () => {
+    const current = ref<PrefetchChapter | null>(chA)
+    const next = ref<PrefetchChapter | null>(null)
+    const page = ref(0)
+    const { dispose } = useChapterPrefetch(current, next, page, pageUrl)
+    dispose()
+    current.value = chB
+    next.value = chA
+    page.value = 3
+    await flushPromises()
+    while (pending.length > 0) {
+      resolveOldest()
+      await flushPromises()
+    }
+    expect(requestedUrls).toHaveLength(5)
   })
 })

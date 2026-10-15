@@ -13,8 +13,16 @@ import (
 	"github.com/technobecet/tsundoku/internal/download"
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
+
+type fixedSourceOverride struct{}
+
+func (fixedSourceOverride) Snapshot(context.Context) (map[int64]sourcethroughput.Override, error) {
+	cap := 2
+	return map[int64]sourcethroughput.Override{101: {DownloadConcurrency: &cap}}, nil
+}
 
 // seedSourceChaptersScanlator is like seedSourceChapters but lets the caller set a
 // scanlator on the SeriesProvider, so a single source ID can back multiple
@@ -256,6 +264,40 @@ func TestRunOnce_MultiScanlatorSharedSourceCap(t *testing.T) {
 		t.Logf("downloading=%d (cap=%d) — cap held", got, cap)
 	}
 
+	g.open()
+	if err := <-done; err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+}
+
+func TestRunOnce_SharedAliasUsesConfiguredSourceOverride(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	const sourceCap = 2
+
+	// Insert the disk-origin alias first so the canonical shared limiter is
+	// initialized from its non-numeric provider row (source ID 0). The live row
+	// carries source ID 101, whose captured override is 2.
+	diskIDs := seedSourceChapters(ctx, t, client, "elf-disk-first", "Elf Toon", 10, 5)
+	liveIDs := seedNamedSourceChapters(ctx, t, client, "elf-live", "101", "Elf Toon", 20, 5)
+	for i, id := range liveIDs {
+		client.Chapter.UpdateOneID(id).SetNumber(float64(100 + i)).SaveX(ctx)
+	}
+	all := make([]uuid.UUID, 0, len(diskIDs)+len(liveIDs))
+	all = append(all, diskIDs...)
+	all = append(all, liveIDs...)
+	g := newGateFetcher()
+	defer g.open()
+	d := download.New(client, g, sse.NewHub(), download.Config{Storage: mustTempDir(t)},
+		&mutableSettings{conc: 5, retries: 3, backoff: time.Hour}, nil).
+		WithSourceThroughputPolicies(fixedSourceOverride{})
+	done := make(chan error, 1)
+	go func() { _, err := d.RunOnce(ctx); done <- err }()
+	g.waitStarted(t, sourceCap)
+	time.Sleep(300 * time.Millisecond)
+	if got := countStates(ctx, t, client, all)[entchapter.StateDownloading]; got > sourceCap {
+		t.Errorf("shared source alias bypassed configured override: %d downloading, cap %d", got, sourceCap)
+	}
 	g.open()
 	if err := <-done; err != nil {
 		t.Fatalf("RunOnce: %v", err)

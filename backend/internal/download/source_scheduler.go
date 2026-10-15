@@ -123,6 +123,14 @@ func (s *SourceScheduler) RefreshPolicy() error {
 	s.policy = policy
 	s.limiter.setPolicy(policy)
 	s.global.setLimit(s.d.MaxConcurrentDownloads(s.ctx))
+	for key, window := range s.sources {
+		if key != unresolvedTargetKey {
+			// Refresh can tighten a recognized alias, but cannot renew its
+			// window or forget starts already charged to the shared allowance.
+			remaining := max(0, BatchPerSource(policy.ForSource(key, 0))-len(window.seen))
+			window.remaining = min(window.remaining, remaining)
+		}
+	}
 	return nil
 }
 
@@ -218,7 +226,7 @@ func (s *SourceScheduler) takeDiscoveredWork(key string, sourceID int64, window 
 	if priority {
 		available = s.priorityTurn(window, items)
 	}
-	selected := s.takeWork(window, available, s.policy.For(sourceID))
+	selected := s.takeWork(window, available, s.policy.ForSource(key, sourceID))
 	if priority && len(selected) > 0 {
 		window.nextSeries = uuid.Nil
 	}
@@ -270,7 +278,7 @@ func (s *SourceScheduler) clearMissingTurns() {
 func (s *SourceScheduler) pendingPriorityCanLaunch() bool {
 	for key, sourceID := range s.pendingPriority {
 		window := s.sources[key]
-		if window.remaining > 0 && window.active < s.policy.For(sourceID) {
+		if window.remaining > 0 && window.active < s.policy.ForSource(key, sourceID) {
 			return true
 		}
 	}
@@ -399,7 +407,7 @@ func (s *SourceScheduler) windowFor(key string, sourceID int64, now time.Time, i
 			lastSeries = window.lastSeries
 			nextSeries = window.nextSeries
 		}
-		window = &sourceWindow{started: now, remaining: BatchPerSource(s.policy.For(sourceID)), seen: make(map[uuid.UUID]bool), lastSeries: lastSeries, nextSeries: nextSeries}
+		window = &sourceWindow{started: now, remaining: BatchPerSource(s.policy.ForSource(key, sourceID)), seen: make(map[uuid.UUID]bool), lastSeries: lastSeries, nextSeries: nextSeries}
 		s.sources[key] = window
 	}
 	if key == unresolvedTargetKey {

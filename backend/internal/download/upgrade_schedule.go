@@ -128,7 +128,7 @@ func (d *Dispatcher) UpgradeAll(ctx context.Context, downloadsConsumed map[strin
 	groups, sourceIDs := d.groupByUpgradeTarget(ctx, chapters, maxRetries, now, disabled)
 	limits := make(map[string]int, len(groups))
 	for key := range groups {
-		limits[key] = policy.For(sourceIDs[key])
+		limits[key] = policy.ForSource(key, sourceIDs[key])
 	}
 	capUpgradeGroupsWithLimits(groups, limits, downloadsConsumed)
 	limiter := newPolicyProviderLimiter(policy)

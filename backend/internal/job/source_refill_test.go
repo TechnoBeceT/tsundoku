@@ -20,6 +20,7 @@ import (
 	"github.com/technobecet/tsundoku/internal/fetcher"
 	"github.com/technobecet/tsundoku/internal/job"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourceengine"
 	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
@@ -511,5 +512,143 @@ func TestRunner_SourceRefillHonorsPersistedSourceConcurrency(t *testing.T) {
 	case got := <-f.started:
 		t.Fatalf("source exceeded persisted cap: %s", got)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+func TestRunner_SourceRefillAliasPolicyBeforeBoundedDiscovery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		diskCount int
+		liveFirst bool
+	}{
+		{name: "disk first", diskCount: 5},
+		{name: "live first", diskCount: 5, liveFirst: true},
+		{name: "disk full page before live", diskCount: 1000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := testdb.New(t)
+			disk := seedMidCycleSourceBacklog(ctx, t, client, "alias-disk", "Elf Toon", tc.diskCount)
+			live := seedMidCycleSourceBacklog(ctx, t, client, "alias-live", "101", 5)
+			client.SeriesProvider.Update().Where(entseriesprovider.SeriesIDEQ(live.ID)).SetProviderName("Elf Toon").ExecX(ctx)
+			if !tc.liveFirst {
+				client.Chapter.Update().Where(entchapter.SeriesIDEQ(live.ID)).SetNumber(2000).ExecX(ctx)
+			} else {
+				client.Chapter.Update().Where(entchapter.SeriesIDEQ(disk.ID)).SetNumber(2000).ExecX(ctx)
+			}
+			// Fresh downloads and upgrades consume the same physical-source window.
+			low := client.SeriesProvider.Create().SetSeries(disk).SetProvider("low").SetImportance(1).SaveX(ctx)
+			client.Chapter.Update().Where(entchapter.SeriesIDEQ(disk.ID), entchapter.NumberLTE(2)).
+				SetState(entchapter.StateUpgradeAvailable).SetFilename("existing.cbz").SetSatisfiedImportance(1).SetSatisfiedByProviderID(low.ID).ExecX(ctx)
+			store := &refillOverride{}
+			store.concurrency.Store(2)
+			f := &refillFetcher{started: make(chan string, 100), release: make(chan struct{})}
+			storage := t.TempDir()
+			hub := sse.NewHub()
+			d := download.New(client, f, hub, download.Config{Storage: storage}, settings.Static{Retries: 3, DownloadConc: 5, MaxConcurrentDl: 10}, nil).WithSourceThroughputPolicies(store)
+			r := job.NewRunner(d, client, hub, storage, settings.Static{})
+			if err := r.RunDownloadCycle(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if got := len(f.started); got != 4 {
+				t.Fatalf("one physical source started %d chapters, want shared override allowance 4", got)
+			}
+		})
+	}
+}
+
+type aliasCapFetcher struct {
+	started    chan string
+	release    chan struct{}
+	active     atomic.Int64
+	peak       atomic.Int64
+	aliasCalls atomic.Int64
+	liveCalls  atomic.Int64
+	once       sync.Once
+}
+
+func (f *aliasCapFetcher) open() { f.once.Do(func() { close(f.release) }) }
+
+func (f *aliasCapFetcher) Fetch(ctx context.Context, ref fetcher.FetchRef) (fetcher.ChapterPages, error) {
+	if ref.Provider == "301" {
+		return fetcher.ChapterPages{}, sourceengine.ErrNoPages
+	}
+	if ref.Provider == "Elf Toon" {
+		f.aliasCalls.Add(1)
+	} else {
+		f.liveCalls.Add(1)
+	}
+	active := f.active.Add(1)
+	defer f.active.Add(-1)
+	for old := f.peak.Load(); active > old; old = f.peak.Load() {
+		if f.peak.CompareAndSwap(old, active) {
+			break
+		}
+	}
+	f.started <- ref.Provider
+	select {
+	case <-f.release:
+	case <-ctx.Done():
+		return fetcher.ChapterPages{}, ctx.Err()
+	}
+	return fetcher.ChapterPages{Pages: []fetcher.PageImage{{Data: []byte{1}, Ext: "jpg"}}, PageCount: 1}, nil
+}
+
+func TestRunner_SourceRefillAliasesShareFetchCapAcrossUpgradeAndFallback(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := testdb.New(t)
+	fallback := seedMidCycleSourceBacklog(ctx, t, client, "alias-fallback", "301", 4)
+	alias := client.SeriesProvider.Create().SetSeries(fallback).SetProvider("Elf Toon").SetImportance(5).SaveX(ctx)
+	for _, ch := range client.Chapter.Query().Where(entchapter.SeriesIDEQ(fallback.ID)).AllX(ctx) {
+		client.ProviderChapter.Create().SetSeriesProvider(alias).SetChapterKey(ch.ChapterKey).SetURL("https://alias/" + ch.ChapterKey).SaveX(ctx)
+	}
+	upgrades := seedMidCycleSourceBacklog(ctx, t, client, "alias-upgrades", "101", 4)
+	client.SeriesProvider.Update().Where(entseriesprovider.SeriesIDEQ(upgrades.ID)).SetProviderName("Elf Toon").ExecX(ctx)
+	low := client.SeriesProvider.Create().SetSeries(upgrades).SetProvider("low").SetImportance(1).SaveX(ctx)
+	client.Chapter.Update().Where(entchapter.SeriesIDEQ(upgrades.ID)).SetState(entchapter.StateUpgradeAvailable).
+		SetFilename("existing.cbz").SetSatisfiedImportance(1).SetSatisfiedByProviderID(low.ID).ExecX(ctx)
+	store := &refillOverride{}
+	store.concurrency.Store(2)
+	f := &aliasCapFetcher{started: make(chan string, 20), release: make(chan struct{})}
+	storage := t.TempDir()
+	hub := sse.NewHub()
+	d := download.New(client, f, hub, download.Config{Storage: storage}, settings.Static{Retries: 3, DownloadConc: 5, MaxConcurrentDl: 10}, nil).WithSourceThroughputPolicies(store)
+	r := job.NewRunner(d, client, hub, storage, settings.Static{})
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	go func() { defer close(finished); done <- r.RunDownloadCycle(ctx) }()
+	t.Cleanup(func() { cancel(); f.open(); <-finished })
+	for range 2 {
+		select {
+		case <-f.started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("shared source did not fill cap 2")
+		}
+	}
+	select {
+	case source := <-f.started:
+		t.Fatalf("alias %s exceeded cap while two shared calls held", source)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if peak := f.peak.Load(); peak != 2 {
+		t.Fatalf("shared source peak = %d, want 2", peak)
+	}
+	finishAliasCapCycle(t, f, done)
+}
+
+func finishAliasCapCycle(t *testing.T, f *aliasCapFetcher, done <-chan error) {
+	t.Helper()
+	f.open()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("mixed alias cycle did not finish")
+	}
+	if f.peak.Load() > 2 || f.aliasCalls.Load() == 0 || f.liveCalls.Load() == 0 {
+		t.Fatalf("mixed fetch peak/alias/live = %d/%d/%d, want cap 2 with both paths exercised", f.peak.Load(), f.aliasCalls.Load(), f.liveCalls.Load())
 	}
 }

@@ -255,7 +255,7 @@ func runQueuedItem[T any](ctx context.Context, it T, run func(context.Context, T
 // politeness wait.
 func (d *Dispatcher) runDownloadQueues(ctx context.Context, groups map[string][]resolvedChapter, policy sourceConcurrencyPolicy, maxRetries int, now time.Time, limiter *providerLimiter, progressed *atomic.Int64, globalSem FetchSemaphore) {
 	_ = runPerSourceQueues(ctx, groups, func(key string) int {
-		return policy.For(groups[key][0].sourceID)
+		return policy.ForSource(key, groups[key][0].sourceID)
 	},
 		func(ctx context.Context, _ string, it resolvedChapter) error {
 			if d.downloadResolved(ctx, it, maxRetries, now, limiter, globalSem) {

@@ -943,7 +943,7 @@ func (d *Dispatcher) RunOnceAt(ctx context.Context, now time.Time, consumed map[
 	// candidate.
 	batched := make(map[string][]resolvedChapter, len(groups))
 	for key, items := range groups {
-		budget := BatchPerSource(policy.For(items[0].sourceID))
+		budget := BatchPerSource(policy.ForSource(key, items[0].sourceID))
 		remaining := budget - consumed[key]
 		if remaining <= 0 {
 			continue
@@ -1803,7 +1803,7 @@ func (l *providerLimiter) acquire(ctx context.Context, sourceKey string, sourceI
 	if !ok {
 		capacity := l.cap
 		if l.policy != nil {
-			capacity = l.policy.For(sourceID)
+			capacity = l.policy.ForSource(sourceKey, sourceID)
 		}
 		sem = newFetchCapacity(capacity)
 		l.sems[sourceKey] = sem
@@ -1987,6 +1987,6 @@ func (l *providerLimiter) setPolicy(policy sourceConcurrencyPolicy) {
 	defer l.mu.Unlock()
 	l.policy = &policy
 	for key, sem := range l.sems {
-		sem.setLimit(policy.For(l.sourceIDs[key]))
+		sem.setLimit(policy.ForSource(key, l.sourceIDs[key]))
 	}
 }

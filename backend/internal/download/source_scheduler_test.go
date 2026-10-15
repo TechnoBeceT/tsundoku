@@ -13,8 +13,58 @@ import (
 	"github.com/technobecet/tsundoku/internal/ent"
 	entchapter "github.com/technobecet/tsundoku/internal/ent/chapter"
 	"github.com/technobecet/tsundoku/internal/settings"
+	"github.com/technobecet/tsundoku/internal/sourcethroughput"
 	"github.com/technobecet/tsundoku/internal/sse"
 )
+
+func TestSourceSchedulerRefreshResolvesAliasesWithoutRenewingSpentAllowance(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	d := New(client, &admissionFetcher{}, sse.NewHub(), Config{}, settings.Static{DownloadConc: 5, MaxConcurrentDl: 10}, nil)
+	scheduler, err := d.NewSourceScheduler(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scheduler.Close()
+	window := scheduler.windowFor("Elf Toon", 0, time.Now(), 0)
+	for range 3 {
+		window.seen[uuid.New()] = true
+	}
+	window.remaining -= 3
+	release, err := scheduler.limiter.acquire(ctx, "Elf Toon", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	permit := scheduler.limiter.sems["Elf Toon"]
+	series := client.Series.Create().SetTitle("known alias").SetSlug("known-alias").SaveX(ctx)
+	client.SeriesProvider.Create().SetSeries(series).SetProvider("101").SetProviderName("Elf Toon").SaveX(ctx)
+	two := 2
+	d.WithSourceThroughputPolicies(&stubThroughputPolicies{overrides: map[int64]sourcethroughput.Override{101: {DownloadConcurrency: &two}}})
+	refreshSchedulerPolicy(t, scheduler)
+	if window.remaining != 1 {
+		t.Fatalf("remaining allowance = %d, want 4 minus 3 spent", window.remaining)
+	}
+	if scheduler.limiter.sems["Elf Toon"] != permit {
+		t.Fatal("refresh replaced outstanding permit object")
+	}
+	if permit.limit != 2 || permit.used != 1 {
+		t.Fatalf("held permit limit/used = %d/%d, want 2/1", permit.limit, permit.used)
+	}
+	four := 4
+	d.WithSourceThroughputPolicies(&stubThroughputPolicies{overrides: map[int64]sourcethroughput.Override{101: {DownloadConcurrency: &four}}})
+	refreshSchedulerPolicy(t, scheduler)
+	if window.remaining != 1 {
+		t.Fatalf("policy increase renewed allowance to %d", window.remaining)
+	}
+}
+
+func refreshSchedulerPolicy(t *testing.T, scheduler *SourceScheduler) {
+	t.Helper()
+	if err := scheduler.RefreshPolicy(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 //nolint:gocognit // One held admission scenario checks both state contracts and preservation after an owner pause.
 func TestSourceSchedulerPauseAfterSelectionPreventsDownloadAndUpgradeAdmission(t *testing.T) {

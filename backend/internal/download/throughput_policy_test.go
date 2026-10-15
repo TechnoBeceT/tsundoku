@@ -174,3 +174,37 @@ func (s fixedRetrySettings) LockedRetryInterval(context.Context) time.Duration {
 func (s fixedRetrySettings) DownloadConcurrency(context.Context) int           { return s.concurrency }
 func (s fixedRetrySettings) MaxConcurrentDownloads(context.Context) int        { return 10 }
 func (s fixedRetrySettings) SuppressSplitParts(context.Context) bool           { return false }
+
+func TestBeginCycleResolvesPhysicalLabelsBeforeAliasAdmission(t *testing.T) {
+	ctx := context.Background()
+	client := testdb.New(t)
+	series := client.Series.Create().SetTitle("aliases").SetSlug("aliases").SaveX(ctx)
+	for _, provider := range []string{"Elf Toon", "101", "202"} {
+		client.SeriesProvider.Create().SetSeries(series).SetProvider(provider).SetProviderName("Elf Toon").SaveX(ctx)
+	}
+	two, four := 2, 4
+	d := &Dispatcher{client: client, retry: fixedRetrySettings{concurrency: 5}, throughput: &stubThroughputPolicies{overrides: map[int64]sourcethroughput.Override{
+		101: {DownloadConcurrency: &two}, 202: {DownloadConcurrency: &four},
+	}}}
+	cycle, err := d.BeginCycle(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := d.concurrencyPolicy(cycle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, order := range [][]int64{{0, 101, 202}, {202, 101, 0}} {
+		limiter := newPolicyProviderLimiter(policy)
+		for _, sourceID := range order {
+			release, err := limiter.acquire(ctx, "Elf Toon", sourceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := limiter.sems["Elf Toon"].limit; got != 2 {
+				t.Fatalf("alias %d limit = %d, want conservative collision bound 2", sourceID, got)
+			}
+			release()
+		}
+	}
+}
